@@ -1,6 +1,42 @@
 # Sub-repos
 mcp-abap-adt/
+abap-adt-api-lib/
 
 # MCP config (contains credentials)
 .mcp.json
 ./claude/abap-adt-api-lib/
+
+# Binaries
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/mcp-abap-adt-go
+
+# Test binary
+*.test
+
+# Coverage
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
