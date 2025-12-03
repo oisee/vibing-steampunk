@@ -526,7 +526,7 @@ func (s *Server) registerTools() {
 
 	// DeployFromFile (Recommended)
 	s.mcpServer.AddTool(mcp.NewTool("DeployFromFile",
-		mcp.WithDescription("✅ RECOMMENDED - Smart deploy from file: auto-detects if object exists and creates/updates accordingly. Solves token limit problem for large generated files (ML models, etc). Workflow: Parse → Check existence → Create or Update → Lock → SyntaxCheck → Write → Unlock → Activate. Supports .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap"),
+		mcp.WithDescription("✅ RECOMMENDED - Smart deploy from file: auto-detects if object exists and creates/updates accordingly. Solves token limit problem for large generated files (ML models, 3948+ lines). Example: DeployFromFile(file_path=\"/path/to/zcl_ml_iris.clas.abap\", package_name=\"$ZAML_IRIS\") deploys any size file. Workflow: Parse → Check existence → Create or Update → Lock → SyntaxCheck → Write → Unlock → Activate. Supports .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap. Use this for all file-based deployments."),
 		mcp.WithString("file_path",
 			mcp.Required(),
 			mcp.Description("Absolute path to ABAP source file"),
@@ -542,7 +542,7 @@ func (s *Server) registerTools() {
 
 	// SaveToFile
 	s.mcpServer.AddTool(mcp.NewTool("SaveToFile",
-		mcp.WithDescription("Save ABAP object source to local file (SAP → File). Enables bidirectional sync: download objects for editing/version control, then re-deploy with DeployFromFile. Auto-determines file extension based on object type."),
+		mcp.WithDescription("Save ABAP object source to local file (SAP → File). Enables BIDIRECTIONAL SYNC WORKFLOW: (1) SaveToFile downloads object from SAP, (2) edit locally with vim/VS Code/AI assistants, (3) DeployFromFile uploads changes back to SAP. Example: SaveToFile(objType=\"CLAS/OC\", objectName=\"ZCL_ML_IRIS\", outputPath=\"./src/\") creates ./src/zcl_ml_iris.clas.abap. Then edit locally and use DeployFromFile to sync back. Recommended for iterative development. Auto-determines file extension."),
 		mcp.WithString("objType",
 			mcp.Required(),
 			mcp.Description("Object type: CLAS/OC (class), PROG/P (program), INTF/OI (interface), FUGR/F (function group), FUGR/FF (function module)"),
