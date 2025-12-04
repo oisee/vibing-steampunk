@@ -34,6 +34,9 @@ type Config struct {
 	// Verbose output
 	Verbose bool
 
+	// Mode: focused or expert (default: focused)
+	Mode string
+
 	// Safety configuration
 	ReadOnly        bool
 	BlockFreeSQL    bool

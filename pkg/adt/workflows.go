@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1386,4 +1387,500 @@ func isSourceObject(objectType string) bool {
 		"PROG/I":  true, // Includes
 	}
 	return sourceTypes[objectType]
+}
+
+// --- Unified Tools (Focused Mode) ---
+
+// GetSourceOptions configures GetSource behavior
+type GetSourceOptions struct {
+	Parent  string // Function group name (required for FUNC type)
+	Include string // Class include type: definitions, implementations, macros, testclasses (optional for CLAS type)
+}
+
+// GetSource is a unified tool for reading ABAP source code across different object types.
+// Replaces GetProgram, GetClass, GetInterface, GetFunction, GetInclude, GetFunctionGroup, GetClassInclude.
+//
+// Supported types:
+//   - PROG: Programs (name = program name)
+//   - CLAS: Classes (name = class name, include = definitions|implementations|macros|testclasses)
+//   - INTF: Interfaces (name = interface name)
+//   - FUNC: Function modules (name = function module name, parent = function group name)
+//   - FUGR: Function groups (name = function group name)
+//   - INCL: Includes (name = include name)
+func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *GetSourceOptions) (string, error) {
+	// Safety check for read operations
+	if err := c.checkSafety(OpRead, "GetSource"); err != nil {
+		return "", err
+	}
+
+	if opts == nil {
+		opts = &GetSourceOptions{}
+	}
+
+	objectType = strings.ToUpper(objectType)
+	name = strings.ToUpper(name)
+
+	switch objectType {
+	case "PROG":
+		return c.GetProgram(ctx, name)
+
+	case "CLAS":
+		if opts.Include != "" {
+			return c.GetClassInclude(ctx, name, ClassIncludeType(opts.Include))
+		}
+		return c.GetClassSource(ctx, name)
+
+	case "INTF":
+		return c.GetInterface(ctx, name)
+
+	case "FUNC":
+		if opts.Parent == "" {
+			return "", fmt.Errorf("parent (function group name) is required for FUNC type")
+		}
+		return c.GetFunction(ctx, name, opts.Parent)
+
+	case "FUGR":
+		// GetFunctionGroup returns JSON metadata (function module list), not source
+		fg, err := c.GetFunctionGroup(ctx, name)
+		if err != nil {
+			return "", err
+		}
+		// Serialize to JSON for display
+		data, err := json.Marshal(fg)
+		if err != nil {
+			return "", fmt.Errorf("failed to serialize function group: %w", err)
+		}
+		return string(data), nil
+
+	case "INCL":
+		return c.GetInclude(ctx, name)
+
+	default:
+		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL)", objectType)
+	}
+}
+
+// WriteSourceMode specifies how WriteSource behaves
+type WriteSourceMode string
+
+const (
+	WriteModeUpdate WriteSourceMode = "update" // Update existing object only
+	WriteModeCreate WriteSourceMode = "create" // Create new object only
+	WriteModeUpsert WriteSourceMode = "upsert" // Create if not exists, update if exists (default)
+)
+
+// WriteSourceOptions configures WriteSource behavior
+type WriteSourceOptions struct {
+	Mode        WriteSourceMode // update, create, upsert (default: upsert)
+	Description string          // Object description (for create)
+	Package     string          // Package name (for create)
+	TestSource  string          // Test source for CLAS (auto-creates test include)
+	Transport   string          // Transport request number
+}
+
+// WriteSourceResult represents the result of WriteSource operation
+type WriteSourceResult struct {
+	Success       bool                       `json:"success"`
+	ObjectType    string                     `json:"objectType"`
+	ObjectName    string                     `json:"objectName"`
+	ObjectURL     string                     `json:"objectUrl"`
+	Mode          string                     `json:"mode"` // "created" or "updated"
+	SyntaxErrors  []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
+	Activation    *ActivationResult          `json:"activation,omitempty"`
+	TestResults   *UnitTestResult            `json:"testResults,omitempty"` // For CLAS with TestSource
+	Message       string                     `json:"message,omitempty"`
+}
+
+// WriteSource is a unified tool for writing ABAP source code across different object types.
+// Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests.
+//
+// Supported types:
+//   - PROG: Programs
+//   - CLAS: Classes (optionally with test source)
+//   - INTF: Interfaces
+//
+// Mode:
+//   - upsert (default): Auto-detect if object exists, create or update accordingly
+//   - create: Create new object only (fails if exists)
+//   - update: Update existing object only (fails if not exists)
+func (c *Client) WriteSource(ctx context.Context, objectType, name, source string, opts *WriteSourceOptions) (*WriteSourceResult, error) {
+	// Safety check for workflow operations
+	if err := c.checkSafety(OpWorkflow, "WriteSource"); err != nil {
+		return nil, err
+	}
+
+	if opts == nil {
+		opts = &WriteSourceOptions{Mode: WriteModeUpsert}
+	}
+	if opts.Mode == "" {
+		opts.Mode = WriteModeUpsert
+	}
+
+	objectType = strings.ToUpper(objectType)
+	name = strings.ToUpper(name)
+
+	result := &WriteSourceResult{
+		ObjectType: objectType,
+		ObjectName: name,
+	}
+
+	// Validate object type
+	switch objectType {
+	case "PROG", "CLAS", "INTF":
+		// Supported types
+	default:
+		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF)", objectType)
+		return result, nil
+	}
+
+	// Determine if object exists (for upsert mode)
+	objectExists := false
+	if opts.Mode == WriteModeUpsert {
+		// Try to check if object exists
+		switch objectType {
+		case "PROG":
+			_, err := c.GetProgram(ctx, name)
+			objectExists = (err == nil)
+		case "CLAS":
+			_, err := c.GetClass(ctx, name)
+			objectExists = (err == nil)
+		case "INTF":
+			_, err := c.GetInterface(ctx, name)
+			objectExists = (err == nil)
+		}
+	}
+
+	// Determine actual operation mode
+	var actualMode WriteSourceMode
+	if opts.Mode == WriteModeUpsert {
+		if objectExists {
+			actualMode = WriteModeUpdate
+		} else {
+			actualMode = WriteModeCreate
+		}
+	} else {
+		actualMode = opts.Mode
+	}
+
+	// Validate mode vs existence
+	if actualMode == WriteModeCreate && objectExists {
+		result.Message = fmt.Sprintf("Object %s already exists (use mode=update or mode=upsert)", name)
+		return result, nil
+	}
+	if actualMode == WriteModeUpdate && !objectExists {
+		result.Message = fmt.Sprintf("Object %s does not exist (use mode=create or mode=upsert)", name)
+		return result, nil
+	}
+
+	// Execute create or update workflow
+	if actualMode == WriteModeCreate {
+		return c.writeSourceCreate(ctx, objectType, name, source, opts)
+	} else {
+		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
+	}
+}
+
+// writeSourceCreate handles creation workflow
+func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source string, opts *WriteSourceOptions) (*WriteSourceResult, error) {
+	result := &WriteSourceResult{
+		ObjectType: objectType,
+		ObjectName: name,
+		Mode:       "created",
+	}
+
+	// Validate required fields for create
+	if opts.Package == "" {
+		result.Message = "Package is required for creating new objects"
+		return result, nil
+	}
+	if opts.Description == "" {
+		result.Message = "Description is required for creating new objects"
+		return result, nil
+	}
+
+	// Use existing Create*AndActivate* workflows
+	switch objectType {
+	case "PROG":
+		progResult, err := c.CreateAndActivateProgram(ctx, name, opts.Description, opts.Package, source, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create program: %v", err)
+			return result, nil
+		}
+		result.Success = progResult.Success
+		result.ObjectURL = progResult.ObjectURL
+		result.SyntaxErrors = progResult.SyntaxErrors
+		result.Activation = progResult.Activation
+		result.Message = progResult.Message
+		return result, nil
+
+	case "CLAS":
+		if opts.TestSource != "" {
+			classResult, err := c.CreateClassWithTests(ctx, name, opts.Description, opts.Package, source, opts.TestSource, opts.Transport)
+			if err != nil {
+				result.Message = fmt.Sprintf("Failed to create class with tests: %v", err)
+				return result, nil
+			}
+			result.Success = classResult.Success
+			result.ObjectURL = classResult.ObjectURL
+			result.Activation = classResult.Activation
+			result.TestResults = classResult.UnitTestResult
+			result.Message = classResult.Message
+			return result, nil
+		} else {
+			// Create class without tests - use CreateObject + WriteClass workflow
+			objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name)
+			result.ObjectURL = objectURL
+
+			// Create object
+			err := c.CreateObject(ctx, CreateObjectOptions{
+				ObjectType:  ObjectTypeClass,
+				Name:        name,
+				Description: opts.Description,
+				PackageName: opts.Package,
+				Transport:   opts.Transport,
+			})
+			if err != nil {
+				result.Message = fmt.Sprintf("Failed to create class: %v", err)
+				return result, nil
+			}
+
+			// Write source
+			writeResult, err := c.WriteClass(ctx, name, source, opts.Transport)
+			if err != nil {
+				result.Message = fmt.Sprintf("Class created but failed to write source: %v", err)
+				return result, nil
+			}
+
+			result.Success = writeResult.Success
+			result.SyntaxErrors = writeResult.SyntaxErrors
+			result.Activation = writeResult.Activation
+			result.Message = writeResult.Message
+			return result, nil
+		}
+
+	case "INTF":
+		objectURL := fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name)
+		result.ObjectURL = objectURL
+
+		// Create object
+		err := c.CreateObject(ctx, CreateObjectOptions{
+			ObjectType:  ObjectTypeInterface,
+			Name:        name,
+			Description: opts.Description,
+			PackageName: opts.Package,
+			Transport:   opts.Transport,
+		})
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to create interface: %v", err)
+			return result, nil
+		}
+
+		// Write source (using WriteProgram logic for interface)
+		sourceURL := objectURL + "/source/main"
+
+		// Syntax check
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			result.Message = fmt.Sprintf("Syntax check failed: %v", err)
+			return result, nil
+		}
+
+		// Check for syntax errors
+		for _, se := range syntaxErrors {
+			if se.Severity == "E" || se.Severity == "A" || se.Severity == "X" {
+				result.SyntaxErrors = syntaxErrors
+				result.Message = "Source has syntax errors - not saved"
+				return result, nil
+			}
+		}
+		result.SyntaxErrors = syntaxErrors
+
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
+			return result, nil
+		}
+
+		defer func() {
+			if !result.Success {
+				c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			}
+		}()
+
+		// Update source
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update source: %v", err)
+			return result, nil
+		}
+
+		// Unlock
+		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
+			return result, nil
+		}
+
+		// Activate
+		activation, err := c.Activate(ctx, objectURL, name)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to activate: %v", err)
+			result.Activation = activation
+			return result, nil
+		}
+
+		result.Activation = activation
+		if activation.Success {
+			result.Success = true
+			result.Message = "Interface created and activated successfully"
+		} else {
+			result.Message = "Activation failed - check activation messages"
+		}
+
+		return result, nil
+
+	default:
+		result.Message = fmt.Sprintf("Unsupported object type for creation: %s", objectType)
+		return result, nil
+	}
+}
+
+// writeSourceUpdate handles update workflow
+func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source string, opts *WriteSourceOptions) (*WriteSourceResult, error) {
+	result := &WriteSourceResult{
+		ObjectType: objectType,
+		ObjectName: name,
+		Mode:       "updated",
+	}
+
+	// Use existing Write* workflows
+	switch objectType {
+	case "PROG":
+		progResult, err := c.WriteProgram(ctx, name, source, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update program: %v", err)
+			return result, nil
+		}
+		result.Success = progResult.Success
+		result.ObjectURL = progResult.ObjectURL
+		result.SyntaxErrors = progResult.SyntaxErrors
+		result.Activation = progResult.Activation
+		result.Message = progResult.Message
+		return result, nil
+
+	case "CLAS":
+		classResult, err := c.WriteClass(ctx, name, source, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update class: %v", err)
+			return result, nil
+		}
+		result.Success = classResult.Success
+		result.ObjectURL = classResult.ObjectURL
+		result.SyntaxErrors = classResult.SyntaxErrors
+		result.Activation = classResult.Activation
+		result.Message = classResult.Message
+
+		// If test source provided, update test include
+		if opts.TestSource != "" {
+			objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name)
+
+			// Lock for test update
+			lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+			if err != nil {
+				result.Message += fmt.Sprintf(" (Warning: Failed to lock for test update: %v)", err)
+				return result, nil
+			}
+
+			// Update test include
+			err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, opts.Transport)
+			unlockErr := c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			if err != nil {
+				result.Message += fmt.Sprintf(" (Warning: Failed to update test include: %v)", err)
+				return result, nil
+			}
+			if unlockErr != nil {
+				result.Message += fmt.Sprintf(" (Warning: Failed to unlock after test update: %v)", unlockErr)
+			}
+
+			// Run tests
+			testResult, err := c.RunUnitTests(ctx, objectURL, nil)
+			if err == nil {
+				result.TestResults = testResult
+			}
+		}
+
+		return result, nil
+
+	case "INTF":
+		// Similar to WriteProgram workflow
+		objectURL := fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name)
+		sourceURL := objectURL + "/source/main"
+		result.ObjectURL = objectURL
+
+		// Syntax check
+		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
+		if err != nil {
+			result.Message = fmt.Sprintf("Syntax check failed: %v", err)
+			return result, nil
+		}
+
+		for _, se := range syntaxErrors {
+			if se.Severity == "E" || se.Severity == "A" || se.Severity == "X" {
+				result.SyntaxErrors = syntaxErrors
+				result.Message = "Source has syntax errors - not saved"
+				return result, nil
+			}
+		}
+		result.SyntaxErrors = syntaxErrors
+
+		// Lock
+		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
+			return result, nil
+		}
+
+		defer func() {
+			if !result.Success {
+				c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			}
+		}()
+
+		// Update
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update source: %v", err)
+			return result, nil
+		}
+
+		// Unlock
+		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
+			return result, nil
+		}
+
+		// Activate
+		activation, err := c.Activate(ctx, objectURL, name)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to activate: %v", err)
+			result.Activation = activation
+			return result, nil
+		}
+
+		result.Activation = activation
+		if activation.Success {
+			result.Success = true
+			result.Message = "Interface updated and activated successfully"
+		} else {
+			result.Message = "Activation failed - check activation messages"
+		}
+
+		return result, nil
+
+	default:
+		result.Message = fmt.Sprintf("Unsupported object type for update: %s", objectType)
+		return result, nil
+	}
 }

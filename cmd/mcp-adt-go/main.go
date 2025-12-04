@@ -76,6 +76,9 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.DisallowedOps, "disallowed-ops", "", "Blacklist of operation types to block (e.g., \"CDUA\" for Create, Delete, Update, Activate)")
 	rootCmd.Flags().StringSliceVar(&cfg.AllowedPackages, "allowed-packages", nil, "Restrict operations to specific packages (comma-separated, supports wildcards like Z*)")
 
+	// Mode options
+	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (14 essential tools) or expert (all 43 tools)")
+
 	// Output options
 	rootCmd.Flags().BoolVarP(&cfg.Verbose, "verbose", "v", false, "Enable verbose output to stderr")
 
@@ -93,6 +96,7 @@ func init() {
 	viper.BindPFlag("allowed-ops", rootCmd.Flags().Lookup("allowed-ops"))
 	viper.BindPFlag("disallowed-ops", rootCmd.Flags().Lookup("disallowed-ops"))
 	viper.BindPFlag("allowed-packages", rootCmd.Flags().Lookup("allowed-packages"))
+	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Set up environment variable mapping
@@ -117,6 +121,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "[VERBOSE] Starting mcp-adt-go server\n")
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Mode: %s\n", cfg.Mode)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP URL: %s\n", cfg.BaseURL)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Client: %s\n", cfg.Client)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Language: %s\n", cfg.Language)
@@ -200,6 +205,13 @@ func resolveConfig(cmd *cobra.Command) {
 		cfg.InsecureSkipVerify = viper.GetBool("INSECURE")
 	}
 
+	// Mode: flag > SAP_MODE env > default (focused)
+	if !cmd.Flags().Changed("mode") {
+		if envMode := viper.GetString("MODE"); envMode != "" {
+			cfg.Mode = envMode
+		}
+	}
+
 	// Verbose: flag > SAP_VERBOSE env
 	if !cmd.Flags().Changed("verbose") {
 		cfg.Verbose = viper.GetBool("VERBOSE")
@@ -228,6 +240,11 @@ func resolveConfig(cmd *cobra.Command) {
 func validateConfig() error {
 	if cfg.BaseURL == "" {
 		return fmt.Errorf("SAP URL is required. Use --url flag or SAP_URL environment variable")
+	}
+
+	// Validate mode
+	if cfg.Mode != "focused" && cfg.Mode != "expert" {
+		return fmt.Errorf("invalid mode: %s (must be 'focused' or 'expert')", cfg.Mode)
 	}
 
 	// Check if we have either basic auth or cookies will be processed
