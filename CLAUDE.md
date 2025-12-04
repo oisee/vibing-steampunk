@@ -4,7 +4,7 @@ This file provides context for AI assistants (Claude, etc.) working on this proj
 
 ## Project Overview
 
-**mcp-adt-go** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution of 36 ADT tools for use with Claude and other MCP-compatible LLMs.
+**mcp-adt-go** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution of 43 ADT tools for use with Claude and other MCP-compatible LLMs.
 
 ## Quick Reference
 
@@ -58,7 +58,7 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./mcp-adt-go
 
 ```
 cmd/mcp-adt-go/main.go       # Entry point
-internal/mcp/server.go       # MCP server (36 tool handlers)
+internal/mcp/server.go       # MCP server (43 tool handlers)
 pkg/
 ├── adt/
 │   ├── client.go             # ADT client + read operations
@@ -66,8 +66,9 @@ pkg/
 │   ├── devtools.go           # Dev tools (syntax check, activate, unit tests)
 │   ├── codeintel.go          # Code intelligence (find def, refs, completion)
 │   ├── workflows.go          # High-level workflow operations
-│   ├── safety.go             # ✨ NEW: Safety & protection configuration
-│   ├── safety_test.go        # ✨ NEW: Safety unit tests (25 tests)
+│   ├── cds.go                # CDS view dependency analysis
+│   ├── safety.go             # Safety & protection configuration
+│   ├── safety_test.go        # Safety unit tests (25 tests)
 │   ├── http.go               # HTTP transport (CSRF, sessions)
 │   ├── config.go             # Configuration
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
@@ -246,11 +247,11 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 36 |
+| **Tools** | 43 |
 | **Unit Tests** | 109 (84 ADT + 25 safety) |
-| **Integration Tests** | 20+ |
+| **Integration Tests** | 21+ |
 | **Platforms** | 9 |
-| **Phase** | 4 (Code Intelligence) - Complete |
+| **Phase** | 5 (CDS Dependency Analysis) - Complete |
 | **Reports** | 11 numbered + 6 reference docs |
 | **Cache Package** | ✅ Complete (in-memory + SQLite) |
 | **Safety System** | ✅ Complete (operation filtering, package restrictions) |

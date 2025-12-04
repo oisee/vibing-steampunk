@@ -5,7 +5,7 @@
 
 A Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT).
 
-Single-binary distribution of 42 ADT tools for use with Claude and other MCP-compatible AI assistants.
+Single-binary distribution of 43 ADT tools for use with Claude and other MCP-compatible AI assistants.
 
 ## Why This Project?
 
@@ -46,7 +46,7 @@ Comparison of ADT capabilities across implementations:
 | Includes | Y | Y | **Y** |
 | Package Contents | Y | Y | **Y** |
 | Type Info | Y | Y | **Y** |
-| CDS Views | Y | Y | N |
+| CDS Views | Y | Y | **Y** (dependencies) |
 | RAP/BDEF | Y | Y | N |
 | **Data Query** |
 | Table Contents | Y | Y | **Y** |
@@ -101,9 +101,9 @@ Comparison of ADT capabilities across implementations:
 
 This guide follows emerging best practices for MCP documentation aimed at AI agents rather than human developers.
 
-## Available Tools (42)
+## Available Tools (43)
 
-### Read Operations (14 tools)
+### Read Operations (15 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -120,6 +120,7 @@ This guide follows emerging best practices for MCP documentation aimed at AI age
 | `GetPackage` | Retrieve package contents |
 | `GetTransaction` | Retrieve transaction details |
 | `GetTypeInfo` | Retrieve data type information |
+| `GetCDSDependencies` | Retrieve CDS view dependency tree (forward dependencies: what this view depends on) |
 | `RunQuery` | Execute freestyle SQL query |
 
 ### Development Tools (3 tools)
@@ -410,8 +411,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 42 |
-| **Unit Tests** | 91 (7 new file parser tests) |
+| **Tools** | 43 |
+| **Unit Tests** | 91 |
 | **Integration Tests** | 21+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
@@ -427,13 +428,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed architecture documentation.
   - [ ] DebuggerGetCallStack - Get call stack
   - [ ] DebuggerStartTrace - Start ABAP/SQL/profile trace
   - [ ] DebuggerGetTraceResults - Analyze trace data
-- [ ] **CDS Dependency Analysis** - Extract dependency tree for CDS views ([Investigation](reports/2025-12-02-016-cds-and-zray-endpoint-investigation.md) | [Plan](reports/2025-12-02-015-cds-dependency-and-zray-local-implementation.md))
+- [x] **CDS Dependency Analysis** - Extract dependency tree for CDS views ([Investigation](reports/2025-12-02-016-cds-and-zray-endpoint-investigation.md))
 - [ ] **$ZRAY Local Implementation** - Execute framework code locally ([Investigation](reports/2025-12-02-016-cds-and-zray-endpoint-investigation.md) | [Plan](reports/2025-12-02-015-cds-dependency-and-zray-local-implementation.md))
 
 ### Planned Features
 - [ ] Transport Management (create, release, add objects)
 - [ ] ATC (ABAP Test Cockpit) integration
-- [ ] CDS View support (read, annotations)
+- [ ] CDS View source read and annotations
 - [ ] RAP/BDEF support (behavior definitions)
 - [ ] Message class support
 - [ ] Domain/Data element support
