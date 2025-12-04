@@ -40,6 +40,7 @@ all: deps lint test build
 ## Build
 
 build: ## Build the binary for current platform
+	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 
 build-all: ## Build for all platforms (linux, darwin, windows - amd64, arm64, 386, arm)
