@@ -11,11 +11,13 @@ A Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (
 
 | Feature | Description |
 |---------|-------------|
-| **Focused Mode** | 25 curated tools optimized for AI assistants (58% token reduction) |
+| **Focused Mode** | 31 curated tools optimized for AI assistants (58% token reduction) |
+| **AI-Powered RCA** | Root cause analysis with dumps, traces, profiler + code intelligence |
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
 | **ExecuteABAP** | Run arbitrary ABAP code via unit test wrapper |
 | **Code Analysis** | Call graphs, object structure, find definition/references |
 | **System Introspection** | System info, installed components, CDS dependencies |
+| **Diagnostics** | Short dumps (RABAX), ABAP profiler (ATRA), SQL traces (ST05) |
 | **File Deployment** | Bypass token limits - deploy large files directly from filesystem |
 | **Surgical Edits** | `EditSource` tool matches Claude's Edit pattern for precise changes |
 
@@ -180,6 +182,29 @@ ExecuteABAP:
 
 See [ExecuteABAP Report](reports/2025-12-05-004-execute-abap-implementation.md) for details.
 
+## AI-Powered Root Cause Analysis
+
+vsp enables AI assistants to investigate production issues autonomously:
+
+```
+User: "Investigate the ZERODIVIDE crash in production"
+
+AI Workflow:
+  1. GetDumps      → Find recent crashes by exception type
+  2. GetDump       → Analyze stack trace and variable values
+  3. GetSource     → Read code at crash location
+  4. GetCallGraph  → Trace call hierarchy
+  5. GrepPackages  → Find similar patterns
+  6. Analysis      → Identify root cause
+  7. Propose Fix   → Generate solution + test case
+```
+
+**Example Output:**
+> "The crash occurs in `ZCL_PRICING=>CALCULATE_RATIO` when `LV_TOTAL=0`.
+> This happens for archived orders with no line items. Here's the fix..."
+
+See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.md) for the complete vision.
+
 ## Tools Reference
 
 **31 Focused Mode Tools:**
@@ -308,14 +333,18 @@ vibing-steampunk/
 - [x] SQL Trace (ST05) - GetSQLTraceState, ListSQLTraces
 
 ### In Progress
+- [ ] External Breakpoint Support (API research complete)
 
 ### Planned
 - [ ] Transport Management
 - [ ] API Release State (ARS)
-- [ ] External Debugging
+- [ ] Interactive Debugging
 - [ ] RAP/BDEF Support
 
-See [Native ADT Features Report](reports/2025-12-05-005-native-adt-features-deep-dive.md) for comprehensive research.
+**Research Reports:**
+- [Native ADT Features](reports/2025-12-05-005-native-adt-features-deep-dive.md) - Comprehensive ADT capability analysis
+- [ADT Debugger API](reports/2025-12-05-012-adt-debugger-api-deep-dive.md) - External debugging REST API
+- [AI-Powered RCA](reports/2025-12-05-013-ai-powered-rca-workflows.md) - Vision for AI-assisted debugging
 
 </details>
 
