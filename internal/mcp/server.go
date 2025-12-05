@@ -120,7 +120,7 @@ func (s *Server) ServeStdio() error {
 // Mode "focused" registers 41 essential tools.
 // Mode "expert" registers all 68 tools.
 // DisabledGroups can disable specific tool groups using short codes:
-//   - "5" or "U" = UI5/BSP tools (7 tools)
+//   - "5" or "U" = UI5/BSP tools (3 tools, read-only)
 //   - "T" = Test tools: RunUnitTests, RunATCCheck (2 tools)
 //   - "H" = HANA/AMDP debugger (5 tools)
 //   - "D" = ABAP Debugger (9 tools: external breakpoints + debugger session)
@@ -128,9 +128,8 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 	// Define tool groups for selective disablement
 	// Short codes: 5/U=UI5, T=Tests, H=HANA, D=Debug
 	toolGroups := map[string][]string{
-		"5": { // UI5/BSP tools (also mapped as "U")
+		"5": { // UI5/BSP tools (also mapped as "U") - read-only, write ops need custom plugin
 			"UI5ListApps", "UI5GetApp", "UI5GetFileContent",
-			"UI5UploadFile", "UI5DeleteFile", "UI5CreateApp", "UI5DeleteApp",
 		},
 		"T": { // Test tools
 			"RunUnitTests", "RunATCCheck",
@@ -231,14 +230,16 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		"DebuggerGetStack":     true, // Get call stack
 		"DebuggerGetVariables": true, // Get variable values
 
-		// UI5/Fiori BSP Management (7)
+		// UI5/Fiori BSP Management (3 read-only - ADT filestore is read-only)
 		"UI5ListApps":       true, // List UI5 applications
 		"UI5GetApp":         true, // Get UI5 app details
 		"UI5GetFileContent": true, // Get file content from UI5 app
-		"UI5UploadFile":     true, // Upload file to UI5 app
-		"UI5DeleteFile":     true, // Delete file from UI5 app
-		"UI5CreateApp":      true, // Create new UI5 app
-		"UI5DeleteApp":      true, // Delete UI5 app
+		// Write ops disabled - ADT filestore API is read-only (405 on POST)
+		// Future: implement via custom plugin using /UI5/CL_REPOSITORY_LOAD
+		// "UI5UploadFile":     true, // Upload file to UI5 app
+		// "UI5DeleteFile":     true, // Delete file from UI5 app
+		// "UI5CreateApp":      true, // Create new UI5 app
+		// "UI5DeleteApp":      true, // Delete UI5 app
 
 		// AMDP (HANA) Debugger (5)
 		"AMDPDebuggerStart":  true, // Start AMDP debug session

@@ -298,7 +298,7 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 80 (53 focused, 80 expert) |
+| **Tools** | 76 (49 focused, 76 expert) |
 | **Unit Tests** | 270 |
 | **Integration Tests** | 34 |
 | **Platforms** | 9 |
