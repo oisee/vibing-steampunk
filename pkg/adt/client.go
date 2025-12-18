@@ -1220,7 +1220,7 @@ func (c *Client) GetDumps(ctx context.Context, opts *DumpQueryOptions) ([]Runtim
 
 	resp, err := c.transport.Request(ctx, endpoint, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/atom+xml",
+		Accept: "application/atom+xml;type=feed",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting dumps: %w", err)
