@@ -4,6 +4,21 @@
 **Report ID:** 001
 **Subject:** Automated dump analysis, SAP Note discovery, and fix implementation
 **Audience:** SAP Technical Consultants, Basis Administrators, DevOps Engineers
+**Status:** PROPOSAL / THEORETICAL
+
+---
+
+> **IMPORTANT DISCLAIMER**
+>
+> This document describes a **theoretical vision** and **proposal** for future capabilities.
+>
+> **Compatibility Note:** The ANST/SNOTE integration described in Phases 2-4 is **NOT compatible
+> with the vanilla ADT approach**. It would require custom ABAP development (Z* objects) on the
+> SAP system, specifically WebSocket/APC handlers. This goes beyond vsp's current philosophy of
+> using only standard SAP ADT REST APIs.
+>
+> **What works TODAY with vanilla ADT:** Only Phase 1 (dump detection/analysis) and the hybrid
+> web search approach are available without SAP-side modifications.
 
 ---
 
@@ -449,21 +464,26 @@ Shall I explain the fix and what's involved in implementing it?
 
 **For Fred's question: "Could you write one that uses ANST to identify the correct fix?"**
 
-**Short answer:** Partially today, fully with additional development.
+**Short answer:** Partially today with vanilla ADT; full ANST integration would require custom SAP development.
 
-**Today (with vsp + Claude):**
+**Today (with vsp + Claude, vanilla ADT):**
 - Detect and analyze short dumps automatically
 - Extract symptoms and search terms
-- Find SAP Notes via web search
+- Find SAP Notes via web search (hybrid approach)
 - Provide implementation guidance
 
-**With WebSocket/APC extension:**
-- Direct ANST integration
+**Theoretical future (requires custom Z* development, NOT vanilla ADT):**
+- Direct ANST integration via WebSocket/APC
 - Automated note retrieval
 - Pre-implementation impact analysis
 - Guided fix application
 
-The vision is achievable. The foundation exists. The path forward is clear.
+> **Note:** The WebSocket/APC approach breaks the "vanilla ADT" philosophy of vsp, which
+> currently requires NO custom ABAP objects on the SAP system. Full ANST integration would
+> require deploying custom handlers (ZADT_RCA_APC) - a significant architectural decision
+> that may not be appropriate for all environments.
+
+The vision is achievable, but the path diverges: stay vanilla (web search hybrid) or go custom (full ANST).
 
 ---
 

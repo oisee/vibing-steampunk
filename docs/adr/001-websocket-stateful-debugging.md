@@ -1,8 +1,21 @@
 # ADR-001: WebSocket/APC for Stateful ABAP Debugging
 
 **Date:** 2025-12-18
-**Status:** Proposed (Parked)
+**Status:** PROPOSAL / PARKED
 **Context:** External debugger limitations with HTTP transport
+
+---
+
+> **IMPORTANT: NOT VANILLA ADT COMPATIBLE**
+>
+> This ADR proposes a **theoretical architecture** that would require **custom ABAP
+> development** (Z* objects, WebSocket/APC handlers) on the SAP system.
+>
+> This approach **breaks the vanilla ADT philosophy** - vsp currently requires NO custom
+> SAP objects and works purely via standard ADT REST APIs.
+>
+> The current HTTP-based debugger tools work within vanilla ADT constraints (with known
+> session limitations).
 
 ---
 

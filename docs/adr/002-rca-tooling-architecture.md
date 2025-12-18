@@ -1,8 +1,20 @@
 # ADR-002: Root Cause Analysis Tooling Architecture
 
 **Date:** 2025-12-18
-**Status:** Proposed
+**Status:** PROPOSAL / THEORETICAL
 **Context:** AI-assisted RCA for SAP runtime errors and ANST integration
+
+---
+
+> **IMPORTANT: NOT VANILLA ADT COMPATIBLE**
+>
+> This ADR describes a **theoretical architecture** that would require **custom ABAP
+> development** (Z* objects, WebSocket/APC handlers) on the SAP system.
+>
+> **Phases 2-3 break the vanilla ADT philosophy** - vsp currently requires NO custom
+> SAP objects and works purely via standard ADT REST APIs.
+>
+> Only **Phase 1** (enhanced dump parsing) is compatible with the vanilla approach.
 
 ---
 
