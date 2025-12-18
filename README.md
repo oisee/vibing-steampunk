@@ -11,12 +11,12 @@
 
 ## What's New
 
-**Ongoing** - ZADT_VSP WebSocket Handler (Experimental)
-- **APC Handler**: Custom WebSocket endpoint for stateful SAP operations
-- **RFC Domain**: Search function modules, call RFCs with scalar parameters
-- **Extensible**: Domain-based routing for debug, RCA, events (planned)
-- **Non-vanilla**: Requires deploying custom ABAP objects to SAP system
-- See `abap/src/zadt_vsp/` for source and `docs/adr/003-zadt-vsp-apc-unified-handler.md` for design
+**v2.13.0** - WebSocket RFC Handler (ZADT_VSP)
+- **APC Handler**: Optional WebSocket endpoint for stateful SAP operations
+- **RFC Domain**: Call any RFC/BAPI with full parameter support (scalar, structures, tables)
+- **Embedded ABAP**: Source code in `embedded/abap/` - deploy via WriteSource or ImportFromFile
+- **Not Required**: vsp works fully without this - it's an optional enhancement
+- See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) for full documentation
 
 **v2.12.5** - EditSource Line Ending Fix
 - **CRLF→LF Normalization**: EditSource now works reliably across platforms
@@ -338,6 +338,33 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (68 tools
 - 62 tools (vs 13 original)
 - ~50x faster startup
 
+## Optional: WebSocket Handler (ZADT_VSP)
+
+vsp can optionally deploy a WebSocket handler to SAP for enhanced functionality like RFC calls:
+
+```bash
+# 1. Create package
+vsp CreatePackage --name '$ZADT_VSP' --description 'VSP WebSocket Handler'
+
+# 2. Deploy objects (embedded in binary)
+vsp WriteSource --object_type INTF --name ZIF_VSP_SERVICE --package '$ZADT_VSP' \
+    --source "$(cat embedded/abap/zif_vsp_service.intf.abap)"
+vsp WriteSource --object_type CLAS --name ZCL_VSP_RFC_SERVICE --package '$ZADT_VSP' \
+    --source "$(cat embedded/abap/zcl_vsp_rfc_service.clas.abap)"
+vsp WriteSource --object_type CLAS --name ZCL_VSP_APC_HANDLER --package '$ZADT_VSP' \
+    --source "$(cat embedded/abap/zcl_vsp_apc_handler.clas.abap)"
+
+# 3. Manually create APC app in SAPC + activate in SICF
+#    See embedded/abap/README.md for details
+```
+
+**After deployment**, connect via WebSocket to call RFCs:
+```json
+{"id":"1","domain":"rfc","action":"call","params":{"function":"BAPI_USER_GET_DETAIL","USERNAME":"TESTUSER"}}
+```
+
+See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) for complete documentation.
+
 ## Documentation
 
 | Document | Description |
@@ -347,6 +374,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (68 tools
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture |
 | [CLAUDE.md](CLAUDE.md) | AI development guidelines |
+| [embedded/abap/README.md](embedded/abap/README.md) | WebSocket handler deployment |
 
 <details>
 <summary><strong>SQL Query Notes</strong></summary>
