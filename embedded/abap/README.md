@@ -29,14 +29,20 @@ The WebSocket handler enables **stateful operations** not available through stan
 | Timeout issues with blocking ops | Native long-polling |
 | No TPDAPI access | Full debugger integration |
 
-### Objects
+### Objects (9 total - self-contained package)
 
 | File | Object | Description |
 |------|--------|-------------|
 | `zif_vsp_service.intf.abap` | Interface | Service contract for domain handlers |
-| `zcl_vsp_rfc_service.clas.abap` | Class | RFC domain - function module calls |
+| `zcl_vsp_apc_handler.clas.abap` | Class | Main APC WebSocket handler (router) |
+| `zcl_vsp_rfc_service.clas.abap` | Class | RFC domain - function module calls, package moves |
 | `zcl_vsp_debug_service.clas.abap` | Class | Debug domain - TPDAPI integration |
-| `zcl_vsp_apc_handler.clas.abap` | Class | Main APC WebSocket handler |
+| `zcl_vsp_amdp_service.clas.abap` | Class | AMDP domain - HANA/SQLScript debugging |
+| `zcl_vsp_git_service.clas.abap` | Class | Git domain - abapGit integration (158 object types) |
+| `zadt_cl_tadir_move.clas.abap` | Class | TADIR package reassignment helper |
+| `zcl_adt_00_amdp_test.clas.abap` | Class | AMDP test class for debugging demos |
+
+**Note:** The Git service requires abapGit to be installed (optional dependency, handled gracefully).
 
 ### Deployment
 
@@ -61,6 +67,14 @@ vsp WriteSource --object_type CLAS --name ZCL_VSP_DEBUG_SERVICE \
 # Deploy handler
 vsp WriteSource --object_type CLAS --name ZCL_VSP_APC_HANDLER \
     --package '$ZADT_VSP' --source "$(cat embedded/abap/zcl_vsp_apc_handler.clas.abap)"
+
+# Deploy AMDP service
+vsp WriteSource --object_type CLAS --name ZCL_VSP_AMDP_SERVICE \
+    --package '$ZADT_VSP' --source "$(cat embedded/abap/zcl_vsp_amdp_service.clas.abap)"
+
+# Deploy Git service
+vsp WriteSource --object_type CLAS --name ZCL_VSP_GIT_SERVICE \
+    --package '$ZADT_VSP' --source "$(cat embedded/abap/zcl_vsp_git_service.clas.abap)"
 ```
 
 #### Option 2: Using ImportFromFile
@@ -70,7 +84,19 @@ vsp ImportFromFile --file_path embedded/abap/zif_vsp_service.intf.abap --package
 vsp ImportFromFile --file_path embedded/abap/zcl_vsp_rfc_service.clas.abap --package_name '$ZADT_VSP'
 vsp ImportFromFile --file_path embedded/abap/zcl_vsp_debug_service.clas.abap --package_name '$ZADT_VSP'
 vsp ImportFromFile --file_path embedded/abap/zcl_vsp_apc_handler.clas.abap --package_name '$ZADT_VSP'
+vsp ImportFromFile --file_path embedded/abap/zcl_vsp_amdp_service.clas.abap --package_name '$ZADT_VSP'
+vsp ImportFromFile --file_path embedded/abap/zcl_vsp_git_service.clas.abap --package_name '$ZADT_VSP'
 ```
+
+#### Option 3: Using InstallZADTVSP (Recommended)
+
+The easiest deployment method - single command:
+
+```bash
+vsp InstallZADTVSP --package '$ZADT_VSP'
+```
+
+This tool reads embedded sources and deploys all objects automatically.
 
 ### Post-Deployment: Create APC Application
 
@@ -124,7 +150,7 @@ unit tests), not code within the same WebSocket handler. This is standard SAP ex
 
 ## RFC Domain (`domain: "rfc"`)
 
-Execute any RFC/BAPI function module with parameters.
+Execute any RFC/BAPI function module with parameters, plus object management.
 
 ### Actions
 
@@ -133,6 +159,7 @@ Execute any RFC/BAPI function module with parameters.
 | `call` | Execute RFC with parameters |
 | `search` | Search function modules |
 | `getMetadata` | Get function signature |
+| `moveToPackage` | Move object to different package (TADIR update) |
 
 ### Examples
 
@@ -155,6 +182,19 @@ Execute any RFC/BAPI function module with parameters.
   "params": {
     "function": "BAPI_USER_GET_DETAIL",
     "USERNAME": "DEVELOPER"
+  }
+}
+
+// Move object to different package
+{
+  "id": "3",
+  "domain": "rfc",
+  "action": "moveToPackage",
+  "params": {
+    "pgmid": "R3TR",
+    "object": "CLAS",
+    "obj_name": "ZCL_MY_CLASS",
+    "new_package": "$ZADT_VSP"
   }
 }
 ```
@@ -290,6 +330,96 @@ vsp SetExternalBreakpoint --kind line \
 
 ---
 
+## AMDP Domain (`domain: "amdp"`) - HANA SQLScript Debugging
+
+Debug AMDP (ABAP Managed Database Procedures) and SQLScript code.
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| `start` | Start AMDP debug session |
+| `stop` | Stop AMDP debug session |
+| `setBreakpoint` | Set breakpoint in SQLScript procedure |
+| `getBreakpoints` | List current breakpoints |
+| `step` | Step through SQLScript code |
+| `getVariables` | Get SQLScript variable values |
+| `getStatus` | Get current debug session status |
+
+### Example
+
+```json
+// Start AMDP debug session
+{
+  "id": "1",
+  "domain": "amdp",
+  "action": "start",
+  "params": { "user": "DEVELOPER" }
+}
+
+// Set breakpoint in AMDP procedure
+{
+  "id": "2",
+  "domain": "amdp",
+  "action": "setBreakpoint",
+  "params": {
+    "proc_name": "ZCL_MY_AMDP=>GET_DATA",
+    "line": 15
+  }
+}
+
+// Step through code
+{
+  "id": "3",
+  "domain": "amdp",
+  "action": "step",
+  "params": { "step_type": "stepOver" }
+}
+```
+
+---
+
+## Git Domain (`domain: "git"`) - abapGit Integration
+
+Export and deploy ABAP objects using abapGit-compatible format (158 object types).
+
+### Actions
+
+| Action | Description |
+|--------|-------------|
+| `getTypes` | List supported object types |
+| `export` | Export packages/objects to ZIP |
+| `status` | Check abapGit availability |
+
+### Example
+
+```json
+// Get supported object types
+{
+  "id": "1",
+  "domain": "git",
+  "action": "getTypes"
+}
+
+// Export package to ZIP
+{
+  "id": "2",
+  "domain": "git",
+  "action": "export",
+  "params": {
+    "packages": "$ZADT_VSP",
+    "include_subpackages": true
+  }
+}
+```
+
+### Supported Object Types (158)
+
+CLAS, INTF, PROG, FUGR, FUNC, TABL, TTYP, DTEL, DOMA, SHLP, VIEW, DDLS, DCLS, DDLX,
+BDEF, SRVD, SRVB, SMBC, STYL, TRAN, MSAG, ENQU, AUTH, SUSO, SUSC, and 130+ more.
+
+---
+
 ## Architecture
 
 ```
@@ -300,13 +430,22 @@ ZCL_VSP_APC_HANDLER (router)
       │
       ├── ZCL_VSP_RFC_SERVICE (domain: "rfc")
       │         │
-      │         └── CALL FUNCTION (dynamic)
+      │         ├── CALL FUNCTION (dynamic)
+      │         └── TR_TADIR_INTERFACE (package moves)
       │
-      └── ZCL_VSP_DEBUG_SERVICE (domain: "debug")
+      ├── ZCL_VSP_DEBUG_SERVICE (domain: "debug")
+      │         │
+      │         └── CL_TPDAPI_SERVICE / IF_TPDAPI_SESSION
+      │                   │
+      │                   └── SAP Debugger (same as Eclipse ADT)
+      │
+      ├── ZCL_VSP_AMDP_SERVICE (domain: "amdp")
+      │         │
+      │         └── CL_AMDP_DEBUGGER (SQLScript/HANA debugging)
+      │
+      └── ZCL_VSP_GIT_SERVICE (domain: "git")
                 │
-                └── CL_TPDAPI_SERVICE / IF_TPDAPI_SESSION
-                          │
-                          └── SAP Debugger (same as Eclipse ADT)
+                └── ZCL_ABAPGIT* (abapGit serialization, 158 object types)
 ```
 
 Each service implements `ZIF_VSP_SERVICE` interface:

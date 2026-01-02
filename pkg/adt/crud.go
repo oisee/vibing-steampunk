@@ -257,7 +257,44 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 	},
 }
 
+// tryCleanupOrphanLock attempts to clear an orphan lock left behind by a failed creation.
+// SAP ADT sometimes creates ENQUEUE locks during object creation that aren't released on failure.
+// This function tries to acquire and immediately release such locks.
+func (c *Client) tryCleanupOrphanLock(ctx context.Context, objectURL string) {
+	// Try to acquire the lock - this may succeed if it's our own orphan lock
+	lock, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		// Lock acquisition failed - lock might be held by another user or doesn't exist
+		return
+	}
+	// Successfully acquired - release it immediately
+	_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+}
+
+// isLockConflictError checks if an error is a lock conflict (HTTP 403 "is currently editing")
+func isLockConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "403") && strings.Contains(errStr, "currently editing")
+}
+
+// packageExists checks if a package exists in the system.
+// Returns true if package exists, false otherwise.
+func (c *Client) packageExists(ctx context.Context, packageName string) bool {
+	pkg, err := c.GetPackage(ctx, packageName)
+	if err != nil {
+		return false
+	}
+	// GetPackage returns empty URI when package doesn't exist
+	return pkg.URI != ""
+}
+
 // CreateObject creates a new ABAP object.
+// IMPORTANT: This function validates package existence BEFORE calling SAP ADT CreateObject API.
+// This prevents orphan ENQUEUE locks that SAP creates internally during CreateObject
+// before validating the request. These orphan locks can only be cleared via SM12.
 func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) error {
 	// Safety check
 	if err := c.checkSafety(OpCreate, "CreateObject"); err != nil {
@@ -280,6 +317,17 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	// Additional validation for package creation: only local packages are supported
 	if opts.ObjectType == ObjectTypePackage && !strings.HasPrefix(opts.Name, "$") {
 		return fmt.Errorf("only local packages (starting with $) are supported for creation, got: %s", opts.Name)
+	}
+
+	// CRITICAL: Validate package exists BEFORE calling SAP ADT CreateObject API.
+	// SAP ADT creates ENQUEUE locks internally BEFORE validating the request.
+	// If package doesn't exist, SAP fails but leaves the lock orphaned.
+	// These orphan locks can only be cleared via SM12 transaction.
+	// By checking first, we prevent this scenario entirely.
+	if opts.ObjectType != ObjectTypePackage && opts.PackageName != "" {
+		if !c.packageExists(ctx, opts.PackageName) {
+			return fmt.Errorf("package %s does not exist - create it first to avoid orphan locks", opts.PackageName)
+		}
 	}
 
 	// Build creation URL
@@ -306,12 +354,31 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 		contentType = "application/vnd.sap.adt.blues.v1+xml"
 	}
 
+	// First attempt
 	_, err := c.transport.Request(ctx, creationURL, &RequestOptions{
 		Method:      http.MethodPost,
 		Query:       params,
 		Body:        []byte(body),
 		ContentType: contentType,
 	})
+
+	// If we hit a lock conflict, try to clean up orphan lock and retry once
+	if isLockConflictError(err) {
+		// Get the object URL for lock cleanup
+		objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
+		if objectURL != "" {
+			c.tryCleanupOrphanLock(ctx, objectURL)
+
+			// Retry creation
+			_, err = c.transport.Request(ctx, creationURL, &RequestOptions{
+				Method:      http.MethodPost,
+				Query:       params,
+				Body:        []byte(body),
+				ContentType: contentType,
+			})
+		}
+	}
+
 	if err != nil {
 		return fmt.Errorf("creating object: %w", err)
 	}

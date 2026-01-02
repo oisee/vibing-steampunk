@@ -1,6 +1,6 @@
 "! <p class="shorttext synchronized">VSP RFC Service</p>
 "! Enables dynamic RFC/BAPI calls via WebSocket.
-"! Actions: call, search, getMetadata, ping
+"! Actions: call, search, getMetadata, ping, moveToPackage
 CLASS zcl_vsp_rfc_service DEFINITION
   PUBLIC
   FINAL
@@ -33,6 +33,10 @@ CLASS zcl_vsp_rfc_service DEFINITION
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
     METHODS handle_ping
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
+    METHODS handle_move_to_package
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
@@ -86,6 +90,8 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
         rs_response = handle_get_metadata( is_message ).
       WHEN 'ping'.
         rs_response = handle_ping( is_message ).
+      WHEN 'moveToPackage'.
+        rs_response = handle_move_to_package( is_message ).
       WHEN OTHERS.
         rs_response = build_error(
           iv_id      = is_message-id
@@ -96,6 +102,62 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD zif_vsp_service~on_disconnect.
+  ENDMETHOD.
+
+  METHOD handle_move_to_package.
+    " Extract parameters: pgmid, object, obj_name, new_package
+    DATA(lv_pgmid) = extract_param( iv_params = is_message-params iv_name = 'pgmid' ).
+    DATA(lv_object) = extract_param( iv_params = is_message-params iv_name = 'object' ).
+    DATA(lv_obj_name) = extract_param( iv_params = is_message-params iv_name = 'obj_name' ).
+    DATA(lv_new_pkg) = extract_param( iv_params = is_message-params iv_name = 'new_package' ).
+
+    " Validate required params
+    IF lv_object IS INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter object is required (e.g., CLAS, PROG, INTF, SAPC)' ).
+      RETURN.
+    ENDIF.
+    IF lv_obj_name IS INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter obj_name is required' ).
+      RETURN.
+    ENDIF.
+    IF lv_new_pkg IS INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter new_package is required' ).
+      RETURN.
+    ENDIF.
+
+    " Default pgmid to R3TR
+    IF lv_pgmid IS INITIAL.
+      lv_pgmid = 'R3TR'.
+    ENDIF.
+
+    " Uppercase all values
+    TRANSLATE lv_pgmid TO UPPER CASE.
+    TRANSLATE lv_object TO UPPER CASE.
+    TRANSLATE lv_obj_name TO UPPER CASE.
+    TRANSLATE lv_new_pkg TO UPPER CASE.
+
+    " Call ZADT_CL_TADIR_MOVE to perform the move
+    DATA lv_result TYPE string.
+    TRY.
+        lv_result = zadt_cl_tadir_move=>move_object_and_commit(
+          iv_pgmid    = CONV #( lv_pgmid )
+          iv_object   = CONV #( lv_object )
+          iv_obj_name = CONV #( lv_obj_name )
+          iv_new_pkg  = CONV #( lv_new_pkg )
+        ).
+      CATCH cx_root INTO DATA(lx_error).
+        rs_response = build_error( iv_id = is_message-id iv_code = 'MOVE_ERROR' iv_message = lx_error->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    " Build response
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA(lv_success) = COND string( WHEN lv_result CP 'SUCCESS*' THEN 'true' ELSE 'false' ).
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"success":{ lv_success },"pgmid":"{ lv_pgmid }","object":"{ lv_object }","obj_name":"{ lv_obj_name }","new_package":"{ lv_new_pkg }","message":"{ escape_json( lv_result ) }"{ lv_c }|.
+
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_call.
@@ -141,7 +203,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
           ENDIF.
         ENDIF.
         ls_ptab-name = ls_imp-parameter.
-        ls_ptab-kind = abap_func_exporting.  " We export TO the function
+        ls_ptab-kind = abap_func_exporting.
         ls_ptab-value = lo_data.
         INSERT ls_ptab INTO TABLE lt_ptab.
       ENDIF.
@@ -153,7 +215,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       lo_data = create_param_data( ls_exp ).
       IF lo_data IS BOUND.
         ls_ptab-name = ls_exp-parameter.
-        ls_ptab-kind = abap_func_importing.  " We import FROM the function
+        ls_ptab-kind = abap_func_importing.
         ls_ptab-value = lo_data.
         INSERT ls_ptab INTO TABLE lt_ptab.
       ENDIF.
@@ -190,7 +252,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
 
     DATA lv_first TYPE abap_bool VALUE abap_true.
     DATA lv_str TYPE string.
-    " Get results from function's export params (our importing)
     LOOP AT lt_ptab INTO DATA(ls_out) WHERE kind = abap_func_importing.
       ASSIGN ls_out-value->* TO FIELD-SYMBOL(<fs_out>).
       IF sy-subrc = 0.
@@ -199,7 +260,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
         ENDIF.
         DATA(lv_pname) = CONV string( ls_out-name ).
         CONDENSE lv_pname.
-        " Check if export is elementary or complex
         DATA(lo_exp_type) = cl_abap_typedescr=>describe_by_data( <fs_out> ).
         IF lo_exp_type->kind = cl_abap_typedescr=>kind_elem.
           TRY.
@@ -210,7 +270,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
           ENDTRY.
           lv_json = |{ lv_json }"{ lv_pname }":"{ lv_str }"|.
         ELSE.
-          " Serialize structure as JSON object
           lv_json = |{ lv_json }"{ lv_pname }":{ lv_o }|.
           DATA(lo_exp_struc) = CAST cl_abap_structdescr( lo_exp_type ).
           DATA lv_exp_first TYPE abap_bool.
@@ -244,7 +303,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
 
     lv_json = |{ lv_json }{ lv_c },"tables":{ lv_o }|.
 
-    " Get results from tables
     lv_first = abap_true.
     LOOP AT lt_ptab INTO ls_out WHERE kind = abap_func_tables.
       ASSIGN ls_out-value->* TO FIELD-SYMBOL(<fs_tab>).
@@ -262,7 +320,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
               IF lv_row_first = abap_false.
                 lv_json = |{ lv_json },|.
               ENDIF.
-              " Serialize structure as JSON object
               lv_json = |{ lv_json }{ lv_o }|.
               DATA(lo_struc) = CAST cl_abap_structdescr( cl_abap_typedescr=>describe_by_data( <fs_row> ) ).
               DATA lv_comp_first TYPE abap_bool.
@@ -273,7 +330,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
                 ENDIF.
                 ASSIGN COMPONENT ls_comp-name OF STRUCTURE <fs_row> TO FIELD-SYMBOL(<fs_comp>).
                 IF sy-subrc = 0.
-                  " Check if component is elementary or complex
                   DATA(lo_type) = cl_abap_typedescr=>describe_by_data( <fs_comp> ).
                   IF lo_type->kind = cl_abap_typedescr=>kind_elem.
                     TRY.
@@ -307,7 +363,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
   METHOD create_param_data.
     DATA lv_type TYPE string.
 
-    " Check for non-empty typ first, then dbfield
     IF strlen( is_param-typ ) > 0.
       lv_type = is_param-typ.
     ELSEIF strlen( is_param-dbfield ) > 0.
@@ -331,7 +386,6 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
   METHOD create_table_data.
     DATA lv_type TYPE string.
 
-    " For tables, typ contains the line type
     IF strlen( is_param-typ ) > 0.
       lv_type = is_param-typ.
     ELSEIF strlen( is_param-dbfield ) > 0.

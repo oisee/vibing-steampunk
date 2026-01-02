@@ -601,7 +601,7 @@ CLASS zcl_vsp_amdp_service IMPLEMENTATION.
 
 
   METHOD handle_execute_and_debug.
-    " Combined action: Start debugger → Set breakpoint → Execute AMDP → Get debug event
+    " Combined action: Start debugger -> Set breakpoint -> Execute AMDP -> Get debug event
     " This runs everything in a single request, avoiding the WebSocket blocking issue.
     " When AMDP hits breakpoint, execution pauses. resume() returns immediately with ON_BREAK.
     DATA: lt_response TYPE if_amdp_dbg_main=>tt_dbg_response.
