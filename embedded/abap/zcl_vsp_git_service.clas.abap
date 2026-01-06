@@ -315,6 +315,24 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
     CREATE OBJECT lo_zip.
     lo_i18n = zcl_abapgit_i18n_params=>new( ).
 
+    " Add .abapgit.xml repository metadata file (required by abapGit)
+    DATA(lv_abapgit_xml) =
+      |<?xml version="1.0" encoding="utf-8"?>\n| &&
+      |<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">\n| &&
+      | <asx:values>\n| &&
+      |  <DATA>\n| &&
+      |   <MASTER_LANGUAGE>E</MASTER_LANGUAGE>\n| &&
+      |   <STARTING_FOLDER>/src/</STARTING_FOLDER>\n| &&
+      |   <FOLDER_LOGIC>PREFIX</FOLDER_LOGIC>\n| &&
+      |  </DATA>\n| &&
+      | </asx:values>\n| &&
+      |</asx:abap>\n|.
+
+    lo_zip->add(
+      name    = '.abapgit.xml'
+      content = cl_abap_codepage=>convert_to( lv_abapgit_xml )
+    ).
+
     LOOP AT it_tadir INTO DATA(ls_tadir).
       DATA(ls_item) = VALUE zif_abapgit_definitions=>ty_item(
         obj_type = ls_tadir-object
