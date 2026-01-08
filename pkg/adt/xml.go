@@ -3,14 +3,70 @@ package adt
 import (
 	"encoding/xml"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Common XML namespaces used in ADT responses
-const (
-	NSAdtCore = "http://www.sap.com/adt/core"
-	NSAtom    = "http://www.w3.org/2005/Atom"
-)
+// Common XML namespace prefixes used in ADT responses.
+// These are stripped before parsing for simpler struct tags.
+var adtXMLPrefixes = []string{
+	"adtcore:", "aunit:", "atc:", "atcworklist:", "atcobject:", "atcfinding:",
+	"atccust:", "chkrun:", "ioc:", "blue:", "abapsource:",
+}
+
+// Common XML namespace declarations that may need stripping.
+var adtXMLNamespaceDeclarations = []string{
+	` xmlns:aunit="http://www.sap.com/adt/aunit"`,
+	` xmlns:adtcore="http://www.sap.com/adt/core"`,
+	` xmlns:atc="http://www.sap.com/adt/atc"`,
+}
+
+// Package-level compiled regex for parsing ADT location fragments.
+// Matches patterns like: #start=10,5 or /path#start=10,5
+var locationFragmentRegex = regexp.MustCompile(`#start=(\d+),(\d+)`)
+
+// StripXMLNamespacePrefixes removes common ADT XML namespace prefixes from XML data.
+// This simplifies parsing by allowing Go struct tags without namespace prefixes.
+// Usage: xml.Unmarshal([]byte(StripXMLNamespacePrefixes(data)), &result)
+func StripXMLNamespacePrefixes(data []byte) string {
+	result := string(data)
+	for _, prefix := range adtXMLPrefixes {
+		result = strings.ReplaceAll(result, prefix, "")
+	}
+	return result
+}
+
+// StripXMLNamespaceDeclarations removes common xmlns declarations from XML string.
+// Use after StripXMLNamespacePrefixes when namespace declarations cause parsing issues.
+func StripXMLNamespaceDeclarations(xml string) string {
+	for _, decl := range adtXMLNamespaceDeclarations {
+		xml = strings.ReplaceAll(xml, decl, "")
+	}
+	return xml
+}
+
+// ParseLocationFragment extracts line and column from ADT URI location fragment.
+// Parses patterns like "#start=10,5" returning (10, 5).
+// Returns (0, 0) if no match found.
+func ParseLocationFragment(uri string) (line, column int) {
+	if matches := locationFragmentRegex.FindStringSubmatch(uri); matches != nil {
+		line, _ = strconv.Atoi(matches[1])
+		column, _ = strconv.Atoi(matches[2])
+	}
+	return
+}
+
+// ParseLocationFragmentWithBase extracts base URI, line and column from ADT URI.
+// Parses patterns like "/path/to/source#start=10,5" returning ("/path/to/source", 10, 5).
+func ParseLocationFragmentWithBase(uri string) (base string, line, column int) {
+	base, _, found := strings.Cut(uri, "#")
+	if !found {
+		return uri, 0, 0
+	}
+	line, column = ParseLocationFragment(uri)
+	return
+}
 
 // ObjectReference represents a reference to an ABAP object.
 type ObjectReference struct {
@@ -260,11 +316,10 @@ func (c *ClassObjectStructure) GetMethods() []MethodInfo {
 // Format: ./../class/source/main#start=739,2;end=887,11
 func parseSourceRange(href string) (start, end int) {
 	// Find the fragment part
-	idx := strings.Index(href, "#")
-	if idx == -1 {
+	_, fragment, found := strings.Cut(href, "#")
+	if !found {
 		return 0, 0
 	}
-	fragment := href[idx+1:]
 
 	// Parse start=line,col;end=line,col
 	var startLine, startCol, endLine, endCol int
