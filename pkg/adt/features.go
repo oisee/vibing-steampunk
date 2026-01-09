@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +27,16 @@ const (
 	// FeatureHANA indicates HANA database (required for some AMDP features)
 	FeatureHANA FeatureID = "hana"
 )
+
+// allFeatures defines the canonical order for probing (HANA first, others depend on it)
+var allFeatures = []FeatureID{
+	FeatureHANA, // Probe first - other features may depend on it
+	FeatureAbapGit,
+	FeatureRAP,
+	FeatureAMDP,
+	FeatureUI5,
+	FeatureTransport,
+}
 
 // FeatureMode controls how a feature is enabled
 type FeatureMode string
@@ -114,17 +123,8 @@ func NewFeatureProber(client *Client, config FeatureConfig, verbose bool) *Featu
 
 // ProbeAll probes all features and returns their status
 func (p *FeatureProber) ProbeAll(ctx context.Context) map[FeatureID]*FeatureStatus {
-	features := []FeatureID{
-		FeatureHANA,     // Probe first - other features may depend on it
-		FeatureAbapGit,
-		FeatureRAP,
-		FeatureAMDP,
-		FeatureUI5,
-		FeatureTransport,
-	}
-
 	results := make(map[FeatureID]*FeatureStatus)
-	for _, id := range features {
+	for _, id := range allFeatures {
 		status := p.Probe(ctx, id)
 		results[id] = status
 	}
@@ -224,130 +224,144 @@ func (p *FeatureProber) probeFeature(ctx context.Context, id FeatureID) *Feature
 
 // probeHANA checks if running on HANA database
 func (p *FeatureProber) probeHANA(ctx context.Context) (bool, string, error) {
-	info, err := p.client.GetSystemInfo(ctx)
+	// Use shared GetDatabaseInfo which queries DB6NAVSYST
+	dbInfo, err := p.client.GetDatabaseInfo(ctx)
 	if err != nil {
-		return false, "", err
+		return false, "", fmt.Errorf("database info query failed: %w", err)
+	}
+	if dbInfo == nil {
+		return false, "no database info available", nil
 	}
 
-	dbSystem := strings.ToUpper(info.DatabaseSystem)
-	if strings.Contains(dbSystem, "HDB") || strings.Contains(dbSystem, "HANA") {
-		return true, fmt.Sprintf("HANA detected: %s", info.DatabaseSystem), nil
+	if strings.ToUpper(dbInfo.System) == "HDB" {
+		msg := fmt.Sprintf("HANA %s", dbInfo.Release)
+		if dbInfo.Host != "" {
+			msg += fmt.Sprintf(" (host: %s)", dbInfo.Host)
+		}
+		return true, msg, nil
 	}
 
-	return false, fmt.Sprintf("non-HANA database: %s", info.DatabaseSystem), nil
+	return false, fmt.Sprintf("non-HANA database: %s", dbInfo.System), nil
 }
 
 // probeAbapGit checks if abapGit is installed
+// abapGit is a community add-on - it doesn't register in ADT discovery,
+// so we use object search directly. Checks for:
+// - Developer edition: ZIF_ABAPGIT* interfaces (full package structure)
+// - Standalone edition: ZABAPGIT program (single file)
 func (p *FeatureProber) probeAbapGit(ctx context.Context) (bool, string, error) {
-	// Search for abapGit interface - it's the primary indicator
+	// Check for developer edition first (full package with interfaces)
+	// This takes priority because systems with dev edition also have ZABAPGIT program
 	results, err := p.client.SearchObject(ctx, "ZIF_ABAPGIT*", 1)
 	if err != nil {
 		return false, "", err
 	}
-
 	if len(results) > 0 {
-		return true, "ZIF_ABAPGIT* found", nil
+		return true, "abapGit installed (developer edition)", nil
 	}
 
-	// Also check for /UI2/CL_ABAPGIT* (SAP official package)
-	results, err = p.client.SearchObject(ctx, "/UI2/CL_ABAPGIT*", 1)
+	// Check for standalone edition (single program, no interfaces)
+	results, err = p.client.SearchObject(ctx, "ZABAPGIT*", 1)
 	if err != nil {
 		return false, "", err
 	}
-
 	if len(results) > 0 {
-		return true, "/UI2/CL_ABAPGIT* found (SAP package)", nil
+		return true, "abapGit installed (standalone)", nil
 	}
 
 	return false, "abapGit not found", nil
 }
 
 // probeRAP checks if RAP development tools are available
+// Uses discovery endpoint check - checks for CDS/DDLS, BDEF, SRVD endpoints
 func (p *FeatureProber) probeRAP(ctx context.Context) (bool, string, error) {
-	// Check if DDLS endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/ddic/ddl/sources", &RequestOptions{
-		Method: http.MethodOptions,
-	})
-	if err != nil {
-		// Check if it's a 404 vs connection error
-		if strings.Contains(err.Error(), "404") {
-			return false, "DDLS endpoint not available", nil
+	// Check discovery first - fastest and most reliable
+	discovery, err := p.client.GetDiscovery(ctx)
+	if err == nil {
+		// Check for CDS views endpoint (primary RAP indicator)
+		if discovery.HasCollection(EndpointCDSViews) {
+			return true, "CDS views endpoint available", nil
 		}
-		return false, "", err
+		// Also check for behavior definitions
+		if discovery.HasCollection(EndpointBehaviorDef) {
+			return true, "BDEF endpoint available", nil
+		}
 	}
 
-	// OPTIONS returning 200 or 405 means endpoint exists
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "RAP endpoints available", nil
+	// Fall back to object search
+	results, err := p.client.SearchObject(ctx, "I_*", 3)
+	if err != nil {
+		return false, "", fmt.Errorf("search failed: %w", err)
+	}
+	for _, r := range results {
+		if strings.HasPrefix(r.Type, "DDLS") {
+			return true, fmt.Sprintf("CDS views available (found %s)", r.Name), nil
+		}
 	}
 
-	return false, "RAP endpoints not responding", nil
+	return false, "RAP endpoints not found", nil
 }
 
 // probeAMDP checks if AMDP debugging is available
+// AMDP is a HANA feature - if HANA is available, AMDP is supported
 func (p *FeatureProber) probeAMDP(ctx context.Context) (bool, string, error) {
-	// AMDP requires HANA - check that first
+	// AMDP requires HANA - that's the only check needed
 	hanaStatus := p.Probe(ctx, FeatureHANA)
 	if !hanaStatus.Available {
 		return false, "AMDP requires HANA database", nil
 	}
 
-	// Check if AMDP debugger endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/debugger/amdp/sessions", &RequestOptions{
-		Method: http.MethodOptions,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return false, "AMDP debugger endpoint not available", nil
-		}
-		return false, "", err
-	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "AMDP debugger available", nil
-	}
-
-	return false, "AMDP debugger not responding", nil
+	return true, "AMDP supported (HANA detected)", nil
 }
 
 // probeUI5 checks if UI5/Fiori BSP management is available
+// Uses discovery endpoint check first, falls back to functional probe
 func (p *FeatureProber) probeUI5(ctx context.Context) (bool, string, error) {
-	// Check if UI5 repository endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/filestore/ui5-bsp", &RequestOptions{
-		Method: http.MethodOptions,
-	})
+	// Check discovery first - fastest and most reliable
+	discovery, err := p.client.GetDiscovery(ctx)
+	if err == nil && discovery.HasCollection(EndpointUI5Repository) {
+		return true, "UI5 BSP endpoint available", nil
+	}
+
+	// Fall back to functional probe
+	apps, err := p.client.UI5ListApps(ctx, "Z*", 1)
 	if err != nil {
 		if strings.Contains(err.Error(), "404") {
-			return false, "UI5 BSP endpoint not available", nil
+			return false, "UI5 BSP repository not available", nil
 		}
-		return false, "", err
+		return false, fmt.Sprintf("UI5 probe failed: %v", err), nil
 	}
 
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "UI5 BSP repository available", nil
+	if len(apps) > 0 {
+		return true, fmt.Sprintf("UI5 BSP available (%d apps found)", len(apps)), nil
 	}
 
-	return false, "UI5 BSP not responding", nil
+	return true, "UI5 BSP repository available", nil
 }
 
 // probeTransport checks if CTS transport management is available
+// Uses discovery endpoint check first, falls back to functional probe
 func (p *FeatureProber) probeTransport(ctx context.Context) (bool, string, error) {
-	// Check if transport endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/cts/transports", &RequestOptions{
-		Method: http.MethodOptions,
-	})
+	// Check discovery first - fastest and most reliable
+	discovery, err := p.client.GetDiscovery(ctx)
+	if err == nil && discovery.HasCollection(EndpointTransports) {
+		return true, "CTS endpoint available", nil
+	}
+
+	// Fall back to functional probe
+	transports, err := p.client.ListTransports(ctx, "*")
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
+		errStr := err.Error()
+		if strings.Contains(errStr, "not enabled") {
+			return true, "CTS available (disabled by config)", nil
+		}
+		if strings.Contains(errStr, "404") {
 			return false, "CTS endpoint not available", nil
 		}
-		return false, "", err
+		return true, "CTS available (access restricted)", nil
 	}
 
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "CTS transport management available", nil
-	}
-
-	return false, "CTS not responding", nil
+	return true, fmt.Sprintf("CTS available (%d transports)", len(transports)), nil
 }
 
 // FeatureSummary returns a human-readable summary of all features
@@ -355,8 +369,7 @@ func (p *FeatureProber) FeatureSummary(ctx context.Context) string {
 	results := p.ProbeAll(ctx)
 	var parts []string
 
-	features := []FeatureID{FeatureHANA, FeatureAbapGit, FeatureRAP, FeatureAMDP, FeatureUI5, FeatureTransport}
-	for _, id := range features {
+	for _, id := range allFeatures {
 		status := results[id]
 		symbol := "✗"
 		if status.Available {

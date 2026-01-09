@@ -329,7 +329,7 @@ func TestIntegration_RunUnitTests(t *testing.T) {
 			if len(method.Alerts) > 0 {
 				status = "FAIL"
 			}
-			t.Logf("    [%s] %s (%d µs)", status, method.Name, method.ExecutionTime)
+			t.Logf("    [%s] %s (%.2f ms)", status, method.Name, method.ExecutionTime*1000)
 		}
 	}
 }
@@ -613,7 +613,7 @@ ENDCLASS.`, strings.ToLower(className))
 					t.Logf("    Alert: %s - %s", alert.Severity, alert.Title)
 				}
 			}
-			t.Logf("    [%s] %s (%d µs)", status, method.Name, method.ExecutionTime)
+			t.Logf("    [%s] %s (%.2f ms)", status, method.Name, method.ExecutionTime*1000)
 		}
 	}
 
@@ -881,7 +881,7 @@ ENDCLASS.`, strings.ToLower(className))
 				if len(tm.Alerts) > 0 {
 					status = "FAIL"
 				}
-				t.Logf("    [%s] %s (%d µs)", status, tm.Name, tm.ExecutionTime)
+				t.Logf("    [%s] %s (%.2f ms)", status, tm.Name, tm.ExecutionTime*1000)
 				for _, alert := range tm.Alerts {
 					t.Logf("      Alert: %s - %s", alert.Severity, alert.Title)
 				}
