@@ -212,12 +212,7 @@ func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
 				}
 			}
 			for _, s := range a.Stack.Entries {
-				ua.Stack = append(ua.Stack, UnitTestStackEntry{
-					URI:         s.URI,
-					Type:        s.Type,
-					Name:        s.Name,
-					Description: s.Description,
-				})
+				ua.Stack = append(ua.Stack, UnitTestStackEntry(s))
 			}
 			converted = append(converted, ua)
 		}
