@@ -20,7 +20,10 @@ func (s *Server) handleGetSystemInfo(ctx context.Context, request mcp.CallToolRe
 		return newToolResultError(fmt.Sprintf("Failed to get system info: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(info, "", "  ")
+	result, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to marshal system info: %v", err)), nil
+	}
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -30,13 +33,16 @@ func (s *Server) handleGetInstalledComponents(ctx context.Context, request mcp.C
 		return newToolResultError(fmt.Sprintf("Failed to get installed components: %v", err)), nil
 	}
 
-	result, _ := json.MarshalIndent(components, "", "  ")
+	result, err := json.MarshalIndent(components, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to marshal components: %v", err)), nil
+	}
 	return mcp.NewToolResultText(string(result)), nil
 }
 
 func (s *Server) handleGetConnectionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Return current connection info for introspection
-	info := map[string]interface{}{
+	info := map[string]any{
 		"user":   s.config.Username,
 		"url":    s.config.BaseURL,
 		"client": s.config.Client,
@@ -49,7 +55,10 @@ func (s *Server) handleGetConnectionInfo(ctx context.Context, request mcp.CallTo
 	// Add debugger status
 	info["debugger_user"] = strings.ToUpper(s.config.Username) // Debugger uses uppercase
 
-	result, _ := json.MarshalIndent(info, "", "  ")
+	result, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to marshal connection info: %v", err)), nil
+	}
 	return mcp.NewToolResultText(string(result)), nil
 }
 
@@ -72,6 +81,9 @@ func (s *Server) handleGetFeatures(ctx context.Context, request mcp.CallToolRequ
 		output.Features[string(id)] = status
 	}
 
-	result, _ := json.MarshalIndent(output, "", "  ")
+	result, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to marshal features: %v", err)), nil
+	}
 	return mcp.NewToolResultText(string(result)), nil
 }

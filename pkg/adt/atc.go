@@ -147,10 +147,7 @@ func parseATCCustomizing(data []byte) (*ATCCustomizing, error) {
 	}
 
 	for _, p := range resp.Properties.Items {
-		result.Properties = append(result.Properties, ATCProperty{
-			Name:  p.Name,
-			Value: p.Value,
-		})
+		result.Properties = append(result.Properties, ATCProperty(p))
 	}
 
 	for _, r := range resp.Exemption.Reasons.Items {
@@ -253,10 +250,7 @@ func parseATCRunResult(data []byte) (*ATCRunResult, error) {
 	}
 
 	for _, i := range resp.Infos.Items {
-		result.Infos = append(result.Infos, ATCRunInfo{
-			Type:        i.Type,
-			Description: i.Description,
-		})
+		result.Infos = append(result.Infos, ATCRunInfo(i))
 	}
 
 	return result, nil
@@ -277,21 +271,6 @@ func (c *Client) GetATCWorklist(ctx context.Context, worklistID string, includeE
 	}
 
 	return parseATCWorklist(resp.Body)
-}
-
-// GetATCWorklistRaw retrieves the raw XML of ATC findings worklist for debugging.
-func (c *Client) GetATCWorklistRaw(ctx context.Context, worklistID string) (string, error) {
-	url := fmt.Sprintf("/sap/bc/adt/atc/worklists/%s?includeExemptedFindings=true", worklistID)
-
-	resp, err := c.transport.Request(ctx, url, &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/atc.worklist.v1+xml",
-	})
-	if err != nil {
-		return "", fmt.Errorf("getting ATC worklist: %w", err)
-	}
-
-	return string(resp.Body), nil
 }
 
 func parseATCWorklist(data []byte) (*ATCWorklist, error) {
@@ -360,11 +339,7 @@ func parseATCWorklist(data []byte) (*ATCWorklist, error) {
 	}
 
 	for _, os := range resp.ObjectSets.Items {
-		result.ObjectSets = append(result.ObjectSets, ATCObjectSet{
-			Name:  os.Name,
-			Title: os.Title,
-			Kind:  os.Kind,
-		})
+		result.ObjectSets = append(result.ObjectSets, ATCObjectSet(os))
 	}
 
 	for _, o := range resp.Objects.Items {
