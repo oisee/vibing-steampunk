@@ -281,9 +281,9 @@ func isLockConflictError(err error) bool {
 }
 
 // packageExists checks if a package exists in the system.
-// Returns true if package exists, false otherwise.
-// Uses direct packages API which returns 404 for non-existing packages.
-func (c *Client) packageExists(ctx context.Context, packageName string) bool {
+// Returns (true, nil) if package exists, (false, nil) if it doesn't exist (404).
+// Returns (false, error) for server errors (5xx) to distinguish from "not found".
+func (c *Client) packageExists(ctx context.Context, packageName string) (bool, error) {
 	packageName = strings.ToUpper(packageName)
 	url := fmt.Sprintf("/sap/bc/adt/packages/%s", strings.ToLower(packageName))
 
@@ -292,7 +292,17 @@ func (c *Client) packageExists(ctx context.Context, packageName string) bool {
 		Accept: "application/vnd.sap.adt.packages.v1+xml",
 	})
 
-	return err == nil
+	if err == nil {
+		return true, nil
+	}
+
+	// 404 means package doesn't exist - this is a definitive "no"
+	if IsNotFoundError(err) {
+		return false, nil
+	}
+
+	// For other errors (5xx, network, etc.), we can't determine if package exists
+	return false, fmt.Errorf("checking package %s: %w", packageName, err)
 }
 
 // CreateObject creates a new ABAP object.
@@ -329,7 +339,11 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	// These orphan locks can only be cleared via SM12 transaction.
 	// By checking first, we prevent this scenario entirely.
 	if opts.ObjectType != ObjectTypePackage && opts.PackageName != "" {
-		if !c.packageExists(ctx, opts.PackageName) {
+		exists, err := c.packageExists(ctx, opts.PackageName)
+		if err != nil {
+			return fmt.Errorf("validating package: %w", err)
+		}
+		if !exists {
 			return fmt.Errorf("package %s does not exist - create it first to avoid orphan locks", opts.PackageName)
 		}
 	}

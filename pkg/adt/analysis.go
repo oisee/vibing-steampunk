@@ -27,10 +27,95 @@ type CallGraphOptions struct {
 	Direction  string // "callers" or "callees"
 	MaxDepth   int    // Maximum depth to traverse
 	MaxResults int    // Maximum results to return
+	Method     string // Specific method name (for classes) - if empty, analyzes all methods
+}
+
+// ProcedureID represents a CAI procedure identifier.
+type ProcedureID struct {
+	Program  string // Program name (e.g., ZTEST, SAPL<fugr>)
+	ProcType string // PROG, METH, FUNC, FORM, etc.
+	ProcName string // Empty for PROG, method/function name for others
+}
+
+// ParseObjectURIToProcID converts an ADT object URI to a CAI procedure ID.
+// Examples:
+//   - /sap/bc/adt/programs/programs/ztest -> {ZTEST, PROG, ""}
+//   - /sap/bc/adt/oo/classes/zcl_test -> {ZCL_TEST, CLAS, ""} (whole class)
+//   - /sap/bc/adt/oo/classes/zcl_test with method=DO_SOMETHING -> {ZCL_TEST, METH, DO_SOMETHING}
+//   - /sap/bc/adt/functions/groups/zfugr/fmodules/zfunc -> {SAPLZFUGR, FUNC, ZFUNC}
+//
+// For classes, you can specify a method using params: method=METHOD_NAME
+// If no method specified, returns CLAS type which triggers whole-class analysis.
+func ParseObjectURIToProcID(objectURI string, params map[string]any) *ProcedureID {
+	// Strip query/fragment from URI
+	uri := objectURI
+	if idx := strings.Index(uri, "#"); idx > 0 {
+		uri = uri[:idx]
+	}
+	if idx := strings.Index(uri, "?"); idx > 0 {
+		uri = uri[:idx]
+	}
+
+	parts := strings.Split(strings.TrimPrefix(uri, "/sap/bc/adt/"), "/")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	switch parts[0] {
+	case "programs":
+		if len(parts) >= 3 && parts[1] == "programs" {
+			return &ProcedureID{
+				Program:  strings.ToUpper(parts[2]),
+				ProcType: "PROG",
+				ProcName: "",
+			}
+		}
+	case "oo":
+		if len(parts) >= 3 && parts[1] == "classes" {
+			className := strings.ToUpper(parts[2])
+			// Check for method parameter
+			if method, ok := params["method"].(string); ok && method != "" {
+				return &ProcedureID{
+					Program:  className,
+					ProcType: "METH",
+					ProcName: strings.ToUpper(method),
+				}
+			}
+			// No method specified: return CLAS type for whole-class analysis
+			return &ProcedureID{
+				Program:  className,
+				ProcType: "CLAS",
+				ProcName: "",
+			}
+		}
+		if len(parts) >= 3 && parts[1] == "interfaces" {
+			ifName := strings.ToUpper(parts[2])
+			if method, ok := params["method"].(string); ok && method != "" {
+				return &ProcedureID{
+					Program:  ifName,
+					ProcType: "METH",
+					ProcName: strings.ToUpper(method),
+				}
+			}
+			return nil // Interfaces don't have implementations directly
+		}
+	case "functions":
+		if len(parts) >= 5 && parts[1] == "groups" && parts[3] == "fmodules" {
+			// Function module: program is SAPL<group>
+			return &ProcedureID{
+				Program:  "SAPL" + strings.ToUpper(parts[2]),
+				ProcType: "FUNC",
+				ProcName: strings.ToUpper(parts[4]),
+			}
+		}
+	}
+
+	return nil
 }
 
 // GetCallGraph retrieves the call graph for an ABAP object.
 // Direction can be "callers" (who calls this) or "callees" (what this calls).
+// For classes without a specific method, it aggregates callees from all methods.
 func (c *Client) GetCallGraph(ctx context.Context, objectURI string, opts *CallGraphOptions) (*CallGraphNode, error) {
 	if opts == nil {
 		opts = &CallGraphOptions{
@@ -40,6 +125,86 @@ func (c *Client) GetCallGraph(ctx context.Context, objectURI string, opts *CallG
 		}
 	}
 
+	// Build params for method specification
+	params := map[string]any{}
+	if opts.Method != "" {
+		params["method"] = opts.Method
+	}
+
+	// Parse object URI to procedure ID
+	procID := ParseObjectURIToProcID(objectURI, params)
+	if procID == nil {
+		return nil, fmt.Errorf("cannot parse object URI to procedure ID: %s", objectURI)
+	}
+
+	// Handle whole-class analysis by getting all methods
+	if procID.ProcType == "CLAS" {
+		return c.getClassCallGraph(ctx, procID.Program, opts)
+	}
+
+	return c.getSingleProcCallGraph(ctx, procID, opts)
+}
+
+// getClassCallGraph aggregates call graphs from all methods in a class.
+func (c *Client) getClassCallGraph(ctx context.Context, className string, opts *CallGraphOptions) (*CallGraphNode, error) {
+	// Get class components to find all methods
+	classURL := "/sap/bc/adt/oo/classes/" + strings.ToLower(className)
+	components, err := c.GetClassComponents(ctx, classURL)
+	if err != nil {
+		return nil, fmt.Errorf("getting class components for call graph: %w", err)
+	}
+
+	// Create root node for the class
+	root := &CallGraphNode{
+		URI:      classURL,
+		Name:     className,
+		Type:     "CLAS",
+		Children: []CallGraphNode{},
+	}
+
+	// Recursively find all methods in the component tree
+	var methods []string
+	var findMethods func(comp *ClassComponent)
+	findMethods = func(comp *ClassComponent) {
+		if comp == nil {
+			return
+		}
+		if comp.Type == "CLAS/OM" || comp.Type == "method" { // CLAS/OM = class method
+			methods = append(methods, comp.Name)
+		}
+		for i := range comp.Components {
+			findMethods(&comp.Components[i])
+		}
+	}
+	findMethods(components)
+
+	// Query callees for each method
+	for _, methodName := range methods {
+		methodProcID := &ProcedureID{
+			Program:  className,
+			ProcType: "METH",
+			ProcName: strings.ToUpper(methodName),
+		}
+
+		methodGraph, err := c.getSingleProcCallGraph(ctx, methodProcID, opts)
+		if err != nil {
+			// Skip methods that fail (might not have callees)
+			continue
+		}
+		if methodGraph != nil {
+			// Add method node even if no children (shows method was analyzed)
+			if methodGraph.Name == "" {
+				methodGraph.Name = methodName
+			}
+			root.Children = append(root.Children, *methodGraph)
+		}
+	}
+
+	return root, nil
+}
+
+// getSingleProcCallGraph retrieves call graph for a single procedure.
+func (c *Client) getSingleProcCallGraph(ctx context.Context, procID *ProcedureID, opts *CallGraphOptions) (*CallGraphNode, error) {
 	params := url.Values{}
 	if opts.Direction != "" {
 		params.Set("direction", opts.Direction)
@@ -51,17 +216,27 @@ func (c *Client) GetCallGraph(ctx context.Context, objectURI string, opts *CallG
 		params.Set("maxResults", fmt.Sprintf("%d", opts.MaxResults))
 	}
 
-	// Build request body with object URI
+	// Build request body with callGraphConfig structure
+	// SAP ST: default namespace for elements, prefixed namespace for attributes
+	procNameAttr := ""
+	if procID.ProcName != "" {
+		procNameAttr = fmt.Sprintf(` cg:procName="%s"`, procID.ProcName)
+	}
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<cai:callGraphRequest xmlns:cai="http://www.sap.com/adt/cai">
-  <cai:objectUri>%s</cai:objectUri>
-</cai:callGraphRequest>`, objectURI)
+<callGraphConfig xmlns="http://www.sap.com/adt/cai/callgraphconfig"
+    xmlns:cg="http://www.sap.com/adt/cai/callgraphconfig"
+    cg:levelExternal="%d"
+    cg:collapse="false">
+  <roots>
+    <procId cg:program="%s" cg:procType="%s"%s/>
+  </roots>
+</callGraphConfig>`, opts.MaxDepth, procID.Program, procID.ProcType, procNameAttr)
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cai/callgraph", &RequestOptions{
 		Method:      http.MethodPost,
 		Query:       params,
-		Accept:      "application/xml",
-		ContentType: "application/xml",
+		Accept:      "application/vnd.sap.adt.cai.callgraph.v1+xml",
+		ContentType: "application/vnd.sap.adt.cai.callgraphconfig.v1+xml",
 		Body:        []byte(body),
 	})
 	if err != nil {
@@ -71,49 +246,89 @@ func (c *Client) GetCallGraph(ctx context.Context, objectURI string, opts *CallG
 	return parseCallGraphResponse(resp.Body)
 }
 
-// callGraphNodeXML is used for parsing call graph XML responses.
-type callGraphNodeXML struct {
-	URI         string             `xml:"uri,attr"`
-	Name        string             `xml:"name,attr"`
-	Type        string             `xml:"type,attr"`
-	Description string             `xml:"description,attr"`
-	Line        int                `xml:"line,attr"`
-	Column      int                `xml:"column,attr"`
-	Children    []callGraphNodeXML `xml:"node"`
+// callGraphNodeResponse matches the ADT CAI callGraphNode response format.
+type callGraphNodeResponse struct {
+	ProcType  string `xml:"processingBlockType,attr"`
+	ProcName  string `xml:"processingBlockName,attr"`
+	NodeIndex struct {
+		ID       int `xml:"id,attr"`
+		CallerID int `xml:"callerId,attr"`
+		OriginID int `xml:"originId,attr"`
+	} `xml:"http://www.sap.com/adt/cai/callgraph nodeIndex"`
+	CAIObject struct {
+		URI         string `xml:"uri,attr"`
+		Type        string `xml:"type,attr"`
+		Name        string `xml:"name,attr"`
+		Description string `xml:"description,attr"`
+		FullName    string `xml:"fullName,attr"`
+	} `xml:"http://www.sap.com/adt/cai/callgraph caiObject"`
 }
 
 // parseCallGraphResponse parses the call graph XML response.
 func parseCallGraphResponse(data []byte) (*CallGraphNode, error) {
-	type callGraphXML struct {
-		XMLName xml.Name         `xml:"callGraph"`
-		Root    callGraphNodeXML `xml:"node"`
+	type callGraphsXML struct {
+		XMLName    xml.Name `xml:"http://www.sap.com/adt/cai/callgraph callGraphs"`
+		CallGraphs []struct {
+			Nodes []callGraphNodeResponse `xml:"http://www.sap.com/adt/cai/callgraph callGraphNode"`
+		} `xml:"http://www.sap.com/adt/cai/callgraph callGraph"`
 	}
 
-	var cg callGraphXML
-	if err := xml.Unmarshal(data, &cg); err != nil {
+	var cgs callGraphsXML
+	if err := xml.Unmarshal(data, &cgs); err != nil {
 		return nil, fmt.Errorf("parsing call graph: %w", err)
 	}
 
-	return convertCallGraphNode(&cg.Root), nil
-}
+	// Debug: return raw data info if no graphs found
+	if len(cgs.CallGraphs) == 0 {
+		preview := string(data)
+		if len(preview) > 500 {
+			preview = preview[:500]
+		}
+		return nil, fmt.Errorf("no callGraph elements found in response (len=%d bytes): %s", len(data), preview)
+	}
+	// Debug: show parse results
+	totalNodes := 0
+	for _, cg := range cgs.CallGraphs {
+		totalNodes += len(cg.Nodes)
+	}
+	if totalNodes == 0 {
+		preview := string(data)
+		if len(preview) > 1500 {
+			preview = preview[:1500]
+		}
+		return nil, fmt.Errorf("found %d callGraph elements with %d total nodes. XML: %s", len(cgs.CallGraphs), totalNodes, preview)
+	}
 
-func convertCallGraphNode(n *callGraphNodeXML) *CallGraphNode {
-	if n == nil {
-		return nil
+	// Create map of nodes by ID
+	nodes := make(map[int]*CallGraphNode)
+	var root *CallGraphNode
+
+	for _, n := range cgs.CallGraphs[0].Nodes {
+		node := &CallGraphNode{
+			URI:         n.CAIObject.URI,
+			Name:        n.CAIObject.Name,
+			Type:        n.ProcType,
+			Description: n.CAIObject.Description,
+		}
+		nodes[n.NodeIndex.ID] = node
+
+		if n.NodeIndex.CallerID == 0 {
+			root = node
+		}
 	}
-	node := &CallGraphNode{
-		URI:         n.URI,
-		Name:        n.Name,
-		Type:        n.Type,
-		Description: n.Description,
-		Line:        n.Line,
-		Column:      n.Column,
+
+	// Build parent-child relationships
+	for _, n := range cgs.CallGraphs[0].Nodes {
+		if n.NodeIndex.CallerID != 0 {
+			if parent, ok := nodes[n.NodeIndex.CallerID]; ok {
+				if child, ok := nodes[n.NodeIndex.ID]; ok {
+					parent.Children = append(parent.Children, *child)
+				}
+			}
+		}
 	}
-	for _, child := range n.Children {
-		childCopy := child
-		node.Children = append(node.Children, *convertCallGraphNode(&childCopy))
-	}
-	return node
+
+	return root, nil
 }
 
 // GetCallersOf returns who calls the specified object (up traversal).

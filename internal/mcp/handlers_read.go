@@ -11,8 +11,10 @@ import (
 
 // --- Read Routing ---
 // Routes for this module:
-//   read: PROG, CLAS, INTF, FUNC, FUGR, INCL, TABL, STRU, DEVC, MSAG, TRAN, TYPE_INFO
-//   query: TABL_CONTENTS, SQL
+//   read (simple source): PROG, INTF, INCL, TABL, STRU, XSLT, DTEL, DOMA, DDLS, BDEF, SRVD, VIEW
+//   read (special):       CLAS (combined source), FUNC (needs group), FUGR/DEVC/MSAG/TRAN/TYPE_INFO (JSON)
+//   query:                TABL_CONTENTS, SQL
+//   analyze:              cds_dependencies
 
 // routeReadAction routes basic read operations.
 // Returns (result, true) if handled, (nil, false) if not handled by this module.
@@ -20,25 +22,22 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 	switch action {
 	case "read":
 		switch objectType {
-		case "PROG":
+		// Simple source types - use unified GetSource
+		case "PROG", "INTF", "INCL", "TABL", "STRU", "XSLT", "DTEL", "DOMA", "DDLS", "BDEF", "SRVD", "VIEW":
 			if objectName == "" {
-				return newToolResultError("program_name is required"), true, nil
+				return newToolResultError("object name is required"), true, nil
 			}
-			result, err := s.handleGetProgram(ctx, newRequest(map[string]any{"program_name": objectName}))
-			return result, true, err
+			source, err := s.adtClient.GetSource(ctx, objectType, objectName, nil)
+			if err != nil {
+				return wrapErr("GetSource", err), true, nil
+			}
+			return mcp.NewToolResultText(source), true, nil
 
 		case "CLAS":
 			if objectName == "" {
 				return newToolResultError("class_name is required"), true, nil
 			}
 			result, err := s.handleGetClass(ctx, newRequest(map[string]any{"class_name": objectName}))
-			return result, true, err
-
-		case "INTF":
-			if objectName == "" {
-				return newToolResultError("interface_name is required"), true, nil
-			}
-			result, err := s.handleGetInterface(ctx, newRequest(map[string]any{"interface_name": objectName}))
 			return result, true, err
 
 		case "FUNC":
@@ -62,32 +61,18 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 			result, err := s.handleGetFunctionGroup(ctx, newRequest(map[string]any{"function_group": objectName}))
 			return result, true, err
 
-		case "INCL":
-			if objectName == "" {
-				return newToolResultError("include_name is required"), true, nil
-			}
-			result, err := s.handleGetInclude(ctx, newRequest(map[string]any{"include_name": objectName}))
-			return result, true, err
-
-		case "TABL":
-			if objectName == "" {
-				return newToolResultError("table_name is required"), true, nil
-			}
-			result, err := s.handleGetTable(ctx, newRequest(map[string]any{"table_name": objectName}))
-			return result, true, err
-
-		case "STRU":
-			if objectName == "" {
-				return newToolResultError("structure_name is required"), true, nil
-			}
-			result, err := s.handleGetStructure(ctx, newRequest(map[string]any{"structure_name": objectName}))
-			return result, true, err
-
 		case "DEVC":
 			if objectName == "" {
 				return newToolResultError("package_name is required"), true, nil
 			}
-			result, err := s.handleGetPackage(ctx, newRequest(map[string]any{"package_name": objectName}))
+			args := map[string]any{"package_name": objectName}
+			if maxResults, ok := params["maxResults"].(float64); ok {
+				args["maxResults"] = maxResults
+			}
+			if offset, ok := params["offset"].(float64); ok {
+				args["offset"] = offset
+			}
+			result, err := s.handleGetPackage(ctx, newRequest(args))
 			return result, true, err
 
 		case "MSAG":
@@ -175,20 +160,6 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 
 // --- Read Handlers ---
 
-func (s *Server) handleGetProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	programName, ok := request.Params.Arguments["program_name"].(string)
-	if !ok || programName == "" {
-		return newToolResultError("program_name is required"), nil
-	}
-
-	source, err := s.adtClient.GetProgram(ctx, programName)
-	if err != nil {
-		return wrapErr("GetProgram", err), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
-}
-
 func (s *Server) handleGetClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	className, ok := request.Params.Arguments["class_name"].(string)
 	if !ok || className == "" {
@@ -198,20 +169,6 @@ func (s *Server) handleGetClass(ctx context.Context, request mcp.CallToolRequest
 	source, err := s.adtClient.GetClassSource(ctx, className)
 	if err != nil {
 		return wrapErr("GetClass", err), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
-}
-
-func (s *Server) handleGetInterface(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	interfaceName, ok := request.Params.Arguments["interface_name"].(string)
-	if !ok || interfaceName == "" {
-		return newToolResultError("interface_name is required"), nil
-	}
-
-	source, err := s.adtClient.GetInterface(ctx, interfaceName)
-	if err != nil {
-		return wrapErr("GetInterface", err), nil
 	}
 
 	return mcp.NewToolResultText(source), nil
@@ -247,34 +204,6 @@ func (s *Server) handleGetFunctionGroup(ctx context.Context, request mcp.CallToo
 		return wrapErr("GetFunctionGroup", err), nil
 	}
 	return newToolResultJSON(fg), nil
-}
-
-func (s *Server) handleGetInclude(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	includeName, ok := request.Params.Arguments["include_name"].(string)
-	if !ok || includeName == "" {
-		return newToolResultError("include_name is required"), nil
-	}
-
-	source, err := s.adtClient.GetInclude(ctx, includeName)
-	if err != nil {
-		return wrapErr("GetInclude", err), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
-}
-
-func (s *Server) handleGetTable(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	tableName, ok := request.Params.Arguments["table_name"].(string)
-	if !ok || tableName == "" {
-		return newToolResultError("table_name is required"), nil
-	}
-
-	source, err := s.adtClient.GetTable(ctx, tableName)
-	if err != nil {
-		return wrapErr("GetTable", err), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
 }
 
 func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -361,27 +290,21 @@ func (s *Server) handleGetCDSDependencies(ctx context.Context, request mcp.CallT
 	}), nil
 }
 
-func (s *Server) handleGetStructure(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	structName, ok := request.Params.Arguments["structure_name"].(string)
-	if !ok || structName == "" {
-		return newToolResultError("structure_name is required"), nil
-	}
-
-	source, err := s.adtClient.GetStructure(ctx, structName)
-	if err != nil {
-		return wrapErr("GetStructure", err), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
-}
-
 func (s *Server) handleGetPackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	packageName, ok := request.Params.Arguments["package_name"].(string)
 	if !ok || packageName == "" {
 		return newToolResultError("package_name is required"), nil
 	}
 
-	pkg, err := s.adtClient.GetPackage(ctx, packageName)
+	opts := &adt.PackageQueryOptions{MaxObjects: 100}
+	if mr, ok := request.Params.Arguments["maxResults"].(float64); ok && mr > 0 {
+		opts.MaxObjects = int(mr)
+	}
+	if off, ok := request.Params.Arguments["offset"].(float64); ok && off > 0 {
+		opts.Offset = int(off)
+	}
+
+	pkg, err := s.adtClient.GetPackage(ctx, packageName, opts)
 	if err != nil {
 		return wrapErr("GetPackage", err), nil
 	}

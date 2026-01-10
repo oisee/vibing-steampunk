@@ -162,9 +162,9 @@ type Transaction struct {
 func (c *Client) GetTransaction(ctx context.Context, tcode string) (*Transaction, error) {
 	tcode = strings.ToUpper(tcode)
 
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/TRAN/object_name/%s", tcode), &RequestOptions{
+	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/trant/object_name/%s", tcode), &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "application/vnd.sap.adt.basic.object.properties+xml",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting transaction: %w", err)

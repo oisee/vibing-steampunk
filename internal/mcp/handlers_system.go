@@ -26,20 +26,20 @@ func (s *Server) routeSystemAction(ctx context.Context, action, objectType, _ st
 		target, _ = params["type"].(string)
 	}
 
-	switch target {
-	case "info":
+	switch strings.ToUpper(target) {
+	case "INFO":
 		result, err := s.handleGetSystemInfo(ctx, newRequest(nil))
 		return result, true, err
 
-	case "features":
+	case "FEATURES":
 		result, err := s.handleGetFeatures(ctx, newRequest(nil))
 		return result, true, err
 
-	case "connection":
+	case "CONNECTION":
 		result, err := s.handleGetConnectionInfo(ctx, newRequest(nil))
 		return result, true, err
 
-	case "components":
+	case "COMPONENTS":
 		result, err := s.handleGetInstalledComponents(ctx, newRequest(nil))
 		return result, true, err
 	}

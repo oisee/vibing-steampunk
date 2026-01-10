@@ -17,7 +17,7 @@ import (
 
 // routeAnalysisAction routes code analysis actions.
 // Returns (result, true) if handled, (nil, false) if not handled by this module.
-func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action != "analyze" {
 		return nil, false, nil
 	}
@@ -25,9 +25,13 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 	analysisType, _ := params["type"].(string)
 	switch analysisType {
 	case "call_graph", "get_call_graph":
+		// Try object_uri from params first, then build from target
 		objectURI, _ := params["object_uri"].(string)
 		if objectURI == "" {
-			return newToolResultError("object_uri is required in params"), true, nil
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
 		}
 		args := map[string]any{"object_uri": objectURI}
 		if dir, ok := params["direction"].(string); ok {
@@ -39,6 +43,9 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		if max, ok := params["max_results"].(float64); ok {
 			args["max_results"] = max
 		}
+		if method, ok := params["method"].(string); ok {
+			args["method"] = method
+		}
 		// Use handleGetCallGraph for raw call graph, handleAnalyzeCallGraph for analyzed version
 		if analysisType == "get_call_graph" {
 			result, err := s.handleGetCallGraph(ctx, newRequest(args))
@@ -48,10 +55,14 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		return result, true, err
 
 	case "compare_call_graphs":
+		// Try object_uri from params first, then build from target
 		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
 		traceData, _ := params["trace_data"].(string)
 		if objectURI == "" || traceData == "" {
-			return newToolResultError("object_uri and trace_data are required"), true, nil
+			return newToolResultError("target or object_uri, and trace_data are required"), true, nil
 		}
 		result, err := s.handleCompareCallGraphs(ctx, newRequest(map[string]any{
 			"object_uri": objectURI,
@@ -60,9 +71,13 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		return result, true, err
 
 	case "trace_execution":
+		// Try object_uri from params first, then build from target
 		objectURI, _ := params["object_uri"].(string)
 		if objectURI == "" {
-			return newToolResultError("object_uri is required"), true, nil
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
 		}
 		args := map[string]any{"object_uri": objectURI}
 		if depth, ok := params["max_depth"].(float64); ok {
@@ -81,9 +96,13 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		return result, true, err
 
 	case "callers":
+		// Try object_uri from params first, then build from target
 		objectURI, _ := params["object_uri"].(string)
 		if objectURI == "" {
-			return newToolResultError("object_uri is required for callers"), true, nil
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
 		}
 		args := map[string]any{"object_uri": objectURI}
 		if depth, ok := params["max_depth"].(float64); ok {
@@ -93,9 +112,13 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		return result, true, err
 
 	case "callees":
+		// Try object_uri from params first, then build from target
 		objectURI, _ := params["object_uri"].(string)
 		if objectURI == "" {
-			return newToolResultError("object_uri is required for callees"), true, nil
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
 		}
 		args := map[string]any{"object_uri": objectURI}
 		if depth, ok := params["max_depth"].(float64); ok {
@@ -105,11 +128,15 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, _, _ string, p
 		return result, true, err
 
 	case "structure":
-		objectName, _ := params["object_name"].(string)
-		if objectName == "" {
-			return newToolResultError("object_name is required for structure"), true, nil
+		// Try object_name from params first, then use objectName from target
+		name, _ := params["object_name"].(string)
+		if name == "" {
+			name = objectName
 		}
-		args := map[string]any{"object_name": objectName}
+		if name == "" {
+			return newToolResultError("target (e.g., 'ZCL_TEST') or object_name in params is required"), true, nil
+		}
+		args := map[string]any{"object_name": name}
 		if maxResults, ok := params["max_results"].(float64); ok {
 			args["max_results"] = maxResults
 		}
@@ -142,6 +169,9 @@ func (s *Server) handleGetCallGraph(ctx context.Context, request mcp.CallToolReq
 	}
 	if max, ok := request.Params.Arguments["max_results"].(float64); ok && max > 0 {
 		opts.MaxResults = int(max)
+	}
+	if method, ok := request.Params.Arguments["method"].(string); ok {
+		opts.Method = method
 	}
 
 	graph, err := s.adtClient.GetCallGraph(ctx, objectURI, opts)
@@ -241,10 +271,16 @@ func (s *Server) handleAnalyzeCallGraph(ctx context.Context, request mcp.CallToo
 		maxDepth = int(depth)
 	}
 
+	method := ""
+	if m, ok := request.Params.Arguments["method"].(string); ok {
+		method = m
+	}
+
 	graph, err := s.adtClient.GetCallGraph(ctx, objectURI, &adt.CallGraphOptions{
 		Direction:  direction,
 		MaxDepth:   maxDepth,
 		MaxResults: 1000,
+		Method:     method,
 	})
 	if err != nil {
 		return wrapErr("AnalyzeCallGraph", err), nil

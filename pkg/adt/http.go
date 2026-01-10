@@ -10,6 +10,21 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
+)
+
+// Retry configuration for transient server errors (500, 502, 503, 504).
+const (
+	maxRetries             = 3               // Total attempts: original + 2 retries
+	initialRetryDelay      = 1 * time.Second // First retry after 1 second
+	maxRetryDelay          = 4 * time.Second // Cap at 4 seconds
+	retryBackoffMultiplier = 2               // Double delay each retry
+)
+
+// Rate limiting configuration to avoid overwhelming SAP/HANA.
+const (
+	maxConcurrentRequests = 5                 // Max parallel requests to SAP
+	minRequestInterval    = 50 * time.Millisecond // Min time between requests
 )
 
 // HTTPDoer is an interface for executing HTTP requests.
@@ -19,7 +34,7 @@ type HTTPDoer interface {
 }
 
 // Transport handles HTTP communication with SAP ADT REST API.
-// It manages CSRF tokens, sessions, and authentication automatically.
+// It manages CSRF tokens, sessions, rate limiting, and authentication automatically.
 type Transport struct {
 	config     *Config
 	httpClient HTTPDoer
@@ -31,6 +46,11 @@ type Transport struct {
 	// Session management
 	sessionID string
 	sessionMu sync.RWMutex
+
+	// Rate limiting
+	semaphore    chan struct{} // Limits concurrent requests
+	lastRequest  time.Time     // Time of last request
+	lastReqMu    sync.Mutex    // Protects lastRequest
 }
 
 // NewTransport creates a new Transport with the given configuration.
@@ -38,6 +58,7 @@ func NewTransport(cfg *Config) *Transport {
 	return &Transport{
 		config:     cfg,
 		httpClient: cfg.NewHTTPClient(),
+		semaphore:  make(chan struct{}, maxConcurrentRequests),
 	}
 }
 
@@ -47,7 +68,41 @@ func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
 	return &Transport{
 		config:     cfg,
 		httpClient: client,
+		semaphore:  make(chan struct{}, maxConcurrentRequests),
 	}
+}
+
+// acquireSlot blocks until a request slot is available and enforces minimum request interval.
+func (t *Transport) acquireSlot(ctx context.Context) error {
+	// Acquire semaphore slot
+	select {
+	case t.semaphore <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	// Enforce minimum interval between requests
+	t.lastReqMu.Lock()
+	elapsed := time.Since(t.lastRequest)
+	if elapsed < minRequestInterval {
+		t.lastReqMu.Unlock()
+		select {
+		case <-time.After(minRequestInterval - elapsed):
+		case <-ctx.Done():
+			<-t.semaphore // Release slot
+			return ctx.Err()
+		}
+		t.lastReqMu.Lock()
+	}
+	t.lastRequest = time.Now()
+	t.lastReqMu.Unlock()
+
+	return nil
+}
+
+// releaseSlot releases a request slot back to the pool.
+func (t *Transport) releaseSlot() {
+	<-t.semaphore
 }
 
 // RequestOptions contains options for an HTTP request.
@@ -68,6 +123,7 @@ type Response struct {
 }
 
 // Request performs an HTTP request to the ADT API.
+// Includes rate limiting and automatic retry with exponential backoff for transient server errors.
 func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptions) (*Response, error) {
 	if opts == nil {
 		opts = &RequestOptions{}
@@ -76,170 +132,163 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 		opts.Method = http.MethodGet
 	}
 
+	// Rate limiting: acquire slot before making request
+	if err := t.acquireSlot(ctx); err != nil {
+		return nil, err
+	}
+	defer t.releaseSlot()
+
 	// Build URL
 	reqURL, err := t.buildURL(path, opts.Query)
 	if err != nil {
 		return nil, fmt.Errorf("building URL: %w", err)
 	}
 
-	// Create request
-	var bodyReader io.Reader
-	if opts.Body != nil {
-		bodyReader = bytes.NewReader(opts.Body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, opts.Method, reqURL, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set authentication - either basic auth or cookies
-	if t.config.HasBasicAuth() {
-		req.SetBasicAuth(t.config.Username, t.config.Password)
-	}
-
-	// Add user-provided cookies for cookie-based authentication
-	for name, value := range t.config.Cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
-
-	// Set default headers
-	t.setDefaultHeaders(req, opts)
-
-	// Add CSRF token for modifying requests
-	if isModifyingMethod(opts.Method) {
-		token := t.getCSRFToken()
-		if token == "" {
-			// Fetch CSRF token first
-			if err := t.fetchCSRFToken(ctx); err != nil {
-				return nil, fmt.Errorf("fetching CSRF token: %w", err)
-			}
-			token = t.getCSRFToken()
-		}
-		req.Header.Set("X-CSRF-Token", token)
-	}
-
-	// Execute request
-	resp, err := t.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	// Handle CSRF token refresh on 403
-	if resp.StatusCode == http.StatusForbidden && isModifyingMethod(opts.Method) {
-		// Try to refresh CSRF token and retry once
+	// Ensure CSRF token is available for modifying requests
+	if isModifyingMethod(opts.Method) && t.getCSRFToken() == "" {
 		if err := t.fetchCSRFToken(ctx); err != nil {
-			return nil, fmt.Errorf("refreshing CSRF token: %w", err)
+			return nil, fmt.Errorf("fetching CSRF token: %w", err)
 		}
-
-		// Retry the request
-		return t.retryRequest(ctx, path, opts)
 	}
 
-	// Store CSRF token from response
-	if token := resp.Header.Get("X-CSRF-Token"); token != "" && token != "Required" {
-		t.setCSRFToken(token)
-	}
+	var lastErr error
+	retryDelay := initialRetryDelay
 
-	// Store session ID
-	if sessionID := t.extractSessionID(resp); sessionID != "" {
-		t.setSessionID(sessionID)
-	}
-
-	// Check for error status codes
-	if resp.StatusCode >= 400 {
-		apiErr := &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    string(body),
-			Path:       path,
-		}
-
-		// Handle session timeout - refresh session and retry once
-		if apiErr.IsSessionExpired() {
-			// Clear cached CSRF token and session ID
-			t.setCSRFToken("")
-			t.setSessionID("")
-			// Fetch new CSRF token (this establishes a new session)
-			if err := t.fetchCSRFToken(ctx); err != nil {
-				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		// Wait before retry (skip on first attempt)
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelay):
 			}
-			// Retry the request
-			return t.retryRequest(ctx, path, opts)
+			// Exponential backoff: 1s -> 2s -> 4s
+			retryDelay *= retryBackoffMultiplier
+			if retryDelay > maxRetryDelay {
+				retryDelay = maxRetryDelay
+			}
 		}
 
-		return nil, apiErr
+		// Create request (must recreate for each attempt as body reader is consumed)
+		var bodyReader io.Reader
+		if opts.Body != nil {
+			bodyReader = bytes.NewReader(opts.Body)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, opts.Method, reqURL, bodyReader)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
+
+		// Set authentication - either basic auth or cookies
+		if t.config.HasBasicAuth() {
+			req.SetBasicAuth(t.config.Username, t.config.Password)
+		}
+
+		// Add user-provided cookies for cookie-based authentication
+		for name, value := range t.config.Cookies {
+			req.AddCookie(&http.Cookie{Name: name, Value: value})
+		}
+
+		// Set default headers
+		t.setDefaultHeaders(req, opts)
+
+		// Add CSRF token for modifying requests
+		if isModifyingMethod(opts.Method) {
+			req.Header.Set("X-CSRF-Token", t.getCSRFToken())
+		}
+
+		// Execute request
+		resp, err := t.httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("executing request: %w", err)
+			continue // Retry on connection errors
+		}
+
+		// Read response body
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("reading response body: %w", err)
+			continue
+		}
+
+		// Store CSRF token from response
+		if token := resp.Header.Get("X-CSRF-Token"); token != "" && token != "Required" {
+			t.setCSRFToken(token)
+		}
+
+		// Store session ID
+		if sessionID := t.extractSessionID(resp); sessionID != "" {
+			t.setSessionID(sessionID)
+		}
+
+		// Handle CSRF token refresh on 403
+		if resp.StatusCode == http.StatusForbidden && isModifyingMethod(opts.Method) {
+			if err := t.fetchCSRFToken(ctx); err != nil {
+				return nil, fmt.Errorf("refreshing CSRF token: %w", err)
+			}
+			continue // Retry with new CSRF token
+		}
+
+		// Retry on transient server errors (502, 503, 504)
+		if isRetryableStatus(resp.StatusCode) {
+			lastErr = &APIError{
+				StatusCode: resp.StatusCode,
+				Message:    string(body),
+				Path:       path,
+			}
+			continue
+		}
+
+		// Check for other error status codes
+		if resp.StatusCode >= 400 {
+			apiErr := &APIError{
+				StatusCode: resp.StatusCode,
+				Message:    string(body),
+				Path:       path,
+			}
+
+			// Handle session timeout - refresh session and retry
+			if apiErr.IsSessionExpired() {
+				t.setCSRFToken("")
+				t.setSessionID("")
+				if err := t.fetchCSRFToken(ctx); err != nil {
+					return nil, fmt.Errorf("refreshing session after timeout: %w", err)
+				}
+				continue
+			}
+
+			return nil, apiErr
+		}
+
+		// Success
+		return &Response{
+			StatusCode: resp.StatusCode,
+			Headers:    resp.Header,
+			Body:       body,
+		}, nil
 	}
 
-	return &Response{
-		StatusCode: resp.StatusCode,
-		Headers:    resp.Header,
-		Body:       body,
-	}, nil
+	// All retries exhausted
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, fmt.Errorf("request failed after %d attempts", maxRetries)
 }
 
-// retryRequest retries a request after CSRF token refresh.
-func (t *Transport) retryRequest(ctx context.Context, path string, opts *RequestOptions) (*Response, error) {
-	reqURL, err := t.buildURL(path, opts.Query)
-	if err != nil {
-		return nil, fmt.Errorf("building URL: %w", err)
+// isRetryableStatus returns true for transient server errors that should be retried.
+// Includes 500 because SAP often returns Internal Server Error transiently under load.
+func isRetryableStatus(statusCode int) bool {
+	switch statusCode {
+	case http.StatusInternalServerError, // 500
+		http.StatusBadGateway,            // 502
+		http.StatusServiceUnavailable,    // 503
+		http.StatusGatewayTimeout:        // 504
+		return true
+	default:
+		return false
 	}
-
-	var bodyReader io.Reader
-	if opts.Body != nil {
-		bodyReader = bytes.NewReader(opts.Body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, opts.Method, reqURL, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
-
-	// Set authentication
-	if t.config.HasBasicAuth() {
-		req.SetBasicAuth(t.config.Username, t.config.Password)
-	}
-	for name, value := range t.config.Cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
-	t.setDefaultHeaders(req, opts)
-	req.Header.Set("X-CSRF-Token", t.getCSRFToken())
-
-	// Ensure session type header is set for retry
-	if t.config.SessionType == SessionStateful {
-		req.Header.Set("X-sap-adt-sessiontype", "stateful")
-	}
-
-	resp, err := t.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("executing retry request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, &APIError{
-			StatusCode: resp.StatusCode,
-			Message:    string(body),
-			Path:       path,
-		}
-	}
-
-	return &Response{
-		StatusCode: resp.StatusCode,
-		Headers:    resp.Header,
-		Body:       body,
-	}, nil
 }
 
 // fetchCSRFToken retrieves a CSRF token from the server.

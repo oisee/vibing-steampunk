@@ -120,7 +120,7 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 
 	// Step 1: Check/Create package (upsert strategy)
 	step("Package Check/Create")
-	pkg, err := s.adtClient.GetPackage(ctx, testPackage)
+	pkg, err := s.adtClient.GetPackage(ctx, testPackage, nil)
 	packageExists := err == nil && pkg.URI != "" // URI empty = package doesn't really exist
 	if !packageExists {
 		info("Package doesn't exist, creating...")
@@ -136,7 +136,7 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 				fail(fmt.Sprintf("CreateObject(package) failed: %v", err))
 			} else {
 				// Verify
-				pkg, err = s.adtClient.GetPackage(ctx, testPackage)
+				pkg, err = s.adtClient.GetPackage(ctx, testPackage, nil)
 				if err != nil || pkg.URI == "" {
 					fail("Verification failed: package not found after create")
 				} else {
@@ -368,7 +368,7 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 	// Check if package exists (verify URI is populated - empty URI means package doesn't really exist)
 	packageExists := false
-	pkg, err := s.adtClient.GetPackage(ctx, packageName)
+	pkg, err := s.adtClient.GetPackage(ctx, packageName, nil)
 	if err == nil && pkg.URI != "" {
 		packageExists = true
 		fmt.Fprintf(&sb, "  ✓ Package %s exists\n", packageName)

@@ -129,13 +129,15 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 }
 
 // parseTarget parses "TYPE NAME" format (e.g., "CLAS ZCL_TEST")
+// All parts are uppercased for consistency with SAP conventions.
+// Single-word targets become the type with empty name.
 func parseTarget(target string) (objectType, objectName string) {
 	parts := strings.Fields(target)
 	if len(parts) >= 2 {
 		return strings.ToUpper(parts[0]), strings.ToUpper(parts[1])
 	}
 	if len(parts) == 1 {
-		return "", strings.ToUpper(parts[0])
+		return strings.ToUpper(parts[0]), ""
 	}
 	return "", ""
 }

@@ -33,7 +33,7 @@ func (c *Client) GetObjectStructureCAI(ctx context.Context, objectName string, m
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cai/objectexplorer/objects", &RequestOptions{
 		Method: http.MethodGet,
 		Query:  params,
-		Accept: "application/xml",
+		Accept: "application/vnd.sap.adt.cai.objectexplorer.v1+xml",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting object structure: %w", err)

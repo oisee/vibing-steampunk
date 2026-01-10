@@ -147,12 +147,14 @@ type Include struct {
 
 // PackageContent represents package contents response.
 type PackageContent struct {
-	XMLName     xml.Name        `xml:"package"`
-	URI         string          `xml:"uri,attr"`
-	Type        string          `xml:"type,attr"`
-	Name        string          `xml:"name,attr"`
-	SubPackages []string        `json:"subPackages,omitempty"`
-	Objects     []PackageObject `json:"objects,omitempty"`
+	XMLName      xml.Name        `xml:"package"`
+	URI          string          `xml:"uri,attr"`
+	Type         string          `xml:"type,attr"`
+	Name         string          `xml:"name,attr"`
+	SubPackages  []string        `json:"subPackages,omitempty"`
+	Objects      []PackageObject `json:"objects,omitempty"`
+	TotalObjects int             `json:"totalObjects"`           // Total count before limiting
+	Truncated    bool            `json:"truncated,omitempty"`    // True if objects were limited
 }
 
 // PackageObject represents an object within a package.
@@ -165,7 +167,7 @@ type PackageObject struct {
 
 // FunctionGroup represents a function group structure.
 type FunctionGroup struct {
-	XMLName   xml.Name         `xml:"group"`
+	XMLName   xml.Name         `xml:"abapFunctionGroup"`
 	URI       string           `xml:"uri,attr"`
 	Type      string           `xml:"type,attr"`
 	Name      string           `xml:"name,attr"`

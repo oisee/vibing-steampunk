@@ -1,16 +1,18 @@
-// ABOUTME: Integration test helpers for SAP ADT integration tests.
-// ABOUTME: Provides getIntegrationClient() and .env file loading for tests.
+// ABOUTME: Integration test helpers for MCP server integration tests.
+// ABOUTME: Provides getIntegrationServer() and callSAPTool() helpers for testing.
 
-package adt
+package mcp
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
-	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 var (
@@ -73,9 +75,9 @@ func parseEnvFile(path string) error {
 	return scanner.Err()
 }
 
-// getIntegrationClient creates an ADT client for integration tests.
+// getIntegrationServer creates an MCP server for integration tests.
 // Loads credentials from .env file or environment variables.
-func getIntegrationClient(t *testing.T) *Client {
+func getIntegrationServer(t *testing.T) *Server {
 	loadEnvFile()
 
 	url := os.Getenv("SAP_URL")
@@ -95,26 +97,47 @@ func getIntegrationClient(t *testing.T) *Client {
 		lang = "EN"
 	}
 
-	opts := []Option{
-		WithClient(client),
-		WithLanguage(lang),
-		WithTimeout(30 * time.Second),
+	cfg := &Config{
+		BaseURL:            url,
+		Username:           user,
+		Password:           pass,
+		Client:             client,
+		Language:           lang,
+		InsecureSkipVerify: os.Getenv("SAP_INSECURE") == "true",
 	}
 
-	if os.Getenv("SAP_INSECURE") == "true" {
-		opts = append(opts, WithInsecureSkipVerify())
-	}
-
-	return NewClient(url, user, pass, opts...)
+	return NewServer(cfg)
 }
 
-// getTestUser returns the test user for debugging tests.
-func getTestUser(t *testing.T) string {
-	loadEnvFile()
-
-	user := os.Getenv("SAP_USER")
-	if user == "" {
-		t.Skip("SAP_USER required")
+// callSAPTool calls the universal SAP tool with given action, target, and params.
+// Returns the result and any error. Handles error formatting for test assertions.
+func callSAPTool(ctx context.Context, s *Server, action, target string, params map[string]any) (*mcp.CallToolResult, error) {
+	args := map[string]any{
+		"action": action,
+		"target": target,
 	}
-	return user
+	if params != nil {
+		args["params"] = params
+	}
+
+	return s.handleUniversalTool(ctx, newRequest(args))
+}
+
+// getResultText extracts the text content from a tool result.
+func getResultText(result *mcp.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+	if textContent, ok := result.Content[0].(mcp.TextContent); ok {
+		return textContent.Text
+	}
+	return ""
+}
+
+// isErrorResult checks if the result indicates an error.
+func isErrorResult(result *mcp.CallToolResult) bool {
+	if result == nil {
+		return true
+	}
+	return result.IsError
 }

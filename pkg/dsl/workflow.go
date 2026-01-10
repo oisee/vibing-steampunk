@@ -429,13 +429,12 @@ func handleSyntaxCheck(ctx *ExecutionContext, params map[string]interface{}) (in
 
 		switch obj.Type {
 		case TypeClass, "CLAS/OC":
-			sourceMap, err := ctx.Client().GetClass(ctx.Context(), obj.Name)
+			source, err = ctx.Client().GetSource(ctx.Context(), "CLAS", obj.Name, nil)
 			if err != nil {
 				return nil, err
 			}
-			source = sourceMap["main"]
 		case TypeProgram, "PROG/P":
-			source, err = ctx.Client().GetProgram(ctx.Context(), obj.Name)
+			source, err = ctx.Client().GetSource(ctx.Context(), "PROG", obj.Name, nil)
 			if err != nil {
 				return nil, err
 			}

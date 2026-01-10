@@ -4,6 +4,8 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -12,11 +14,11 @@ import (
 // --- ATC Routing ---
 // Routes for this module:
 //   system: type=atc_customizing
-//   test: type=atc
+//   test: type=atc, target=CLAS ZCL_TEST (or object_url in params)
 
 // routeATCAction routes ATC actions.
 // Returns (result, true) if handled, (nil, false) if not handled by this module.
-func (s *Server) routeATCAction(ctx context.Context, action, _, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+func (s *Server) routeATCAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	switch action {
 	case "system":
 		systemType, _ := params["type"].(string)
@@ -28,9 +30,13 @@ func (s *Server) routeATCAction(ctx context.Context, action, _, _ string, params
 	case "test":
 		testType, _ := params["type"].(string)
 		if testType == "atc" {
+			// Try object_url from params first, then build from target
 			objectURL, _ := params["object_url"].(string)
 			if objectURL == "" {
-				return newToolResultError("object_url is required for ATC check"), true, nil
+				objectURL = buildObjectURL(objectType, objectName)
+			}
+			if objectURL == "" {
+				return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_url in params is required for ATC check"), true, nil
 			}
 			args := map[string]any{"object_url": objectURL}
 			if variant, ok := params["variant"].(string); ok {
@@ -45,6 +51,33 @@ func (s *Server) routeATCAction(ctx context.Context, action, _, _ string, params
 	}
 
 	return nil, false, nil
+}
+
+// buildObjectURL constructs ADT object URL from type and name.
+// Returns empty string if type is not supported.
+func buildObjectURL(objectType, objectName string) string {
+	if objectType == "" || objectName == "" {
+		return ""
+	}
+	name := strings.ToLower(objectName)
+	switch objectType {
+	case "CLAS":
+		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name)
+	case "PROG":
+		return fmt.Sprintf("/sap/bc/adt/programs/programs/%s", name)
+	case "INTF":
+		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name)
+	case "FUGR":
+		return fmt.Sprintf("/sap/bc/adt/functions/groups/%s", name)
+	case "DDLS":
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", name)
+	case "BDEF":
+		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", name)
+	case "SRVD":
+		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", name)
+	default:
+		return ""
+	}
 }
 
 // --- ATC Handlers ---
