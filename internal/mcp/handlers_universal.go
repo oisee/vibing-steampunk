@@ -3,7 +3,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -28,10 +27,10 @@ func newRequest(args map[string]any) mcp.CallToolRequest {
 // This reduces MCP schema overhead from ~14,200 tokens to ~150 tokens.
 func (s *Server) registerUniversalTool() {
 	s.mcpServer.AddTool(mcp.NewTool("SAP",
-		mcp.WithDescription("SAP ABAP development. Actions: read, edit, create, delete, search, grep, debug, query, analyze, test, deploy, system"),
+		mcp.WithDescription("SAP ABAP development. Common: read/edit CLAS|INTF|PROG <name> (edit needs params.source), search <query>, create OBJECT"),
 		mcp.WithString("action",
 			mcp.Required(),
-			mcp.Description("Operation: read|edit|create|delete|search|grep|debug|query|analyze|test|deploy|system"),
+			mcp.Description("Operation: read|edit|create|delete|search|grep|debug|query|analyze|test|system"),
 		),
 		mcp.WithString("target",
 			mcp.Description("Target object (e.g., 'CLAS ZCL_TEST', 'PROG ZREPORT', 'TABLE SFLIGHT') or action-specific target"),
@@ -47,6 +46,11 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 	action := getString(request.Params.Arguments, "action")
 	target := getString(request.Params.Arguments, "target")
 	params := getObject(request.Params.Arguments, "params")
+
+	// Handle help action first
+	if action == "help" {
+		return handleHelp(target), nil
+	}
 
 	// Parse target for sub-routers
 	objectType, objectName := parseTarget(target)
@@ -125,7 +129,7 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 		return result, err
 	}
 	// No sub-router handled this request - return error with guidance
-	return newToolResultError(fmt.Sprintf("Unhandled: action=%s target=%s. Check action/target combination.", action, target)), nil
+	return newToolResultError(getUnhandledErrorMessage(action, objectType, objectName)), nil
 }
 
 // parseTarget parses "TYPE NAME" format (e.g., "CLAS ZCL_TEST")

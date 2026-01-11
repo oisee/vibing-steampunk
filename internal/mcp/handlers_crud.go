@@ -13,7 +13,8 @@ import (
 
 // --- CRUD Routing ---
 // Routes for this module:
-//   edit:    LOCK, UNLOCK, UPDATE_SOURCE, MOVE
+//   edit:    CLAS, INTF, PROG, DDLS, BDEF, SRVD, SRVB (with params.source) - high-level write
+//   edit:    LOCK, UNLOCK, UPDATE_SOURCE, MOVE - low-level operations
 //   create:  OBJECT, DEVC, TABL, CLONE
 //   delete:  OBJECT
 //   read:    CLAS_INFO
@@ -79,6 +80,30 @@ func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, object
 				"new_package": newPackage,
 			}))
 			return result, true, err
+
+		case "CLAS", "INTF", "PROG", "DDLS", "BDEF", "SRVD", "SRVB":
+			if objectName == "" {
+				return newToolResultError("object name is required"), true, nil
+			}
+			source := getStr(params, "source")
+			if source == "" {
+				return newToolResultError("source is required in params"), true, nil
+			}
+			opts := &adt.WriteSourceOptions{
+				Mode:        adt.WriteModeUpsert,
+				Package:     getStr(params, "package"),
+				Description: getStr(params, "description"),
+				Transport:   getStr(params, "transport"),
+				TestSource:  getStr(params, "test_source"),
+			}
+			if opts.Package == "" {
+				opts.Package = "$TMP"
+			}
+			writeResult, err := s.adtClient.WriteSource(ctx, objectType, objectName, source, opts)
+			if err != nil {
+				return wrapErr("WriteSource", err), true, nil
+			}
+			return newToolResultJSON(writeResult), true, nil
 		}
 
 	case "create":

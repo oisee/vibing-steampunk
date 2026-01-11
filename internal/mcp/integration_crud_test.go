@@ -244,6 +244,123 @@ func TestIntegration_CreateInterface(t *testing.T) {
 	}
 }
 
+func TestIntegration_EditInterfaceWithSource(t *testing.T) {
+	s := getIntegrationServer(t)
+	ctx := context.Background()
+
+	// Use edit INTF with params.source (upsert mode)
+	intfName := fmt.Sprintf("ZIF_TEST_EDIT_%d", time.Now().Unix()%100000)
+	source := fmt.Sprintf(`INTERFACE %s PUBLIC.
+  METHODS get_value RETURNING VALUE(rv_value) TYPE string.
+ENDINTERFACE.`, strings.ToLower(intfName))
+
+	result, err := callSAPTool(ctx, s, "edit", "INTF "+intfName, map[string]any{
+		"source":      source,
+		"description": "MCP Edit Integration Test",
+	})
+	if err != nil {
+		t.Fatalf("callSAPTool failed: %v", err)
+	}
+
+	if isErrorResult(result) {
+		t.Fatalf("Edit failed: %s", getResultText(result))
+	}
+
+	text := getResultText(result)
+	t.Logf("Edit result: %s", text)
+
+	// Result should indicate success
+	if !strings.Contains(text, "created") && !strings.Contains(text, "updated") {
+		t.Error("Expected result to indicate created or updated")
+	}
+
+	// Read it back to verify
+	readResult, err := callSAPTool(ctx, s, "read", "INTF "+intfName, nil)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if isErrorResult(readResult) {
+		t.Fatalf("Read failed: %s", getResultText(readResult))
+	}
+
+	readText := getResultText(readResult)
+	if !strings.Contains(strings.ToUpper(readText), "GET_VALUE") {
+		t.Errorf("Expected source to contain GET_VALUE method, got: %s", readText)
+	}
+
+	// Clean up
+	var writeInfo map[string]any
+	if err := json.Unmarshal([]byte(text), &writeInfo); err == nil {
+		objectURL, _ := writeInfo["object_url"].(string)
+		if objectURL != "" {
+			cleanupInterface(ctx, t, s, objectURL)
+		}
+	}
+}
+
+func TestIntegration_EditClassWithSource(t *testing.T) {
+	s := getIntegrationServer(t)
+	ctx := context.Background()
+
+	// Use edit CLAS with params.source (upsert mode)
+	className := fmt.Sprintf("ZCL_TEST_EDIT_%d", time.Now().Unix()%100000)
+	source := fmt.Sprintf(`CLASS %s DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    METHODS get_name RETURNING VALUE(rv_name) TYPE string.
+ENDCLASS.
+
+CLASS %s IMPLEMENTATION.
+  METHOD get_name.
+    rv_name = '%s'.
+  ENDMETHOD.
+ENDCLASS.`, strings.ToLower(className), strings.ToLower(className), className)
+
+	result, err := callSAPTool(ctx, s, "edit", "CLAS "+className, map[string]any{
+		"source":      source,
+		"description": "MCP Edit Integration Test Class",
+	})
+	if err != nil {
+		t.Fatalf("callSAPTool failed: %v", err)
+	}
+
+	if isErrorResult(result) {
+		t.Fatalf("Edit failed: %s", getResultText(result))
+	}
+
+	text := getResultText(result)
+	t.Logf("Edit result: %s", text)
+
+	// Result should indicate success
+	if !strings.Contains(text, "created") && !strings.Contains(text, "updated") {
+		t.Error("Expected result to indicate created or updated")
+	}
+
+	// Read it back to verify
+	readResult, err := callSAPTool(ctx, s, "read", "CLAS "+className, nil)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	if isErrorResult(readResult) {
+		t.Fatalf("Read failed: %s", getResultText(readResult))
+	}
+
+	readText := getResultText(readResult)
+	if !strings.Contains(strings.ToUpper(readText), "GET_NAME") {
+		t.Errorf("Expected source to contain GET_NAME method, got: %s", readText)
+	}
+
+	// Clean up
+	var writeInfo map[string]any
+	if err := json.Unmarshal([]byte(text), &writeInfo); err == nil {
+		objectURL, _ := writeInfo["object_url"].(string)
+		if objectURL != "" {
+			cleanupClass(ctx, t, s, objectURL)
+		}
+	}
+}
+
 // cleanupProgram attempts to delete a test program
 func cleanupProgram(ctx context.Context, t *testing.T, s *Server, objectURL string) {
 	// Lock the object first

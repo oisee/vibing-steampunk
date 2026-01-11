@@ -334,12 +334,12 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	// Phase 1: Check prerequisites
 	sb.WriteString("Checking prerequisites...\n")
 
-	// Check if package exists (verify URI is populated - empty URI means package doesn't really exist)
+	// Check if package exists
 	packageExists := false
 	pkg, err := s.adtClient.GetPackage(ctx, packageName, nil)
-	if err == nil && pkg.URI != "" {
+	if err == nil && (pkg.URI != "" || pkg.Name != "" || pkg.TotalObjects > 0) {
 		packageExists = true
-		fmt.Fprintf(&sb, "  ✓ Package %s exists\n", packageName)
+		fmt.Fprintf(&sb, "  ✓ Package %s exists (%d objects)\n", packageName, pkg.TotalObjects)
 	} else {
 		fmt.Fprintf(&sb, "  → Package %s will be created\n", packageName)
 	}

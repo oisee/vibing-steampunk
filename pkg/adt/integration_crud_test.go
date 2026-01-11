@@ -601,7 +601,7 @@ func TestIntegration_EditSource(t *testing.T) {
 	}
 
 	// Cleanup at end
-	defer cleanupObject(t, client, ObjectTypeProg, programName, "")
+	defer cleanupObject(t, client, ObjectTypeProgram, programName, "")
 
 	// Set initial source using WriteProgram
 	initialSource := fmt.Sprintf(`REPORT %s.
