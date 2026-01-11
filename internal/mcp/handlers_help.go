@@ -54,6 +54,11 @@ High-level (recommended):
   Uses upsert mode: creates if not exists, updates if exists.
   Default package: $TMP
 
+Method-level update (class only):
+  edit CLAS <name>     params.source="METHOD...ENDMETHOD", params.method="<method_name>"
+
+  Updates only the specified method. Source must be the complete METHOD...ENDMETHOD block.
+
 Description-only update (no source change):
   edit CLAS <name>     params.description="New description"
   edit INTF <name>     params.description="New description"

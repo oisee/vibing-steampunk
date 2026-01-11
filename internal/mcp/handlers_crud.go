@@ -104,6 +104,7 @@ func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, object
 				Description: description,
 				Transport:   getStr(params, "transport"),
 				TestSource:  getStr(params, "test_source"),
+				Method:      getStr(params, "method"),
 			}
 			if opts.Package == "" {
 				opts.Package = "$TMP"
