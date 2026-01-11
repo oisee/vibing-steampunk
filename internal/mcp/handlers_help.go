@@ -105,10 +105,22 @@ Note: Lock the object first with 'edit LOCK' to get lock_handle`)
   search <query>       params.max_results=N, params.object_type="CLAS"|"PROG"|...`)
 
 	case "test":
-		return mcp.NewToolResultText(`TEST - Run unit tests
+		return mcp.NewToolResultText(`TEST - Run tests
 
+Unit tests:
   test                 params.object_url="/sap/bc/adt/oo/classes/<name>"
-                       [params.with_coverage=true]`)
+                       [params.with_coverage=true]
+
+ATC (ABAP Test Cockpit):
+  test CLAS <name>     params.type="atc" [params.variant, params.max_results]
+  test PROG <name>     params.type="atc"
+  test INTF <name>     params.type="atc"
+  test FUGR <name>     params.type="atc"
+  test DDLS <name>     params.type="atc"
+  test BDEF <name>     params.type="atc"
+
+Example:
+  test CLAS ZCL_CSV params.type="atc" params.variant="DEFAULT"`)
 
 	case "query":
 		return mcp.NewToolResultText(`QUERY - Database queries
