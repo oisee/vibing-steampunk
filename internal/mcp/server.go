@@ -76,6 +76,7 @@ type Config struct {
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default, probe system), "on" (force enabled), "off" (force disabled)
+	FeatureHANA      string // HANA database detection (required for some AMDP features)
 	FeatureAbapGit   string // abapGit integration
 	FeatureRAP       string // RAP/OData development (DDLS, BDEF, SRVD, SRVB)
 	FeatureAMDP      string // AMDP/HANA debugger
@@ -142,6 +143,7 @@ func NewServer(cfg *Config) *Server {
 
 	// Configure feature detection (safety network)
 	featureConfig := adt.FeatureConfig{
+		HANA:      parseFeatureMode(cfg.FeatureHANA),
 		AbapGit:   parseFeatureMode(cfg.FeatureAbapGit),
 		RAP:       parseFeatureMode(cfg.FeatureRAP),
 		AMDP:      parseFeatureMode(cfg.FeatureAMDP),
@@ -1642,6 +1644,9 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		),
 		mcp.WithString("method",
 			mcp.Description("For CLAS only: constrain search/replace to this method only. Prevents accidental edits in other methods. (optional)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for objects not in $TMP package)"),
 		),
 	), s.handleEditSource)
 	}

@@ -85,6 +85,7 @@ func init() {
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default), "on", "off"
+	rootCmd.Flags().StringVar(&cfg.FeatureHANA, "feature-hana", "auto", "HANA database detection: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAbapGit, "feature-abapgit", "auto", "abapGit integration: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureRAP, "feature-rap", "auto", "RAP/OData development: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAMDP, "feature-amdp", "auto", "AMDP/HANA debugger: auto, on, off")
@@ -119,6 +120,7 @@ func init() {
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Feature configuration
+	viper.BindPFlag("feature-hana", rootCmd.Flags().Lookup("feature-hana"))
 	viper.BindPFlag("feature-abapgit", rootCmd.Flags().Lookup("feature-abapgit"))
 	viper.BindPFlag("feature-rap", rootCmd.Flags().Lookup("feature-rap"))
 	viper.BindPFlag("feature-amdp", rootCmd.Flags().Lookup("feature-amdp"))
@@ -298,6 +300,11 @@ func resolveConfig(cmd *cobra.Command) {
 	}
 
 	// Feature configuration: flag > SAP_FEATURE_* env
+	if !cmd.Flags().Changed("feature-hana") {
+		if v := viper.GetString("FEATURE_HANA"); v != "" {
+			cfg.FeatureHANA = v
+		}
+	}
 	if !cmd.Flags().Changed("feature-abapgit") {
 		if v := viper.GetString("FEATURE_ABAPGIT"); v != "" {
 			cfg.FeatureAbapGit = v

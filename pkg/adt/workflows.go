@@ -1171,6 +1171,7 @@ type EditSourceOptions struct {
 	SyntaxCheck     bool   // If true, validate syntax before saving (default: true if not set)
 	CaseInsensitive bool   // If true, ignore case when matching
 	Method          string // For CLAS only: constrain search/replace to this method only
+	Transport       string // Transport request number (required for non-$TMP packages)
 }
 
 // normalizeLineEndings converts CRLF to LF for consistent matching
@@ -1494,9 +1495,9 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	// 6. Update source
 	if isClassInclude && className != "" {
 		// Use UpdateClassInclude for class includes
-		err = c.UpdateClassInclude(ctx, className, includeType, newSource, lockResult.LockHandle, "")
+		err = c.UpdateClassInclude(ctx, className, includeType, newSource, lockResult.LockHandle, opts.Transport)
 	} else {
-		err = c.UpdateSource(ctx, sourceURL, newSource, lockResult.LockHandle, "")
+		err = c.UpdateSource(ctx, sourceURL, newSource, lockResult.LockHandle, opts.Transport)
 	}
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to update source: %v", err)

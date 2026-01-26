@@ -539,6 +539,7 @@ SAP_MODE=focused
 # SAP_ALLOWED_OPS=RSQ
 
 # Feature Flags (optional, values: auto/on/off)
+# SAP_FEATURE_HANA=auto
 # SAP_FEATURE_ABAPGIT=auto
 # SAP_FEATURE_RAP=auto
 # SAP_FEATURE_AMDP=auto
