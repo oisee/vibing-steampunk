@@ -77,8 +77,8 @@ func TestParseUserTransports(t *testing.T) {
 		t.Fatalf("expected 1 object in task, got %d", len(task.Objects))
 	}
 	obj := task.Objects[0]
-	if obj.PGMID != "R3TR" {
-		t.Errorf("expected PGMID 'R3TR', got '%s'", obj.PGMID)
+	if obj.PgmID != "R3TR" {
+		t.Errorf("expected PgmID 'R3TR', got '%s'", obj.PgmID)
 	}
 	if obj.Type != "CLAS" {
 		t.Errorf("expected type 'CLAS', got '%s'", obj.Type)
@@ -150,8 +150,8 @@ func TestParseTransportInfo(t *testing.T) {
 		t.Fatalf("parseTransportInfo failed: %v", err)
 	}
 
-	if result.PGMID != "R3TR" {
-		t.Errorf("expected PGMID 'R3TR', got '%s'", result.PGMID)
+	if result.PgmID != "R3TR" {
+		t.Errorf("expected PgmID 'R3TR', got '%s'", result.PgmID)
 	}
 	if result.Object != "CLAS" {
 		t.Errorf("expected Object 'CLAS', got '%s'", result.Object)
@@ -170,119 +170,42 @@ func TestParseTransportInfo(t *testing.T) {
 	}
 }
 
-func TestParseReleaseResult(t *testing.T) {
-	xmlData := `<?xml version="1.0" encoding="utf-8"?>
-<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm"
-         xmlns:chkrun="http://www.sap.com/adt/checkrun">
-  <tm:releasereports>
-    <chkrun:checkReport chkrun:reporter="CTS" chkrun:status="released">
-      <chkrun:checkMessageList>
-        <chkrun:checkMessage chkrun:type="I" chkrun:shortText="Transport released successfully"/>
-        <chkrun:checkMessage chkrun:type="W" chkrun:shortText="Some objects were ignored"/>
-      </chkrun:checkMessageList>
-    </chkrun:checkReport>
-    <chkrun:checkReport chkrun:reporter="SYNTAX" chkrun:status="passed"/>
-  </tm:releasereports>
-</tm:root>`
-
-	messages, err := parseReleaseResult([]byte(xmlData))
-	if err != nil {
-		t.Fatalf("parseReleaseResult failed: %v", err)
+func TestReleaseTransportOptions(t *testing.T) {
+	// Test default action
+	opts := ReleaseTransportOptions{}
+	if opts.GetAction() != ReleaseActionNormal {
+		t.Errorf("expected default action %s, got %s", ReleaseActionNormal, opts.GetAction())
 	}
 
-	// Should have 4 messages: 2 report statuses + 2 check messages
-	if len(messages) != 4 {
-		t.Fatalf("expected 4 messages, got %d: %v", len(messages), messages)
+	// Test explicit IgnoreLocks action
+	opts = ReleaseTransportOptions{Action: ReleaseActionIgnoreLocks}
+	if opts.GetAction() != ReleaseActionIgnoreLocks {
+		t.Errorf("expected action %s, got %s", ReleaseActionIgnoreLocks, opts.GetAction())
 	}
 
-	// Check first report status
-	if messages[0] != "[CTS] Status: released" {
-		t.Errorf("expected '[CTS] Status: released', got '%s'", messages[0])
-	}
-
-	// Check first message
-	if messages[1] != "  [I] Transport released successfully" {
-		t.Errorf("expected '  [I] Transport released successfully', got '%s'", messages[1])
-	}
-
-	// Check second message
-	if messages[2] != "  [W] Some objects were ignored" {
-		t.Errorf("expected '  [W] Some objects were ignored', got '%s'", messages[2])
-	}
-
-	// Check second report status
-	if messages[3] != "[SYNTAX] Status: passed" {
-		t.Errorf("expected '[SYNTAX] Status: passed', got '%s'", messages[3])
+	// Test explicit SkipATC action
+	opts = ReleaseTransportOptions{Action: ReleaseActionSkipATC}
+	if opts.GetAction() != ReleaseActionSkipATC {
+		t.Errorf("expected action %s, got %s", ReleaseActionSkipATC, opts.GetAction())
 	}
 }
 
-func TestParseReleaseResultEmpty(t *testing.T) {
-	xmlData := `<?xml version="1.0" encoding="utf-8"?>
-<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm">
-</tm:root>`
-
-	messages, err := parseReleaseResult([]byte(xmlData))
-	if err != nil {
-		t.Fatalf("parseReleaseResult failed: %v", err)
+func TestParsePosition(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int
+	}{
+		{"", 0},
+		{"0", 0},
+		{"1", 1},
+		{"42", 42},
+		{"abc", 0},
 	}
 
-	if len(messages) != 0 {
-		t.Errorf("expected 0 messages for empty result, got %d", len(messages))
-	}
-}
-
-func TestTransportTypes(t *testing.T) {
-	// Test TransportRequest
-	tr := TransportRequest{
-		Number:      "DEVK900001",
-		Owner:       "DEVELOPER",
-		Description: "Test Transport",
-		Status:      "D",
-		Target:      "PROD",
-		Type:        "workbench",
-	}
-
-	if tr.Number != "DEVK900001" {
-		t.Errorf("TransportRequest.Number mismatch")
-	}
-
-	// Test TransportTask
-	task := TransportTask{
-		Number:      "DEVK900002",
-		Owner:       "DEVELOPER",
-		Description: "Task 1",
-		Status:      "D",
-	}
-
-	if task.Number != "DEVK900002" {
-		t.Errorf("TransportTask.Number mismatch")
-	}
-
-	// Test TransportObject
-	obj := TransportObject{
-		PGMID:   "R3TR",
-		Type:    "CLAS",
-		Name:    "ZCL_TEST",
-		ObjInfo: "Class ZCL_TEST",
-	}
-
-	if obj.PGMID != "R3TR" {
-		t.Errorf("TransportObject.PGMID mismatch")
-	}
-
-	// Test TransportInfo
-	info := TransportInfo{
-		PGMID:        "R3TR",
-		Object:       "CLAS",
-		ObjectName:   "ZCL_TEST",
-		Operation:    "I",
-		DevClass:     "$TMP",
-		Recording:    "X",
-		LockedByUser: "DEVELOPER",
-		LockedInTask: "DEVK900002",
-	}
-
-	if info.LockedByUser != "DEVELOPER" {
-		t.Errorf("TransportInfo.LockedByUser mismatch")
+	for _, tc := range tests {
+		result := parsePosition(tc.input)
+		if result != tc.expected {
+			t.Errorf("parsePosition(%q) = %d, expected %d", tc.input, result, tc.expected)
+		}
 	}
 }

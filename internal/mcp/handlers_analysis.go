@@ -5,11 +5,147 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- Analysis Routing ---
+// Routes for this module:
+//   analyze: type=call_graph, type=get_call_graph, type=compare_call_graphs, type=trace_execution,
+//            type=callers, type=callees, type=structure
+
+// routeAnalysisAction routes code analysis actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+
+	analysisType, _ := params["type"].(string)
+	switch analysisType {
+	case "call_graph", "get_call_graph":
+		// Try object_uri from params first, then build from target
+		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
+		}
+		args := map[string]any{"object_uri": objectURI}
+		if dir, ok := params["direction"].(string); ok {
+			args["direction"] = dir
+		}
+		if depth, ok := params["max_depth"].(float64); ok {
+			args["max_depth"] = depth
+		}
+		if max, ok := params["max_results"].(float64); ok {
+			args["max_results"] = max
+		}
+		if method, ok := params["method"].(string); ok {
+			args["method"] = method
+		}
+		// Use handleGetCallGraph for raw call graph, handleAnalyzeCallGraph for analyzed version
+		if analysisType == "get_call_graph" {
+			result, err := s.handleGetCallGraph(ctx, newRequest(args))
+			return result, true, err
+		}
+		result, err := s.handleAnalyzeCallGraph(ctx, newRequest(args))
+		return result, true, err
+
+	case "compare_call_graphs":
+		// Try object_uri from params first, then build from target
+		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		traceData, _ := params["trace_data"].(string)
+		if objectURI == "" || traceData == "" {
+			return newToolResultError("target or object_uri, and trace_data are required"), true, nil
+		}
+		result, err := s.handleCompareCallGraphs(ctx, newRequest(map[string]any{
+			"object_uri": objectURI,
+			"trace_data": traceData,
+		}))
+		return result, true, err
+
+	case "trace_execution":
+		// Try object_uri from params first, then build from target
+		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
+		}
+		args := map[string]any{"object_uri": objectURI}
+		if depth, ok := params["max_depth"].(float64); ok {
+			args["max_depth"] = depth
+		}
+		if runTests, ok := params["run_tests"].(bool); ok {
+			args["run_tests"] = runTests
+		}
+		if testURI, ok := params["test_object_uri"].(string); ok {
+			args["test_object_uri"] = testURI
+		}
+		if traceUser, ok := params["trace_user"].(string); ok {
+			args["trace_user"] = traceUser
+		}
+		result, err := s.handleTraceExecution(ctx, newRequest(args))
+		return result, true, err
+
+	case "callers":
+		// Try object_uri from params first, then build from target
+		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
+		}
+		args := map[string]any{"object_uri": objectURI}
+		if depth, ok := params["max_depth"].(float64); ok {
+			args["max_depth"] = depth
+		}
+		result, err := s.handleGetCallersOf(ctx, newRequest(args))
+		return result, true, err
+
+	case "callees":
+		// Try object_uri from params first, then build from target
+		objectURI, _ := params["object_uri"].(string)
+		if objectURI == "" {
+			objectURI = buildObjectURL(objectType, objectName)
+		}
+		if objectURI == "" {
+			return newToolResultError("target (e.g., 'CLAS ZCL_TEST') or object_uri in params is required"), true, nil
+		}
+		args := map[string]any{"object_uri": objectURI}
+		if depth, ok := params["max_depth"].(float64); ok {
+			args["max_depth"] = depth
+		}
+		result, err := s.handleGetCalleesOf(ctx, newRequest(args))
+		return result, true, err
+
+	case "structure":
+		// Try object_name from params first, then use objectName from target
+		name, _ := params["object_name"].(string)
+		if name == "" {
+			name = objectName
+		}
+		if name == "" {
+			return newToolResultError("target (e.g., 'ZCL_TEST') or object_name in params is required"), true, nil
+		}
+		args := map[string]any{"object_name": name}
+		if maxResults, ok := params["max_results"].(float64); ok {
+			args["max_results"] = maxResults
+		}
+		result, err := s.handleGetObjectStructure(ctx, newRequest(args))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
 
 // --- Code Analysis Infrastructure Handlers ---
 
@@ -34,14 +170,16 @@ func (s *Server) handleGetCallGraph(ctx context.Context, request mcp.CallToolReq
 	if max, ok := request.Params.Arguments["max_results"].(float64); ok && max > 0 {
 		opts.MaxResults = int(max)
 	}
+	if method, ok := request.Params.Arguments["method"].(string); ok {
+		opts.Method = method
+	}
 
 	graph, err := s.adtClient.GetCallGraph(ctx, objectURI, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get call graph: %v", err)), nil
+		return wrapErr("GetCallGraph", err), nil
 	}
 
-	result, _ := json.MarshalIndent(graph, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(graph), nil
 }
 
 func (s *Server) handleGetObjectStructure(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -57,11 +195,10 @@ func (s *Server) handleGetObjectStructure(ctx context.Context, request mcp.CallT
 
 	structure, err := s.adtClient.GetObjectStructureCAI(ctx, objectName, maxResults)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get object structure: %v", err)), nil
+		return wrapErr("GetObjectStructure", err), nil
 	}
 
-	result, _ := json.MarshalIndent(structure, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(structure), nil
 }
 
 func (s *Server) handleGetCallersOf(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -77,21 +214,18 @@ func (s *Server) handleGetCallersOf(ctx context.Context, request mcp.CallToolReq
 
 	graph, err := s.adtClient.GetCallersOf(ctx, objectURI, maxDepth)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get callers: %v", err)), nil
+		return wrapErr("GetCallersOf", err), nil
 	}
 
 	// Flatten to edges for easier consumption
 	edges := adt.FlattenCallGraph(graph)
 	stats := adt.AnalyzeCallGraph(graph)
 
-	output := map[string]interface{}{
+	return newToolResultJSON(map[string]any{
 		"root":  graph,
 		"edges": edges,
 		"stats": stats,
-	}
-
-	result, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	}), nil
 }
 
 func (s *Server) handleGetCalleesOf(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -107,21 +241,18 @@ func (s *Server) handleGetCalleesOf(ctx context.Context, request mcp.CallToolReq
 
 	graph, err := s.adtClient.GetCalleesOf(ctx, objectURI, maxDepth)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get callees: %v", err)), nil
+		return wrapErr("GetCalleesOf", err), nil
 	}
 
 	// Flatten to edges for easier consumption
 	edges := adt.FlattenCallGraph(graph)
 	stats := adt.AnalyzeCallGraph(graph)
 
-	output := map[string]interface{}{
+	return newToolResultJSON(map[string]any{
 		"root":  graph,
 		"edges": edges,
 		"stats": stats,
-	}
-
-	result, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	}), nil
 }
 
 func (s *Server) handleAnalyzeCallGraph(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -140,28 +271,31 @@ func (s *Server) handleAnalyzeCallGraph(ctx context.Context, request mcp.CallToo
 		maxDepth = int(depth)
 	}
 
+	method := ""
+	if m, ok := request.Params.Arguments["method"].(string); ok {
+		method = m
+	}
+
 	graph, err := s.adtClient.GetCallGraph(ctx, objectURI, &adt.CallGraphOptions{
 		Direction:  direction,
 		MaxDepth:   maxDepth,
 		MaxResults: 1000,
+		Method:     method,
 	})
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get call graph: %v", err)), nil
+		return wrapErr("AnalyzeCallGraph", err), nil
 	}
 
 	stats := adt.AnalyzeCallGraph(graph)
 	edges := adt.FlattenCallGraph(graph)
 
-	output := map[string]interface{}{
+	return newToolResultJSON(map[string]any{
 		"object_uri": objectURI,
 		"direction":  direction,
 		"stats":      stats,
 		"edge_count": len(edges),
 		"edges":      edges,
-	}
-
-	result, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	}), nil
 }
 
 func (s *Server) handleCompareCallGraphs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -178,7 +312,7 @@ func (s *Server) handleCompareCallGraphs(ctx context.Context, request mcp.CallTo
 	// Parse trace data
 	var actualEdges []adt.CallGraphEdge
 	if err := json.Unmarshal([]byte(traceDataStr), &actualEdges); err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to parse trace_data: %v", err)), nil
+		return wrapErr("ParseTraceData", err), nil
 	}
 
 	// Get static call graph
@@ -188,7 +322,7 @@ func (s *Server) handleCompareCallGraphs(ctx context.Context, request mcp.CallTo
 		MaxResults: 1000,
 	})
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get static call graph: %v", err)), nil
+		return wrapErr("GetStaticCallGraph", err), nil
 	}
 
 	staticEdges := adt.FlattenCallGraph(graph)
@@ -196,7 +330,7 @@ func (s *Server) handleCompareCallGraphs(ctx context.Context, request mcp.CallTo
 	// Compare
 	comparison := adt.CompareCallGraphs(staticEdges, actualEdges)
 
-	output := map[string]interface{}{
+	return newToolResultJSON(map[string]any{
 		"object_uri":     objectURI,
 		"static_edges":   len(staticEdges),
 		"actual_edges":   len(actualEdges),
@@ -207,10 +341,7 @@ func (s *Server) handleCompareCallGraphs(ctx context.Context, request mcp.CallTo
 		"common":         comparison.CommonEdges,
 		"static_only":    comparison.StaticOnly,
 		"actual_only":    comparison.ActualOnly,
-	}
-
-	result, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	}), nil
 }
 
 func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -244,11 +375,11 @@ func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolR
 
 	result, err := s.adtClient.TraceExecution(ctx, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Trace execution failed: %v", err)), nil
+		return wrapErr("TraceExecution", err), nil
 	}
 
 	// Build comprehensive output
-	output := map[string]interface{}{
+	output := map[string]any{
 		"object_uri": objectURI,
 	}
 
@@ -257,7 +388,7 @@ func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolR
 	}
 
 	if result.Trace != nil {
-		output["trace"] = map[string]interface{}{
+		output["trace"] = map[string]any{
 			"id":          result.Trace.TraceID,
 			"total_time":  result.Trace.TotalTime,
 			"total_calls": result.Trace.TotalCalls,
@@ -270,7 +401,7 @@ func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolR
 	}
 
 	if result.Comparison != nil {
-		output["comparison"] = map[string]interface{}{
+		output["comparison"] = map[string]any{
 			"common_edges":   len(result.Comparison.CommonEdges),
 			"untested_paths": len(result.Comparison.StaticOnly),
 			"dynamic_calls":  len(result.Comparison.ActualOnly),
@@ -286,6 +417,5 @@ func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolR
 
 	output["execution_time_us"] = result.ExecutionTime
 
-	jsonResult, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(jsonResult)), nil
+	return newToolResultJSON(output), nil
 }

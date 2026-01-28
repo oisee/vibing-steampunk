@@ -171,7 +171,7 @@ func TestSaveAndGetCheckpoint(t *testing.T) {
 	engine.SetOutput(&buf)
 
 	// Mock checkpoint by directly accessing engine
-	engine.checkpoints["test_cp"] = map[string]interface{}{
+	engine.checkpoints["test_cp"] = map[string]any{
 		"LV_VALUE": "hello",
 		"LV_COUNT": 42,
 	}
@@ -201,8 +201,8 @@ func TestListCheckpoints(t *testing.T) {
 	var buf bytes.Buffer
 	engine.SetOutput(&buf)
 
-	engine.checkpoints["cp1"] = map[string]interface{}{}
-	engine.checkpoints["cp2"] = map[string]interface{}{}
+	engine.checkpoints["cp1"] = map[string]any{}
+	engine.checkpoints["cp2"] = map[string]any{}
 
 	err := engine.Execute(`
 		local list = listCheckpoints()
@@ -259,7 +259,7 @@ func TestLuaToGo(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    lua.LValue
-		expected interface{}
+		expected any
 	}{
 		{"nil", lua.LNil, nil},
 		{"bool true", lua.LBool(true), true},
@@ -289,9 +289,9 @@ func TestLuaTableToGoArray(t *testing.T) {
 	tbl.RawSetInt(3, lua.LString("c"))
 
 	result := luaToGo(tbl)
-	arr, ok := result.([]interface{})
+	arr, ok := result.([]any)
 	if !ok {
-		t.Fatalf("expected []interface{}, got %T", result)
+		t.Fatalf("expected []any, got %T", result)
 	}
 	if len(arr) != 3 {
 		t.Errorf("expected 3 elements, got %d", len(arr))
@@ -307,9 +307,9 @@ func TestLuaTableToGoMap(t *testing.T) {
 	tbl.RawSetString("value", lua.LNumber(42))
 
 	result := luaToGo(tbl)
-	m, ok := result.(map[string]interface{})
+	m, ok := result.(map[string]any)
 	if !ok {
-		t.Fatalf("expected map[string]interface{}, got %T", result)
+		t.Fatalf("expected map[string]any, got %T", result)
 	}
 	if m["name"] != "test" {
 		t.Errorf("expected name='test', got %v", m["name"])
@@ -322,7 +322,7 @@ func TestGoToLua(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		input    interface{}
+		input    any
 		expected lua.LValueType
 	}{
 		{"nil", nil, lua.LTNil},
@@ -347,7 +347,7 @@ func TestGoSliceToLua(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	slice := []interface{}{"a", "b", "c"}
+	slice := []any{"a", "b", "c"}
 	result := goToLua(L, slice)
 
 	tbl, ok := result.(*lua.LTable)
@@ -363,7 +363,7 @@ func TestGoMapToLua(t *testing.T) {
 	L := lua.NewState()
 	defer L.Close()
 
-	m := map[string]interface{}{
+	m := map[string]any{
 		"name":  "test",
 		"value": 42,
 	}

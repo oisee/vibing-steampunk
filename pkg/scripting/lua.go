@@ -22,10 +22,10 @@ type LuaEngine struct {
 	ctx    context.Context
 	output io.Writer
 
-	// Checkpoints (for Force Replay)
-	checkpoints map[string]map[string]interface{}
+	// Checkpoints for state capture
+	checkpoints map[string]map[string]any
 
-	// Execution Recording (Phase 5.2)
+	// Execution recording for replay
 	recorder       *adt.ExecutionRecorder
 	historyManager *adt.HistoryManager
 	isRecording    bool
@@ -45,7 +45,7 @@ func NewLuaEngine(client *adt.Client) *LuaEngine {
 		client:      client,
 		ctx:         context.Background(),
 		output:      os.Stdout,
-		checkpoints: make(map[string]map[string]interface{}),
+		checkpoints: make(map[string]map[string]any),
 	}
 
 	engine.registerBuiltins()
@@ -162,9 +162,9 @@ Recording & Checkpoints:
   saveCheckpoint(name)            Save current state
   getCheckpoint(name)             Get saved state
   listCheckpoints()               List all checkpoints
-  injectCheckpoint(name)          Inject saved state (FORCE REPLAY!)
+  injectCheckpoint(name)          Inject saved state
 
-Execution Recording (Phase 5.2):
+Execution Recording:
   startRecording([session], [program])  Start recording execution
   stopRecording()                       Stop and get statistics
   getRecording()                        Get current recording info
@@ -178,7 +178,7 @@ History Navigation:
   loadRecording(id, [path])       Load a saved recording
   compareRecordings(id1, id2)     Compare two recordings
 
-Force Replay (Phase 5.5) - THE KILLER FEATURE:
+Force Replay:
   setVariable(name, value)        Modify variable in live session
   injectCheckpoint(name)          Inject all vars from checkpoint
   forceReplay(recordingId, [step]) Inject state from saved recording
@@ -256,7 +256,7 @@ func (e *LuaEngine) luaJSONEncode(L *lua.LState) int {
 func (e *LuaEngine) luaJSONDecode(L *lua.LState) int {
 	str := L.ToString(1)
 
-	var goVal interface{}
+	var goVal any
 	if err := jsonUnmarshal([]byte(str), &goVal); err != nil {
 		L.Push(lua.LNil)
 		L.Push(lua.LString(err.Error()))

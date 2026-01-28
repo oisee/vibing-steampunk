@@ -78,7 +78,7 @@ func (c *DebugWebSocketClient) RunReport(ctx context.Context, report string, var
 
 	rawMsg := map[string]any{
 		"id":      id,
-		"domain":  "rfc",
+		"domain":  "report",
 		"action":  "runReport",
 		"params":  paramsObj,
 		"timeout": 30000,
@@ -129,7 +129,7 @@ func (c *DebugWebSocketClient) RunReportSync(ctx context.Context, report string,
 
 	rawMsg := map[string]any{
 		"id":      id,
-		"domain":  "rfc",
+		"domain":  "report",
 		"action":  "runReport",
 		"params":  paramsObj,
 		"timeout": 30000,

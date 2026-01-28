@@ -12,6 +12,80 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// --- Legacy Debugger Routing ---
+// Routes for this module:
+//   debug: listen, attach, detach, step, get_stack, get_variables
+
+// routeDebuggerLegacyAction routes legacy REST-based debugger operations.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectType, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "debug" {
+		return nil, false, nil
+	}
+
+	debugType := strings.ToLower(objectType)
+	if debugType == "" {
+		if t, ok := params["type"].(string); ok {
+			debugType = strings.ToLower(t)
+		}
+	}
+
+	switch debugType {
+	case "listen":
+		args := map[string]any{}
+		if user, ok := params["user"].(string); ok {
+			args["user"] = user
+		}
+		if timeout, ok := params["timeout"].(float64); ok {
+			args["timeout"] = timeout
+		}
+		result, err := s.handleDebuggerListen(ctx, newRequest(args))
+		return result, true, err
+
+	case "attach":
+		debuggeeID, _ := params["debuggee_id"].(string)
+		if debuggeeID == "" {
+			return newToolResultError("debuggee_id is required in params"), true, nil
+		}
+		args := map[string]any{"debuggee_id": debuggeeID}
+		if user, ok := params["user"].(string); ok {
+			args["user"] = user
+		}
+		result, err := s.handleDebuggerAttach(ctx, newRequest(args))
+		return result, true, err
+
+	case "detach":
+		result, err := s.handleDebuggerDetach(ctx, newRequest(nil))
+		return result, true, err
+
+	case "step":
+		stepType, _ := params["step_type"].(string)
+		if stepType == "" {
+			return newToolResultError("step_type is required in params (stepInto, stepOver, stepReturn, stepContinue)"), true, nil
+		}
+		args := map[string]any{"step_type": stepType}
+		if uri, ok := params["uri"].(string); ok {
+			args["uri"] = uri
+		}
+		result, err := s.handleDebuggerStep(ctx, newRequest(args))
+		return result, true, err
+
+	case "get_stack":
+		result, err := s.handleDebuggerGetStack(ctx, newRequest(nil))
+		return result, true, err
+
+	case "get_variables":
+		args := map[string]any{}
+		if varIDs, ok := params["variable_ids"].([]any); ok {
+			args["variable_ids"] = varIDs
+		}
+		result, err := s.handleDebuggerGetVariables(ctx, newRequest(args))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
+
 // --- Legacy REST-based Debugger Handlers (fallback) ---
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -33,7 +107,7 @@ func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolR
 		TimeoutSeconds: timeout,
 	})
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerListen failed: %v", err)), nil
+		return wrapErr("DebuggerListen", err), nil
 	}
 
 	if result.TimedOut {
@@ -76,7 +150,7 @@ func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolR
 
 	result, err := s.adtClient.DebuggerAttach(ctx, debuggeeID, user)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerAttach failed: %v", err)), nil
+		return wrapErr("DebuggerAttach", err), nil
 	}
 
 	var sb strings.Builder
@@ -108,7 +182,7 @@ func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolR
 func (s *Server) handleDebuggerDetach(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	err := s.adtClient.DebuggerDetach(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerDetach failed: %v", err)), nil
+		return wrapErr("DebuggerDetach", err), nil
 	}
 
 	return mcp.NewToolResultText("Successfully detached from debug session."), nil
@@ -136,14 +210,14 @@ func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolReq
 	case "stepJumpToLine":
 		stepType = adt.DebugStepJumpToLine
 	default:
-		return newToolResultError(fmt.Sprintf("Invalid step_type: %s. Valid values: stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine", stepTypeStr)), nil
+		return newToolResultError("Invalid step_type: " + stepTypeStr + ". Valid values: stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine"), nil
 	}
 
 	uri, _ := request.Params.Arguments["uri"].(string)
 
 	result, err := s.adtClient.DebuggerStep(ctx, stepType, uri)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerStep failed: %v", err)), nil
+		return wrapErr("DebuggerStep", err), nil
 	}
 
 	var sb strings.Builder
@@ -166,7 +240,7 @@ func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolReq
 func (s *Server) handleDebuggerGetStack(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	result, err := s.adtClient.DebuggerGetStack(ctx, true)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerGetStack failed: %v", err)), nil
+		return wrapErr("DebuggerGetStack", err), nil
 	}
 
 	var sb strings.Builder
@@ -197,7 +271,7 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 	// Parse variable_ids from request
 	var variableIDs []string
 
-	if ids, ok := request.Params.Arguments["variable_ids"].([]interface{}); ok {
+	if ids, ok := request.Params.Arguments["variable_ids"].([]any); ok {
 		for _, id := range ids {
 			if s, ok := id.(string); ok {
 				variableIDs = append(variableIDs, s)
@@ -214,7 +288,7 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 	if len(variableIDs) == 1 && variableIDs[0] == "@ROOT" {
 		result, err := s.adtClient.DebuggerGetChildVariables(ctx, []string{"@ROOT", "@DATAAGING"})
 		if err != nil {
-			return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
+			return wrapErr("DebuggerGetVariables", err), nil
 		}
 
 		var sb strings.Builder
@@ -234,7 +308,7 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 	// Get specific variables
 	result, err := s.adtClient.DebuggerGetVariables(ctx, variableIDs)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
+		return wrapErr("DebuggerGetVariables", err), nil
 	}
 
 	var sb strings.Builder

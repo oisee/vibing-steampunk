@@ -30,9 +30,9 @@ func (c *AMDPWebSocketClient) GitTypes(ctx context.Context) ([]string, error) {
 
 // GitExportParams contains parameters for git export.
 type GitExportParams struct {
-	Packages           []string `json:"packages,omitempty"`
+	Packages           []string       `json:"packages,omitempty"`
 	Objects            []GitObjectRef `json:"objects,omitempty"`
-	IncludeSubpackages bool     `json:"includeSubpackages,omitempty"`
+	IncludeSubpackages bool           `json:"includeSubpackages,omitempty"`
 }
 
 // GitObjectRef identifies a single ABAP object.
@@ -43,10 +43,10 @@ type GitObjectRef struct {
 
 // GitExportResult contains the export result.
 type GitExportResult struct {
-	ObjectCount int             `json:"objectCount"`
-	FileCount   int             `json:"fileCount"`
-	ZipBase64   string          `json:"zipBase64"`
-	Files       []GitFileInfo   `json:"files"`
+	ObjectCount int           `json:"objectCount"`
+	FileCount   int           `json:"fileCount"`
+	ZipBase64   string        `json:"zipBase64"`
+	Files       []GitFileInfo `json:"files"`
 }
 
 // GitFileInfo describes a file in the export.
@@ -58,7 +58,7 @@ type GitFileInfo struct {
 // GitExport exports ABAP objects as abapGit-compatible ZIP.
 func (c *AMDPWebSocketClient) GitExport(ctx context.Context, params GitExportParams) (*GitExportResult, error) {
 	// Build params map
-	p := make(map[string]interface{})
+	p := make(map[string]any)
 	if len(params.Packages) > 0 {
 		p["packages"] = params.Packages
 	}
@@ -104,7 +104,7 @@ func (c *AMDPWebSocketClient) GitExportToBytes(ctx context.Context, params GitEx
 }
 
 // sendGitRequest sends a request to the git domain.
-func (c *AMDPWebSocketClient) sendGitRequest(ctx context.Context, action string, params map[string]interface{}) (*WSResponse, error) {
+func (c *AMDPWebSocketClient) sendGitRequest(ctx context.Context, action string, params map[string]any) (*WSResponse, error) {
 	c.mu.RLock()
 	if c.conn == nil {
 		c.mu.RUnlock()

@@ -91,9 +91,9 @@ WRITE 'Hello World'.`
 	transport := NewTransportWithClient(cfg, mock)
 	client := NewClientWithTransport(cfg, transport)
 
-	source, err := client.GetProgram(context.Background(), "ztest")
+	source, err := client.GetSource(context.Background(), "PROG", "ztest", nil)
 	if err != nil {
-		t.Fatalf("GetProgram failed: %v", err)
+		t.Fatalf("GetSource(PROG) failed: %v", err)
 	}
 
 	if !strings.Contains(source, "REPORT ztest") {
@@ -166,7 +166,7 @@ func TestClient_NameNormalization(t *testing.T) {
 	client := NewClientWithTransport(cfg, transport)
 
 	// Call with lowercase - should make request with uppercase
-	_, _ = client.GetProgram(context.Background(), "lowercase_program")
+	_, _ = client.GetSource(context.Background(), "PROG", "lowercase_program", nil)
 
 	// Check that the request used uppercase
 	found := false

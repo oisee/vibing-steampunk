@@ -28,7 +28,7 @@ var rootCmd = &cobra.Command{
 	Long: `vsp is a Model Context Protocol (MCP) server that provides
 ABAP Development Tools (ADT) functionality for AI assistants like Claude.
 
-It exposes 19 essential tools (focused mode, default) or 45 complete tools (expert mode) for reading, writing, and managing ABAP code in SAP systems.
+It exposes a single universal SAP tool that routes to 86+ internal operations for reading, writing, and managing ABAP code in SAP systems.
 
 Examples:
   # Using environment variables
@@ -47,86 +47,85 @@ Examples:
 	RunE:    runServer,
 }
 
+// stringFlag defines a string CLI flag
+type stringFlag struct {
+	name, shorthand, defaultValue, description string
+}
+
+// boolFlag defines a bool CLI flag
+type boolFlag struct {
+	name, shorthand, description string
+	defaultValue                 bool
+}
+
+// sliceFlag defines a string slice CLI flag
+type sliceFlag struct {
+	name, description string
+}
+
+var stringFlags = []stringFlag{
+	{"url", "", "", "SAP system URL (e.g., https://host:44300)"},
+	{"service", "", "", "SAP system URL (alias for --url)"},
+	{"user", "u", "", "SAP username"},
+	{"password", "p", "", "SAP password"},
+	{"pass", "", "", "SAP password (alias for --password)"},
+	{"client", "", "001", "SAP client number"},
+	{"language", "", "EN", "SAP language"},
+	{"cookie-file", "", "", "Path to cookie file in Netscape format"},
+	{"cookie-string", "", "", "Cookie string (key1=val1; key2=val2)"},
+	{"allowed-ops", "", "", "Whitelist of allowed operation types (e.g., \"RSQ\" for Read, Search, Query only)"},
+	{"disallowed-ops", "", "", "Blacklist of operation types to block (e.g., \"CDUA\" for Create, Delete, Update, Activate)"},
+	{"feature-abapgit", "", "auto", "abapGit integration: auto, on, off"},
+	{"feature-rap", "", "auto", "RAP/OData development: auto, on, off"},
+	{"feature-amdp", "", "auto", "AMDP/HANA debugger: auto, on, off"},
+	{"feature-ui5", "", "auto", "UI5/Fiori BSP management: auto, on, off"},
+	{"feature-transport", "", "auto", "CTS transport management: auto, on, off"},
+	{"terminal-id", "", "", "SAP GUI terminal ID for cross-tool breakpoint sharing"},
+}
+
+var boolFlags = []boolFlag{
+	{"insecure", "", "Skip TLS certificate verification", false},
+	{"read-only", "", "Block all write operations (create, update, delete, activate)", false},
+	{"block-free-sql", "", "Block execution of arbitrary SQL queries via RunQuery", false},
+	{"enable-transports", "", "Enable transport management operations (disabled by default for safety)", false},
+	{"transport-read-only", "", "Only allow read operations on transports (list, get)", false},
+	{"verbose", "v", "Enable verbose output to stderr", false},
+}
+
+var sliceFlags = []sliceFlag{
+	{"allowed-packages", "Restrict operations to specific packages (comma-separated, supports wildcards like Z*)"},
+	{"allowed-transports", "Restrict transport operations to specific transports (comma-separated, supports wildcards like A4HK*)"},
+}
+
 func init() {
-	// Load .env file if it exists
-	godotenv.Load()
+	// Load .env file if it exists (ignore error - file is optional)
+	_ = godotenv.Load()
 
-	// Service URL
-	rootCmd.Flags().StringVar(&cfg.BaseURL, "url", "", "SAP system URL (e.g., https://host:44300)")
-	rootCmd.Flags().StringVar(&cfg.BaseURL, "service", "", "SAP system URL (alias for --url)")
+	// Register string flags
+	for _, f := range stringFlags {
+		if f.shorthand != "" {
+			rootCmd.Flags().StringP(f.name, f.shorthand, f.defaultValue, f.description)
+		} else {
+			rootCmd.Flags().String(f.name, f.defaultValue, f.description)
+		}
+		_ = viper.BindPFlag(f.name, rootCmd.Flags().Lookup(f.name))
+	}
 
-	// Authentication flags
-	rootCmd.Flags().StringVarP(&cfg.Username, "user", "u", "", "SAP username")
-	rootCmd.Flags().StringVarP(&cfg.Password, "password", "p", "", "SAP password")
-	rootCmd.Flags().StringVar(&cfg.Password, "pass", "", "SAP password (alias for --password)")
+	// Register bool flags
+	for _, f := range boolFlags {
+		if f.shorthand != "" {
+			rootCmd.Flags().BoolP(f.name, f.shorthand, f.defaultValue, f.description)
+		} else {
+			rootCmd.Flags().Bool(f.name, f.defaultValue, f.description)
+		}
+		_ = viper.BindPFlag(f.name, rootCmd.Flags().Lookup(f.name))
+	}
 
-	// SAP connection options
-	rootCmd.Flags().StringVar(&cfg.Client, "client", "001", "SAP client number")
-	rootCmd.Flags().StringVar(&cfg.Language, "language", "EN", "SAP language")
-	rootCmd.Flags().BoolVar(&cfg.InsecureSkipVerify, "insecure", false, "Skip TLS certificate verification")
-
-	// Cookie authentication
-	rootCmd.Flags().String("cookie-file", "", "Path to cookie file in Netscape format")
-	rootCmd.Flags().String("cookie-string", "", "Cookie string (key1=val1; key2=val2)")
-
-	// Safety options
-	rootCmd.Flags().BoolVar(&cfg.ReadOnly, "read-only", false, "Block all write operations (create, update, delete, activate)")
-	rootCmd.Flags().BoolVar(&cfg.BlockFreeSQL, "block-free-sql", false, "Block execution of arbitrary SQL queries via RunQuery")
-	rootCmd.Flags().StringVar(&cfg.AllowedOps, "allowed-ops", "", "Whitelist of allowed operation types (e.g., \"RSQ\" for Read, Search, Query only)")
-	rootCmd.Flags().StringVar(&cfg.DisallowedOps, "disallowed-ops", "", "Blacklist of operation types to block (e.g., \"CDUA\" for Create, Delete, Update, Activate)")
-	rootCmd.Flags().StringSliceVar(&cfg.AllowedPackages, "allowed-packages", nil, "Restrict operations to specific packages (comma-separated, supports wildcards like Z*)")
-	rootCmd.Flags().BoolVar(&cfg.EnableTransports, "enable-transports", false, "Enable transport management operations (disabled by default for safety)")
-	rootCmd.Flags().BoolVar(&cfg.TransportReadOnly, "transport-read-only", false, "Only allow read operations on transports (list, get)")
-	rootCmd.Flags().StringSliceVar(&cfg.AllowedTransports, "allowed-transports", nil, "Restrict transport operations to specific transports (comma-separated, supports wildcards like A4HK*)")
-
-	// Mode options
-	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (19 essential tools) or expert (all 45 tools)")
-	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug (e.g., \"TH\" disables Tests and HANA)")
-
-	// Feature configuration (safety network)
-	// Values: "auto" (default), "on", "off"
-	rootCmd.Flags().StringVar(&cfg.FeatureAbapGit, "feature-abapgit", "auto", "abapGit integration: auto, on, off")
-	rootCmd.Flags().StringVar(&cfg.FeatureRAP, "feature-rap", "auto", "RAP/OData development: auto, on, off")
-	rootCmd.Flags().StringVar(&cfg.FeatureAMDP, "feature-amdp", "auto", "AMDP/HANA debugger: auto, on, off")
-	rootCmd.Flags().StringVar(&cfg.FeatureUI5, "feature-ui5", "auto", "UI5/Fiori BSP management: auto, on, off")
-	rootCmd.Flags().StringVar(&cfg.FeatureTransport, "feature-transport", "auto", "CTS transport management: auto, on, off")
-
-	// Debugger configuration
-	rootCmd.Flags().StringVar(&cfg.TerminalID, "terminal-id", "", "SAP GUI terminal ID for cross-tool breakpoint sharing")
-
-	// Output options
-	rootCmd.Flags().BoolVarP(&cfg.Verbose, "verbose", "v", false, "Enable verbose output to stderr")
-
-	// Bind flags to viper for environment variable support
-	viper.BindPFlag("url", rootCmd.Flags().Lookup("url"))
-	viper.BindPFlag("user", rootCmd.Flags().Lookup("user"))
-	viper.BindPFlag("password", rootCmd.Flags().Lookup("password"))
-	viper.BindPFlag("client", rootCmd.Flags().Lookup("client"))
-	viper.BindPFlag("language", rootCmd.Flags().Lookup("language"))
-	viper.BindPFlag("insecure", rootCmd.Flags().Lookup("insecure"))
-	viper.BindPFlag("cookie-file", rootCmd.Flags().Lookup("cookie-file"))
-	viper.BindPFlag("cookie-string", rootCmd.Flags().Lookup("cookie-string"))
-	viper.BindPFlag("read-only", rootCmd.Flags().Lookup("read-only"))
-	viper.BindPFlag("block-free-sql", rootCmd.Flags().Lookup("block-free-sql"))
-	viper.BindPFlag("allowed-ops", rootCmd.Flags().Lookup("allowed-ops"))
-	viper.BindPFlag("disallowed-ops", rootCmd.Flags().Lookup("disallowed-ops"))
-	viper.BindPFlag("allowed-packages", rootCmd.Flags().Lookup("allowed-packages"))
-	viper.BindPFlag("enable-transports", rootCmd.Flags().Lookup("enable-transports"))
-	viper.BindPFlag("transport-read-only", rootCmd.Flags().Lookup("transport-read-only"))
-	viper.BindPFlag("allowed-transports", rootCmd.Flags().Lookup("allowed-transports"))
-	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
-	viper.BindPFlag("disabled-groups", rootCmd.Flags().Lookup("disabled-groups"))
-	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
-
-	// Feature configuration
-	viper.BindPFlag("feature-abapgit", rootCmd.Flags().Lookup("feature-abapgit"))
-	viper.BindPFlag("feature-rap", rootCmd.Flags().Lookup("feature-rap"))
-	viper.BindPFlag("feature-amdp", rootCmd.Flags().Lookup("feature-amdp"))
-	viper.BindPFlag("feature-ui5", rootCmd.Flags().Lookup("feature-ui5"))
-	viper.BindPFlag("feature-transport", rootCmd.Flags().Lookup("feature-transport"))
-
-	// Debugger configuration
-	viper.BindPFlag("terminal-id", rootCmd.Flags().Lookup("terminal-id"))
+	// Register slice flags
+	for _, f := range sliceFlags {
+		rootCmd.Flags().StringSlice(f.name, nil, f.description)
+		_ = viper.BindPFlag(f.name, rootCmd.Flags().Lookup(f.name))
+	}
 
 	// Set up environment variable mapping
 	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
@@ -134,7 +133,7 @@ func init() {
 	viper.SetEnvPrefix("SAP")
 }
 
-func runServer(cmd *cobra.Command, args []string) error {
+func runServer(cmd *cobra.Command, _ []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
@@ -148,48 +147,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Set verbose log output for feature probing
+	// Verbose startup logging
 	if cfg.Verbose {
 		adt.SetLogOutput(os.Stderr)
-	}
-
-	if cfg.Verbose {
-		fmt.Fprintf(os.Stderr, "[VERBOSE] Starting vsp server\n")
-		fmt.Fprintf(os.Stderr, "[VERBOSE] Mode: %s\n", cfg.Mode)
-		if cfg.DisabledGroups != "" {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Disabled groups: %s (5/U=UI5, T=Tests, H=HANA, D=Debug)\n", cfg.DisabledGroups)
-		}
-		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP URL: %s\n", cfg.BaseURL)
-		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Client: %s\n", cfg.Client)
-		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Language: %s\n", cfg.Language)
-		if cfg.Username != "" {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: Basic (user: %s)\n", cfg.Username)
-		} else if len(cfg.Cookies) > 0 {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: Cookie (%d cookies)\n", len(cfg.Cookies))
-		}
-
-		// Safety status
-		if cfg.ReadOnly {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: READ-ONLY mode enabled\n")
-		}
-		if cfg.BlockFreeSQL {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Free SQL queries BLOCKED\n")
-		}
-		if cfg.AllowedOps != "" {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Allowed operations: %s\n", cfg.AllowedOps)
-		}
-		if cfg.DisallowedOps != "" {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Disallowed operations: %s\n", cfg.DisallowedOps)
-		}
-		if len(cfg.AllowedPackages) > 0 {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Allowed packages: %v\n", cfg.AllowedPackages)
-		}
-		if cfg.EnableTransports {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Transport management ENABLED\n")
-		}
-		if !cfg.ReadOnly && !cfg.BlockFreeSQL && cfg.AllowedOps == "" && cfg.DisallowedOps == "" && len(cfg.AllowedPackages) == 0 {
-			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: UNRESTRICTED (no safety checks active)\n")
-		}
+		logStartupInfo()
 	}
 
 	// Create and start MCP server
@@ -197,138 +158,168 @@ func runServer(cmd *cobra.Command, args []string) error {
 	return server.ServeStdio()
 }
 
+// logStartupInfo outputs verbose startup information
+func logStartupInfo() {
+	fmt.Fprintf(os.Stderr, "[VERBOSE] Starting vsp server (unified mode - 1 SAP tool)\n")
+	fmt.Fprintf(os.Stderr, "[VERBOSE] SAP URL: %s\n", cfg.BaseURL)
+	fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Client: %s\n", cfg.Client)
+	fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Language: %s\n", cfg.Language)
+
+	if cfg.Username != "" {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: Basic (user: %s)\n", cfg.Username)
+	} else if len(cfg.Cookies) > 0 {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: Cookie (%d cookies)\n", len(cfg.Cookies))
+	}
+
+	logSafetyStatus()
+}
+
+// logSafetyStatus outputs verbose safety configuration
+func logSafetyStatus() {
+	if cfg.ReadOnly {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: READ-ONLY mode enabled\n")
+	}
+	if cfg.BlockFreeSQL {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Free SQL queries BLOCKED\n")
+	}
+	if cfg.AllowedOps != "" {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Allowed operations: %s\n", cfg.AllowedOps)
+	}
+	if cfg.DisallowedOps != "" {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Disallowed operations: %s\n", cfg.DisallowedOps)
+	}
+	if len(cfg.AllowedPackages) > 0 {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Allowed packages: %v\n", cfg.AllowedPackages)
+	}
+	if cfg.EnableTransports {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Transport management ENABLED\n")
+	}
+	if !cfg.ReadOnly && !cfg.BlockFreeSQL && cfg.AllowedOps == "" && cfg.DisallowedOps == "" && len(cfg.AllowedPackages) == 0 {
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: UNRESTRICTED (no safety checks active)\n")
+	}
+}
+
 func resolveConfig(cmd *cobra.Command) {
-	// Check if cookie auth is explicitly requested via CLI flags OR env vars
-	// If so, we should NOT load user/password from env/.env to avoid conflicts
-	// Cookie auth takes precedence over basic auth since it's more explicit
+	hasCookieAuth := detectCookieAuth(cmd)
+	resolveConnectionConfig(cmd, hasCookieAuth)
+	resolveSafetyConfig(cmd)
+	resolveFeatureConfig(cmd)
+}
+
+// detectCookieAuth checks if cookie authentication is requested
+func detectCookieAuth(cmd *cobra.Command) bool {
 	cookieAuthViaCLI := cmd.Flags().Changed("cookie-file") || cmd.Flags().Changed("cookie-string")
 	cookieAuthViaEnv := viper.GetString("COOKIE_FILE") != "" || viper.GetString("COOKIE_STRING") != ""
-	hasCookieAuth := cookieAuthViaCLI || cookieAuthViaEnv
+	return cookieAuthViaCLI || cookieAuthViaEnv
+}
 
-	// URL: flag > SAP_URL env
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = viper.GetString("URL")
-	}
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = viper.GetString("SERVICE_URL")
-	}
+// resolveConnectionConfig resolves URL, auth, and connection settings
+func resolveConnectionConfig(cmd *cobra.Command, hasCookieAuth bool) {
+	// URL: flag > SAP_URL > SAP_SERVICE_URL
+	cfg.BaseURL = getFirstNonEmpty("URL", "SERVICE_URL")
 
-	// Username: flag > SAP_USER env (skip if cookie auth is present)
-	if cfg.Username == "" && !hasCookieAuth {
-		cfg.Username = viper.GetString("USER")
-	}
-	if cfg.Username == "" && !hasCookieAuth {
-		cfg.Username = viper.GetString("USERNAME")
-	}
-
-	// Password: flag > SAP_PASSWORD env (skip if cookie auth is present)
-	if cfg.Password == "" && !hasCookieAuth {
-		cfg.Password = viper.GetString("PASSWORD")
-	}
-	if cfg.Password == "" && !hasCookieAuth {
-		cfg.Password = viper.GetString("PASS")
+	// Username/Password: skip if cookie auth is present
+	if !hasCookieAuth {
+		if cfg.Username == "" {
+			cfg.Username = getFirstNonEmpty("USER", "USERNAME")
+		}
+		if cfg.Password == "" {
+			cfg.Password = getFirstNonEmpty("PASSWORD", "PASS")
+		}
 	}
 
-	// Client: flag > SAP_CLIENT env > default
+	// Client: flag > env > default
 	if !cmd.Flags().Changed("client") {
-		if envClient := viper.GetString("CLIENT"); envClient != "" {
-			cfg.Client = envClient
+		if v := viper.GetString("CLIENT"); v != "" {
+			cfg.Client = v
 		}
+	} else {
+		cfg.Client, _ = cmd.Flags().GetString("client")
 	}
 
-	// Language: flag > SAP_LANGUAGE env > default
+	// Language: flag > env > default
 	if !cmd.Flags().Changed("language") {
-		if envLang := viper.GetString("LANGUAGE"); envLang != "" {
-			cfg.Language = envLang
+		if v := viper.GetString("LANGUAGE"); v != "" {
+			cfg.Language = v
 		}
+	} else {
+		cfg.Language, _ = cmd.Flags().GetString("language")
 	}
 
-	// Insecure: flag > SAP_INSECURE env
+	// Simple bool/string from env if flag not changed
 	if !cmd.Flags().Changed("insecure") {
 		cfg.InsecureSkipVerify = viper.GetBool("INSECURE")
+	} else {
+		cfg.InsecureSkipVerify, _ = cmd.Flags().GetBool("insecure")
 	}
 
-	// Mode: flag > SAP_MODE env > default (focused)
-	if !cmd.Flags().Changed("mode") {
-		if envMode := viper.GetString("MODE"); envMode != "" {
-			cfg.Mode = envMode
-		}
-	}
-
-	// DisabledGroups: flag > SAP_DISABLED_GROUPS env
-	if !cmd.Flags().Changed("disabled-groups") {
-		if envGroups := viper.GetString("DISABLED_GROUPS"); envGroups != "" {
-			cfg.DisabledGroups = envGroups
-		}
-	}
-
-	// Verbose: flag > SAP_VERBOSE env
 	if !cmd.Flags().Changed("verbose") {
 		cfg.Verbose = viper.GetBool("VERBOSE")
+	} else {
+		cfg.Verbose, _ = cmd.Flags().GetBool("verbose")
 	}
+}
 
-	// Safety options: flag > SAP_* env
-	if !cmd.Flags().Changed("read-only") {
-		cfg.ReadOnly = viper.GetBool("READ_ONLY")
-	}
-	if !cmd.Flags().Changed("block-free-sql") {
-		cfg.BlockFreeSQL = viper.GetBool("BLOCK_FREE_SQL")
-	}
-	if !cmd.Flags().Changed("allowed-ops") {
-		cfg.AllowedOps = viper.GetString("ALLOWED_OPS")
-	}
-	if !cmd.Flags().Changed("disallowed-ops") {
-		cfg.DisallowedOps = viper.GetString("DISALLOWED_OPS")
-	}
-	if !cmd.Flags().Changed("allowed-packages") {
-		if pkgs := viper.GetStringSlice("ALLOWED_PACKAGES"); len(pkgs) > 0 {
-			cfg.AllowedPackages = pkgs
-		}
-	}
-	if !cmd.Flags().Changed("enable-transports") {
-		cfg.EnableTransports = viper.GetBool("ENABLE_TRANSPORTS")
-	}
-	if !cmd.Flags().Changed("transport-read-only") {
-		cfg.TransportReadOnly = viper.GetBool("TRANSPORT_READ_ONLY")
-	}
-	if !cmd.Flags().Changed("allowed-transports") {
-		if transports := viper.GetStringSlice("ALLOWED_TRANSPORTS"); len(transports) > 0 {
-			cfg.AllowedTransports = transports
-		}
-	}
+// resolveSafetyConfig resolves safety-related settings
+func resolveSafetyConfig(cmd *cobra.Command) {
+	resolveBool(cmd, "read-only", "READ_ONLY", &cfg.ReadOnly)
+	resolveBool(cmd, "block-free-sql", "BLOCK_FREE_SQL", &cfg.BlockFreeSQL)
+	resolveBool(cmd, "enable-transports", "ENABLE_TRANSPORTS", &cfg.EnableTransports)
+	resolveBool(cmd, "transport-read-only", "TRANSPORT_READ_ONLY", &cfg.TransportReadOnly)
 
-	// Feature configuration: flag > SAP_FEATURE_* env
-	if !cmd.Flags().Changed("feature-abapgit") {
-		if v := viper.GetString("FEATURE_ABAPGIT"); v != "" {
-			cfg.FeatureAbapGit = v
-		}
-	}
-	if !cmd.Flags().Changed("feature-rap") {
-		if v := viper.GetString("FEATURE_RAP"); v != "" {
-			cfg.FeatureRAP = v
-		}
-	}
-	if !cmd.Flags().Changed("feature-amdp") {
-		if v := viper.GetString("FEATURE_AMDP"); v != "" {
-			cfg.FeatureAMDP = v
-		}
-	}
-	if !cmd.Flags().Changed("feature-ui5") {
-		if v := viper.GetString("FEATURE_UI5"); v != "" {
-			cfg.FeatureUI5 = v
-		}
-	}
-	if !cmd.Flags().Changed("feature-transport") {
-		if v := viper.GetString("FEATURE_TRANSPORT"); v != "" {
-			cfg.FeatureTransport = v
-		}
-	}
+	resolveString(cmd, "allowed-ops", "ALLOWED_OPS", &cfg.AllowedOps)
+	resolveString(cmd, "disallowed-ops", "DISALLOWED_OPS", &cfg.DisallowedOps)
 
-	// Terminal ID for debugger: flag > SAP_TERMINAL_ID env
-	if !cmd.Flags().Changed("terminal-id") {
-		if v := viper.GetString("TERMINAL_ID"); v != "" {
-			cfg.TerminalID = v
+	resolveStringSlice(cmd, "allowed-packages", "ALLOWED_PACKAGES", &cfg.AllowedPackages)
+	resolveStringSlice(cmd, "allowed-transports", "ALLOWED_TRANSPORTS", &cfg.AllowedTransports)
+}
+
+// resolveFeatureConfig resolves feature flag settings
+func resolveFeatureConfig(cmd *cobra.Command) {
+	resolveString(cmd, "feature-abapgit", "FEATURE_ABAPGIT", &cfg.FeatureAbapGit)
+	resolveString(cmd, "feature-rap", "FEATURE_RAP", &cfg.FeatureRAP)
+	resolveString(cmd, "feature-amdp", "FEATURE_AMDP", &cfg.FeatureAMDP)
+	resolveString(cmd, "feature-ui5", "FEATURE_UI5", &cfg.FeatureUI5)
+	resolveString(cmd, "feature-transport", "FEATURE_TRANSPORT", &cfg.FeatureTransport)
+	resolveString(cmd, "terminal-id", "TERMINAL_ID", &cfg.TerminalID)
+}
+
+// Helper functions for config resolution
+
+func getFirstNonEmpty(keys ...string) string {
+	for _, key := range keys {
+		if v := viper.GetString(key); v != "" {
+			return v
 		}
+	}
+	return ""
+}
+
+func resolveBool(cmd *cobra.Command, flag, envKey string, target *bool) {
+	if !cmd.Flags().Changed(flag) {
+		*target = viper.GetBool(envKey)
+	} else {
+		*target, _ = cmd.Flags().GetBool(flag)
+	}
+}
+
+func resolveString(cmd *cobra.Command, flag, envKey string, target *string) {
+	if !cmd.Flags().Changed(flag) {
+		if v := viper.GetString(envKey); v != "" {
+			*target = v
+		}
+	} else {
+		*target, _ = cmd.Flags().GetString(flag)
+	}
+}
+
+func resolveStringSlice(cmd *cobra.Command, flag, envKey string, target *[]string) {
+	if !cmd.Flags().Changed(flag) {
+		if v := viper.GetStringSlice(envKey); len(v) > 0 {
+			*target = v
+		}
+	} else {
+		*target, _ = cmd.Flags().GetStringSlice(flag)
 	}
 }
 
@@ -336,28 +327,12 @@ func validateConfig() error {
 	if cfg.BaseURL == "" {
 		return fmt.Errorf("SAP URL is required. Use --url flag or SAP_URL environment variable")
 	}
-
-	// Validate mode
-	if cfg.Mode != "focused" && cfg.Mode != "expert" {
-		return fmt.Errorf("invalid mode: %s (must be 'focused' or 'expert')", cfg.Mode)
-	}
-
-	// Check if we have either basic auth or cookies will be processed
-	// Cookies are checked later in processCookieAuth
 	return nil
 }
 
 func processCookieAuth(cmd *cobra.Command) error {
-	cookieFile, _ := cmd.Flags().GetString("cookie-file")
-	cookieString, _ := cmd.Flags().GetString("cookie-string")
-
-	// Check environment variables if flags not provided
-	if cookieFile == "" {
-		cookieFile = viper.GetString("COOKIE_FILE")
-	}
-	if cookieString == "" {
-		cookieString = viper.GetString("COOKIE_STRING")
-	}
+	cookieFile := getStringFlag(cmd, "cookie-file", "COOKIE_FILE")
+	cookieString := getStringFlag(cmd, "cookie-string", "COOKIE_STRING")
 
 	// Count authentication methods
 	authMethods := 0
@@ -381,19 +356,10 @@ func processCookieAuth(cmd *cobra.Command) error {
 
 	// Process cookie file
 	if cookieFile != "" {
-		if _, err := os.Stat(cookieFile); os.IsNotExist(err) {
-			return fmt.Errorf("cookie file not found: %s", cookieFile)
-		}
-
-		cookies, err := adt.LoadCookiesFromFile(cookieFile)
+		cookies, err := loadCookieFile(cookieFile)
 		if err != nil {
-			return fmt.Errorf("failed to load cookies from file: %w", err)
+			return err
 		}
-
-		if len(cookies) == 0 {
-			return fmt.Errorf("no cookies found in file: %s", cookieFile)
-		}
-
 		cfg.Cookies = cookies
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Loaded %d cookies from file: %s\n", len(cookies), cookieFile)
@@ -406,7 +372,6 @@ func processCookieAuth(cmd *cobra.Command) error {
 		if len(cookies) == 0 {
 			return fmt.Errorf("failed to parse cookie string")
 		}
-
 		cfg.Cookies = cookies
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Parsed %d cookies from string\n", len(cookies))
@@ -414,6 +379,30 @@ func processCookieAuth(cmd *cobra.Command) error {
 	}
 
 	return nil
+}
+
+func getStringFlag(cmd *cobra.Command, flag, envKey string) string {
+	if v, _ := cmd.Flags().GetString(flag); v != "" {
+		return v
+	}
+	return viper.GetString(envKey)
+}
+
+func loadCookieFile(path string) (map[string]string, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("cookie file not found: %s", path)
+	}
+
+	cookies, err := adt.LoadCookiesFromFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load cookies from file: %w", err)
+	}
+
+	if len(cookies) == 0 {
+		return nil, fmt.Errorf("no cookies found in file: %s", path)
+	}
+
+	return cookies, nil
 }
 
 func main() {

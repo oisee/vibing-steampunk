@@ -5,13 +5,141 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- Code Intelligence Routing ---
+// Routes for this module:
+//   analyze: type=definition, type=completion, type=pretty_print, type=class_components, type=type_hierarchy, type=references
+//   system: type=pretty_printer_settings, type=inactive_objects
+//   edit: type=set_pretty_printer_settings
+
+// routeCodeIntelAction routes code intelligence actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeCodeIntelAction(ctx context.Context, action, objectType, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch action {
+	case "analyze":
+		analysisType, _ := params["type"].(string)
+		switch analysisType {
+		case "definition":
+			sourceURL, _ := params["source_url"].(string)
+			source, _ := params["source"].(string)
+			line, _ := params["line"].(float64)
+			startCol, _ := params["start_column"].(float64)
+			endCol, _ := params["end_column"].(float64)
+			if sourceURL == "" || source == "" {
+				return newToolResultError("source_url and source are required for definition"), true, nil
+			}
+			args := map[string]any{
+				"source_url":   sourceURL,
+				"source":       source,
+				"line":         line,
+				"start_column": startCol,
+				"end_column":   endCol,
+			}
+			if impl, ok := params["implementation"].(bool); ok {
+				args["implementation"] = impl
+			}
+			if mp, ok := params["main_program"].(string); ok {
+				args["main_program"] = mp
+			}
+			result, err := s.handleFindDefinition(ctx, newRequest(args))
+			return result, true, err
+
+		case "completion":
+			sourceURL, _ := params["source_url"].(string)
+			source, _ := params["source"].(string)
+			line, _ := params["line"].(float64)
+			column, _ := params["column"].(float64)
+			if sourceURL == "" || source == "" {
+				return newToolResultError("source_url and source are required for completion"), true, nil
+			}
+			result, err := s.handleCodeCompletion(ctx, newRequest(map[string]any{
+				"source_url": sourceURL,
+				"source":     source,
+				"line":       line,
+				"column":     column,
+			}))
+			return result, true, err
+
+		case "pretty_print":
+			source, _ := params["source"].(string)
+			if source == "" {
+				return newToolResultError("source is required for pretty_print"), true, nil
+			}
+			result, err := s.handlePrettyPrint(ctx, newRequest(map[string]any{"source": source}))
+			return result, true, err
+
+		case "class_components":
+			classURL, _ := params["class_url"].(string)
+			if classURL == "" {
+				return newToolResultError("class_url is required for class_components"), true, nil
+			}
+			result, err := s.handleGetClassComponents(ctx, newRequest(map[string]any{"class_url": classURL}))
+			return result, true, err
+
+		case "type_hierarchy":
+			sourceURL, _ := params["source_url"].(string)
+			source, _ := params["source"].(string)
+			line, _ := params["line"].(float64)
+			column, _ := params["column"].(float64)
+			if sourceURL == "" || source == "" {
+				return newToolResultError("source_url and source are required for type_hierarchy"), true, nil
+			}
+			args := map[string]any{
+				"source_url": sourceURL,
+				"source":     source,
+				"line":       line,
+				"column":     column,
+			}
+			if superTypes, ok := params["super_types"].(bool); ok {
+				args["super_types"] = superTypes
+			}
+			result, err := s.handleGetTypeHierarchy(ctx, newRequest(args))
+			return result, true, err
+
+		case "references":
+			objectURL, _ := params["object_url"].(string)
+			if objectURL == "" {
+				return newToolResultError("object_url is required for references"), true, nil
+			}
+			result, err := s.handleFindReferences(ctx, newRequest(map[string]any{"object_url": objectURL}))
+			return result, true, err
+		}
+
+	case "system":
+		systemType, _ := params["type"].(string)
+		switch systemType {
+		case "pretty_printer_settings":
+			result, err := s.handleGetPrettyPrinterSettings(ctx, newRequest(nil))
+			return result, true, err
+		case "inactive_objects":
+			result, err := s.handleGetInactiveObjects(ctx, newRequest(nil))
+			return result, true, err
+		}
+
+	case "edit":
+		editType, _ := params["type"].(string)
+		if editType == "set_pretty_printer_settings" {
+			indentation, _ := params["indentation"].(bool)
+			style, _ := params["style"].(string)
+			if style == "" {
+				return newToolResultError("style is required for set_pretty_printer_settings"), true, nil
+			}
+			result, err := s.handleSetPrettyPrinterSettings(ctx, newRequest(map[string]any{
+				"indentation": indentation,
+				"style":       style,
+			}))
+			return result, true, err
+		}
+	}
+
+	return nil, false, nil
+}
 
 // --- Code Intelligence Handlers ---
 
@@ -56,11 +184,9 @@ func (s *Server) handleFindDefinition(ctx context.Context, request mcp.CallToolR
 
 	result, err := s.adtClient.FindDefinition(ctx, sourceURL, source, line, startCol, endCol, implementation, mainProgram)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("FindDefinition failed: %v", err)), nil
+		return wrapErr("FindDefinition", err), nil
 	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(result), nil
 }
 
 func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -80,11 +206,9 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 
 	results, err := s.adtClient.FindReferences(ctx, objectURL, line, column)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("FindReferences failed: %v", err)), nil
+		return wrapErr("FindReferences", err), nil
 	}
-
-	output, _ := json.MarshalIndent(results, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(results), nil
 }
 
 func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -112,11 +236,9 @@ func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolR
 
 	proposals, err := s.adtClient.CodeCompletion(ctx, sourceURL, source, line, column)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("CodeCompletion failed: %v", err)), nil
+		return wrapErr("CodeCompletion", err), nil
 	}
-
-	output, _ := json.MarshalIndent(proposals, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(proposals), nil
 }
 
 func (s *Server) handlePrettyPrint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -127,20 +249,17 @@ func (s *Server) handlePrettyPrint(ctx context.Context, request mcp.CallToolRequ
 
 	formatted, err := s.adtClient.PrettyPrint(ctx, source)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("PrettyPrint failed: %v", err)), nil
+		return wrapErr("PrettyPrint", err), nil
 	}
-
 	return mcp.NewToolResultText(formatted), nil
 }
 
-func (s *Server) handleGetPrettyPrinterSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetPrettyPrinterSettings(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	settings, err := s.adtClient.GetPrettyPrinterSettings(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetPrettyPrinterSettings failed: %v", err)), nil
+		return wrapErr("GetPrettyPrinterSettings", err), nil
 	}
-
-	output, _ := json.MarshalIndent(settings, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(settings), nil
 }
 
 func (s *Server) handleSetPrettyPrinterSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -161,9 +280,8 @@ func (s *Server) handleSetPrettyPrinterSettings(ctx context.Context, request mcp
 
 	err := s.adtClient.SetPrettyPrinterSettings(ctx, settings)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("SetPrettyPrinterSettings failed: %v", err)), nil
+		return wrapErr("SetPrettyPrinterSettings", err), nil
 	}
-
 	return mcp.NewToolResultText("Pretty printer settings updated successfully"), nil
 }
 
@@ -197,11 +315,9 @@ func (s *Server) handleGetTypeHierarchy(ctx context.Context, request mcp.CallToo
 
 	hierarchy, err := s.adtClient.GetTypeHierarchy(ctx, sourceURL, source, line, column, superTypes)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetTypeHierarchy failed: %v", err)), nil
+		return wrapErr("GetTypeHierarchy", err), nil
 	}
-
-	output, _ := json.MarshalIndent(hierarchy, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(hierarchy), nil
 }
 
 func (s *Server) handleGetClassComponents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -212,7 +328,7 @@ func (s *Server) handleGetClassComponents(ctx context.Context, request mcp.CallT
 
 	components, err := s.adtClient.GetClassComponents(ctx, classURL)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetClassComponents failed: %v", err)), nil
+		return wrapErr("GetClassComponents", err), nil
 	}
 
 	// Format output with summary
@@ -317,10 +433,10 @@ func componentFlags(c adt.ClassComponent) string {
 	return ""
 }
 
-func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetInactiveObjects(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objects, err := s.adtClient.GetInactiveObjects(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetInactiveObjects failed: %v", err)), nil
+		return wrapErr("GetInactiveObjects", err), nil
 	}
 
 	if len(objects) == 0 {
@@ -351,330 +467,4 @@ func (s *Server) handleGetInactiveObjects(ctx context.Context, request mcp.CallT
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
-}
-
-// registerGetSource registers the unified GetSource tool
-func (s *Server) registerGetSource() {
-	s.mcpServer.AddTool(mcp.NewTool("GetSource",
-		mcp.WithDescription("Unified tool for reading ABAP source code across different object types. Replaces GetProgram, GetClass, GetInterface, GetFunction, GetInclude, GetFunctionGroup, GetClassInclude."),
-		mcp.WithString("object_type",
-			mcp.Required(),
-			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), FUNC (function module), FUGR (function group), INCL (include), DDLS (CDS DDL source), VIEW (DDIC view), BDEF (behavior definition), SRVD (service definition), SRVB (service binding), MSAG (message class)"),
-		),
-		mcp.WithString("name",
-			mcp.Required(),
-			mcp.Description("Object name (e.g., program name, class name, function module name)"),
-		),
-		mcp.WithString("parent",
-			mcp.Description("Function group name (required only for FUNC type)"),
-		),
-		mcp.WithString("include",
-			mcp.Description("Class include type for CLAS: definitions, implementations, macros, testclasses (optional)"),
-		),
-		mcp.WithString("method",
-			mcp.Description("Method name for CLAS only: returns only the METHOD...ENDMETHOD block for the specified method (optional)"),
-		),
-	), s.handleGetSource)
-}
-
-// registerWriteSource registers the unified WriteSource tool
-func (s *Server) registerWriteSource() {
-	s.mcpServer.AddTool(mcp.NewTool("WriteSource",
-		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Supports PROG, CLAS, INTF, and RAP types (DDLS, BDEF, SRVD)."),
-		mcp.WithString("object_type",
-			mcp.Required(),
-			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), DDLS (CDS view), BDEF (behavior definition), SRVD (service definition)"),
-		),
-		mcp.WithString("name",
-			mcp.Required(),
-			mcp.Description("Object name"),
-		),
-		mcp.WithString("source",
-			mcp.Required(),
-			mcp.Description("ABAP source code"),
-		),
-		mcp.WithString("mode",
-			mcp.Description("Operation mode: upsert (default, auto-detect), create (new only), update (existing only)"),
-		),
-		mcp.WithString("description",
-			mcp.Description("Object description (required for create mode)"),
-		),
-		mcp.WithString("package",
-			mcp.Description("Package name (required for create mode)"),
-		),
-		mcp.WithString("test_source",
-			mcp.Description("Test source code for CLAS (auto-creates test include and runs tests)"),
-		),
-		mcp.WithString("transport",
-			mcp.Description("Transport request number"),
-		),
-		mcp.WithString("method",
-			mcp.Description("For CLAS only: update only this method (source must be METHOD...ENDMETHOD block). Method must already exist in the class."),
-		),
-	), s.handleWriteSource)
-}
-
-// handleGetSource handles the unified GetSource tool call
-func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectType, ok := request.Params.Arguments["object_type"].(string)
-	if !ok || objectType == "" {
-		return newToolResultError("object_type is required"), nil
-	}
-
-	name, ok := request.Params.Arguments["name"].(string)
-	if !ok || name == "" {
-		return newToolResultError("name is required"), nil
-	}
-
-	parent, _ := request.Params.Arguments["parent"].(string)
-	include, _ := request.Params.Arguments["include"].(string)
-	method, _ := request.Params.Arguments["method"].(string)
-
-	opts := &adt.GetSourceOptions{
-		Parent:  parent,
-		Include: include,
-		Method:  method,
-	}
-
-	source, err := s.adtClient.GetSource(ctx, objectType, name, opts)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(source), nil
-}
-
-// handleWriteSource handles the unified WriteSource tool call
-func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectType, ok := request.Params.Arguments["object_type"].(string)
-	if !ok || objectType == "" {
-		return newToolResultError("object_type is required"), nil
-	}
-
-	name, ok := request.Params.Arguments["name"].(string)
-	if !ok || name == "" {
-		return newToolResultError("name is required"), nil
-	}
-
-	source, ok := request.Params.Arguments["source"].(string)
-	if !ok || source == "" {
-		return newToolResultError("source is required"), nil
-	}
-
-	mode, _ := request.Params.Arguments["mode"].(string)
-	description, _ := request.Params.Arguments["description"].(string)
-	packageName, _ := request.Params.Arguments["package"].(string)
-	testSource, _ := request.Params.Arguments["test_source"].(string)
-	transport, _ := request.Params.Arguments["transport"].(string)
-	method, _ := request.Params.Arguments["method"].(string)
-
-	opts := &adt.WriteSourceOptions{
-		Description: description,
-		Package:     packageName,
-		TestSource:  testSource,
-		Transport:   transport,
-		Method:      method,
-	}
-
-	if mode != "" {
-		opts.Mode = adt.WriteSourceMode(mode)
-	}
-
-	result, err := s.adtClient.WriteSource(ctx, objectType, name, source, opts)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("WriteSource failed: %v", err)), nil
-	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
-}
-
-// registerGrepObjects registers the unified GrepObjects tool
-func (s *Server) registerGrepObjects() {
-	s.mcpServer.AddTool(mcp.NewTool("GrepObjects",
-		mcp.WithDescription("Unified tool for searching regex patterns in single or multiple ABAP objects. Replaces GrepObject."),
-		mcp.WithArray("object_urls",
-			mcp.Required(),
-			mcp.Description("Array of ADT object URLs to search (e.g., [\"/sap/bc/adt/programs/programs/ZTEST\"])"),
-			mcp.Items(map[string]interface{}{"type": "string"}),
-		),
-		mcp.WithString("pattern",
-			mcp.Required(),
-			mcp.Description("Regular expression pattern (Go regexp syntax)"),
-		),
-		mcp.WithBoolean("case_insensitive",
-			mcp.Description("If true, perform case-insensitive matching (default: false)"),
-		),
-		mcp.WithNumber("context_lines",
-			mcp.Description("Number of context lines before/after each match (default: 0)"),
-		),
-	), s.handleGrepObjects)
-}
-
-// registerGrepPackages registers the unified GrepPackages tool
-func (s *Server) registerGrepPackages() {
-	s.mcpServer.AddTool(mcp.NewTool("GrepPackages",
-		mcp.WithDescription("Unified tool for searching regex patterns across single or multiple packages with optional recursive subpackage search. Replaces GrepPackage."),
-		mcp.WithArray("packages",
-			mcp.Required(),
-			mcp.Description("Array of package names to search (e.g., [\"$TMP\"], [\"Z\"] for namespace search)"),
-			mcp.Items(map[string]interface{}{"type": "string"}),
-		),
-		mcp.WithBoolean("include_subpackages",
-			mcp.Description("If true, recursively search all subpackages (default: false). Enables namespace-wide searches."),
-		),
-		mcp.WithString("pattern",
-			mcp.Required(),
-			mcp.Description("Regular expression pattern (Go regexp syntax)"),
-		),
-		mcp.WithBoolean("case_insensitive",
-			mcp.Description("If true, perform case-insensitive matching (default: false)"),
-		),
-		mcp.WithArray("object_types",
-			mcp.Description("Filter by object types (e.g., [\"CLAS/OC\", \"PROG/P\"]). Empty = search all types."),
-			mcp.Items(map[string]interface{}{"type": "string"}),
-		),
-		mcp.WithNumber("max_results",
-			mcp.Description("Maximum number of matching objects to return (0 = unlimited, default: 0)"),
-		),
-	), s.handleGrepPackages)
-}
-
-// registerImportFromFile registers the ImportFromFile tool (alias for DeployFromFile)
-func (s *Server) registerImportFromFile() {
-	s.mcpServer.AddTool(mcp.NewTool("ImportFromFile",
-		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type from file extension, creates or updates, activates. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For class includes (.clas.testclasses.abap, .clas.locals_def.abap, etc.), the parent class must exist."),
-		mcp.WithString("file_path",
-			mcp.Required(),
-			mcp.Description("Absolute path to ABAP source file. Supported extensions: .prog.abap, .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, .srvd.srvdsrv"),
-		),
-		mcp.WithString("package_name",
-			mcp.Description("Target package name (required for new objects, not needed for class includes)"),
-		),
-		mcp.WithString("transport",
-			mcp.Description("Transport request number"),
-		),
-	), s.handleDeployFromFile) // Reuse existing handler
-}
-
-// registerExportToFile registers the ExportToFile tool (alias for SaveToFile)
-func (s *Server) registerExportToFile() {
-	s.mcpServer.AddTool(mcp.NewTool("ExportToFile",
-		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For classes, use 'include' parameter to export specific includes (testclasses, definitions, implementations, macros)."),
-		mcp.WithString("object_type",
-			mcp.Required(),
-			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD"),
-		),
-		mcp.WithString("object_name",
-			mcp.Required(),
-			mcp.Description("Object name"),
-		),
-		mcp.WithString("output_dir",
-			mcp.Required(),
-			mcp.Description("Output directory path (must exist)"),
-		),
-		mcp.WithString("include",
-			mcp.Description("For CLAS only: include type to export. Values: main (default), testclasses, definitions, implementations, macros. Creates abapGit-compatible files (.clas.testclasses.abap, .clas.locals_def.abap, etc.)"),
-		),
-		mcp.WithString("parent",
-			mcp.Description("Function group name (required for FUNC type)"),
-		),
-	), s.handleSaveToFile) // Reuse existing handler
-}
-
-// handleGrepObjects handles the unified GrepObjects tool call
-func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURLsRaw, ok := request.Params.Arguments["object_urls"].([]interface{})
-	if !ok || len(objectURLsRaw) == 0 {
-		return newToolResultError("object_urls array is required"), nil
-	}
-
-	// Convert []interface{} to []string
-	objectURLs := make([]string, len(objectURLsRaw))
-	for i, v := range objectURLsRaw {
-		if s, ok := v.(string); ok {
-			objectURLs[i] = s
-		} else {
-			return newToolResultError(fmt.Sprintf("object_urls[%d] must be a string", i)), nil
-		}
-	}
-
-	pattern, ok := request.Params.Arguments["pattern"].(string)
-	if !ok || pattern == "" {
-		return newToolResultError("pattern is required"), nil
-	}
-
-	caseInsensitive := false
-	if ci, ok := request.Params.Arguments["case_insensitive"].(bool); ok {
-		caseInsensitive = ci
-	}
-
-	contextLines := 0
-	if cl, ok := request.Params.Arguments["context_lines"].(float64); ok {
-		contextLines = int(cl)
-	}
-
-	result, err := s.adtClient.GrepObjects(ctx, objectURLs, pattern, caseInsensitive, contextLines)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("GrepObjects failed: %v", err)), nil
-	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
-}
-
-// handleGrepPackages handles the unified GrepPackages tool call
-func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	packagesRaw, ok := request.Params.Arguments["packages"].([]interface{})
-	if !ok || len(packagesRaw) == 0 {
-		return newToolResultError("packages array is required"), nil
-	}
-
-	// Convert []interface{} to []string
-	packages := make([]string, len(packagesRaw))
-	for i, v := range packagesRaw {
-		if s, ok := v.(string); ok {
-			packages[i] = s
-		} else {
-			return newToolResultError(fmt.Sprintf("packages[%d] must be a string", i)), nil
-		}
-	}
-
-	includeSubpackages := false
-	if is, ok := request.Params.Arguments["include_subpackages"].(bool); ok {
-		includeSubpackages = is
-	}
-
-	pattern, ok := request.Params.Arguments["pattern"].(string)
-	if !ok || pattern == "" {
-		return newToolResultError("pattern is required"), nil
-	}
-
-	caseInsensitive := false
-	if ci, ok := request.Params.Arguments["case_insensitive"].(bool); ok {
-		caseInsensitive = ci
-	}
-
-	var objectTypes []string
-	if ot, ok := request.Params.Arguments["object_types"].([]interface{}); ok {
-		objectTypes = make([]string, len(ot))
-		for i, v := range ot {
-			if s, ok := v.(string); ok {
-				objectTypes[i] = s
-			}
-		}
-	}
-
-	maxResults := 0
-	if mr, ok := request.Params.Arguments["max_results"].(float64); ok {
-		maxResults = int(mr)
-	}
-
-	result, err := s.adtClient.GrepPackages(ctx, packages, includeSubpackages, pattern, caseInsensitive, objectTypes, maxResults)
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("GrepPackages failed: %v", err)), nil
-	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
 }

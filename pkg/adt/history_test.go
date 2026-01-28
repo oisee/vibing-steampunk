@@ -481,13 +481,11 @@ func TestCacheEviction(t *testing.T) {
 	hm.cacheSize = 3 // Small cache for testing
 
 	// Create more recordings than cache size
-	var ids []string
 	for i := 0; i < 5; i++ {
 		recorder := NewExecutionRecorder("session", "ZTEST")
 		recorder.RecordFrame(CodeLocation{Program: "ZTEST", Line: i + 1}, "step", nil)
 		recorder.Complete()
 		hm.SaveRecording(recorder)
-		ids = append(ids, recorder.GetRecording().ID)
 	}
 
 	// Cache should only have cacheSize entries

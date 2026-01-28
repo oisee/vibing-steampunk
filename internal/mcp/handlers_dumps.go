@@ -4,12 +4,66 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- Dumps Routing ---
+// Routes for this module:
+//   analyze: type=dumps (list), type=dump with dump_id in params
+
+// routeDumpsAction routes runtime errors/short dumps actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeDumpsAction(ctx context.Context, action, _, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+
+	analysisType, _ := params["type"].(string)
+	switch analysisType {
+	case "dumps":
+		// ListDumps
+		args := map[string]any{}
+		if user, ok := params["user"].(string); ok {
+			args["user"] = user
+		}
+		if excType, ok := params["exception_type"].(string); ok {
+			args["exception_type"] = excType
+		}
+		if prog, ok := params["program"].(string); ok {
+			args["program"] = prog
+		}
+		if pkg, ok := params["package"].(string); ok {
+			args["package"] = pkg
+		}
+		if dateFrom, ok := params["date_from"].(string); ok {
+			args["date_from"] = dateFrom
+		}
+		if dateTo, ok := params["date_to"].(string); ok {
+			args["date_to"] = dateTo
+		}
+		if maxResults, ok := params["max_results"].(float64); ok {
+			args["max_results"] = maxResults
+		}
+		result, err := s.handleListDumps(ctx, newRequest(args))
+		return result, true, err
+
+	case "dump":
+		// GetDump - requires dump_id
+		dumpID, _ := params["dump_id"].(string)
+		if dumpID == "" {
+			dumpID = objectName
+		}
+		if dumpID == "" {
+			return newToolResultError("dump_id is required for dump analysis"), true, nil
+		}
+		result, err := s.handleGetDump(ctx, newRequest(map[string]any{"dump_id": dumpID}))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
 
 // --- Runtime Errors / Short Dumps Handlers ---
 
@@ -42,11 +96,10 @@ func (s *Server) handleListDumps(ctx context.Context, request mcp.CallToolReques
 
 	dumps, err := s.adtClient.GetDumps(ctx, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get dumps: %v", err)), nil
+		return wrapErr("GetDumps", err), nil
 	}
 
-	result, _ := json.MarshalIndent(dumps, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(dumps), nil
 }
 
 func (s *Server) handleGetDump(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -57,9 +110,8 @@ func (s *Server) handleGetDump(ctx context.Context, request mcp.CallToolRequest)
 
 	dump, err := s.adtClient.GetDump(ctx, dumpID)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get dump: %v", err)), nil
+		return wrapErr("GetDump", err), nil
 	}
 
-	result, _ := json.MarshalIndent(dump, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(dump), nil
 }

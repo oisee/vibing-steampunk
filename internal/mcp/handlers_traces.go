@@ -4,12 +4,61 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- Traces Routing ---
+// Routes for this module:
+//   analyze: type=traces (list), type=trace with trace_id in params
+
+// routeTracesAction routes ABAP profiler trace actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeTracesAction(ctx context.Context, action, _, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+
+	analysisType, _ := params["type"].(string)
+	switch analysisType {
+	case "traces":
+		// ListTraces
+		args := map[string]any{}
+		if user, ok := params["user"].(string); ok {
+			args["user"] = user
+		}
+		if procType, ok := params["process_type"].(string); ok {
+			args["process_type"] = procType
+		}
+		if objType, ok := params["object_type"].(string); ok {
+			args["object_type"] = objType
+		}
+		if maxResults, ok := params["max_results"].(float64); ok {
+			args["max_results"] = maxResults
+		}
+		result, err := s.handleListTraces(ctx, newRequest(args))
+		return result, true, err
+
+	case "trace":
+		// GetTrace - requires trace_id
+		traceID, _ := params["trace_id"].(string)
+		if traceID == "" {
+			traceID = objectName
+		}
+		if traceID == "" {
+			return newToolResultError("trace_id is required for trace analysis"), true, nil
+		}
+		args := map[string]any{"trace_id": traceID}
+		if toolType, ok := params["tool_type"].(string); ok {
+			args["tool_type"] = toolType
+		}
+		result, err := s.handleGetTrace(ctx, newRequest(args))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
 
 // --- ABAP Profiler / Traces Handlers ---
 
@@ -33,11 +82,10 @@ func (s *Server) handleListTraces(ctx context.Context, request mcp.CallToolReque
 
 	traces, err := s.adtClient.ListTraces(ctx, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to list traces: %v", err)), nil
+		return wrapErr("ListTraces", err), nil
 	}
 
-	result, _ := json.MarshalIndent(traces, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(traces), nil
 }
 
 func (s *Server) handleGetTrace(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -53,9 +101,8 @@ func (s *Server) handleGetTrace(ctx context.Context, request mcp.CallToolRequest
 
 	analysis, err := s.adtClient.GetTrace(ctx, traceID, toolType)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get trace: %v", err)), nil
+		return wrapErr("GetTrace", err), nil
 	}
 
-	result, _ := json.MarshalIndent(analysis, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(analysis), nil
 }

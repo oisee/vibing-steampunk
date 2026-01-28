@@ -1,3 +1,6 @@
+// ABOUTME: Helper functions for Lua-Go type conversions.
+// ABOUTME: Provides luaToGo, goToLua, argument extraction, and error helpers.
+
 package scripting
 
 import (
@@ -23,17 +26,17 @@ func contextWithTimeout(ctx context.Context, seconds lua.LNumber) <-chan struct{
 }
 
 // jsonMarshal wraps json.MarshalIndent.
-func jsonMarshal(v interface{}) ([]byte, error) {
+func jsonMarshal(v any) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
 }
 
 // jsonUnmarshal wraps json.Unmarshal.
-func jsonUnmarshal(data []byte, v interface{}) error {
+func jsonUnmarshal(data []byte, v any) error {
 	return json.Unmarshal(data, v)
 }
 
 // luaToGo converts a Lua value to a Go value.
-func luaToGo(val lua.LValue) interface{} {
+func luaToGo(val lua.LValue) any {
 	switch v := val.(type) {
 	case lua.LBool:
 		return bool(v)
@@ -55,7 +58,7 @@ func luaToGo(val lua.LValue) interface{} {
 }
 
 // luaTableToGo converts a Lua table to a Go map or slice.
-func luaTableToGo(tbl *lua.LTable) interface{} {
+func luaTableToGo(tbl *lua.LTable) any {
 	// Check if it's an array (sequential integer keys starting from 1)
 	isArray := true
 	maxN := 0
@@ -72,7 +75,7 @@ func luaTableToGo(tbl *lua.LTable) interface{} {
 
 	if isArray && maxN > 0 && tbl.Len() == maxN {
 		// Convert to slice
-		arr := make([]interface{}, maxN)
+		arr := make([]any, maxN)
 		for i := 1; i <= maxN; i++ {
 			arr[i-1] = luaToGo(tbl.RawGetInt(i))
 		}
@@ -80,7 +83,7 @@ func luaTableToGo(tbl *lua.LTable) interface{} {
 	}
 
 	// Convert to map
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 	tbl.ForEach(func(key, value lua.LValue) {
 		keyStr := key.String()
 		m[keyStr] = luaToGo(value)
@@ -89,7 +92,7 @@ func luaTableToGo(tbl *lua.LTable) interface{} {
 }
 
 // goToLua converts a Go value to a Lua value.
-func goToLua(L *lua.LState, val interface{}) lua.LValue {
+func goToLua(L *lua.LState, val any) lua.LValue {
 	if val == nil {
 		return lua.LNil
 	}
@@ -109,11 +112,11 @@ func goToLua(L *lua.LState, val interface{}) lua.LValue {
 		return lua.LNumber(v)
 	case string:
 		return lua.LString(v)
-	case []interface{}:
+	case []any:
 		return goSliceToLua(L, v)
-	case map[string]interface{}:
+	case map[string]any:
 		return goMapToLua(L, v)
-	case []map[string]interface{}:
+	case []map[string]any:
 		tbl := L.NewTable()
 		for i, item := range v {
 			tbl.RawSetInt(i+1, goMapToLua(L, item))
@@ -122,7 +125,7 @@ func goToLua(L *lua.LState, val interface{}) lua.LValue {
 	default:
 		// Try JSON marshaling for complex types
 		if data, err := json.Marshal(v); err == nil {
-			var parsed interface{}
+			var parsed any
 			if json.Unmarshal(data, &parsed) == nil {
 				return goToLua(L, parsed)
 			}
@@ -132,7 +135,7 @@ func goToLua(L *lua.LState, val interface{}) lua.LValue {
 }
 
 // goSliceToLua converts a Go slice to a Lua table.
-func goSliceToLua(L *lua.LState, slice []interface{}) *lua.LTable {
+func goSliceToLua(L *lua.LState, slice []any) *lua.LTable {
 	tbl := L.NewTable()
 	for i, v := range slice {
 		tbl.RawSetInt(i+1, goToLua(L, v))
@@ -141,7 +144,7 @@ func goSliceToLua(L *lua.LState, slice []interface{}) *lua.LTable {
 }
 
 // goMapToLua converts a Go map to a Lua table.
-func goMapToLua(L *lua.LState, m map[string]interface{}) *lua.LTable {
+func goMapToLua(L *lua.LState, m map[string]any) *lua.LTable {
 	tbl := L.NewTable()
 	for k, v := range m {
 		tbl.RawSetString(k, goToLua(L, v))
@@ -150,7 +153,7 @@ func goMapToLua(L *lua.LState, m map[string]interface{}) *lua.LTable {
 }
 
 // toString converts any value to a string.
-func toString(v interface{}) string {
+func toString(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
@@ -201,13 +204,27 @@ func getBool(L *lua.LState, n int) bool {
 }
 
 // getTable extracts a table argument from Lua as a map.
-func getTable(L *lua.LState, n int) map[string]interface{} {
+func getTable(L *lua.LState, n int) map[string]any {
 	val := L.Get(n)
 	if tbl, ok := val.(*lua.LTable); ok {
 		result := luaTableToGo(tbl)
-		if m, ok := result.(map[string]interface{}); ok {
+		if m, ok := result.(map[string]any); ok {
 			return m
 		}
 	}
 	return nil
+}
+
+// pushError pushes nil and error message to Lua stack, returns 2.
+func pushError(L *lua.LState, err error) int {
+	L.Push(lua.LNil)
+	L.Push(lua.LString(err.Error()))
+	return 2
+}
+
+// pushBoolError pushes false and error message to Lua stack, returns 2.
+func pushBoolError(L *lua.LState, err error) int {
+	L.Push(lua.LBool(false))
+	L.Push(lua.LString(err.Error()))
+	return 2
 }

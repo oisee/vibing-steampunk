@@ -338,7 +338,7 @@ func (hm *HistoryManager) DeleteRecording(id string) error {
 }
 
 // GetRecordingStats returns aggregate statistics across all recordings.
-func (hm *HistoryManager) GetRecordingStats() map[string]interface{} {
+func (hm *HistoryManager) GetRecordingStats() map[string]any {
 	hm.mu.RLock()
 	defer hm.mu.RUnlock()
 
@@ -352,7 +352,7 @@ func (hm *HistoryManager) GetRecordingStats() map[string]interface{} {
 		programs[idx.Program]++
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_recordings": len(hm.index),
 		"total_steps":      totalSteps,
 		"total_size_bytes": totalSize,
@@ -437,7 +437,7 @@ type HistoryQuery struct {
 	RecordingFilter RecordingFilter
 	MatchType       string // variable_value, variable_changed, location, checkpoint
 	VariableName    string
-	TargetValue     interface{}
+	TargetValue     any
 	LocationPattern string
 	CheckpointName  string
 	Limit           int

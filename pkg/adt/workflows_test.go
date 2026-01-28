@@ -160,9 +160,9 @@ WRITE: 'Hello, World!'.`
                      adtcore:type="PROG/P"
                      adtcore:responsible="USER"/>`),
 			"/sap/bc/adt/programs/programs/ZTEST/source/main": newWorkflowTestResponse("OK"),
-			"/sap/bc/adt/checkruns": newWorkflowTestResponse("OK"),
-			"/sap/bc/adt/activation": newWorkflowTestResponse("OK"),
-			"discovery": newWorkflowTestResponse("OK"),
+			"/sap/bc/adt/checkruns":                           newWorkflowTestResponse("OK"),
+			"/sap/bc/adt/activation":                          newWorkflowTestResponse("OK"),
+			"discovery":                                       newWorkflowTestResponse("OK"),
 		},
 	}
 
@@ -305,7 +305,7 @@ func TestClient_GrepPackages(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/$TMP": newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$TMP":                        newWorkflowTestResponse(packageContents),
 			"/sap/bc/adt/programs/programs/ZTEST1/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},
@@ -352,8 +352,8 @@ func TestClient_GrepPackages_Recursive(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/ZMAIN":       newWorkflowTestResponse(mainPackageContents),
-			"/sap/bc/adt/packages/ZSUB1":       newWorkflowTestResponse(subPackageContents),
+			"/sap/bc/adt/packages/ZMAIN":                          newWorkflowTestResponse(mainPackageContents),
+			"/sap/bc/adt/packages/ZSUB1":                          newWorkflowTestResponse(subPackageContents),
 			"/sap/bc/adt/programs/programs/ZTEST_SUB/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},
@@ -389,8 +389,8 @@ func TestClient_GrepPackages_MultiplePackages(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/$TMP":  newWorkflowTestResponse(packageContents),
-			"/sap/bc/adt/packages/$LOCAL": newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$TMP":                        newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$LOCAL":                      newWorkflowTestResponse(packageContents),
 			"/sap/bc/adt/programs/programs/ZTEST1/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},

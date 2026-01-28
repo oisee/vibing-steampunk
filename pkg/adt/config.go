@@ -208,9 +208,15 @@ func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
 	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: c.InsecureSkipVerify,
 		},
+		// Connection pooling settings to avoid overwhelming SAP server
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 30, // Keep idle connections for reuse (match MaxConnsPerHost)
+		MaxConnsPerHost:     30, // Concurrent connections per host
+		IdleConnTimeout:     90 * time.Second,
 	}
 
 	return &http.Client{

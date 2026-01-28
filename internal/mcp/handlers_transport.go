@@ -4,13 +4,135 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- Transport Routing ---
+// Routes for this module:
+//   read:   TRANSPORTS <user>, TRANSPORT <number>, TRANSPORT_INFO
+//   system: list_transports, execute_abap
+//   create: TRANSPORT
+//   delete: TRANSPORT <number>
+//   deploy: release_transport
+
+// routeTransportAction routes transport management actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeTransportAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch action {
+	case "read":
+		switch objectType {
+		case "TRANSPORTS":
+			// GetUserTransports: read TRANSPORTS <user>
+			if objectName == "" {
+				return newToolResultError("user name is required for TRANSPORTS read"), true, nil
+			}
+			result, err := s.handleGetUserTransports(ctx, newRequest(map[string]any{"user_name": objectName}))
+			return result, true, err
+
+		case "TRANSPORT":
+			// GetTransport: read TRANSPORT <number>
+			if objectName == "" {
+				return newToolResultError("transport number is required"), true, nil
+			}
+			result, err := s.handleGetTransport(ctx, newRequest(map[string]any{"transport": objectName}))
+			return result, true, err
+
+		case "TRANSPORT_INFO":
+			// GetTransportInfo: read TRANSPORT_INFO (requires object_url and dev_class in params)
+			objectURL, _ := params["object_url"].(string)
+			devClass, _ := params["dev_class"].(string)
+			if objectURL == "" || devClass == "" {
+				return newToolResultError("object_url and dev_class are required in params for TRANSPORT_INFO"), true, nil
+			}
+			result, err := s.handleGetTransportInfo(ctx, newRequest(map[string]any{"object_url": objectURL, "dev_class": devClass}))
+			return result, true, err
+		}
+
+	case "system":
+		systemType, _ := params["type"].(string)
+		switch systemType {
+		case "list_transports":
+			user, _ := params["user"].(string)
+			result, err := s.handleListTransports(ctx, newRequest(map[string]any{"user": user}))
+			return result, true, err
+
+		case "execute_abap":
+			code, _ := params["code"].(string)
+			if code == "" {
+				return newToolResultError("code is required for execute_abap"), true, nil
+			}
+			args := map[string]any{"code": code}
+			if riskLevel, ok := params["risk_level"].(string); ok {
+				args["risk_level"] = riskLevel
+			}
+			if returnVar, ok := params["return_variable"].(string); ok {
+				args["return_variable"] = returnVar
+			}
+			if keepProgram, ok := params["keep_program"].(bool); ok {
+				args["keep_program"] = keepProgram
+			}
+			if prefix, ok := params["program_prefix"].(string); ok {
+				args["program_prefix"] = prefix
+			}
+			result, err := s.handleExecuteABAP(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "create":
+		if objectType == "TRANSPORT" {
+			description, _ := params["description"].(string)
+			pkg, _ := params["package"].(string)
+			if description == "" || pkg == "" {
+				return newToolResultError("description and package are required for TRANSPORT create"), true, nil
+			}
+			args := map[string]any{"description": description, "package": pkg}
+			if transportLayer, ok := params["transport_layer"].(string); ok {
+				args["transport_layer"] = transportLayer
+			}
+			if transportType, ok := params["type"].(string); ok && transportType != "" {
+				args["type"] = transportType
+			}
+			result, err := s.handleCreateTransport(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "delete":
+		if objectType == "TRANSPORT" {
+			if objectName == "" {
+				return newToolResultError("transport number is required for delete"), true, nil
+			}
+			result, err := s.handleDeleteTransport(ctx, newRequest(map[string]any{"transport": objectName}))
+			return result, true, err
+		}
+
+	case "deploy":
+		deployType, _ := params["type"].(string)
+		if deployType == "release_transport" {
+			transport, _ := params["transport"].(string)
+			if transport == "" {
+				transport = objectName
+			}
+			if transport == "" {
+				return newToolResultError("transport number is required for release"), true, nil
+			}
+			args := map[string]any{"transport": transport}
+			if ignoreLocks, ok := params["ignore_locks"].(bool); ok {
+				args["ignore_locks"] = ignoreLocks
+			}
+			if skipATC, ok := params["skip_atc"].(bool); ok {
+				args["skip_atc"] = skipATC
+			}
+			result, err := s.handleReleaseTransport(ctx, newRequest(args))
+			return result, true, err
+		}
+	}
+
+	return nil, false, nil
+}
 
 // --- Transport Management Handlers ---
 
@@ -22,7 +144,7 @@ func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallTo
 
 	transports, err := s.adtClient.GetUserTransports(ctx, userName)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetUserTransports failed: %v", err)), nil
+		return wrapErr("GetUserTransports", err), nil
 	}
 
 	// Format output
@@ -32,7 +154,7 @@ func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallTo
 	if len(transports.Workbench) > 0 {
 		sb.WriteString("=== Workbench Requests ===\n")
 		for _, tr := range transports.Workbench {
-			formatTransportRequest(&sb, &tr)
+			formatTransportSummary(&sb, &tr)
 		}
 	} else {
 		sb.WriteString("No workbench requests found.\n")
@@ -43,7 +165,7 @@ func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallTo
 	if len(transports.Customizing) > 0 {
 		sb.WriteString("=== Customizing Requests ===\n")
 		for _, tr := range transports.Customizing {
-			formatTransportRequest(&sb, &tr)
+			formatTransportSummary(&sb, &tr)
 		}
 	} else {
 		sb.WriteString("No customizing requests found.\n")
@@ -52,7 +174,7 @@ func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallTo
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func formatTransportRequest(sb *strings.Builder, tr *adt.TransportRequest) {
+func formatTransportSummary(sb *strings.Builder, tr *adt.TransportSummary) {
 	fmt.Fprintf(sb, "\n%s - %s\n", tr.Number, tr.Description)
 	fmt.Fprintf(sb, "  Owner: %s, Status: %s", tr.Owner, tr.Status)
 	if tr.Target != "" {
@@ -67,7 +189,7 @@ func formatTransportRequest(sb *strings.Builder, tr *adt.TransportRequest) {
 				task.Number, task.Description, task.Owner, task.Status)
 			if len(task.Objects) > 0 {
 				for _, obj := range task.Objects {
-					fmt.Fprintf(sb, "      - %s %s %s\n", obj.PGMID, obj.Type, obj.Name)
+					fmt.Fprintf(sb, "      - %s %s %s\n", obj.PgmID, obj.Type, obj.Name)
 				}
 			}
 		}
@@ -87,13 +209,13 @@ func (s *Server) handleGetTransportInfo(ctx context.Context, request mcp.CallToo
 
 	info, err := s.adtClient.GetTransportInfo(ctx, objectURL, devClass)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetTransportInfo failed: %v", err)), nil
+		return wrapErr("GetTransportInfo", err), nil
 	}
 
 	// Format output
 	var sb strings.Builder
 	sb.WriteString("Transport Information:\n\n")
-	fmt.Fprintf(&sb, "PGMID: %s\n", info.PGMID)
+	fmt.Fprintf(&sb, "PGMID: %s\n", info.PgmID)
 	fmt.Fprintf(&sb, "Object: %s\n", info.Object)
 	fmt.Fprintf(&sb, "Object Name: %s\n", info.ObjectName)
 	fmt.Fprintf(&sb, "Operation: %s\n", info.Operation)
@@ -138,7 +260,7 @@ func (s *Server) handleExecuteABAP(ctx context.Context, request mcp.CallToolRequ
 
 	result, err := s.adtClient.ExecuteABAP(ctx, code, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("ExecuteABAP failed: %v", err)), nil
+		return wrapErr("ExecuteABAP", err), nil
 	}
 
 	var sb strings.Builder
@@ -183,19 +305,14 @@ func (s *Server) handleListTransports(ctx context.Context, request mcp.CallToolR
 
 	transports, err := s.adtClient.ListTransports(ctx, user)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("ListTransports failed: %v", err)), nil
+		return wrapErr("ListTransports", err), nil
 	}
 
 	if len(transports) == 0 {
 		return mcp.NewToolResultText("No modifiable transports found."), nil
 	}
 
-	jsonBytes, err := json.MarshalIndent(transports, "", "  ")
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return newToolResultJSON(transports), nil
 }
 
 func (s *Server) handleGetTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -211,15 +328,9 @@ func (s *Server) handleGetTransport(ctx context.Context, request mcp.CallToolReq
 
 	result, err := s.adtClient.GetTransport(ctx, transport)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetTransport failed: %v", err)), nil
+		return wrapErr("GetTransport", err), nil
 	}
-
-	jsonBytes, err := json.MarshalIndent(result, "", "  ")
-	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to format result: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(string(jsonBytes)), nil
+	return newToolResultJSON(result), nil
 }
 
 func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -248,12 +359,11 @@ func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallTool
 		Type:           transportType,
 	}
 
-	transportNumber, err := s.adtClient.CreateTransportV2(ctx, opts)
+	transportNumber, err := s.adtClient.CreateTransport(ctx, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("CreateTransport failed: %v", err)), nil
+		return wrapErr("CreateTransport", err), nil
 	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Transport created: %s", transportNumber)), nil
+	return mcp.NewToolResultText("Transport created: " + transportNumber), nil
 }
 
 func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -267,20 +377,18 @@ func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToo
 		return newToolResultError(err.Error()), nil
 	}
 
-	ignoreLocks, _ := request.Params.Arguments["ignore_locks"].(bool)
-	skipATC, _ := request.Params.Arguments["skip_atc"].(bool)
-
-	opts := adt.ReleaseTransportOptions{
-		IgnoreLocks: ignoreLocks,
-		SkipATC:     skipATC,
+	opts := adt.ReleaseTransportOptions{}
+	if skipATC, _ := request.Params.Arguments["skip_atc"].(bool); skipATC {
+		opts.Action = adt.ReleaseActionSkipATC
+	} else if ignoreLocks, _ := request.Params.Arguments["ignore_locks"].(bool); ignoreLocks {
+		opts.Action = adt.ReleaseActionIgnoreLocks
 	}
 
-	err := s.adtClient.ReleaseTransportV2(ctx, transport, opts)
+	err := s.adtClient.ReleaseTransport(ctx, transport, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("ReleaseTransport failed: %v", err)), nil
+		return wrapErr("ReleaseTransport", err), nil
 	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Transport %s released successfully.", transport)), nil
+	return mcp.NewToolResultText("Transport " + transport + " released successfully."), nil
 }
 
 func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -296,8 +404,7 @@ func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallTool
 
 	err := s.adtClient.DeleteTransport(ctx, transport)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DeleteTransport failed: %v", err)), nil
+		return wrapErr("DeleteTransport", err), nil
 	}
-
-	return mcp.NewToolResultText(fmt.Sprintf("Transport %s deleted successfully.", transport)), nil
+	return mcp.NewToolResultText("Transport " + transport + " deleted successfully."), nil
 }

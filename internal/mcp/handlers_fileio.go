@@ -4,13 +4,119 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+// --- FileIO Routing ---
+// Routes for this module:
+//   edit: type=rename, type=edit_source, DEPLOY_FILE
+//   deploy: import, export
+
+// routeFileIOAction routes file IO actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeFileIOAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch action {
+	case "edit":
+		editType, _ := params["type"].(string)
+		switch editType {
+		case "edit_source":
+			objectURL, _ := params["object_url"].(string)
+			oldString, _ := params["old_string"].(string)
+			newString, _ := params["new_string"].(string)
+			if objectURL == "" || oldString == "" {
+				return newToolResultError("object_url and old_string are required for edit_source"), true, nil
+			}
+			args := map[string]any{
+				"object_url": objectURL,
+				"old_string": oldString,
+				"new_string": newString,
+			}
+			if replaceAll, ok := params["replace_all"].(bool); ok {
+				args["replace_all"] = replaceAll
+			}
+			if syntaxCheck, ok := params["syntax_check"].(bool); ok {
+				args["syntax_check"] = syntaxCheck
+			}
+			if caseInsensitive, ok := params["case_insensitive"].(bool); ok {
+				args["case_insensitive"] = caseInsensitive
+			}
+			if method, ok := params["method"].(string); ok {
+				args["method"] = method
+			}
+			result, err := s.handleEditSource(ctx, newRequest(args))
+			return result, true, err
+
+		case "rename":
+			objType, _ := params["objType"].(string)
+			oldName, _ := params["oldName"].(string)
+			newName, _ := params["newName"].(string)
+			packageName, _ := params["packageName"].(string)
+			transport, _ := params["transport"].(string)
+			if objType == "" || oldName == "" || newName == "" || packageName == "" {
+				return newToolResultError("rename requires objType, oldName, newName, packageName in params"), true, nil
+			}
+			args := map[string]any{
+				"objType":     objType,
+				"oldName":     oldName,
+				"newName":     newName,
+				"packageName": packageName,
+			}
+			if transport != "" {
+				args["transport"] = transport
+			}
+			result, err := s.handleRenameObject(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "deploy":
+		switch objectType {
+		case "import", "DEPLOY_FILE":
+			filePath, _ := params["file_path"].(string)
+			packageName, _ := params["package_name"].(string)
+			if filePath == "" || packageName == "" {
+				return newToolResultError("file_path and package_name are required for deploy import"), true, nil
+			}
+			args := map[string]any{
+				"file_path":    filePath,
+				"package_name": packageName,
+			}
+			if transport, ok := params["transport"].(string); ok {
+				args["transport"] = transport
+			}
+			result, err := s.handleDeployFromFile(ctx, newRequest(args))
+			return result, true, err
+
+		case "export":
+			objType, _ := params["object_type"].(string)
+			if objType == "" {
+				objType = objectName
+			}
+			objName, _ := params["object_name"].(string)
+			outputDir, _ := params["output_dir"].(string)
+			if objName == "" || outputDir == "" {
+				return newToolResultError("object_name and output_dir are required for deploy export"), true, nil
+			}
+			args := map[string]any{
+				"object_type": objType,
+				"object_name": objName,
+				"output_dir":  outputDir,
+			}
+			if include, ok := params["include"].(string); ok {
+				args["include"] = include
+			}
+			if parent, ok := params["parent"].(string); ok {
+				args["parent"] = parent
+			}
+			result, err := s.handleSaveToFile(ctx, newRequest(args))
+			return result, true, err
+		}
+	}
+
+	return nil, false, nil
+}
 
 // --- File-Based Deployment Handlers ---
 
@@ -34,45 +140,26 @@ func (s *Server) handleDeployFromFile(ctx context.Context, request mcp.CallToolR
 
 	result, err := s.adtClient.DeployFromFile(ctx, filePath, packageName, transport)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("DeployFromFile failed: %v", err)), nil
+		return wrapErr("DeployFromFile", err), nil
 	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(result), nil
 }
 
 func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Support both old (objType/objectName/outputPath) and new (object_type/object_name/output_dir) parameter names
-	objTypeStr, ok := request.Params.Arguments["objType"].(string)
-	if !ok || objTypeStr == "" {
-		objTypeStr, ok = request.Params.Arguments["object_type"].(string)
-		if !ok || objTypeStr == "" {
-			return newToolResultError("object_type is required (e.g., PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD)"), nil
-		}
+	objTypeStr, _ := request.Params.Arguments["object_type"].(string)
+	if objTypeStr == "" {
+		return newToolResultError("object_type is required (e.g., PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD)"), nil
 	}
 
-	objectName, ok := request.Params.Arguments["objectName"].(string)
-	if !ok || objectName == "" {
-		objectName, ok = request.Params.Arguments["object_name"].(string)
-		if !ok || objectName == "" {
-			return newToolResultError("object_name is required"), nil
-		}
+	objectName, _ := request.Params.Arguments["object_name"].(string)
+	if objectName == "" {
+		return newToolResultError("object_name is required"), nil
 	}
 
-	outputPath := ""
-	if p, ok := request.Params.Arguments["outputPath"].(string); ok {
-		outputPath = p
-	} else if p, ok := request.Params.Arguments["output_dir"].(string); ok {
-		outputPath = p
-	}
+	outputDir, _ := request.Params.Arguments["output_dir"].(string)
+	includeStr, _ := request.Params.Arguments["include"].(string)
 
-	// Check for include parameter (for class includes)
-	includeStr := ""
-	if inc, ok := request.Params.Arguments["include"].(string); ok {
-		includeStr = strings.ToLower(inc)
-	}
-
-	// Parse object type - support both short (PROG) and full (PROG/P) format
+	// Parse object type
 	var objType adt.CreatableObjectType
 	switch strings.ToUpper(objTypeStr) {
 	case "PROG", "PROG/P":
@@ -87,7 +174,6 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		objType = adt.ObjectTypeFunctionMod
 	case "INCL", "PROG/I":
 		objType = adt.ObjectTypeInclude
-	// RAP types
 	case "DDLS", "DDLS/DF":
 		objType = adt.ObjectTypeDDLS
 	case "BDEF", "BDEF/BDO":
@@ -99,9 +185,9 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 	}
 
 	// Handle class includes
-	if objType == adt.ObjectTypeClass && includeStr != "" && includeStr != "main" {
+	if objType == adt.ObjectTypeClass && includeStr != "" && strings.ToLower(includeStr) != "main" {
 		var includeType adt.ClassIncludeType
-		switch includeStr {
+		switch strings.ToLower(includeStr) {
 		case "testclasses":
 			includeType = adt.ClassIncludeTestClasses
 		case "definitions":
@@ -111,24 +197,21 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		case "macros":
 			includeType = adt.ClassIncludeMacros
 		default:
-			return newToolResultError(fmt.Sprintf("invalid include type: %s (expected: main, testclasses, definitions, implementations, macros)", includeStr)), nil
+			return newToolResultError("invalid include type: " + includeStr + " (expected: main, testclasses, definitions, implementations, macros)"), nil
 		}
 
-		result, err := s.adtClient.SaveClassIncludeToFile(ctx, objectName, includeType, outputPath)
+		result, err := s.adtClient.SaveClassIncludeToFile(ctx, objectName, includeType, outputDir)
 		if err != nil {
-			return newToolResultError(fmt.Sprintf("SaveClassIncludeToFile failed: %v", err)), nil
+			return wrapErr("SaveClassIncludeToFile", err), nil
 		}
-		output, _ := json.MarshalIndent(result, "", "  ")
-		return mcp.NewToolResultText(string(output)), nil
+		return newToolResultJSON(result), nil
 	}
 
-	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, outputPath)
+	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, outputDir)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("SaveToFile failed: %v", err)), nil
+		return wrapErr("SaveToFile", err), nil
 	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(result), nil
 }
 
 func (s *Server) handleRenameObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -162,11 +245,9 @@ func (s *Server) handleRenameObject(ctx context.Context, request mcp.CallToolReq
 
 	result, err := s.adtClient.RenameObject(ctx, objType, oldName, newName, packageName, transport)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("RenameObject failed: %v", err)), nil
+		return wrapErr("RenameObject", err), nil
 	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(result), nil
 }
 
 func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -214,9 +295,7 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 
 	result, err := s.adtClient.EditSourceWithOptions(ctx, objectURL, oldString, newString, opts)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("EditSource failed: %v", err)), nil
+		return wrapErr("EditSource", err), nil
 	}
-
-	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	return newToolResultJSON(result), nil
 }

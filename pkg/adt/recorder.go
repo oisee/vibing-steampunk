@@ -4,6 +4,7 @@ package adt
 
 import (
 	"encoding/json"
+	"maps"
 	"sync"
 	"time"
 )
@@ -18,29 +19,29 @@ type CodeLocation struct {
 
 // VariableValue represents a captured variable value.
 type VariableValue struct {
-	Name      string      `json:"name"`
-	Type      string      `json:"type"`
-	Value     interface{} `json:"value"`
-	IsChanged bool        `json:"is_changed,omitempty"` // Changed since last frame
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Value     any    `json:"value"`
+	IsChanged bool   `json:"is_changed,omitempty"` // Changed since last frame
 }
 
 // DBOperation represents a database operation captured during execution.
 type DBOperation struct {
-	Operation string                 `json:"operation"` // SELECT, INSERT, UPDATE, DELETE
-	Table     string                 `json:"table"`
-	Rows      int                    `json:"rows,omitempty"`
-	Duration  time.Duration          `json:"duration,omitempty"`
-	Details   map[string]interface{} `json:"details,omitempty"`
+	Operation string         `json:"operation"` // SELECT, INSERT, UPDATE, DELETE
+	Table     string         `json:"table"`
+	Rows      int            `json:"rows,omitempty"`
+	Duration  time.Duration  `json:"duration,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
 }
 
 // RFCCall represents an RFC call captured during execution.
 type RFCCall struct {
-	Function  string                 `json:"function"`
-	System    string                 `json:"system,omitempty"`
-	Duration  time.Duration          `json:"duration,omitempty"`
-	Inputs    map[string]interface{} `json:"inputs,omitempty"`
-	Outputs   map[string]interface{} `json:"outputs,omitempty"`
-	Exception string                 `json:"exception,omitempty"`
+	Function  string         `json:"function"`
+	System    string         `json:"system,omitempty"`
+	Duration  time.Duration  `json:"duration,omitempty"`
+	Inputs    map[string]any `json:"inputs,omitempty"`
+	Outputs   map[string]any `json:"outputs,omitempty"`
+	Exception string         `json:"exception,omitempty"`
 }
 
 // ExecutionFrame represents a single point in execution history.
@@ -228,7 +229,7 @@ func (r *ExecutionRecorder) GetVariablesAtStep(stepNumber int) map[string]Variab
 	frame := r.recording.Frames[stepNumber-1]
 
 	// If this is a full snapshot, return it directly
-	if frame.Variables != nil && len(frame.Variables) > 0 {
+	if len(frame.Variables) > 0 {
 		return frame.Variables
 	}
 
@@ -241,28 +242,22 @@ func (r *ExecutionRecorder) GetVariablesAtStep(stepNumber int) map[string]Variab
 	// Start with base frame variables
 	result := make(map[string]VariableValue)
 	baseFrame := r.recording.Frames[baseStep-1]
-	for k, v := range baseFrame.Variables {
-		result[k] = v
-	}
+	maps.Copy(result, baseFrame.Variables)
 
 	// Apply deltas from base+1 to target step
 	for i := baseStep; i < stepNumber; i++ {
 		f := r.recording.Frames[i]
-		for k, v := range f.VariableDelta {
-			result[k] = v
-		}
+		maps.Copy(result, f.VariableDelta)
 	}
 
 	// Apply final delta
-	for k, v := range frame.VariableDelta {
-		result[k] = v
-	}
+	maps.Copy(result, frame.VariableDelta)
 
 	return result
 }
 
 // FindWhenChanged finds the first step where a variable changed to a specific value.
-func (r *ExecutionRecorder) FindWhenChanged(variableName string, targetValue interface{}) int {
+func (r *ExecutionRecorder) FindWhenChanged(variableName string, targetValue any) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -345,7 +340,7 @@ func FromJSON(data []byte) (*ExecutionRecording, error) {
 }
 
 // Stats returns statistics about the recording.
-func (r *ExecutionRecorder) Stats() map[string]interface{} {
+func (r *ExecutionRecorder) Stats() map[string]any {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -366,7 +361,7 @@ func (r *ExecutionRecorder) Stats() map[string]interface{} {
 		uniqueLocations[locKey] = true
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_steps":      r.recording.TotalSteps,
 		"unique_locations": len(uniqueLocations),
 		"total_variables":  totalVars,

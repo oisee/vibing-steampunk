@@ -25,12 +25,12 @@ type UI5App struct {
 
 // UI5AppDetails contains detailed information about a UI5 application.
 type UI5AppDetails struct {
-	Name           string     `json:"name"`
-	Description    string     `json:"description,omitempty"`
-	Package        string     `json:"package,omitempty"`
-	TransportLayer string     `json:"transportLayer,omitempty"`
-	Files          []UI5File  `json:"files,omitempty"`
-	Links          []Link     `json:"-"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description,omitempty"`
+	Package        string    `json:"package,omitempty"`
+	TransportLayer string    `json:"transportLayer,omitempty"`
+	Files          []UI5File `json:"files,omitempty"`
+	Links          []Link    `json:"-"`
 }
 
 // UI5File represents a file within a UI5 application.
@@ -188,59 +188,6 @@ func extractFilesFromAtomFeed(feed *UI5AtomFeed, appName string) []UI5File {
 	return files
 }
 
-// extractFilesFromContent flattens the UI5Content structure into a file list.
-func extractFilesFromContent(content *UI5Content) []UI5File {
-	var files []UI5File
-
-	// Add root files
-	for _, f := range content.Files {
-		files = append(files, UI5File{
-			Name:        f.Name,
-			Path:        f.Path,
-			Type:        "file",
-			Size:        f.Size,
-			ContentType: f.ContentType,
-		})
-	}
-
-	// Recursively add folder contents
-	for _, folder := range content.Folders {
-		files = append(files, extractFilesFromFolder(&folder)...)
-	}
-
-	return files
-}
-
-// extractFilesFromFolder recursively extracts files from a folder structure.
-func extractFilesFromFolder(folder *UI5Folder) []UI5File {
-	var files []UI5File
-
-	// Add folder itself
-	files = append(files, UI5File{
-		Name: folder.Name,
-		Path: folder.Path,
-		Type: "folder",
-	})
-
-	// Add files in this folder
-	for _, f := range folder.Files {
-		files = append(files, UI5File{
-			Name:        f.Name,
-			Path:        f.Path,
-			Type:        "file",
-			Size:        f.Size,
-			ContentType: f.ContentType,
-		})
-	}
-
-	// Recurse into subfolders
-	for _, subFolder := range folder.Folders {
-		files = append(files, extractFilesFromFolder(&subFolder)...)
-	}
-
-	return files
-}
-
 // UI5GetFileContent retrieves the content of a specific file within a UI5 app.
 // The filePath should be relative to the app root (e.g., "/.project", "/WebContent/index.html").
 func (c *Client) UI5GetFileContent(ctx context.Context, appName, filePath string) ([]byte, error) {
@@ -249,10 +196,7 @@ func (c *Client) UI5GetFileContent(ctx context.Context, appName, filePath string
 	}
 
 	appName = strings.ToUpper(appName)
-	// Remove leading slash if present for path construction
-	if strings.HasPrefix(filePath, "/") {
-		filePath = filePath[1:]
-	}
+	filePath = strings.TrimPrefix(filePath, "/")
 
 	// URL structure is: /sap/bc/adt/filestore/ui5-bsp/objects/APPNAME%2fFILEPATH/content
 	// The app name and file path are combined with encoded slash
@@ -276,10 +220,7 @@ func (c *Client) UI5UploadFile(ctx context.Context, appName, filePath string, co
 	}
 
 	appName = strings.ToUpper(appName)
-	// Remove leading slash if present for path construction
-	if strings.HasPrefix(filePath, "/") {
-		filePath = filePath[1:]
-	}
+	filePath = strings.TrimPrefix(filePath, "/")
 
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -308,10 +249,7 @@ func (c *Client) UI5DeleteFile(ctx context.Context, appName, filePath string) er
 	}
 
 	appName = strings.ToUpper(appName)
-	// Remove leading slash if present for path construction
-	if strings.HasPrefix(filePath, "/") {
-		filePath = filePath[1:]
-	}
+	filePath = strings.TrimPrefix(filePath, "/")
 
 	// URL structure is: /sap/bc/adt/filestore/ui5-bsp/objects/APPNAME%2fFILEPATH
 	fullPath := appName + "/" + filePath
