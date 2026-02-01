@@ -4,74 +4,92 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// --- System Routing ---
+// Routes for this module:
+//   system: info, features, connection, components
+
+// routeSystemAction routes system information actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeSystemAction(ctx context.Context, action, objectType, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+
+	target := objectType
+	if target == "" {
+		target, _ = params["type"].(string)
+	}
+
+	switch strings.ToUpper(target) {
+	case "INFO":
+		result, err := s.handleGetSystemInfo(ctx, newRequest(nil))
+		return result, true, err
+
+	case "FEATURES":
+		result, err := s.handleGetFeatures(ctx, newRequest(nil))
+		return result, true, err
+
+	case "CONNECTION":
+		result, err := s.handleGetConnectionInfo(ctx, newRequest(nil))
+		return result, true, err
+
+	case "COMPONENTS":
+		result, err := s.handleGetInstalledComponents(ctx, newRequest(nil))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
+
 // --- System Information Handlers ---
 
-func (s *Server) handleGetSystemInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetSystemInfo(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	info, err := s.adtClient.GetSystemInfo(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get system info: %v", err)), nil
+		return wrapErr("GetSystemInfo", err), nil
 	}
-
-	result, _ := json.MarshalIndent(info, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(info), nil
 }
 
-func (s *Server) handleGetInstalledComponents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetInstalledComponents(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	components, err := s.adtClient.GetInstalledComponents(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("Failed to get installed components: %v", err)), nil
+		return wrapErr("GetInstalledComponents", err), nil
 	}
-
-	result, _ := json.MarshalIndent(components, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(components), nil
 }
 
-func (s *Server) handleGetConnectionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetConnectionInfo(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Return current connection info for introspection
-	info := map[string]interface{}{
-		"user":   s.config.Username,
-		"url":    s.config.BaseURL,
-		"client": s.config.Client,
-		"mode":   s.config.Mode,
+	info := map[string]any{
+		"user":           s.config.Username,
+		"url":            s.config.BaseURL,
+		"client":         s.config.Client,
+		"mode":           "unified",
+		"features":       s.featureProber.FeatureSummary(ctx),
+		"debugger_user":  strings.ToUpper(s.config.Username), // Debugger uses uppercase
 	}
-
-	// Add feature summary
-	info["features"] = s.featureProber.FeatureSummary(ctx)
-
-	// Add debugger status
-	info["debugger_user"] = strings.ToUpper(s.config.Username) // Debugger uses uppercase
-
-	result, _ := json.MarshalIndent(info, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(info), nil
 }
 
-func (s *Server) handleGetFeatures(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (s *Server) handleGetFeatures(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Probe all features
 	results := s.featureProber.ProbeAll(ctx)
 
 	// Format output
-	type featureOutput struct {
-		Features map[string]*adt.FeatureStatus `json:"features"`
-		Summary  string                        `json:"summary"`
-	}
-
-	output := featureOutput{
-		Features: make(map[string]*adt.FeatureStatus),
-		Summary:  s.featureProber.FeatureSummary(ctx),
-	}
-
+	features := make(map[string]*adt.FeatureStatus)
 	for id, status := range results {
-		output.Features[string(id)] = status
+		features[string(id)] = status
 	}
 
-	result, _ := json.MarshalIndent(output, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
+	return newToolResultJSON(map[string]any{
+		"features": features,
+		"summary":  s.featureProber.FeatureSummary(ctx),
+	}), nil
 }

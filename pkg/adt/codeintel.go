@@ -65,7 +65,7 @@ func parseDefinitionLocation(data []byte) (*DefinitionLocation, error) {
 	}
 
 	// Strip namespace prefix
-	xmlStr := strings.ReplaceAll(string(data), "adtcore:", "")
+	xmlStr := StripXMLNamespaces(string(data), "adtcore:")
 
 	var ref objectRef
 	if err := xml.Unmarshal([]byte(xmlStr), &ref); err != nil {
@@ -136,9 +136,7 @@ func (c *Client) FindReferences(ctx context.Context, objectURL string, line int,
 
 func parseUsageReferences(data []byte) ([]UsageReference, error) {
 	// Strip namespace prefixes
-	xmlStr := string(data)
-	xmlStr = strings.ReplaceAll(xmlStr, "usageReferences:", "")
-	xmlStr = strings.ReplaceAll(xmlStr, "adtcore:", "")
+	xmlStr := StripXMLNamespaces(string(data), "usageReferences:", "adtcore:")
 
 	type packageRef struct {
 		URI  string `xml:"uri,attr"`
@@ -205,8 +203,8 @@ func parseUsageReferences(data []byte) ([]UsageReference, error) {
 func extractTypeFromURI(uri string) string {
 	// Common patterns: /sap/bc/adt/oo/classes/..., /sap/bc/adt/programs/programs/...
 	patterns := map[string]string{
-		"/oo/classes/":      "CLAS/OC",
-		"/oo/interfaces/":   "INTF/OI",
+		"/oo/classes/":       "CLAS/OC",
+		"/oo/interfaces/":    "INTF/OI",
 		"/programs/programs": "PROG/P",
 		"/programs/includes": "PROG/I",
 		"/functions/groups/": "FUGR/F",
@@ -286,7 +284,7 @@ func parseCompletionProposals(data []byte) ([]CompletionProposal, error) {
 	}
 
 	// Strip namespace prefix
-	xmlStr := strings.ReplaceAll(string(data), "asx:", "")
+	xmlStr := StripXMLNamespaces(string(data), "asx:")
 
 	var resp response
 	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
@@ -375,7 +373,7 @@ func parsePrettyPrinterSettings(data []byte) (*PrettyPrinterSettings, error) {
 	}
 
 	// Strip namespace prefix
-	xmlStr := strings.ReplaceAll(string(data), "abapformatter:", "")
+	xmlStr := StripXMLNamespaces(string(data), "abapformatter:")
 
 	var resp settings
 	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
@@ -491,10 +489,7 @@ type xmlComponentLink struct {
 
 func parseClassComponents(data []byte) (*ClassComponent, error) {
 	// Strip namespace prefixes for easier parsing
-	xmlStr := string(data)
-	xmlStr = strings.ReplaceAll(xmlStr, "abapsource:", "")
-	xmlStr = strings.ReplaceAll(xmlStr, "adtcore:", "")
-	xmlStr = strings.ReplaceAll(xmlStr, "atom:", "")
+	xmlStr := StripXMLNamespaces(string(data), "abapsource:", "adtcore:", "atom:")
 
 	var root xmlClassComponent
 	if err := xml.Unmarshal([]byte(xmlStr), &root); err != nil {
@@ -579,9 +574,7 @@ func (c *Client) GetTypeHierarchy(ctx context.Context, sourceURL string, source 
 
 func parseTypeHierarchy(data []byte) ([]HierarchyNode, error) {
 	// Strip namespace prefixes
-	xmlStr := string(data)
-	xmlStr = strings.ReplaceAll(xmlStr, "hierarchy:", "")
-	xmlStr = strings.ReplaceAll(xmlStr, "adtcore:", "")
+	xmlStr := StripXMLNamespaces(string(data), "hierarchy:", "adtcore:")
 
 	type entry struct {
 		URI          string `xml:"uri,attr"`

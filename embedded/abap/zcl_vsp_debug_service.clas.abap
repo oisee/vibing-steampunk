@@ -86,6 +86,19 @@ CLASS zcl_vsp_debug_service DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
+    " HTTP breakpoint handlers (CL_ABAP_DEBUGGER - writes to ABDBG_BPS)
+    METHODS handle_set_http_breakpoint
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
+    METHODS handle_get_http_breakpoints
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
+    METHODS handle_delete_http_breakpoints
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
     METHODS get_debugger_service
       RETURNING VALUE(ro_service) TYPE REF TO if_tpdapi_service.
 
@@ -141,6 +154,13 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
         rs_response = handle_detach( is_message ).
       WHEN 'getStatus'.
         rs_response = handle_get_status( is_message ).
+      " HTTP breakpoints (CL_ABAP_DEBUGGER) - triggers on HTTP execution
+      WHEN 'setHttpBreakpoint'.
+        rs_response = handle_set_http_breakpoint( is_message ).
+      WHEN 'getHttpBreakpoints'.
+        rs_response = handle_get_http_breakpoints( is_message ).
+      WHEN 'deleteHttpBreakpoints'.
+        rs_response = handle_delete_http_breakpoints( is_message ).
       WHEN OTHERS.
         rs_response = zcl_vsp_utils=>build_error(
           iv_id      = is_message-id
@@ -911,6 +931,189 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
       ( zcl_vsp_utils=>json_bool( iv_key = 'debuggingAvailable' iv_value = xsdbool( cl_tpdapi_service=>is_debugging_available( ) IS NOT INITIAL ) ) )
     ) ) ).
     rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+  ENDMETHOD.
+
+  METHOD handle_set_http_breakpoint.
+    " Uses CL_ABAP_DEBUGGER which writes to ABDBG_BPS - checked by HTTP execution
+    DATA(lv_program) = to_upper( zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'program' ) ).
+    DATA(lv_method) = to_upper( zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'method' ) ).
+    DATA lv_line TYPE i.
+    lv_line = zcl_vsp_utils=>extract_param_int( iv_params = is_message-params iv_name = 'line' ).
+
+    IF lv_program IS INITIAL OR lv_line <= 0.
+      rs_response = zcl_vsp_utils=>build_error(
+        iv_id = is_message-id
+        iv_code = 'INVALID_PARAMS'
+        iv_message = 'HTTP breakpoint requires program and line parameters'
+      ).
+      RETURN.
+    ENDIF.
+
+    " For classes, resolve method to include name
+    DATA lv_include TYPE syrepid.
+    DATA lv_class TYPE string.
+    DATA lv_main_program TYPE syrepid.
+
+    " Check if this looks like a class (contains = or starts with Z/Y and has CL in name)
+    IF lv_program CP '*=*CP' OR lv_program CP '*=*'.
+      lv_class = lv_program.
+      DATA lv_eq_pos TYPE i.
+      FIND '=' IN lv_class MATCH OFFSET lv_eq_pos.
+      IF lv_eq_pos > 0.
+        lv_class = lv_class(lv_eq_pos).
+      ENDIF.
+    ELSEIF lv_program CP 'ZCL_*' OR lv_program CP 'YCL_*' OR lv_program CP 'CL_*'.
+      lv_class = lv_program.
+    ENDIF.
+
+    IF lv_class IS NOT INITIAL.
+      IF lv_method IS INITIAL.
+        rs_response = zcl_vsp_utils=>build_error(
+          iv_id = is_message-id
+          iv_code = 'INVALID_PARAMS'
+          iv_message = 'HTTP breakpoint for class requires method parameter'
+        ).
+        RETURN.
+      ENDIF.
+
+      TRY.
+          DATA lo_incl_naming TYPE REF TO if_oo_class_incl_naming.
+          lo_incl_naming ?= cl_oo_include_naming=>get_instance_by_name( CONV seoclsname( lv_class ) ).
+          lv_include = lo_incl_naming->get_include_by_mtdname( CONV seocpdname( lv_method ) ).
+          DATA(lv_padded_name) = |{ lv_class WIDTH = 30 PAD = '=' ALIGN = LEFT }|.
+          lv_main_program = |{ lv_padded_name }CP|.
+        CATCH cx_root INTO DATA(lx_naming).
+          rs_response = zcl_vsp_utils=>build_error(
+            iv_id = is_message-id
+            iv_code = 'RESOLVE_FAILED'
+            iv_message = |Cannot resolve class/method: { lx_naming->get_text( ) }|
+          ).
+          RETURN.
+      ENDTRY.
+    ELSE.
+      lv_include = lv_program.
+      lv_main_program = lv_program.
+    ENDIF.
+
+    " Build breakpoint structure - program is the include, line is within include
+    DATA: lt_breakpoints TYPE breakpoints,
+          ls_breakpoint  TYPE breakpoint.
+
+    ls_breakpoint-program = lv_include.
+    ls_breakpoint-line    = lv_line.
+    APPEND ls_breakpoint TO lt_breakpoints.
+
+    " Save via CL_ABAP_DEBUGGER (writes to ABDBG_BPS table)
+    TRY.
+        cl_abap_debugger=>save_http_breakpoints(
+          EXPORTING
+            username     = sy-uname
+            main_program = lv_main_program
+            breakpoints  = lt_breakpoints
+          EXCEPTIONS
+            too_many_breakpoints  = 1
+            generate              = 2
+            bp_position_not_found = 3
+            error                 = 4
+            wrong_parameters      = 5
+            OTHERS                = 6 ).
+
+        IF sy-subrc <> 0.
+          rs_response = zcl_vsp_utils=>build_error(
+            iv_id = is_message-id
+            iv_code = 'SAVE_FAILED'
+            iv_message = |Failed to save HTTP breakpoint (sy-subrc={ sy-subrc }): main={ lv_main_program }, incl={ lv_include }, line={ lv_line }|
+          ).
+          RETURN.
+        ENDIF.
+
+        " Success
+        DATA(lt_result) = VALUE string_table(
+          ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = 'http' ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'table' iv_value = 'ABDBG_BPS' ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'program' iv_value = CONV #( lv_main_program ) ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'include' iv_value = CONV #( lv_include ) ) )
+          ( zcl_vsp_utils=>json_int( iv_key = 'line' iv_value = lv_line ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'user' iv_value = CONV #( sy-uname ) ) )
+          ( zcl_vsp_utils=>json_bool( iv_key = 'saved' iv_value = abap_true ) )
+        ).
+        IF lv_method IS NOT INITIAL.
+          APPEND zcl_vsp_utils=>json_str( iv_key = 'method' iv_value = lv_method ) TO lt_result.
+        ENDIF.
+        DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_result ) ).
+        rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+
+      CATCH cx_root INTO DATA(lx_error).
+        rs_response = zcl_vsp_utils=>build_error(
+          iv_id = is_message-id
+          iv_code = 'SET_HTTP_BP_FAILED'
+          iv_message = lx_error->get_text( )
+        ).
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD handle_get_http_breakpoints.
+    " Read HTTP breakpoints from ABDBG_BPS via CL_ABAP_DEBUGGER
+    DATA: lt_breakpoints TYPE breakpoints,
+          lv_count       TYPE i.
+
+    TRY.
+        cl_abap_debugger=>read_http_breakpoints(
+          EXPORTING
+            main_program           = '*'
+            username               = sy-uname
+          IMPORTING
+            breakpoints            = lt_breakpoints
+            number_all_breakpoints = lv_count ).
+
+        " Build response
+        DATA lt_bp_items TYPE string_table.
+        LOOP AT lt_breakpoints INTO DATA(ls_bp).
+          DATA(lt_bp_props) = VALUE string_table(
+            ( zcl_vsp_utils=>json_str( iv_key = 'program' iv_value = CONV #( ls_bp-program ) ) )
+            ( zcl_vsp_utils=>json_int( iv_key = 'line' iv_value = ls_bp-line ) )
+          ).
+          APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_bp_props ) ) TO lt_bp_items.
+        ENDLOOP.
+
+        DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
+          ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = 'http' ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'table' iv_value = 'ABDBG_BPS' ) )
+          ( zcl_vsp_utils=>json_int( iv_key = 'count' iv_value = lv_count ) )
+          ( |"breakpoints":{ zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_bp_items ) ) }| )
+        ) ) ).
+        rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+
+      CATCH cx_root INTO DATA(lx_error).
+        rs_response = zcl_vsp_utils=>build_error(
+          iv_id = is_message-id
+          iv_code = 'GET_HTTP_BP_FAILED'
+          iv_message = lx_error->get_text( )
+        ).
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD handle_delete_http_breakpoints.
+    " Delete all HTTP breakpoints for current user
+    TRY.
+        cl_abap_debugger=>delete_http_breakpoints(
+          client   = sy-mandt
+          username = sy-uname ).
+
+        DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
+          ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = 'http' ) )
+          ( zcl_vsp_utils=>json_bool( iv_key = 'deleted' iv_value = abap_true ) )
+          ( zcl_vsp_utils=>json_str( iv_key = 'user' iv_value = CONV #( sy-uname ) ) )
+        ) ) ).
+        rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+
+      CATCH cx_root INTO DATA(lx_error).
+        rs_response = zcl_vsp_utils=>build_error(
+          iv_id = is_message-id
+          iv_code = 'DELETE_HTTP_BP_FAILED'
+          iv_message = lx_error->get_text( )
+        ).
+    ENDTRY.
   ENDMETHOD.
 
 ENDCLASS.

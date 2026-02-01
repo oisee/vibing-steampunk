@@ -12,6 +12,42 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// --- Git Routing ---
+// Routes for this module:
+//   system: type=git_types
+//   deploy: export
+
+// routeGitAction routes Git/abapGit actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeGitAction(ctx context.Context, action, objectType, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch action {
+	case "system":
+		systemType, _ := params["type"].(string)
+		if systemType == "git_types" {
+			result, err := s.handleGitTypes(ctx, newRequest(nil))
+			return result, true, err
+		}
+
+	case "deploy":
+		if objectType == "export" {
+			args := map[string]any{}
+			if packages, ok := params["packages"].(string); ok && packages != "" {
+				args["packages"] = packages
+			}
+			if objects, ok := params["objects"].(string); ok && objects != "" {
+				args["objects"] = objects
+			}
+			if inclSub, ok := params["include_subpackages"].(bool); ok {
+				args["include_subpackages"] = inclSub
+			}
+			result, err := s.handleGitExport(ctx, newRequest(args))
+			return result, true, err
+		}
+	}
+
+	return nil, false, nil
+}
+
 // --- Git/abapGit Handlers ---
 
 func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -21,7 +57,7 @@ func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest
 
 	types, err := s.amdpWSClient.GitTypes(ctx)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GitTypes failed: %v", err)), nil
+		return wrapErr("GitTypes", err), nil
 	}
 
 	var sb strings.Builder
@@ -59,7 +95,7 @@ func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolReques
 	if objsStr, ok := request.Params.Arguments["objects"].(string); ok && objsStr != "" {
 		var objs []adt.GitObjectRef
 		if err := json.Unmarshal([]byte(objsStr), &objs); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid objects JSON: %v", err)), nil
+			return wrapErr("GitExport/ParseObjects", err), nil
 		}
 		params.Objects = objs
 	}
@@ -77,7 +113,7 @@ func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolReques
 
 	result, err := s.amdpWSClient.GitExport(ctx, params)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GitExport failed: %v", err)), nil
+		return wrapErr("GitExport", err), nil
 	}
 
 	var sb strings.Builder

@@ -28,6 +28,9 @@ linters-settings:
       - fieldalignment
   goimports:
     local-prefixes: github.com/vibingsteamer/mcp-abap-adt-go
+  misspell:
+    ignore-words:
+      - CLAS  # SAP object type abbreviation for class
 
 issues:
   exclude-rules:
@@ -35,3 +38,15 @@ issues:
       linters:
         - errcheck
         - unparam
+    # Handler methods are called indirectly via universal tool router (handlers_universal.go)
+    # The linter can't trace: handleUniversalTool -> handleUniversalRead -> handleGetTable
+    - path: internal/mcp/(handlers_.*|server)\.go
+      linters:
+        - unused
+    - path: internal/mcp/handlers_.*\.go
+      linters:
+        - unparam
+    - path: internal/mcp/handlers_.*\.go
+      linters:
+        - staticcheck
+      text: "U1000"

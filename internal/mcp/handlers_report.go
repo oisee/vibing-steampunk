@@ -13,6 +13,106 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// --- Report Routing ---
+// Routes for this module:
+//   test:   type=report, type=report_async
+//   read:   VARIANTS <report>, TEXT_ELEMENTS <program>
+//   edit:   TEXT_ELEMENTS <program>
+//   system: async_result
+
+// routeReportAction routes report-related actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeReportAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch action {
+	case "test":
+		testType, _ := params["type"].(string)
+		switch testType {
+		case "report":
+			args := map[string]any{"report": objectName}
+			if variant, ok := params["variant"].(string); ok {
+				args["variant"] = variant
+			}
+			if reportParams, ok := params["report_params"].(string); ok {
+				args["params"] = reportParams
+			}
+			result, err := s.handleRunReport(ctx, newRequest(args))
+			return result, true, err
+
+		case "report_async":
+			args := map[string]any{"report": objectName}
+			if variant, ok := params["variant"].(string); ok {
+				args["variant"] = variant
+			}
+			if reportParams, ok := params["report_params"].(string); ok {
+				args["params"] = reportParams
+			}
+			result, err := s.handleRunReportAsync(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "read":
+		switch objectType {
+		case "VARIANTS":
+			result, err := s.handleGetVariants(ctx, newRequest(map[string]any{"report": objectName}))
+			return result, true, err
+
+		case "TEXT_ELEMENTS":
+			args := map[string]any{"program": objectName}
+			if lang, ok := params["language"].(string); ok {
+				args["language"] = lang
+			}
+			result, err := s.handleGetTextElements(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "edit":
+		if objectType == "TEXT_ELEMENTS" {
+			args := map[string]any{"program": objectName}
+			if lang, ok := params["language"].(string); ok {
+				args["language"] = lang
+			}
+			if selTexts, ok := params["selection_texts"].(string); ok {
+				args["selection_texts"] = selTexts
+			}
+			if textSyms, ok := params["text_symbols"].(string); ok {
+				args["text_symbols"] = textSyms
+			}
+			if headTexts, ok := params["heading_texts"].(string); ok {
+				args["heading_texts"] = headTexts
+			}
+			result, err := s.handleSetTextElements(ctx, newRequest(args))
+			return result, true, err
+		}
+
+	case "system":
+		if objectType == "ASYNC_RESULT" || objectName == "async_result" {
+			taskID, _ := params["task_id"].(string)
+			if taskID == "" {
+				return newToolResultError("async_result requires 'task_id' in params"), true, nil
+			}
+			args := map[string]any{"task_id": taskID}
+			if wait, ok := params["wait"].(bool); ok {
+				args["wait"] = wait
+			}
+			result, err := s.handleGetAsyncResult(ctx, newRequest(args))
+			return result, true, err
+		}
+	}
+
+	return nil, false, nil // Not handled by this module
+}
+
+// AsyncTask represents a background task status.
+type AsyncTask struct {
+	ID        string     `json:"id"`
+	Type      string     `json:"type"`   // "report", "export", etc.
+	Status    string     `json:"status"` // "running", "completed", "error"
+	StartedAt time.Time  `json:"started_at"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
+	Result    any        `json:"result,omitempty"`
+	Error     string     `json:"error,omitempty"`
+}
+
 // --- Report Execution Handlers ---
 
 func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -38,7 +138,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
 		var p map[string]string
 		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+			return wrapErr("RunReport/ParseParams", err), nil
 		}
 		params.Params = p
 	}
@@ -46,7 +146,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	// Step 1: Schedule background job via WebSocket
 	result, err := s.amdpWSClient.RunReport(ctx, params)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("RunReport failed: %v", err)), nil
+		return wrapErr("RunReport", err), nil
 	}
 
 	// Check if we got job info (new job-based approach)
@@ -62,7 +162,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	for {
 		jobStatus, err = s.amdpWSClient.GetJobStatus(pollCtx, result.JobName, result.JobCount)
 		if err != nil {
-			return newToolResultError(fmt.Sprintf("GetJobStatus failed: %v", err)), nil
+			return wrapErr("GetJobStatus", err), nil
 		}
 
 		if jobStatus.Status == "finished" || jobStatus.Status == "aborted" {
@@ -71,7 +171,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 
 		select {
 		case <-pollCtx.Done():
-			return newToolResultError(fmt.Sprintf("Job %s/%s timed out (status: %s)", result.JobName, result.JobCount, jobStatus.Status)), nil
+			return newToolResultError("Job " + result.JobName + "/" + result.JobCount + " timed out (status: " + jobStatus.Status + ")"), nil
 		case <-time.After(500 * time.Millisecond):
 			// Continue polling
 		}
@@ -126,7 +226,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
 		var p map[string]string
 		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+			return wrapErr("RunReportAsync/ParseParams", err), nil
 		}
 		params.Params = p
 	}
@@ -225,7 +325,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		now := time.Now()
 		task.EndedAt = &now
 		task.Status = "completed"
-		task.Result = map[string]interface{}{
+		task.Result = map[string]any{
 			"report":       result.Report,
 			"jobname":      result.JobName,
 			"jobcount":     result.JobCount,
@@ -265,7 +365,7 @@ func (s *Server) handleGetAsyncResult(ctx context.Context, request mcp.CallToolR
 			task, exists := s.asyncTasks[taskID]
 			if !exists {
 				s.asyncTasksMu.RUnlock()
-				return newToolResultError(fmt.Sprintf("Task not found: %s", taskID)), nil
+				return newToolResultError("Task not found: " + taskID), nil
 			}
 			status := task.Status
 			s.asyncTasksMu.RUnlock()
@@ -290,7 +390,7 @@ func (s *Server) handleGetAsyncResult(ctx context.Context, request mcp.CallToolR
 	task, exists := s.asyncTasks[taskID]
 	if !exists {
 		s.asyncTasksMu.RUnlock()
-		return newToolResultError(fmt.Sprintf("Task not found: %s", taskID)), nil
+		return newToolResultError("Task not found: " + taskID), nil
 	}
 	// Make a copy for safe access
 	taskCopy := *task
@@ -313,7 +413,7 @@ func (s *Server) handleGetVariants(ctx context.Context, request mcp.CallToolRequ
 
 	result, err := s.amdpWSClient.GetVariants(ctx, report)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetVariants failed: %v", err)), nil
+		return wrapErr("GetVariants", err), nil
 	}
 
 	var sb strings.Builder
@@ -348,7 +448,7 @@ func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallTool
 
 	result, err := s.amdpWSClient.GetTextElements(ctx, program, language)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("GetTextElements failed: %v", err)), nil
+		return wrapErr("GetTextElements", err), nil
 	}
 
 	var sb strings.Builder
@@ -397,7 +497,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 	if selTextsStr, ok := request.Params.Arguments["selection_texts"].(string); ok && selTextsStr != "" {
 		var selTexts map[string]string
 		if err := json.Unmarshal([]byte(selTextsStr), &selTexts); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid selection_texts JSON: %v", err)), nil
+			return wrapErr("SetTextElements/ParseSelectionTexts", err), nil
 		}
 		params.SelectionTexts = selTexts
 	}
@@ -405,7 +505,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 	if textSymsStr, ok := request.Params.Arguments["text_symbols"].(string); ok && textSymsStr != "" {
 		var textSyms map[string]string
 		if err := json.Unmarshal([]byte(textSymsStr), &textSyms); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid text_symbols JSON: %v", err)), nil
+			return wrapErr("SetTextElements/ParseTextSymbols", err), nil
 		}
 		params.TextSymbols = textSyms
 	}
@@ -413,7 +513,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 	if headTextsStr, ok := request.Params.Arguments["heading_texts"].(string); ok && headTextsStr != "" {
 		var headTexts map[string]string
 		if err := json.Unmarshal([]byte(headTextsStr), &headTexts); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid heading_texts JSON: %v", err)), nil
+			return wrapErr("SetTextElements/ParseHeadingTexts", err), nil
 		}
 		params.HeadingTexts = headTexts
 	}
@@ -424,7 +524,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 
 	result, err := s.amdpWSClient.SetTextElements(ctx, params)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("SetTextElements failed: %v", err)), nil
+		return wrapErr("SetTextElements", err), nil
 	}
 
 	var sb strings.Builder

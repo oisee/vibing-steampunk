@@ -86,7 +86,7 @@ func TestDeltaCompression(t *testing.T) {
 
 	// Frame 1 should have full variables
 	frame1 := recorder.GetFrame(1)
-	if frame1.Variables == nil || len(frame1.Variables) == 0 {
+	if len(frame1.Variables) == 0 {
 		t.Error("frame 1 should have full variables")
 	}
 
@@ -101,7 +101,7 @@ func TestDeltaCompression(t *testing.T) {
 
 	// Frame 5 should have full variables (snapshot boundary)
 	frame5 := recorder.GetFrame(5)
-	if frame5.Variables == nil || len(frame5.Variables) == 0 {
+	if len(frame5.Variables) == 0 {
 		t.Error("frame 5 should have full variables (snapshot)")
 	}
 }

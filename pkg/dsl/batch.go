@@ -224,13 +224,9 @@ func (b *BatchBuilder) processObject(ctx context.Context, obj ObjectRef) ObjectR
 func (b *BatchBuilder) getSource(ctx context.Context, obj ObjectRef) (string, error) {
 	switch obj.Type {
 	case TypeClass, "CLAS/OC":
-		sources, err := b.client.GetClass(ctx, obj.Name)
-		if err != nil {
-			return "", err
-		}
-		return sources["main"], nil
+		return b.client.GetSource(ctx, "CLAS", obj.Name, nil)
 	case TypeProgram, "PROG/P":
-		return b.client.GetProgram(ctx, obj.Name)
+		return b.client.GetSource(ctx, "PROG", obj.Name, nil)
 	default:
 		return "", fmt.Errorf("unsupported object type: %s", obj.Type)
 	}

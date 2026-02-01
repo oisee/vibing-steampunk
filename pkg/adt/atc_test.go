@@ -228,3 +228,92 @@ func TestATCFindingPriorityMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestParseATCWorklistWithTags(t *testing.T) {
+	xmlData := `<?xml version="1.0" encoding="utf-8"?>
+<atcworklist:worklist xmlns:atcworklist="http://www.sap.com/adt/atc/worklist"
+                      xmlns:atcobject="http://www.sap.com/adt/atc/object"
+                      xmlns:atcfinding="http://www.sap.com/adt/atc/finding"
+                      xmlns:adtcore="http://www.sap.com/adt/core"
+                      id="TAGS123" timestamp="2025-12-04T10:30:00Z"
+                      usedObjectSet="LAST_RUN" objectSetIsComplete="true">
+  <atcworklist:objects>
+    <atcobject:object uri="/sap/bc/adt/oo/classes/ZCL_SERIALIZER" type="CLAS/OC"
+                      name="ZCL_SERIALIZER" packageName="$ZRAY" author="DEVELOPER">
+      <atcfinding:findings>
+        <atcfinding:finding uri="/sap/bc/adt/atc/findings/001"
+                           location="/sap/bc/adt/oo/classes/ZCL_SERIALIZER/source/main#start=50,10"
+                           priority="2" checkId="CL_ABAP_API_STATE" checkTitle="API State Check"
+                           messageId="RELEASED" messageTitle="Usage of not released ABAP Platform APIs"
+                           processor="PROCESSOR1" lastChangedBy="DEVUSER">
+          <atcfinding:tags>
+            <atcfinding:tag atcfinding:name="REF_OBJ_NAME" atcfinding:value="DECIMALS"/>
+            <atcfinding:tag atcfinding:name="REF_OBJ_TYPE" atcfinding:value="DTEL"/>
+            <atcfinding:tag atcfinding:name="REF_PACKAGE" atcfinding:value="SDIC"/>
+            <atcfinding:tag atcfinding:name="REF_SOFTWARE_COMPONENT" atcfinding:value="SAP_BASIS"/>
+            <atcfinding:tag atcfinding:name="APPLICATION_COMPONENT" atcfinding:value="BC-DWB-DIC-AC"/>
+          </atcfinding:tags>
+        </atcfinding:finding>
+        <atcfinding:finding uri="/sap/bc/adt/atc/findings/002"
+                           location="/sap/bc/adt/oo/classes/ZCL_SERIALIZER/source/main#start=100,5"
+                           priority="2" checkId="CL_ABAP_API_STATE" checkTitle="API State Check"
+                           messageId="RELEASED" messageTitle="Usage of not released ABAP Platform APIs">
+          <atcfinding:tags>
+            <atcfinding:tag atcfinding:name="REF_OBJ_NAME" atcfinding:value="SY-DATUM"/>
+          </atcfinding:tags>
+        </atcfinding:finding>
+      </atcfinding:findings>
+    </atcobject:object>
+  </atcworklist:objects>
+</atcworklist:worklist>`
+
+	result, err := parseATCWorklist([]byte(xmlData))
+	if err != nil {
+		t.Fatalf("parseATCWorklist failed: %v", err)
+	}
+
+	if len(result.Objects) != 1 {
+		t.Fatalf("expected 1 object, got %d", len(result.Objects))
+	}
+
+	obj := result.Objects[0]
+	if len(obj.Findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(obj.Findings))
+	}
+
+	// First finding - full tags
+	f1 := obj.Findings[0]
+	if f1.Processor != "PROCESSOR1" {
+		t.Errorf("expected processor 'PROCESSOR1', got '%s'", f1.Processor)
+	}
+	if f1.LastChangedBy != "DEVUSER" {
+		t.Errorf("expected lastChangedBy 'DEVUSER', got '%s'", f1.LastChangedBy)
+	}
+	if len(f1.Tags) != 5 {
+		t.Errorf("expected 5 tags, got %d", len(f1.Tags))
+	}
+	if f1.Tags[ATCTagRefObjName] != "DECIMALS" {
+		t.Errorf("expected REF_OBJ_NAME 'DECIMALS', got '%s'", f1.Tags[ATCTagRefObjName])
+	}
+	if f1.Tags[ATCTagRefObjType] != "DTEL" {
+		t.Errorf("expected REF_OBJ_TYPE 'DTEL', got '%s'", f1.Tags[ATCTagRefObjType])
+	}
+	if f1.Tags[ATCTagRefPackage] != "SDIC" {
+		t.Errorf("expected REF_PACKAGE 'SDIC', got '%s'", f1.Tags[ATCTagRefPackage])
+	}
+	if f1.Tags[ATCTagRefSoftwareComponent] != "SAP_BASIS" {
+		t.Errorf("expected REF_SOFTWARE_COMPONENT 'SAP_BASIS', got '%s'", f1.Tags[ATCTagRefSoftwareComponent])
+	}
+	if f1.Tags[ATCTagApplicationComponent] != "BC-DWB-DIC-AC" {
+		t.Errorf("expected APPLICATION_COMPONENT 'BC-DWB-DIC-AC', got '%s'", f1.Tags[ATCTagApplicationComponent])
+	}
+
+	// Second finding - single tag
+	f2 := obj.Findings[1]
+	if len(f2.Tags) != 1 {
+		t.Errorf("expected 1 tag, got %d", len(f2.Tags))
+	}
+	if f2.Tags[ATCTagRefObjName] != "SY-DATUM" {
+		t.Errorf("expected REF_OBJ_NAME 'SY-DATUM', got '%s'", f2.Tags[ATCTagRefObjName])
+	}
+}

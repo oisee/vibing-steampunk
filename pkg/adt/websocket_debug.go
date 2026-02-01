@@ -125,6 +125,85 @@ func (c *DebugWebSocketClient) DeleteBreakpoint(ctx context.Context, breakpointI
 	return nil
 }
 
+// --- HTTP Breakpoint Operations (CL_ABAP_DEBUGGER → ABDBG_BPS table) ---
+// These breakpoints are checked by HTTP-triggered execution, unlike TPDAPI breakpoints.
+
+// SetHttpBreakpoint sets a breakpoint via CL_ABAP_DEBUGGER which writes to ABDBG_BPS.
+// This breakpoint type is checked by HTTP-triggered execution (classrun, REST calls).
+// For classes, the method parameter is required to resolve the include name.
+func (c *DebugWebSocketClient) SetHttpBreakpoint(ctx context.Context, program string, line int, method string) (map[string]any, error) {
+	params := map[string]any{
+		"program": program,
+		"line":    line,
+	}
+	if method != "" {
+		params["method"] = method
+	}
+
+	resp, err := c.sendRequest(ctx, "setHttpBreakpoint", params)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("setHttpBreakpoint failed")
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// GetHttpBreakpoints returns all HTTP breakpoints from ABDBG_BPS table.
+func (c *DebugWebSocketClient) GetHttpBreakpoints(ctx context.Context) (map[string]any, error) {
+	resp, err := c.sendRequest(ctx, "getHttpBreakpoints", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("getHttpBreakpoints failed")
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// DeleteHttpBreakpoints removes all HTTP breakpoints for the current user from ABDBG_BPS.
+func (c *DebugWebSocketClient) DeleteHttpBreakpoints(ctx context.Context) (map[string]any, error) {
+	resp, err := c.sendRequest(ctx, "deleteHttpBreakpoints", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("deleteHttpBreakpoints failed")
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // --- Debugger Session Operations ---
 
 // Listen waits for a debuggee to hit a breakpoint.

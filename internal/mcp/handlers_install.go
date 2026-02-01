@@ -13,6 +13,47 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
+// --- Install Routing ---
+// Routes for this module:
+//   system: type=install_zadt_vsp, type=install_abapgit, type=list_dependencies, type=install_dummy_test
+
+// routeInstallAction routes install actions.
+// Returns (result, true) if handled, (nil, false) if not handled by this module.
+func (s *Server) routeInstallAction(ctx context.Context, action, _, _ string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+
+	systemType := getStr(params, "type")
+	switch systemType {
+	case "install_zadt_vsp":
+		args := map[string]any{}
+		copyOptional(args, params, "package")
+		copyOptionalBool(args, params, "skip_git_service", "check_only")
+		result, err := s.handleInstallZADTVSP(ctx, newRequest(args))
+		return result, true, err
+
+	case "install_abapgit":
+		args := map[string]any{}
+		copyOptional(args, params, "edition", "package")
+		copyOptionalBool(args, params, "check_only")
+		result, err := s.handleInstallAbapGit(ctx, newRequest(args))
+		return result, true, err
+
+	case "list_dependencies":
+		result, err := s.handleListDependencies(ctx, newRequest(nil))
+		return result, true, err
+
+	case "install_dummy_test":
+		args := map[string]any{}
+		copyOptionalBool(args, params, "check_only", "cleanup")
+		result, err := s.handleInstallDummyTest(ctx, newRequest(args))
+		return result, true, err
+	}
+
+	return nil, false, nil
+}
+
 // --- Install Handlers ---
 
 func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -22,15 +63,9 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 		testClass     = "ZCL_DUMMY_TEST"
 	)
 
-	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
-		checkOnly = check
-	}
-
-	cleanup := false
-	if cl, ok := request.Params.Arguments["cleanup"].(bool); ok {
-		cleanup = cl
-	}
+	args := request.Params.Arguments
+	checkOnly := getBool(args, "check_only", false)
+	cleanup := getBool(args, "cleanup", false)
 
 	var sb strings.Builder
 	sb.WriteString("InstallDummyTest - Workflow Verification\n")
@@ -60,7 +95,7 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 
 	// Step 1: Check/Create package (upsert strategy)
 	step("Package Check/Create")
-	pkg, err := s.adtClient.GetPackage(ctx, testPackage)
+	pkg, err := s.adtClient.GetPackage(ctx, testPackage, nil)
 	packageExists := err == nil && pkg.URI != "" // URI empty = package doesn't really exist
 	if !packageExists {
 		info("Package doesn't exist, creating...")
@@ -76,7 +111,7 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 				fail(fmt.Sprintf("CreateObject(package) failed: %v", err))
 			} else {
 				// Verify
-				pkg, err = s.adtClient.GetPackage(ctx, testPackage)
+				pkg, err = s.adtClient.GetPackage(ctx, testPackage, nil)
 				if err != nil || pkg.URI == "" {
 					fail("Verification failed: package not found after create")
 				} else {
@@ -278,23 +313,16 @@ ENDCLASS.`
 }
 
 func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Parse parameters
-	packageName := "$ZADT_VSP"
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
-		packageName = strings.ToUpper(pkg)
+	args := request.Params.Arguments
+	packageName := getStr(args, "package")
+	if packageName == "" {
+		packageName = "$ZADT_VSP"
+	} else {
+		packageName = strings.ToUpper(packageName)
 	}
+	skipGitService := getBool(args, "skip_git_service", false)
+	checkOnly := getBool(args, "check_only", false)
 
-	skipGitService := false
-	if skip, ok := request.Params.Arguments["skip_git_service"].(bool); ok {
-		skipGitService = skip
-	}
-
-	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
-		checkOnly = check
-	}
-
-	// Validate package name
 	if !strings.HasPrefix(packageName, "$") {
 		return newToolResultError("Package name must start with $ (local package)"), nil
 	}
@@ -306,12 +334,12 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	// Phase 1: Check prerequisites
 	sb.WriteString("Checking prerequisites...\n")
 
-	// Check if package exists (verify URI is populated - empty URI means package doesn't really exist)
+	// Check if package exists
 	packageExists := false
-	pkg, err := s.adtClient.GetPackage(ctx, packageName)
-	if err == nil && pkg.URI != "" {
+	pkg, err := s.adtClient.GetPackage(ctx, packageName, nil)
+	if err == nil && (pkg.URI != "" || pkg.Name != "" || pkg.TotalObjects > 0) {
 		packageExists = true
-		fmt.Fprintf(&sb, "  ✓ Package %s exists\n", packageName)
+		fmt.Fprintf(&sb, "  ✓ Package %s exists (%d objects)\n", packageName, pkg.TotalObjects)
 	} else {
 		fmt.Fprintf(&sb, "  → Package %s will be created\n", packageName)
 	}
@@ -366,7 +394,7 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		}
 		err := s.adtClient.CreateObject(ctx, createOpts)
 		if err != nil {
-			return newToolResultError(fmt.Sprintf("Failed to create package: %v", err)), nil
+			return wrapErr("CreateObject(package)", err), nil
 		}
 		fmt.Fprintf(&sb, "  ✓ Package %s created\n\n", packageName)
 	} else {
@@ -468,28 +496,16 @@ func (s *Server) handleListDependencies(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Parse parameters
-	edition := "standalone"
-	if ed, ok := request.Params.Arguments["edition"].(string); ok && ed != "" {
-		edition = strings.ToLower(ed)
+	args := request.Params.Arguments
+	edition := strings.ToLower(getStr(args, "edition"))
+	if edition == "" {
+		edition = "standalone"
 	}
-
-	packageName := ""
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
-		packageName = strings.ToUpper(pkg)
-	}
-
-	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
-		checkOnly = check
-	}
-
-	// Validate edition
 	if edition != "standalone" && edition != "dev" {
 		return newToolResultError("Invalid edition. Use 'standalone' or 'dev'"), nil
 	}
 
-	// Set default package based on edition
+	packageName := strings.ToUpper(getStr(args, "package"))
 	if packageName == "" {
 		if edition == "standalone" {
 			packageName = "$ABAPGIT"
@@ -497,11 +513,11 @@ func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolR
 			packageName = "$ZGIT_DEV"
 		}
 	}
-
-	// Validate package name
 	if !strings.HasPrefix(packageName, "$") {
 		return newToolResultError("Package name must start with $ (local package)"), nil
 	}
+
+	checkOnly := getBool(args, "check_only", false)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Install abapGit (%s edition)\n", edition)
@@ -519,7 +535,7 @@ func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolR
 	}
 
 	if selectedDep == nil {
-		return newToolResultError(fmt.Sprintf("Edition '%s' not found in available dependencies", edition)), nil
+		return newToolResultError("Edition '" + edition + "' not found in available dependencies"), nil
 	}
 
 	if !selectedDep.Available {

@@ -38,7 +38,7 @@ PLATFORMS_COMMON=linux/amd64 darwin/arm64 windows/amd64
 CURRENT_OS=$(shell go env GOOS)
 CURRENT_ARCH=$(shell go env GOARCH)
 
-.PHONY: all build clean test lint fmt deps tidy help install run
+.PHONY: all build clean test test-integration lint fmt deps tidy help install run
 .PHONY: build-all build-all-all build-linux build-darwin build-windows
 .PHONY: deploy-windows sync-embedded
 
@@ -159,6 +159,9 @@ lint: ## Run linter
 
 test: ## Run tests
 	$(GOTEST) -v -race ./...
+
+test-integration: ## Run integration tests (requires SAP_* env vars)
+	$(GOTEST) -tags=integration -v ./...
 
 test-coverage: ## Run tests with coverage
 	$(GOTEST) -v -race -coverprofile=coverage.out ./...

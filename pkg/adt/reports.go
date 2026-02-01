@@ -9,7 +9,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 // RunReportParams contains parameters for report execution.
 // Reports run as background jobs and output to spool (APC-safe).
 type RunReportParams struct {
@@ -85,7 +84,7 @@ type GetVariantsResult struct {
 // RunReport executes an ABAP report via WebSocket (ZADT_VSP report domain).
 // Report runs as background job - returns job info for polling.
 func (c *AMDPWebSocketClient) RunReport(ctx context.Context, params RunReportParams) (*RunReportResult, error) {
-	reqParams := map[string]interface{}{
+	reqParams := map[string]any{
 		"report": params.Report,
 	}
 	if params.Variant != "" {
@@ -112,7 +111,7 @@ func (c *AMDPWebSocketClient) RunReport(ctx context.Context, params RunReportPar
 
 // GetTextElements retrieves program text elements via WebSocket.
 func (c *AMDPWebSocketClient) GetTextElements(ctx context.Context, program, language string) (*TextElements, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"program": program,
 	}
 	if language != "" {
@@ -136,7 +135,7 @@ func (c *AMDPWebSocketClient) GetTextElements(ctx context.Context, program, lang
 
 // SetTextElements updates program text elements via WebSocket.
 func (c *AMDPWebSocketClient) SetTextElements(ctx context.Context, params SetTextElementsParams) (*SetTextElementsResult, error) {
-	reqParams := map[string]interface{}{
+	reqParams := map[string]any{
 		"program": params.Program,
 	}
 	if params.Language != "" {
@@ -169,7 +168,7 @@ func (c *AMDPWebSocketClient) SetTextElements(ctx context.Context, params SetTex
 
 // GetVariants retrieves available variants for a report via WebSocket.
 func (c *AMDPWebSocketClient) GetVariants(ctx context.Context, report string) (*GetVariantsResult, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"report": report,
 	}
 
@@ -190,7 +189,7 @@ func (c *AMDPWebSocketClient) GetVariants(ctx context.Context, report string) (*
 
 // GetJobStatus retrieves job status via WebSocket.
 func (c *AMDPWebSocketClient) GetJobStatus(ctx context.Context, jobName, jobCount string) (*JobStatusResult, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"jobname":  jobName,
 		"jobcount": jobCount,
 	}
@@ -212,7 +211,7 @@ func (c *AMDPWebSocketClient) GetJobStatus(ctx context.Context, jobName, jobCoun
 
 // GetSpoolOutput retrieves spool output by ID via WebSocket.
 func (c *AMDPWebSocketClient) GetSpoolOutput(ctx context.Context, spoolID string) (*SpoolOutputResult, error) {
-	params := map[string]interface{}{
+	params := map[string]any{
 		"spool_id": spoolID,
 	}
 
@@ -232,7 +231,7 @@ func (c *AMDPWebSocketClient) GetSpoolOutput(ctx context.Context, spoolID string
 }
 
 // sendReportRequest sends a request to the report domain.
-func (c *AMDPWebSocketClient) sendReportRequest(ctx context.Context, action string, params map[string]interface{}) (*WSResponse, error) {
+func (c *AMDPWebSocketClient) sendReportRequest(ctx context.Context, action string, params map[string]any) (*WSResponse, error) {
 	c.mu.RLock()
 	if c.conn == nil {
 		c.mu.RUnlock()
