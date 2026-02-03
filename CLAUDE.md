@@ -317,6 +317,10 @@ All research reports, analysis documents, and design specifications follow this 
 - **002:** abapGit Integration Progress - Status update, SAP objects created, parked issues
 - **003:** RAP OData Service Lessons - BDEF XML format, SRVB creation, OData V4 action URLs
 
+#### 2026-02-01 Reports
+- **001:** One Tool Mode Future - Vision for ultra-minimal tool consolidation
+- **002:** ABAP Help Tool Design - GetAbapHelp implementation via WebSocket
+
 #### Reference Documentation (Non-numbered)
 - `abap-adt-discovery-guide.md` - ADT API discovery process
 - `adt-abap-internals-documentation.md` - Detailed ADT endpoint analysis
@@ -380,6 +384,10 @@ When creating a new report:
 | **Class Includes** | ✅ Complete (v2.12 - testclasses, locals_def, locals_imp, macros) |
 | **abapGit Integration** | ✅ Complete (v2.16.0 - WebSocket, GitTypes, GitExport - 158 object types) |
 | **Install Tools** | ✅ Complete (v2.17.0 - InstallZADTVSP, InstallAbapGit, ListDependencies) |
+| **GetAbapHelp** | ✅ Complete (v2.23.0 - ABAP keyword docs via WebSocket/ZADT_VSP) |
+| **GitExport to Disk** | ✅ Complete (v2.23.0 - ZIP files written directly, no base64) |
+| **Tool Visibility** | ✅ Complete (v2.22.0 - .vsp.json for granular tool control) |
+| **HTTP Proxy** | ✅ Complete (v2.22.0 - HTTP_PROXY/HTTPS_PROXY support) |
 
 ### DSL & Workflow Usage
 
@@ -434,50 +442,41 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ---
 
-## Last Session Reference (2026-01-07)
+## Last Session Reference (2026-02-03)
 
-### Objective: SAP GUI Terminal ID Integration - COMPLETED ✅
+### Objective: Upstream Merge - COMPLETED ✅
 
-Added `SAP_TERMINAL_ID` config to enable cross-tool breakpoint sharing with SAP GUI.
+Merged 13 commits from upstream `oisee/vibing-steampunk` to sync with v2.23.0.
 
 ### What Was Done
 
-1. ✅ **Merged Community PRs** (#4, #6 from vitalratel)
-   - MoveObject tool, WebSocket refactoring, ZCL_VSP_UTILS
+1. ✅ **Fetched upstream changes**
+   - 13 new commits from oisee/vibing-steampunk
 
-2. ✅ **Terminal ID Feature** - SAP GUI breakpoint compatibility
-   - Added `--terminal-id` CLI flag
-   - Added `SAP_TERMINAL_ID` env variable support
-   - Updated `pkg/adt/config.go` - `TerminalID` field + `WithTerminalID()` option
-   - Updated `pkg/adt/debugger.go` - `SetTerminalID()` function, priority: custom > user-based > default
-   - Updated `internal/mcp/server.go` - Config field + initialization
-   - Updated `cmd/vsp/main.go` - flag + viper binding
+2. ✅ **Resolved merge conflict**
+   - Fixed import paths in `cmd/vsp/main.go` (vinchacho org)
+   - Added new `pkg/config` import
 
-### How It Works
+3. ✅ **Updated dependencies**
+   - Ran `go mod tidy` to update go.mod/go.sum
+   - All dependencies resolved successfully
 
-SAP GUI stores terminal ID in:
-- **Windows**: Registry `HKCU\Software\SAP\ABAP Debugging\TerminalID`
-- **Linux/Mac**: File `~/.SAP/ABAPDebugging/terminalId`
+4. ✅ **Verified build**
+   - Build succeeded with `go build -o vsp ./cmd/vsp`
 
-By configuring vsp to use the same terminal ID, breakpoints set by vsp can be hit by SAP GUI sessions!
+5. ✅ **Pushed to fork**
+   - Pushed 15 commits total to vinchacho/vibing-steampunk
 
-### Configuration
+### New Features from Upstream (v2.22.0 - v2.23.0)
 
-```bash
-# .env file
-SAP_TERMINAL_ID=D0C586D015974B75BFB2A306A4A13AEA
+- **GetAbapHelp** - ABAP keyword documentation from SAP system via WebSocket
+- **GitExport to Disk** - ZIP files written directly, no more base64 encoding
+- **Tool Visibility Control** - `.vsp.json` for granular tool enable/disable
+- **HTTP Proxy Support** - Honor `HTTP_PROXY`/`HTTPS_PROXY` env variables
+- **Transport Fixes** - Fixed 406 error and EditSource transport support
+- **Tool Aliases Disabled** - Reduced tool bloat by default
 
-# Or CLI
-vsp --terminal-id D0C586D015974B75BFB2A306A4A13AEA
-```
+### Previous Session: SAP GUI Terminal ID Integration (2026-01-07)
 
-### TODO
-
-- [ ] **Re-add ALV capture for RunReport**
-- [ ] **Test SAP GUI breakpoint sharing** - Set breakpoint via vsp, trigger in SAP GUI
-
-### Previous Session: Method-Level Source Operations (2026-01-06)
-
-- Added `method` parameter to GetSource, EditSource, WriteSource
-- 95% token reduction for method-level work
-- Released as v2.21.0
+- Added `SAP_TERMINAL_ID` config to enable cross-tool breakpoint sharing
+- Released as v2.22.0
