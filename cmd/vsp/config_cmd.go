@@ -17,6 +17,11 @@ func init() {
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(mcpToVspCmd)
 	configCmd.AddCommand(vspToMcpCmd)
+	configCmd.AddCommand(configToolsCmd)
+	configToolsCmd.AddCommand(configToolsInitCmd)
+	configToolsCmd.AddCommand(configToolsListCmd)
+	configToolsCmd.AddCommand(configToolsEnableCmd)
+	configToolsCmd.AddCommand(configToolsDisableCmd)
 }
 
 var configCmd = &cobra.Command{
@@ -507,6 +512,336 @@ func runVspToMcp(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// --- Tools configuration commands ---
+
+var configToolsCmd = &cobra.Command{
+	Use:   "tools",
+	Short: "Manage tool visibility settings",
+	Long: `Manage granular tool visibility in .vsp.json.
+
+Tools can be enabled/disabled individually to control what the LLM sees.
+This allows hiding experimental or non-working tools.
+
+Use 'vsp config tools init' to create a complete tools configuration.
+Use 'vsp config tools list' to see current visibility.`,
+}
+
+var configToolsInitCmd = &cobra.Command{
+	Use:   "init [--mode focused|expert]",
+	Short: "Initialize tools configuration with defaults",
+	Long: `Create or update the "tools" section in .vsp.json.
+
+Lists ALL available tools with their visibility status based on:
+- Current mode (focused/expert)
+- Disabled groups
+- Known non-working tools (debuggers, etc.)
+
+This gives you full control to enable/disable any tool.`,
+	RunE: runConfigToolsInit,
+}
+
+var configToolsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all tools and their visibility",
+	RunE:  runConfigToolsList,
+}
+
+var configToolsEnableCmd = &cobra.Command{
+	Use:   "enable <tool>",
+	Short: "Enable a tool",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runConfigToolsEnable,
+}
+
+var configToolsDisableCmd = &cobra.Command{
+	Use:   "disable <tool>",
+	Short: "Disable a tool",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runConfigToolsDisable,
+}
+
+func init() {
+	configToolsInitCmd.Flags().String("mode", "focused", "Mode to use for defaults (focused/expert)")
+}
+
+func runConfigToolsInit(cmd *cobra.Command, args []string) error {
+	mode, _ := cmd.Flags().GetString("mode")
+
+	// Load or create .vsp.json
+	cfg, path, err := config.LoadSystems()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = &config.SystemsConfig{
+			Systems: make(map[string]config.SystemConfig),
+		}
+		path = ".vsp.json"
+	}
+
+	// Get all tools and their visibility
+	allTools := GetAllToolNames()
+	focusedTools := GetFocusedToolNames()
+	defaultDisabled := config.DefaultDisabledTools()
+
+	// Build tools map
+	cfg.Tools = make(map[string]bool)
+
+	disabledSet := make(map[string]bool)
+	for _, t := range defaultDisabled {
+		disabledSet[t] = true
+	}
+
+	focusedSet := make(map[string]bool)
+	for _, t := range focusedTools {
+		focusedSet[t] = true
+	}
+
+	enabledCount := 0
+	disabledCount := 0
+
+	for _, tool := range allTools {
+		var enabled bool
+
+		if disabledSet[tool] {
+			// Always disabled (non-working)
+			enabled = false
+		} else if mode == "expert" {
+			// Expert mode: all working tools enabled
+			enabled = true
+		} else {
+			// Focused mode: only focused whitelist
+			enabled = focusedSet[tool]
+		}
+
+		cfg.Tools[tool] = enabled
+
+		if enabled {
+			enabledCount++
+		} else {
+			disabledCount++
+		}
+	}
+
+	// Save
+	if err := cfg.SaveToFile(path); err != nil {
+		return err
+	}
+
+	fmt.Printf("Tools configuration written to %s\n", path)
+	fmt.Printf("  Mode: %s\n", mode)
+	fmt.Printf("  Enabled: %d tools\n", enabledCount)
+	fmt.Printf("  Disabled: %d tools\n", disabledCount)
+	fmt.Println("\nEdit .vsp.json to customize tool visibility.")
+
+	return nil
+}
+
+func runConfigToolsList(cmd *cobra.Command, args []string) error {
+	cfg, _, err := config.LoadSystems()
+	if err != nil {
+		return err
+	}
+
+	allTools := GetAllToolNames()
+
+	fmt.Println("Tool Visibility:")
+	fmt.Println()
+
+	enabled := 0
+	disabled := 0
+
+	for _, tool := range allTools {
+		var status string
+		var isEnabled bool
+
+		if cfg != nil && cfg.Tools != nil {
+			if val, exists := cfg.Tools[tool]; exists {
+				isEnabled = val
+			} else {
+				isEnabled = true // default enabled
+			}
+		} else {
+			isEnabled = true
+		}
+
+		if isEnabled {
+			status = "[ON] "
+			enabled++
+		} else {
+			status = "[OFF]"
+			disabled++
+		}
+
+		fmt.Printf("  %s %s\n", status, tool)
+	}
+
+	fmt.Printf("\nTotal: %d enabled, %d disabled\n", enabled, disabled)
+	return nil
+}
+
+func runConfigToolsEnable(cmd *cobra.Command, args []string) error {
+	toolName := args[0]
+
+	cfg, path, err := config.LoadSystems()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf(".vsp.json not found. Run 'vsp config tools init' first")
+	}
+
+	// Verify tool exists
+	allTools := GetAllToolNames()
+	found := false
+	for _, t := range allTools {
+		if t == toolName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown tool: %s", toolName)
+	}
+
+	cfg.SetToolEnabled(toolName, true)
+
+	if err := cfg.SaveToFile(path); err != nil {
+		return err
+	}
+
+	fmt.Printf("Enabled: %s\n", toolName)
+	return nil
+}
+
+func runConfigToolsDisable(cmd *cobra.Command, args []string) error {
+	toolName := args[0]
+
+	cfg, path, err := config.LoadSystems()
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return fmt.Errorf(".vsp.json not found. Run 'vsp config tools init' first")
+	}
+
+	// Verify tool exists
+	allTools := GetAllToolNames()
+	found := false
+	for _, t := range allTools {
+		if t == toolName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown tool: %s", toolName)
+	}
+
+	cfg.SetToolEnabled(toolName, false)
+
+	if err := cfg.SaveToFile(path); err != nil {
+		return err
+	}
+
+	fmt.Printf("Disabled: %s\n", toolName)
+	return nil
+}
+
+// GetAllToolNames returns all available tool names.
+// This list should match the tools registered in internal/mcp/server.go
+func GetAllToolNames() []string {
+	return []string{
+		// Core read tools
+		"GetSource", "GetProgram", "GetClass", "GetInterface", "GetFunction",
+		"GetFunctionGroup", "GetInclude", "GetTable", "GetTableContents",
+		"GetStructure", "GetPackage", "GetMessages", "GetTransaction", "GetTypeInfo",
+		"GetClassInfo", "GetClassComponents", "GetClassInclude", "GetCDSDependencies",
+		// Core write tools
+		"WriteSource", "WriteClass", "WriteProgram", "EditSource", "UpdateSource",
+		"CreateObject", "DeleteObject", "CloneObject", "RenameObject", "MoveObject",
+		"LockObject", "UnlockObject",
+		// Search tools
+		"SearchObject", "GrepObjects", "GrepPackages", "GrepObject", "GrepPackage",
+		// Development tools
+		"SyntaxCheck", "Activate", "ActivatePackage", "PrettyPrint",
+		"GetPrettyPrinterSettings", "SetPrettyPrinterSettings",
+		"RunUnitTests", "RunATCCheck", "GetATCCustomizing",
+		"GetInactiveObjects", "CreatePackage", "CreateTable",
+		"CompareSource", "CreateClassWithTests", "CreateTestInclude",
+		"CreateAndActivateProgram", "UpdateClassInclude",
+		// Code intelligence
+		"FindDefinition", "FindReferences", "CodeCompletion", "GetTypeHierarchy",
+		// Call graph / analysis
+		"GetCallGraph", "GetCallersOf", "GetCalleesOf", "GetObjectStructure",
+		"AnalyzeCallGraph", "CompareCallGraphs", "TraceExecution",
+		// System info
+		"GetSystemInfo", "GetInstalledComponents", "GetConnectionInfo", "GetFeatures",
+		// Dumps / traces
+		"ListDumps", "GetDump", "ListTraces", "GetTrace",
+		"GetSQLTraceState", "ListSQLTraces",
+		// File I/O
+		"ImportFromFile", "ExportToFile", "DeployFromFile", "SaveToFile",
+		// Transport
+		"ListTransports", "GetTransport", "GetTransportInfo", "GetUserTransports",
+		"CreateTransport", "ReleaseTransport", "DeleteTransport",
+		// Report execution (requires ZADT_VSP)
+		"RunReport", "RunReportAsync", "GetAsyncResult",
+		"GetVariants", "GetTextElements", "SetTextElements",
+		// Debugger (requires ZADT_VSP, experimental)
+		"SetBreakpoint", "GetBreakpoints", "DeleteBreakpoint",
+		"DebuggerListen", "DebuggerAttach", "DebuggerDetach",
+		"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables",
+		// AMDP debugger (experimental)
+		"AMDPDebuggerStart", "AMDPDebuggerResume", "AMDPDebuggerStop",
+		"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
+		// RFC (requires ZADT_VSP)
+		"CallRFC", "ExecuteABAP",
+		// Git/abapGit (requires ZADT_VSP)
+		"GitTypes", "GitExport",
+		// Install tools
+		"InstallZADTVSP", "InstallAbapGit", "ListDependencies", "InstallDummyTest",
+		// UI5/BSP
+		"UI5ListApps", "UI5GetApp", "UI5GetFileContent",
+		"UI5CreateApp", "UI5DeleteApp", "UI5DeleteFile", "UI5UploadFile",
+		// Service binding
+		"PublishServiceBinding", "UnpublishServiceBinding",
+	}
+}
+
+// GetFocusedToolNames returns tools enabled in focused mode.
+func GetFocusedToolNames() []string {
+	return []string{
+		// Unified tools
+		"GetSource", "WriteSource",
+		// Search tools
+		"GrepObjects", "GrepPackages", "SearchObject",
+		// Primary workflow
+		"EditSource",
+		// Data/Metadata read
+		"GetTable", "GetTableContents", "RunQuery",
+		"GetPackage", "GetFunctionGroup", "GetCDSDependencies", "GetMessages",
+		// Code intelligence
+		"FindDefinition", "FindReferences",
+		// Development tools
+		"SyntaxCheck", "RunUnitTests", "RunATCCheck",
+		"Activate", "ActivatePackage", "PrettyPrint",
+		"GetInactiveObjects", "CreatePackage", "CreateTable",
+		"CompareSource", "CloneObject", "GetClassInfo",
+		// Lock/Unlock
+		"LockObject", "UnlockObject",
+		// File operations
+		"ImportFromFile", "ExportToFile",
+		// System info
+		"GetSystemInfo", "GetInstalledComponents", "GetConnectionInfo", "GetFeatures",
+		// Code analysis
+		"GetCallGraph", "GetObjectStructure", "GetCallersOf", "GetCalleesOf",
+		"AnalyzeCallGraph", "CompareCallGraphs", "TraceExecution",
+		// Dumps / Traces
+		"ListDumps", "GetDump", "ListTraces", "GetTrace",
+	}
+}
+
 // Example configuration files
 
 const envExample = `# vsp Environment Configuration
@@ -539,6 +874,7 @@ SAP_MODE=focused
 # SAP_ALLOWED_OPS=RSQ
 
 # Feature Flags (optional, values: auto/on/off)
+# SAP_FEATURE_HANA=auto
 # SAP_FEATURE_ABAPGIT=auto
 # SAP_FEATURE_RAP=auto
 # SAP_FEATURE_AMDP=auto

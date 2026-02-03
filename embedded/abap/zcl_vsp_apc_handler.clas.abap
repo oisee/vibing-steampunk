@@ -42,6 +42,10 @@ CLASS zcl_vsp_apc_handler DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
+    METHODS handle_abap_help
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
 ENDCLASS.
 
 
@@ -192,6 +196,9 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         WHEN 'ping'.
           rs_response = handle_ping( is_message ).
           RETURN.
+        WHEN 'get_abap_help'.
+          rs_response = handle_abap_help( is_message ).
+          RETURN.
       ENDCASE.
     ENDIF.
 
@@ -226,6 +233,75 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       ( zcl_vsp_utils=>json_bool( iv_key = 'pong' iv_value = abap_true ) )
       ( zcl_vsp_utils=>json_str( iv_key = 'timestamp' iv_value = |{ sy-datum }T{ sy-uzeit }| ) )
     ) ) ).
+    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+  ENDMETHOD.
+
+
+  METHOD handle_abap_help.
+    " Get ABAP keyword documentation via CL_ABAP_DOCU
+    DATA(lv_keyword) = zcl_vsp_utils=>extract_param(
+      iv_params = is_message-params
+      iv_name   = 'keyword'
+    ).
+
+    IF lv_keyword IS INITIAL.
+      rs_response = zcl_vsp_utils=>build_error(
+        iv_id      = is_message-id
+        iv_code    = 'MISSING_PARAM'
+        iv_message = 'keyword is required'
+      ).
+      RETURN.
+    ENDIF.
+
+    " Convert to uppercase for CL_ABAP_DOCU lookup
+    TRANSLATE lv_keyword TO UPPER CASE.
+
+    " Retrieve ABAP documentation
+    DATA lt_html TYPE abapdocu_html_tab.
+    DATA lv_html TYPE string.
+
+    TRY.
+        cl_abap_docu=>convert_itf_to_html(
+          EXPORTING
+            area   = 'ABEN'                    " ABAP English documentation
+            name   = CONV #( lv_keyword )
+            langu  = sy-langu
+          IMPORTING
+            html   = lt_html ).
+
+        " Concatenate HTML lines
+        LOOP AT lt_html INTO DATA(ls_html_line).
+          lv_html = lv_html && ls_html_line.
+        ENDLOOP.
+
+      CATCH cx_abap_docu_conversion INTO DATA(lx_docu_error).
+        " Try generic error message area if keyword not found in ABEN
+        TRY.
+            cl_abap_docu=>convert_itf_to_html(
+              EXPORTING
+                area   = 'AB'                  " Alternative area
+                name   = CONV #( lv_keyword )
+                langu  = sy-langu
+              IMPORTING
+                html   = lt_html ).
+
+            LOOP AT lt_html INTO ls_html_line.
+              lv_html = lv_html && ls_html_line.
+            ENDLOOP.
+
+          CATCH cx_abap_docu_conversion INTO DATA(lx_error2).
+            " Documentation not found - return empty
+            lv_html = ''.
+        ENDTRY.
+    ENDTRY.
+
+    " Build response
+    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
+      ( zcl_vsp_utils=>json_str( iv_key = 'keyword' iv_value = lv_keyword ) )
+      ( zcl_vsp_utils=>json_str( iv_key = 'html' iv_value = lv_html ) )
+      ( zcl_vsp_utils=>json_bool( iv_key = 'found' iv_value = xsdbool( lv_html IS NOT INITIAL ) ) )
+    ) ) ).
+
     rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
   ENDMETHOD.
 

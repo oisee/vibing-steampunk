@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/vinchacho/vibing-steampunk/internal/mcp"
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -85,6 +86,7 @@ func init() {
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default), "on", "off"
+	rootCmd.Flags().StringVar(&cfg.FeatureHANA, "feature-hana", "auto", "HANA database detection: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAbapGit, "feature-abapgit", "auto", "abapGit integration: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureRAP, "feature-rap", "auto", "RAP/OData development: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAMDP, "feature-amdp", "auto", "AMDP/HANA debugger: auto, on, off")
@@ -119,6 +121,7 @@ func init() {
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Feature configuration
+	viper.BindPFlag("feature-hana", rootCmd.Flags().Lookup("feature-hana"))
 	viper.BindPFlag("feature-abapgit", rootCmd.Flags().Lookup("feature-abapgit"))
 	viper.BindPFlag("feature-rap", rootCmd.Flags().Lookup("feature-rap"))
 	viper.BindPFlag("feature-amdp", rootCmd.Flags().Lookup("feature-amdp"))
@@ -189,6 +192,25 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 		if !cfg.ReadOnly && !cfg.BlockFreeSQL && cfg.AllowedOps == "" && cfg.DisallowedOps == "" && len(cfg.AllowedPackages) == 0 {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: UNRESTRICTED (no safety checks active)\n")
+		}
+	}
+
+	// Load granular tool visibility from .vsp.json if present
+	if systemsCfg, configPath, err := config.LoadSystems(); err == nil && systemsCfg != nil {
+		if systemsCfg.Tools != nil {
+			cfg.ToolsConfig = systemsCfg.Tools
+			if cfg.Verbose {
+				enabled := 0
+				disabled := 0
+				for _, v := range systemsCfg.Tools {
+					if v {
+						enabled++
+					} else {
+						disabled++
+					}
+				}
+				fmt.Fprintf(os.Stderr, "[VERBOSE] Tool config loaded from %s: %d enabled, %d disabled\n", configPath, enabled, disabled)
+			}
 		}
 	}
 
@@ -298,6 +320,11 @@ func resolveConfig(cmd *cobra.Command) {
 	}
 
 	// Feature configuration: flag > SAP_FEATURE_* env
+	if !cmd.Flags().Changed("feature-hana") {
+		if v := viper.GetString("FEATURE_HANA"); v != "" {
+			cfg.FeatureHANA = v
+		}
+	}
 	if !cmd.Flags().Changed("feature-abapgit") {
 		if v := viper.GetString("FEATURE_ABAPGIT"); v != "" {
 			cfg.FeatureAbapGit = v

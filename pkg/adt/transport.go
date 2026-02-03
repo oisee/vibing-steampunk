@@ -57,6 +57,11 @@ type TransportInfo struct {
 	LockedInTask   string             `json:"lockedInTask,omitempty"`
 }
 
+const (
+	acceptTransportOrganizerV1     = "application/vnd.sap.adt.transportorganizer.v1+xml"
+	acceptTransportOrganizerTreeV1 = "application/vnd.sap.adt.transportorganizertree.v1+xml"
+)
+
 // --- Transport Operations ---
 
 // GetUserTransports retrieves all transport requests for a user.
@@ -72,6 +77,7 @@ func (c *Client) GetUserTransports(ctx context.Context, userName string) (*UserT
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
 		Method: http.MethodGet,
 		Query:  map[string][]string{"user": {userName}, "targets": {"true"}},
+		Accept: acceptTransportOrganizerTreeV1 + ", " + acceptTransportOrganizerV1 + ";q=0.9",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get user transports failed: %w", err)
@@ -438,7 +444,7 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
 		Method: http.MethodGet,
 		Query:  map[string][]string{"user": {strings.ToUpper(user)}},
-		Accept: "application/vnd.sap.adt.transportorganizertree.v1+xml",
+		Accept: acceptTransportOrganizerTreeV1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing transports: %w", err)
@@ -507,7 +513,7 @@ func (c *Client) GetTransport(ctx context.Context, number string) (*TransportDet
 
 	resp, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.transportrequests.v1+xml",
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting transport %s: %w", number, err)
@@ -712,7 +718,7 @@ func (c *Client) ReleaseTransportV2(ctx context.Context, number string, opts Rel
 
 	_, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodPost,
-		Accept: "application/vnd.sap.adt.transportrequests.v1+xml",
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return fmt.Errorf("releasing transport %s: %w", number, err)
@@ -736,6 +742,7 @@ func (c *Client) DeleteTransport(ctx context.Context, number string) error {
 
 	_, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodDelete,
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return fmt.Errorf("deleting transport %s: %w", number, err)

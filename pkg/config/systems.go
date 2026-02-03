@@ -31,6 +31,11 @@ type SystemConfig struct {
 type SystemsConfig struct {
 	Systems map[string]SystemConfig `json:"systems"`
 	Default string                  `json:"default,omitempty"`
+
+	// Tools configuration - granular tool visibility control
+	// Key: tool name, Value: true=enabled, false=disabled
+	// Tools not listed are enabled by default
+	Tools map[string]bool `json:"tools,omitempty"`
 }
 
 // ConfigPaths returns the list of paths to search for systems config.
@@ -149,4 +154,65 @@ func ExampleConfig() string {
 
 	data, _ := json.MarshalIndent(example, "", "  ")
 	return string(data)
+}
+
+// IsToolEnabled checks if a tool is enabled in the configuration.
+// Tools not explicitly listed are enabled by default.
+func (c *SystemsConfig) IsToolEnabled(toolName string) bool {
+	if c.Tools == nil {
+		return true
+	}
+	enabled, exists := c.Tools[toolName]
+	if !exists {
+		return true // Default: enabled
+	}
+	return enabled
+}
+
+// GetDisabledTools returns a list of explicitly disabled tools.
+func (c *SystemsConfig) GetDisabledTools() []string {
+	var disabled []string
+	for name, enabled := range c.Tools {
+		if !enabled {
+			disabled = append(disabled, name)
+		}
+	}
+	return disabled
+}
+
+// SetToolEnabled sets the enabled state for a tool.
+func (c *SystemsConfig) SetToolEnabled(toolName string, enabled bool) {
+	if c.Tools == nil {
+		c.Tools = make(map[string]bool)
+	}
+	c.Tools[toolName] = enabled
+}
+
+// SaveToFile saves the configuration to a file.
+func (c *SystemsConfig) SaveToFile(path string) error {
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+	return nil
+}
+
+// DefaultDisabledTools returns the list of tools that should be disabled by default.
+// These are experimental or non-working tools.
+func DefaultDisabledTools() []string {
+	return []string{
+		// AMDP/HANA Debugger - session management issues
+		"AMDPDebuggerStart", "AMDPDebuggerResume", "AMDPDebuggerStop",
+		"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
+		// ABAP Debugger - requires ZADT_VSP WebSocket, HTTP unreliable
+		"DebuggerListen", "DebuggerAttach", "DebuggerDetach",
+		"DebuggerStep", "DebuggerGetStack", "DebuggerGetVariables",
+		// Breakpoints - requires ZADT_VSP WebSocket
+		"SetBreakpoint", "GetBreakpoints", "DeleteBreakpoint",
+		// UI5 write operations - need alternate API
+		"UI5CreateApp", "UI5DeleteApp", "UI5DeleteFile", "UI5UploadFile",
+	}
 }

@@ -58,3 +58,6 @@ Thumbs.db
 # Session summaries (may contain credentials)
 *SESSION-SUMMARY*
 abap-adt-api/
+
+# Session logs
+sessions/

@@ -205,11 +205,17 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 		method = m
 	}
 
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok {
+		transport = t
+	}
+
 	opts := &adt.EditSourceOptions{
 		ReplaceAll:      replaceAll,
 		SyntaxCheck:     syntaxCheck,
 		CaseInsensitive: caseInsensitive,
 		Method:          method,
+		Transport:       transport,
 	}
 
 	result, err := s.adtClient.EditSourceWithOptions(ctx, objectURL, oldString, newString, opts)

@@ -76,6 +76,7 @@ type Config struct {
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default, probe system), "on" (force enabled), "off" (force disabled)
+	FeatureHANA      string // HANA database detection (required for some AMDP features)
 	FeatureAbapGit   string // abapGit integration
 	FeatureRAP       string // RAP/OData development (DDLS, BDEF, SRVD, SRVB)
 	FeatureAMDP      string // AMDP/HANA debugger
@@ -84,6 +85,11 @@ type Config struct {
 
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
+
+	// Granular tool visibility (from .vsp.json)
+	// Key: tool name, Value: true=enabled, false=disabled
+	// Takes highest priority over mode and disabled groups
+	ToolsConfig map[string]bool
 }
 
 // NewServer creates a new MCP server for ABAP ADT tools.
@@ -142,6 +148,7 @@ func NewServer(cfg *Config) *Server {
 
 	// Configure feature detection (safety network)
 	featureConfig := adt.FeatureConfig{
+		HANA:      parseFeatureMode(cfg.FeatureHANA),
 		AbapGit:   parseFeatureMode(cfg.FeatureAbapGit),
 		RAP:       parseFeatureMode(cfg.FeatureRAP),
 		AMDP:      parseFeatureMode(cfg.FeatureAMDP),
@@ -169,8 +176,8 @@ func NewServer(cfg *Config) *Server {
 		asyncTasks:    make(map[string]*AsyncTask),
 	}
 
-	// Register tools based on mode and disabled groups
-	s.registerTools(cfg.Mode, cfg.DisabledGroups)
+	// Register tools based on mode, disabled groups, and granular tool config
+	s.registerTools(cfg.Mode, cfg.DisabledGroups, cfg.ToolsConfig)
 
 	return s
 }
@@ -192,7 +199,7 @@ func (s *Server) ServeStdio() error {
 	return server.ServeStdio(s.mcpServer)
 }
 
-// registerTools registers ADT tools with the MCP server based on mode and disabled groups.
+// registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
 // Mode "focused" registers essential tools.
 // Mode "expert" registers all tools.
 // DisabledGroups can disable specific tool groups using short codes:
@@ -205,7 +212,12 @@ func (s *Server) ServeStdio() error {
 //   - "R" = Report tools (4 tools)
 //   - "I" = Install tools (4 tools)
 //   - "X" = EXPERIMENTAL: All debugger + RunReport (17 tools) - use to disable unreliable features
-func (s *Server) registerTools(mode string, disabledGroups string) {
+//
+// toolsConfig from .vsp.json has highest priority:
+//   - If tool is explicitly disabled (false), it will NOT be registered
+//   - If tool is explicitly enabled (true), it WILL be registered (overrides focused mode)
+//   - If tool is not in config, mode/disabledGroups rules apply
+func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig map[string]bool) {
 	// Define tool groups for selective disablement
 	// Short codes: 5/U=UI5, T=Tests, H=HANA, D=Debug, C=CTS, X=Experimental
 	toolGroups := map[string][]string{
@@ -400,10 +412,17 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 
 	// Helper to check if tool should be registered
 	shouldRegister := func(toolName string) bool {
-		// Check if tool is disabled by group
+		// Priority 1: Check granular tool config from .vsp.json (highest priority)
+		if toolsConfig != nil {
+			if enabled, exists := toolsConfig[toolName]; exists {
+				return enabled // Explicit config overrides everything
+			}
+		}
+		// Priority 2: Check if tool is disabled by group
 		if disabledTools[toolName] {
 			return false
 		}
+		// Priority 3: Check mode
 		if mode == "expert" {
 			return true // Expert mode: register all tools (except disabled)
 		}
@@ -647,6 +666,16 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 	s.mcpServer.AddTool(mcp.NewTool("GetFeatures",
 		mcp.WithDescription("Probe SAP system for available features. Returns status of optional capabilities like abapGit, RAP/OData, AMDP debugging, UI5/BSP, and CTS transports. Use this to understand what features are available before attempting to use them."),
 	), s.handleGetFeatures)
+
+	// GetAbapHelp - ABAP Keyword Documentation
+	// Always registered - provides URL and search query, optionally real docs via ZADT_VSP
+	s.mcpServer.AddTool(mcp.NewTool("GetAbapHelp",
+		mcp.WithDescription("Get ABAP keyword documentation. Returns URL to SAP Help Portal and search query. If ZADT_VSP is installed, also returns real documentation from SAP system."),
+		mcp.WithString("keyword",
+			mcp.Required(),
+			mcp.Description("ABAP keyword (e.g., SELECT, LOOP, DATA, METHOD, READ TABLE)"),
+		),
+	), s.handleGetAbapHelp)
 
 	// --- Code Analysis Infrastructure (CAI) ---
 
@@ -1643,6 +1672,9 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 		mcp.WithString("method",
 			mcp.Description("For CLAS only: constrain search/replace to this method only. Prevents accidental edits in other methods. (optional)"),
 		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for objects not in $TMP package)"),
+		),
 	), s.handleEditSource)
 	}
 
@@ -2177,7 +2209,7 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 	// GitExport
 	if shouldRegister("GitExport") {
 		s.mcpServer.AddTool(mcp.NewTool("GitExport",
-			mcp.WithDescription("Export ABAP objects as abapGit-compatible ZIP. Supports 158 object types. Returns base64-encoded ZIP with files in abapGit format. Use packages OR objects parameter."),
+			mcp.WithDescription("Export ABAP objects as abapGit-compatible ZIP. Supports 158 object types. Saves ZIP file to output_dir (default: current directory). Use packages OR objects parameter."),
 			mcp.WithString("packages",
 				mcp.Description("Comma-separated package names to export (e.g., '$ZRAY,$TMP'). Supports wildcards."),
 			),
@@ -2186,6 +2218,9 @@ func (s *Server) registerTools(mode string, disabledGroups string) {
 			),
 			mcp.WithBoolean("include_subpackages",
 				mcp.Description("Include subpackages when exporting by package (default: true)"),
+			),
+			mcp.WithString("output_dir",
+				mcp.Description("Output directory for ZIP file (default: current directory)"),
 			),
 		), s.handleGitExport)
 	}
@@ -2381,6 +2416,10 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 		"atc": {"RunATCCheck", "Alias for RunATCCheck - run ATC code check", s.handleRunATCCheck},
 	}
 
+	// Aliases disabled by default - they bloat the tool list without adding value
+	// Uncomment if you want short names like gs, ws, es, etc.
+	_ = aliases // suppress unused variable warning
+	/*
 	for alias, info := range aliases {
 		if shouldRegister(info.canonical) {
 			s.mcpServer.AddTool(mcp.NewTool(alias,
@@ -2390,6 +2429,7 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 			), info.handler)
 		}
 	}
+	*/
 }
 
 // newToolResultError creates an error result for tool execution failures.

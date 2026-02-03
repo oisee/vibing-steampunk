@@ -19,6 +19,17 @@ CLASS zadt_cl_tadir_move DEFINITION
       RETURNING
         VALUE(rv_msg) TYPE string.
 
+    "! Move object and commit the change
+    "! Use this method when calling from external context
+    CLASS-METHODS move_object_and_commit
+      IMPORTING
+        iv_pgmid      TYPE tadir-pgmid DEFAULT 'R3TR'
+        iv_object     TYPE tadir-object
+        iv_obj_name   TYPE tadir-obj_name
+        iv_new_pkg    TYPE devclass
+      RETURNING
+        VALUE(rv_msg) TYPE string.
+
 ENDCLASS.
 
 CLASS zadt_cl_tadir_move IMPLEMENTATION.
@@ -88,6 +99,19 @@ CLASS zadt_cl_tadir_move IMPLEMENTATION.
       rv_msg = |SUCCESS: { rv_msg }|.
     ELSE.
       rv_msg = |ERROR sy-subrc={ sy-subrc } { sy-msgid }-{ sy-msgno }: { sy-msgv1 } { sy-msgv2 }|.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD move_object_and_commit.
+    rv_msg = move_object(
+      iv_pgmid    = iv_pgmid
+      iv_object   = iv_object
+      iv_obj_name = iv_obj_name
+      iv_new_pkg  = iv_new_pkg ).
+
+    IF rv_msg CP 'SUCCESS*'.
+      COMMIT WORK AND WAIT.
+      rv_msg = rv_msg && ' [COMMITTED]'.
     ENDIF.
   ENDMETHOD.
 ENDCLASS.
