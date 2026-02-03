@@ -1,0 +1,24 @@
+{
+  "upstream": {
+    "repo": "oisee/vibing-steampunk",
+    "branch": "main"
+  },
+  "fork": {
+    "org": "vinchacho",
+    "repo": "vibing-steampunk",
+    "branch": "main"
+  },
+  "automation": {
+    "schedule": "0 2 * * *",
+    "auto_merge_trivial": true,
+    "create_pr_on_conflict": true,
+    "run_tests": true
+  },
+  "replacements": [
+    {
+      "pattern": "github.com/oisee/vibing-steampunk",
+      "replacement": "github.com/vinchacho/vibing-steampunk",
+      "files": "**/*.go"
+    }
+  ]
+}

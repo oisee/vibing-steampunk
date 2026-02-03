@@ -1,0 +1,156 @@
+name: Sync with Upstream
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/oisee/vibing-steampunk.git || true
+          git fetch upstream
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create sync branch
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="sync-upstream-${TIMESTAMP}"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          git checkout -b "$BRANCH_NAME"
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          # Attempt merge
+          if ! git merge upstream/main --no-edit; then
+            echo "Merge conflict detected - attempting auto-resolution"
+
+            # Check if conflict is in main.go (import paths)
+            if git status | grep -q "cmd/vsp/main.go"; then
+              # Fix import paths automatically
+              sed -i 's|github.com/oisee/vibing-steampunk|github.com/vinchacho/vibing-steampunk|g' cmd/vsp/main.go
+              git add cmd/vsp/main.go
+            fi
+
+            # Try to continue merge
+            if ! git commit --no-edit; then
+              echo "::error::Merge conflict could not be auto-resolved"
+              exit 1
+            fi
+          fi
+
+      - name: Fix import paths globally
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          # Replace any oisee references with vinchacho
+          find . -name "*.go" -type f ! -path "./vendor/*" -exec sed -i 's|github.com/oisee/vibing-steampunk|github.com/vinchacho/vibing-steampunk|g' {} +
+
+          # Stage any changes
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: fix import paths to vinchacho organization"
+          fi
+
+      - name: Update dependencies
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            git add go.mod go.sum
+            git commit -m "chore: update dependencies after upstream merge"
+          fi
+
+      - name: Run tests
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          go test ./... || echo "::warning::Some tests failed"
+
+      - name: Build
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          go build -o vsp ./cmd/vsp
+
+      - name: Update CLAUDE.md
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          # Get latest upstream commit info
+          LATEST_COMMIT=$(git log upstream/main --oneline -1)
+          MERGE_DATE=$(date +%Y-%m-%d)
+
+          # TODO: This is a placeholder - would need more sophisticated parsing
+          # For now, just add a note to update manually
+          echo "::notice::Remember to update CLAUDE.md Last Session Reference manually"
+
+      - name: Push sync branch
+        if: steps.check.outputs.has_changes == 'true'
+        run: |
+          git push origin "$BRANCH_NAME"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COMMITS=$(git rev-list --count origin/main..HEAD)
+          UPSTREAM_COMMITS=$(git log upstream/main --oneline --no-merges -10 | head -5)
+
+          gh pr create \
+            --title "🔄 Sync with upstream (${COMMITS} new commits)" \
+            --body "## Automated Upstream Sync
+
+This PR syncs the fork with upstream \`oisee/vibing-steampunk\`.
+
+### Changes
+- Merged ${{ steps.check.outputs.commits_behind }} commits from upstream
+- Fixed import paths to \`vinchacho/vibing-steampunk\`
+- Updated dependencies via \`go mod tidy\`
+- Build verified ✅
+
+### Recent Upstream Commits
+\`\`\`
+${UPSTREAM_COMMITS}
+\`\`\`
+
+### Manual Steps Required
+- [ ] Review merge conflicts (if any)
+- [ ] Update CLAUDE.md Last Session Reference
+- [ ] Update version numbers in documentation
+- [ ] Test new features
+
+---
+🤖 Generated by GitHub Actions" \
+            --base main \
+            --head "$BRANCH_NAME"

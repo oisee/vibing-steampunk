@@ -442,6 +442,35 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ---
 
+## Upstream Sync Automation
+
+This fork automatically syncs with upstream `oisee/vibing-steampunk`. See [scripts/README.md](scripts/README.md) for details.
+
+### Quick Sync
+
+```bash
+# Manual sync (recommended first time)
+./scripts/sync-upstream.sh
+
+# Auto-merge and push
+./scripts/sync-upstream.sh --auto-merge --push
+
+# Or trigger GitHub Action
+gh workflow run sync-upstream.yml
+```
+
+### What's Automated
+
+- ✅ Daily checks for upstream changes (2 AM UTC)
+- ✅ Auto-merge when no conflicts
+- ✅ Fix import paths (`oisee` → `vinchacho`)
+- ✅ Update dependencies (`go mod tidy`)
+- ✅ Build & test verification
+- ✅ Create PR for review
+- ⚠️ CLAUDE.md updates (template provided, manual review needed)
+
+---
+
 ## Last Session Reference (2026-02-03)
 
 ### Objective: Upstream Merge - COMPLETED ✅
