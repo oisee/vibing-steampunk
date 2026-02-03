@@ -1246,17 +1246,20 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// CreatePackage - simplified package creation for focused mode
 	if shouldRegister("CreatePackage") {
 		s.mcpServer.AddTool(mcp.NewTool("CreatePackage",
-		mcp.WithDescription("Create a new local ABAP package. Only local packages (starting with $) are supported. For development/testing purposes."),
+		mcp.WithDescription("Create a new ABAP package. Local packages ($*) work by default. Transportable packages require --enable-transports flag and transport parameter."),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Package name (must start with $, e.g., $ZTEST, $ZLOCAL_DEV)"),
+			mcp.Description("Package name (e.g., $ZTEST for local, ZPRODUCTION for transportable)"),
 		),
 		mcp.WithString("description",
 			mcp.Required(),
 			mcp.Description("Package description"),
 		),
 		mcp.WithString("parent",
-			mcp.Description("Parent package name (optional, e.g., $TMP). If not specified, creates a root-level local package."),
+			mcp.Description("Parent package name (optional, e.g., $TMP, ZPROD). If not specified, creates a root-level package."),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for transportable packages, e.g., 'A4HK900114')"),
 		),
 	), s.handleCreatePackage)
 	}

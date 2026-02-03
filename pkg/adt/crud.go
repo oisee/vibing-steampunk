@@ -318,9 +318,16 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 		return err
 	}
 
-	// Additional validation for package creation: only local packages are supported
+	// Package creation validation: local packages always allowed, transportable requires opt-in
 	if opts.ObjectType == ObjectTypePackage && !strings.HasPrefix(opts.Name, "$") {
-		return fmt.Errorf("only local packages (starting with $) are supported for creation, got: %s", opts.Name)
+		// Transportable package - check if transports are enabled
+		if !c.config.Safety.EnableTransports && !c.config.Safety.AllowTransportableEdits {
+			return fmt.Errorf("creating transportable packages requires --enable-transports or --allow-transportable-edits flag. Package: %s", opts.Name)
+		}
+		// Transportable package requires a transport request
+		if opts.Transport == "" {
+			return fmt.Errorf("transport request is required for creating transportable package %s", opts.Name)
+		}
 	}
 
 	// CRITICAL: Validate package exists BEFORE calling SAP ADT CreateObject API.
@@ -397,8 +404,16 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 	}
 
 	// For packages, use special structure with attributes element
-	// Note: Only local packages (starting with $) are supported (validated in CreateObject)
+	// Local packages use "LOCAL" software component, transportable packages inherit from parent
 	if opts.ObjectType == ObjectTypePackage {
+		// Determine software component based on package type
+		softwareComponent := "LOCAL"
+		transportLayer := ""
+		if !strings.HasPrefix(opts.Name, "$") {
+			// Transportable package - leave software component empty to inherit from parent
+			// SAP will determine the correct values based on the super package
+			softwareComponent = ""
+		}
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <%s %s xmlns:adtcore="http://www.sap.com/adt/core"
   adtcore:description="%s"
@@ -409,8 +424,8 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
   <pack:superPackage adtcore:name="%s" adtcore:type="DEVC/K"/>
   <pack:applicationComponent/>
   <pack:transport>
-    <pack:softwareComponent pack:name="LOCAL"/>
-    <pack:transportLayer pack:name=""/>
+    <pack:softwareComponent pack:name="%s"/>
+    <pack:transportLayer pack:name="%s"/>
   </pack:transport>
   <pack:translation/>
   <pack:useAccesses/>
@@ -423,6 +438,8 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 			opts.ObjectType,
 			responsible,
 			opts.PackageName,
+			softwareComponent,
+			transportLayer,
 			typeInfo.rootName)
 	}
 
