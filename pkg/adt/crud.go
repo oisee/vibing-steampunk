@@ -284,16 +284,10 @@ func isLockConflictError(err error) bool {
 
 // packageExists checks if a package exists in the system.
 // Returns true if package exists, false otherwise.
-// Uses direct packages API which returns 404 for non-existing packages.
+// Uses GetPackage (nodestructure API) which passes the package name as a query
+// parameter, avoiding URL path encoding issues with $ in local package names.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
-	packageName = strings.ToUpper(packageName)
-	url := fmt.Sprintf("/sap/bc/adt/packages/%s", strings.ToLower(packageName))
-
-	_, err := c.transport.Request(ctx, url, &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.packages.v1+xml",
-	})
-
+	_, err := c.GetPackage(ctx, packageName)
 	return err == nil
 }
 
