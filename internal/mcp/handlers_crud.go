@@ -166,11 +166,7 @@ func (s *Server) handleCreatePackage(ctx context.Context, request mcp.CallToolRe
 		return newToolResultError("name is required"), nil
 	}
 
-	// Validate package name starts with $
 	name = strings.ToUpper(name)
-	if !strings.HasPrefix(name, "$") {
-		return newToolResultError("package name must start with $ (local packages only)"), nil
-	}
 
 	description, ok := request.Params.Arguments["description"].(string)
 	if !ok || description == "" {
@@ -182,11 +178,28 @@ func (s *Server) handleCreatePackage(ctx context.Context, request mcp.CallToolRe
 		parent = strings.ToUpper(p)
 	}
 
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok && t != "" {
+		transport = t
+	}
+
+	softwareComponent := ""
+	if sc, ok := request.Params.Arguments["software_component"].(string); ok && sc != "" {
+		softwareComponent = strings.ToUpper(sc)
+	}
+
+	// Transportable packages require transport parameter
+	if !strings.HasPrefix(name, "$") && transport == "" {
+		return newToolResultError("transport is required for creating transportable packages (non-$ packages). Use --enable-transports flag."), nil
+	}
+
 	opts := adt.CreateObjectOptions{
-		ObjectType:  adt.ObjectTypePackage,
-		Name:        name,
-		Description: description,
-		PackageName: parent, // Parent package
+		ObjectType:        adt.ObjectTypePackage,
+		Name:              name,
+		Description:       description,
+		PackageName:       parent, // Parent package
+		Transport:         transport,
+		SoftwareComponent: softwareComponent,
 	}
 
 	err := s.adtClient.CreateObject(ctx, opts)

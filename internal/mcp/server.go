@@ -70,9 +70,10 @@ type Config struct {
 	AllowedOps       string
 	DisallowedOps    string
 	AllowedPackages  []string
-	EnableTransports  bool     // Explicitly enable transport management (default: disabled)
-	TransportReadOnly bool     // Only allow read operations on transports (list, get)
-	AllowedTransports []string // Whitelist specific transports (supports wildcards like "A4HK*")
+	EnableTransports        bool     // Explicitly enable transport management (default: disabled)
+	TransportReadOnly       bool     // Only allow read operations on transports (list, get)
+	AllowedTransports       []string // Whitelist specific transports (supports wildcards like "A4HK*")
+	AllowTransportableEdits bool     // Allow editing objects that require transport requests
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default, probe system), "on" (force enabled), "off" (force disabled)
@@ -134,6 +135,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if len(cfg.AllowedTransports) > 0 {
 		safety.AllowedTransports = cfg.AllowedTransports
+	}
+	if cfg.AllowTransportableEdits {
+		safety.AllowTransportableEdits = true
 	}
 	opts = append(opts, adt.WithSafety(safety))
 
@@ -1242,17 +1246,23 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// CreatePackage - simplified package creation for focused mode
 	if shouldRegister("CreatePackage") {
 		s.mcpServer.AddTool(mcp.NewTool("CreatePackage",
-		mcp.WithDescription("Create a new local ABAP package. Only local packages (starting with $) are supported. For development/testing purposes."),
+		mcp.WithDescription("Create a new ABAP package. Local packages ($*) work by default. Transportable packages require --enable-transports flag and transport parameter."),
 		mcp.WithString("name",
 			mcp.Required(),
-			mcp.Description("Package name (must start with $, e.g., $ZTEST, $ZLOCAL_DEV)"),
+			mcp.Description("Package name (e.g., $ZTEST for local, ZPRODUCTION for transportable)"),
 		),
 		mcp.WithString("description",
 			mcp.Required(),
 			mcp.Description("Package description"),
 		),
 		mcp.WithString("parent",
-			mcp.Description("Parent package name (optional, e.g., $TMP). If not specified, creates a root-level local package."),
+			mcp.Description("Parent package name (optional, e.g., $TMP, ZPROD). If not specified, creates a root-level package."),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for transportable packages, e.g., 'A4HK900114')"),
+		),
+		mcp.WithString("software_component",
+			mcp.Description("Software component name (required for transportable packages, e.g., 'HOME', 'ZLOCAL'). Use GetInstalledComponents to list available components."),
 		),
 	), s.handleCreatePackage)
 	}
@@ -2130,7 +2140,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// ListTransports
 	if shouldRegister("ListTransports") {
 		s.mcpServer.AddTool(mcp.NewTool("ListTransports",
-			mcp.WithDescription("List transport requests. Returns modifiable transports for a user. Requires --enable-transports flag."),
+			mcp.WithDescription("List transport requests. Returns modifiable transports for a user. Requires --enable-transports OR --allow-transportable-edits flag."),
 			mcp.WithString("user",
 				mcp.Description("Username to list transports for (default: current user, '*' for all users)"),
 			),
@@ -2140,7 +2150,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// GetTransport
 	if shouldRegister("GetTransport") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTransport",
-			mcp.WithDescription("Get detailed transport information including objects and tasks. Requires --enable-transports flag."),
+			mcp.WithDescription("Get detailed transport information including objects and tasks. Requires --enable-transports OR --allow-transportable-edits flag."),
 			mcp.WithString("transport",
 				mcp.Required(),
 				mcp.Description("Transport request number (e.g., 'A4HK900094')"),

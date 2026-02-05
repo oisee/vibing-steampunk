@@ -327,3 +327,86 @@ func containsInMiddle(s, substr string) bool {
 	}
 	return false
 }
+
+func TestSafetyConfig_CheckTransportableEdit(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      SafetyConfig
+		transport   string
+		opName      string
+		expectError bool
+	}{
+		{
+			name:        "No transport - always allowed",
+			config:      SafetyConfig{},
+			transport:   "",
+			opName:      "EditSource",
+			expectError: false,
+		},
+		{
+			name:        "Transport provided but not allowed - blocked",
+			config:      SafetyConfig{AllowTransportableEdits: false},
+			transport:   "DEVK900123",
+			opName:      "EditSource",
+			expectError: true,
+		},
+		{
+			name:        "Transport provided and allowed - success",
+			config:      SafetyConfig{AllowTransportableEdits: true},
+			transport:   "DEVK900123",
+			opName:      "EditSource",
+			expectError: false,
+		},
+		{
+			name:        "Transport allowed but not in whitelist - blocked",
+			config:      SafetyConfig{AllowTransportableEdits: true, AllowedTransports: []string{"A4HK*"}},
+			transport:   "DEVK900123",
+			opName:      "WriteSource",
+			expectError: true,
+		},
+		{
+			name:        "Transport allowed and in whitelist - success",
+			config:      SafetyConfig{AllowTransportableEdits: true, AllowedTransports: []string{"DEVK*"}},
+			transport:   "DEVK900123",
+			opName:      "WriteSource",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.CheckTransportableEdit(tt.transport, tt.opName)
+			if tt.expectError && err == nil {
+				t.Error("Expected error but got nil")
+			}
+			if !tt.expectError && err != nil {
+				t.Errorf("Expected no error but got: %v", err)
+			}
+		})
+	}
+}
+
+func TestSafetyConfig_CheckTransportableEdit_ErrorMessage(t *testing.T) {
+	config := SafetyConfig{AllowTransportableEdits: false}
+	err := config.CheckTransportableEdit("DEVK900123", "EditSource")
+
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+
+	errMsg := err.Error()
+
+	// Check that error message contains helpful information
+	if !contains(errMsg, "EditSource") {
+		t.Error("Error message should contain operation name")
+	}
+	if !contains(errMsg, "DEVK900123") {
+		t.Error("Error message should contain transport number")
+	}
+	if !contains(errMsg, "--allow-transportable-edits") {
+		t.Error("Error message should mention CLI flag")
+	}
+	if !contains(errMsg, "SAP_ALLOW_TRANSPORTABLE_EDITS") {
+		t.Error("Error message should mention environment variable")
+	}
+}

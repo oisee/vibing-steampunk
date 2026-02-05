@@ -59,6 +59,17 @@ type SafetyConfig struct {
 	// Supports wildcards: "A4HK*" matches all transports starting with A4HK
 	// Empty = all transports allowed (within other restrictions)
 	AllowedTransports []string
+
+	// AllowTransportableEdits enables editing objects that require transport requests
+	// By default false - only allows editing local objects ($TMP, $* packages)
+	// When false:
+	//   - Providing a transport parameter to EditSource/WriteSource will be rejected
+	//   - Objects in transportable packages will fail at SAP level (no transport)
+	// When true:
+	//   - Transport parameter is accepted and passed to SAP
+	//   - User takes responsibility for transport management
+	// Use --allow-transportable-edits or SAP_ALLOW_TRANSPORTABLE_EDITS=true to enable
+	AllowTransportableEdits bool
 }
 
 // DefaultSafetyConfig returns a safe default configuration (read-only, no free SQL)
@@ -238,8 +249,25 @@ func (s *SafetyConfig) IsTransportWriteAllowed() bool {
 
 // CheckTransport returns an error if the transport operation is not allowed
 func (s *SafetyConfig) CheckTransport(transport, opName string, isWrite bool) error {
-	// Check if transports are enabled
+	// For read operations (ListTransports, GetTransport), allow if:
+	// - EnableTransports is true, OR
+	// - AllowTransportableEdits is true (user needs to discover transports)
+	if !isWrite && (s.EnableTransports || s.AllowTransportableEdits) {
+		// Read operation allowed, check transport whitelist if specified
+		if transport != "" && transport != "*" && len(s.AllowedTransports) > 0 {
+			if !s.isTransportInWhitelist(transport) {
+				return fmt.Errorf("operation '%s' on transport '%s' is blocked by safety configuration (allowed: %v)",
+					opName, transport, s.AllowedTransports)
+			}
+		}
+		return nil
+	}
+
+	// For write operations or when neither flag is set, require EnableTransports
 	if !s.EnableTransports {
+		if s.AllowTransportableEdits && isWrite {
+			return fmt.Errorf("transport write operation '%s' requires --enable-transports flag (--allow-transportable-edits only enables read operations)", opName)
+		}
 		return fmt.Errorf("transport operation '%s' is blocked: transports not enabled (use --enable-transports or SAP_ENABLE_TRANSPORTS=true)", opName)
 	}
 
@@ -257,6 +285,60 @@ func (s *SafetyConfig) CheckTransport(transport, opName string, isWrite bool) er
 	}
 
 	return nil
+}
+
+// CheckTransportableEdit returns an error if editing transportable objects is not allowed
+// This should be called when a transport parameter is provided to write operations
+func (s *SafetyConfig) CheckTransportableEdit(transport, opName string) error {
+	if transport == "" {
+		return nil // No transport = local object, always allowed
+	}
+
+	if !s.AllowTransportableEdits {
+		return fmt.Errorf(
+			"operation '%s' with transport '%s' is blocked: editing transportable objects is disabled.\n"+
+				"Objects in transportable packages require explicit opt-in.\n"+
+				"Use --allow-transportable-edits or SAP_ALLOW_TRANSPORTABLE_EDITS=true to enable.\n"+
+				"WARNING: This allows modifications to non-local objects that may affect production systems.",
+			opName, transport)
+	}
+
+	// If transportable edits are allowed, also check transport whitelist
+	if len(s.AllowedTransports) > 0 && !s.isTransportInWhitelist(transport) {
+		return fmt.Errorf("operation '%s' with transport '%s' is blocked by safety configuration (allowed transports: %v)",
+			opName, transport, s.AllowedTransports)
+	}
+
+	return nil
+}
+
+// isTransportInWhitelist checks if a transport matches the AllowedTransports whitelist
+// This is a helper that doesn't check EnableTransports (unlike IsTransportAllowed)
+func (s *SafetyConfig) isTransportInWhitelist(transport string) bool {
+	if len(s.AllowedTransports) == 0 {
+		return true // Empty whitelist = all allowed
+	}
+
+	transport = strings.ToUpper(transport)
+
+	for _, allowed := range s.AllowedTransports {
+		allowed = strings.ToUpper(allowed)
+
+		// Exact match
+		if allowed == transport {
+			return true
+		}
+
+		// Wildcard match (e.g., "DEVK*" matches "DEVK900123", etc.)
+		if strings.HasSuffix(allowed, "*") {
+			prefix := strings.TrimSuffix(allowed, "*")
+			if strings.HasPrefix(transport, prefix) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // String returns a human-readable description of the safety configuration
@@ -295,6 +377,10 @@ func (s *SafetyConfig) String() string {
 		if len(s.AllowedTransports) > 0 {
 			parts = append(parts, fmt.Sprintf("AllowedTransports=%v", s.AllowedTransports))
 		}
+	}
+
+	if s.AllowTransportableEdits {
+		parts = append(parts, "TRANSPORTABLE-EDITS-ALLOWED")
 	}
 
 	if len(parts) == 0 {

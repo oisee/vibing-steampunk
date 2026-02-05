@@ -55,6 +55,7 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_ALLOWED_OPS` / `--allowed-ops` | Whitelist operation types (e.g., "RSQ") |
 | `SAP_DISALLOWED_OPS` / `--disallowed-ops` | Blacklist operation types (e.g., "CDUA") |
 | `SAP_ALLOWED_PACKAGES` / `--allowed-packages` | Restrict to packages (supports wildcards: "Z*") |
+| `SAP_ALLOW_TRANSPORTABLE_EDITS` / `--allow-transportable-edits` | Allow editing objects in transportable packages (default: false) |
 | **Feature Configuration (Safety Network)** | |
 | `SAP_FEATURE_ABAPGIT` / `--feature-abapgit` | abapGit integration: auto, on, off (default: auto) |
 | `SAP_FEATURE_RAP` / `--feature-rap` | RAP/OData development: auto, on, off (default: auto) |
@@ -320,6 +321,12 @@ All research reports, analysis documents, and design specifications follow this 
 #### 2026-02-01 Reports
 - **001:** One Tool Mode Future - Vision for ultra-minimal tool consolidation
 - **002:** ABAP Help Tool Design - GetAbapHelp implementation via WebSocket
+
+#### 2026-02-03 Reports
+- **001:** abapGit Dependencies & Submodules - Git submodules analysis, dependency management patterns, vsp opportunity `[ROADMAP]`
+- **002:** Test Checklist - Comprehensive testing guide
+- **003:** Transportable Edits Safety Feature - v2.24.0 feature design
+- **004:** Transport Tools Release Plan - Phased rollout strategy
 
 #### Reference Documentation (Non-numbered)
 - `abap-adt-discovery-guide.md` - ADT API discovery process

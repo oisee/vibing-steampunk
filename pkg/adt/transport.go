@@ -430,7 +430,8 @@ type ReleaseTransportOptions struct {
 	SkipATC     bool
 }
 
-// ListTransports returns transport requests for a user
+// ListTransports returns transport requests for a user.
+// First tries ADT API, falls back to E070/E07T table query if ADT returns empty.
 func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSummary, error) {
 	// Safety check
 	if err := c.config.Safety.CheckTransport("", "ListTransports", false); err != nil {
@@ -441,6 +442,7 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 		user = c.config.Username
 	}
 
+	// Try ADT API first
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
 		Method: http.MethodGet,
 		Query:  map[string][]string{"user": {strings.ToUpper(user)}},
@@ -450,7 +452,94 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 		return nil, fmt.Errorf("listing transports: %w", err)
 	}
 
-	return parseTransportList(resp.Body)
+	transports, err := parseTransportList(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// If ADT API returned results, use them
+	if len(transports) > 0 {
+		return transports, nil
+	}
+
+	// Fallback: query E070/E07T tables directly
+	// This works on systems without configured transport routes (sandboxes)
+	return c.listTransportsViaSQL(ctx, user)
+}
+
+// listTransportsViaSQL queries E070/E07T tables to get modifiable transports.
+// Used as fallback when ADT API returns empty (common on sandbox systems).
+func (c *Client) listTransportsViaSQL(ctx context.Context, user string) ([]TransportSummary, error) {
+	// Query modifiable workbench requests (K) for the user
+	// TRFUNCTION: K=Workbench request, W=Customizing request, S=Task
+	// TRSTATUS: D=Modifiable, R=Released, N=Released (import started)
+	query := `SELECT e070~TRKORR, e070~TRFUNCTION, e070~TRSTATUS, e070~TARSYSTEM,
+		e070~AS4USER, e070~AS4DATE, e070~AS4TIME, e07t~AS4TEXT
+		FROM E070 AS e070
+		LEFT OUTER JOIN E07T AS e07t ON e070~TRKORR = e07t~TRKORR AND e07t~LANGU = 'E'
+		WHERE e070~AS4USER = '` + strings.ToUpper(user) + `'
+		AND e070~TRSTATUS = 'D'
+		AND e070~TRFUNCTION IN ('K', 'W')
+		ORDER BY e070~TRKORR DESCENDING`
+
+	result, err := c.RunQuery(ctx, query, 100)
+	if err != nil {
+		// If SQL query fails, return empty list (not an error)
+		return []TransportSummary{}, nil
+	}
+
+	var transports []TransportSummary
+	for _, row := range result.Rows {
+		tr := TransportSummary{
+			Number:     getString(row, "TRKORR"),
+			Owner:      getString(row, "AS4USER"),
+			Description: getString(row, "AS4TEXT"),
+			Type:       getString(row, "TRFUNCTION"),
+			Status:     getString(row, "TRSTATUS"),
+			Target:     getString(row, "TARSYSTEM"),
+		}
+
+		// Map status code to text
+		switch tr.Status {
+		case "D":
+			tr.StatusText = "Modifiable"
+		case "R":
+			tr.StatusText = "Released"
+		case "N":
+			tr.StatusText = "Released (import started)"
+		}
+
+		// Map type code to text
+		switch tr.Type {
+		case "K":
+			tr.Type = "K"
+			tr.TargetDesc = "Workbench Request"
+		case "W":
+			tr.Type = "W"
+			tr.TargetDesc = "Customizing Request"
+		}
+
+		// Format date/time if available
+		date := getString(row, "AS4DATE")
+		time := getString(row, "AS4TIME")
+		if date != "" && time != "" {
+			tr.ChangedAt = date + time
+		}
+
+		transports = append(transports, tr)
+	}
+
+	return transports, nil
+}
+
+// getString safely extracts a string value from a row map
+func getString(row map[string]interface{}, key string) string {
+	if v, ok := row[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func parseTransportList(data []byte) ([]TransportSummary, error) {

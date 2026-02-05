@@ -53,6 +53,8 @@ Thumbs.db
 
 # vsp config files (contain credentials)
 .vsp*.json
+vsp.tmp.json
+vsp*.tmp.json
 .vsp/
 
 # Session summaries (may contain credentials)
