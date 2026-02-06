@@ -11,14 +11,6 @@ CLASS zcl_vsp_report_service DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
-    METHODS handle_get_job_status
-      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
-      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
-
-    METHODS handle_get_spool_output
-      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
-      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
-
     METHODS handle_get_text_elements
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
@@ -29,6 +21,26 @@ CLASS zcl_vsp_report_service DEFINITION
 
     METHODS handle_get_variants
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
+    METHODS extract_param
+      IMPORTING iv_params       TYPE string
+                iv_name         TYPE string
+      RETURNING VALUE(rv_value) TYPE string.
+
+    METHODS extract_param_object
+      IMPORTING iv_params       TYPE string
+                iv_name         TYPE string
+      RETURNING VALUE(rv_json)  TYPE string.
+
+    METHODS escape_json
+      IMPORTING iv_string         TYPE string
+      RETURNING VALUE(rv_escaped) TYPE string.
+
+    METHODS build_error
+      IMPORTING iv_id              TYPE string
+                iv_code            TYPE string
+                iv_message         TYPE string
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
 ENDCLASS.
@@ -44,10 +56,6 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
     CASE is_message-action.
       WHEN 'runReport'.
         rs_response = handle_run_report( is_message ).
-      WHEN 'getJobStatus'.
-        rs_response = handle_get_job_status( is_message ).
-      WHEN 'getSpoolOutput'.
-        rs_response = handle_get_spool_output( is_message ).
       WHEN 'getTextElements'.
         rs_response = handle_get_text_elements( is_message ).
       WHEN 'setTextElements'.
@@ -55,7 +63,7 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       WHEN 'getVariants'.
         rs_response = handle_get_variants( is_message ).
       WHEN OTHERS.
-        rs_response = zcl_vsp_utils=>build_error(
+        rs_response = build_error(
           iv_id      = is_message-id
           iv_code    = 'UNKNOWN_ACTION'
           iv_message = |Action '{ is_message-action }' not supported|
@@ -67,61 +75,41 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD handle_run_report.
-    " Background Job approach - works in APC/ICF context
-    " Uses XBP BAPIs to schedule immediate job execution
-    DATA: lv_report    TYPE progname,
-          lv_variant   TYPE variant,
-          lv_jobname   TYPE btcjob,
-          lv_jobcount  TYPE btcjobcnt,
-          lv_extuser   TYPE bapixmlogr-extuser,
-          lt_rsparams  TYPE TABLE OF rsparams,
-          lv_sessionid TYPE xmisessnid.
+    DATA: lt_rsparams  TYPE TABLE OF rsparams,
+          lr_data      TYPE REF TO data,
+          lv_start     TYPE timestampl,
+          lv_end       TYPE timestampl,
+          lv_runtime   TYPE i,
+          lv_report    TYPE progname,
+          lv_variant   TYPE variant.
 
-    DATA(lv_report_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'report' ).
-    DATA(lv_variant_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'variant' ).
-    DATA(lv_params_json) = zcl_vsp_utils=>extract_param_object( iv_params = is_message-params iv_name = 'params' ).
+    DATA(lv_report_str) = extract_param( iv_params = is_message-params iv_name = 'report' ).
+    DATA(lv_variant_str) = extract_param( iv_params = is_message-params iv_name = 'variant' ).
+    DATA(lv_capture) = extract_param( iv_params = is_message-params iv_name = 'capture_alv' ).
+    DATA(lv_max_str) = extract_param( iv_params = is_message-params iv_name = 'max_rows' ).
+    DATA(lv_params_json) = extract_param_object( iv_params = is_message-params iv_name = 'params' ).
 
     IF lv_report_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
       RETURN.
     ENDIF.
 
     TRANSLATE lv_report_str TO UPPER CASE.
     lv_report = lv_report_str.
-
     IF lv_variant_str IS NOT INITIAL.
       TRANSLATE lv_variant_str TO UPPER CASE.
       lv_variant = lv_variant_str.
     ENDIF.
 
-    " Step 0: Logon to XMI interface (required for XBP BAPIs)
-    DATA ls_xmi_return TYPE bapiret2.
-    TRY.
-        CALL FUNCTION 'BAPI_XMI_LOGON'
-          EXPORTING
-            extcompany = 'VSP'
-            extproduct = 'VSP'
-            interface  = 'XBP'
-            version    = '2.0'
-          IMPORTING
-            sessionid  = lv_sessionid
-            return     = ls_xmi_return.
-      CATCH cx_sy_dyn_call_illegal_type INTO DATA(lx_xmi).
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'XMI_TYPE_ERROR' iv_message = |XMI_LOGON: { lx_xmi->get_text( ) }| ).
-        RETURN.
-    ENDTRY.
+    DATA(lv_capture_alv) = COND abap_bool( WHEN lv_capture = 'false' THEN abap_false ELSE abap_true ).
+    DATA(lv_max_rows) = COND i( WHEN lv_max_str IS NOT INITIAL THEN CONV i( lv_max_str ) ELSE 1000 ).
 
-    " Continue even if already logged on - XMI logon errors are non-fatal
-    " The "already logged on" error is normal when reusing APC session
-
-    " Verify report exists
     SELECT SINGLE name FROM trdir INTO @DATA(lv_exists) WHERE name = @lv_report.
     IF sy-subrc <> 0.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'REPORT_NOT_FOUND' iv_message = |Report { lv_report } not found| ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'REPORT_NOT_FOUND' iv_message = |Report { lv_report } not found| ).
       RETURN.
     ENDIF.
 
-    " Parse params JSON if provided
     IF lv_params_json IS NOT INITIAL.
       DATA(lv_work) = lv_params_json.
       WHILE lv_work CS '"'.
@@ -152,349 +140,136 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       ENDWHILE.
     ENDIF.
 
-    " Generate unique job name
-    DATA(lv_timestamp) = |{ sy-datum }{ sy-uzeit }|.
-    lv_jobname = |VSP_{ lv_timestamp(12) }|.
-    lv_extuser = sy-uname.
+    GET TIME STAMP FIELD lv_start.
 
-    " Step 1: Open job
-    DATA ls_ret TYPE bapiret2.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    DATA lv_alv_json TYPE string.
+    DATA lv_columns_json TYPE string.
+    DATA lv_total_rows TYPE i.
+    DATA lv_truncated TYPE abap_bool.
+
     TRY.
-        CALL FUNCTION 'BAPI_XBP_JOB_OPEN'
-          EXPORTING
-            jobname            = lv_jobname
-            external_user_name = lv_extuser
-          IMPORTING
-            jobcount           = lv_jobcount
-            return             = ls_ret.
-      CATCH cx_sy_dyn_call_illegal_type INTO DATA(lx_open).
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_OPEN_TYPE_ERROR' iv_message = |JOB_OPEN: { lx_open->get_text( ) }| ).
+        IF lv_capture_alv = abap_true.
+          cl_salv_bs_runtime_info=>set(
+            display  = abap_false
+            metadata = abap_true
+            data     = abap_true ).
+        ENDIF.
+
+        IF lv_variant IS NOT INITIAL.
+          SUBMIT (lv_report)
+            USING SELECTION-SET lv_variant
+            AND RETURN.
+        ELSEIF lt_rsparams IS NOT INITIAL.
+          SUBMIT (lv_report)
+            WITH SELECTION-TABLE lt_rsparams
+            AND RETURN.
+        ELSE.
+          SUBMIT (lv_report) AND RETURN.
+        ENDIF.
+
+        IF lv_capture_alv = abap_true.
+          TRY.
+              cl_salv_bs_runtime_info=>get_data_ref( IMPORTING r_data = lr_data ).
+
+              IF lr_data IS BOUND.
+                FIELD-SYMBOLS <lt_data> TYPE ANY TABLE.
+                ASSIGN lr_data->* TO <lt_data>.
+                lv_total_rows = lines( <lt_data> ).
+
+                DATA(lo_type) = cl_abap_typedescr=>describe_by_data_ref( lr_data ).
+                IF lo_type->kind = cl_abap_typedescr=>kind_table.
+                  DATA(lo_table) = CAST cl_abap_tabledescr( lo_type ).
+                  DATA(lo_struct) = CAST cl_abap_structdescr( lo_table->get_table_line_type( ) ).
+                  lv_columns_json = '['.
+                  DATA lv_col_first TYPE abap_bool VALUE abap_true.
+                  LOOP AT lo_struct->components INTO DATA(ls_comp).
+                    IF lv_col_first = abap_false.
+                      lv_columns_json = |{ lv_columns_json },|.
+                    ENDIF.
+                    lv_columns_json = |{ lv_columns_json }{ lv_o }"name":"{ ls_comp-name }","type":"{ ls_comp-type_kind }"{ lv_c }|.
+                    lv_col_first = abap_false.
+                  ENDLOOP.
+                  lv_columns_json = |{ lv_columns_json }]|.
+
+                  lv_alv_json = '['.
+                  DATA lv_row_first TYPE abap_bool VALUE abap_true.
+                  DATA lv_row_count TYPE i.
+                  LOOP AT <lt_data> ASSIGNING FIELD-SYMBOL(<ls_row>).
+                    lv_row_count = lv_row_count + 1.
+                    IF lv_row_count > lv_max_rows.
+                      lv_truncated = abap_true.
+                      EXIT.
+                    ENDIF.
+                    IF lv_row_first = abap_false.
+                      lv_alv_json = |{ lv_alv_json },|.
+                    ENDIF.
+                    lv_alv_json = |{ lv_alv_json }{ lv_o }|.
+                    DATA lv_fld_first TYPE abap_bool VALUE abap_true.
+                    LOOP AT lo_struct->components INTO ls_comp.
+                      IF lv_fld_first = abap_false.
+                        lv_alv_json = |{ lv_alv_json },|.
+                      ENDIF.
+                      ASSIGN COMPONENT ls_comp-name OF STRUCTURE <ls_row> TO FIELD-SYMBOL(<fv>).
+                      IF sy-subrc = 0.
+                        DATA lv_val TYPE string.
+                        TRY.
+                            lv_val = <fv>.
+                          CATCH cx_root.
+                            lv_val = ''.
+                        ENDTRY.
+                        lv_alv_json = |{ lv_alv_json }"{ ls_comp-name }":"{ escape_json( lv_val ) }"|.
+                      ENDIF.
+                      lv_fld_first = abap_false.
+                    ENDLOOP.
+                    lv_alv_json = |{ lv_alv_json }{ lv_c }|.
+                    lv_row_first = abap_false.
+                  ENDLOOP.
+                  lv_alv_json = |{ lv_alv_json }]|.
+                ENDIF.
+              ENDIF.
+            CATCH cx_salv_bs_sc_runtime_info.
+          ENDTRY.
+        ENDIF.
+
+      CATCH cx_root INTO DATA(lx_error).
+        IF lv_capture_alv = abap_true.
+          cl_salv_bs_runtime_info=>clear_all( ).
+        ENDIF.
+        rs_response = build_error( iv_id = is_message-id iv_code = 'SUBMIT_ERROR' iv_message = lx_error->get_text( ) ).
         RETURN.
     ENDTRY.
 
-    IF ls_ret-type = 'E'.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_OPEN_ERROR' iv_message = |{ ls_ret-message }| ).
-      RETURN.
+    IF lv_capture_alv = abap_true.
+      cl_salv_bs_runtime_info=>clear_all( ).
     ENDIF.
 
-    " Step 2: Add ABAP step
-    CLEAR ls_ret.
-    IF lv_variant IS NOT INITIAL.
-      " Use variant
-      CALL FUNCTION 'BAPI_XBP_JOB_ADD_ABAP_STEP'
-        EXPORTING
-          jobname            = lv_jobname
-          jobcount           = lv_jobcount
-          external_user_name = lv_extuser
-          abap_program_name  = lv_report
-          abap_variant_name  = lv_variant
-        IMPORTING
-          return             = ls_ret.
-    ELSEIF lt_rsparams IS NOT INITIAL.
-      " Create temp variant for parameters
-      DATA lv_temp_variant TYPE variant.
-      lv_temp_variant = |VSP{ sy-uzeit(6) }|.
+    GET TIME STAMP FIELD lv_end.
+    lv_runtime = cl_abap_tstmp=>subtract( tstmp1 = lv_end tstmp2 = lv_start ) * 1000.
 
-      " Try to create variant with parameters
-      CALL FUNCTION 'RS_CREATE_VARIANT'
-        EXPORTING
-          curr_report               = lv_report
-          curr_variant              = lv_temp_variant
-          vari_desc                 = VALUE varid( report = lv_report variant = lv_temp_variant mandt = sy-mandt )
-        TABLES
-          vari_contents             = lt_rsparams
-        EXCEPTIONS
-          illegal_report_or_variant = 1
-          illegal_variantname       = 2
-          not_authorized            = 3
-          not_executed              = 4
-          report_not_existent       = 5
-          report_not_supplied       = 6
-          variant_exists            = 7
-          variant_locked            = 8
-          OTHERS                    = 9.
+    DATA(lv_alv_captured) = COND string( WHEN lv_alv_json IS NOT INITIAL THEN 'true' ELSE 'false' ).
+    DATA(lv_trunc) = COND string( WHEN lv_truncated = abap_true THEN 'true' ELSE 'false' ).
 
-      IF sy-subrc = 0 OR sy-subrc = 7. " Created or already exists
-        lv_variant = lv_temp_variant.
-      ENDIF.
-
-      CLEAR ls_ret.
-      CALL FUNCTION 'BAPI_XBP_JOB_ADD_ABAP_STEP'
-        EXPORTING
-          jobname            = lv_jobname
-          jobcount           = lv_jobcount
-          external_user_name = lv_extuser
-          abap_program_name  = lv_report
-          abap_variant_name  = lv_variant
-        IMPORTING
-          return             = ls_ret.
-    ELSE.
-      " No variant, no params
-      CLEAR ls_ret.
-      CALL FUNCTION 'BAPI_XBP_JOB_ADD_ABAP_STEP'
-        EXPORTING
-          jobname            = lv_jobname
-          jobcount           = lv_jobcount
-          external_user_name = lv_extuser
-          abap_program_name  = lv_report
-        IMPORTING
-          return             = ls_ret.
+    lv_json = |{ lv_o }"status":"success","report":"{ lv_report }","runtime_ms":{ lv_runtime },"alv_captured":{ lv_alv_captured }|.
+    IF lv_alv_json IS NOT INITIAL.
+      lv_json = |{ lv_json },"columns":{ lv_columns_json },"rows":{ lv_alv_json },"total_rows":{ lv_total_rows },"truncated":{ lv_trunc }|.
     ENDIF.
+    lv_json = |{ lv_json }{ lv_c }|.
 
-    IF ls_ret-type = 'E'.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_STEP_ERROR' iv_message = |{ ls_ret-message }| ).
-      RETURN.
-    ENDIF.
-
-    " Step 3: Close job
-    CLEAR ls_ret.
-    CALL FUNCTION 'BAPI_XBP_JOB_CLOSE'
-      EXPORTING
-        jobname            = lv_jobname
-        jobcount           = lv_jobcount
-        external_user_name = lv_extuser
-      IMPORTING
-        return             = ls_ret.
-
-    IF ls_ret-type = 'E'.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_CLOSE_ERROR' iv_message = |{ ls_ret-message }| ).
-      RETURN.
-    ENDIF.
-
-    " Step 4: Start job immediately (target_server is required but can be blank for default)
-    CLEAR ls_ret.
-    CALL FUNCTION 'BAPI_XBP_JOB_START_IMMEDIATELY'
-      EXPORTING
-        jobname            = lv_jobname
-        jobcount           = lv_jobcount
-        external_user_name = lv_extuser
-        target_server      = space
-      IMPORTING
-        return             = ls_ret.
-
-    IF ls_ret-type = 'E'.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_START_ERROR' iv_message = |{ ls_ret-message }| ).
-      RETURN.
-    ENDIF.
-
-    " Success - return job info for polling
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'status' iv_value = 'scheduled' ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'report' iv_value = CONV #( lv_report ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'jobname' iv_value = CONV #( lv_jobname ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'jobcount' iv_value = CONV #( lv_jobcount ) ) )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
-  ENDMETHOD.
-
-  METHOD handle_get_job_status.
-    " Check job status using XBP BAPI
-    DATA: lv_jobname   TYPE btcjob,
-          lv_jobcount  TYPE btcjobcnt,
-          lv_extuser   TYPE bapixmlogr-extuser,
-          lv_status    TYPE btcstatus,
-          ls_return    TYPE bapiret2,
-          lv_sessionid TYPE xmisessnid.
-
-    DATA(lv_jobname_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'jobname' ).
-    DATA(lv_jobcount_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'jobcount' ).
-
-    IF lv_jobname_str IS INITIAL OR lv_jobcount_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameters jobname and jobcount are required' ).
-      RETURN.
-    ENDIF.
-
-    " Logon to XMI interface (required for XBP BAPIs)
-    DATA ls_xmi_return TYPE bapiret2.
-    CALL FUNCTION 'BAPI_XMI_LOGON'
-      EXPORTING
-        extcompany = 'VSP'
-        extproduct = 'VSP'
-        interface  = 'XBP'
-        version    = '2.0'
-      IMPORTING
-        sessionid  = lv_sessionid
-        return     = ls_xmi_return.
-
-    " Continue even if already logged on - XMI logon errors are non-fatal
-    " The "already logged on" error is normal when reusing APC session
-
-    lv_jobname = lv_jobname_str.
-    lv_jobcount = lv_jobcount_str.
-    lv_extuser = sy-uname.
-
-    " Get job status
-    CALL FUNCTION 'BAPI_XBP_JOB_STATUS_GET'
-      EXPORTING
-        jobname            = lv_jobname
-        jobcount           = lv_jobcount
-        external_user_name = lv_extuser
-      IMPORTING
-        status             = lv_status
-        return             = ls_return.
-
-    IF ls_return-type = 'E'.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'JOB_STATUS_ERROR' iv_message = |{ ls_return-message }| ).
-      RETURN.
-    ENDIF.
-
-    " Map status codes to readable status
-    DATA lv_status_text TYPE string.
-    CASE lv_status.
-      WHEN 'S'. lv_status_text = 'scheduled'.
-      WHEN 'R'. lv_status_text = 'running'.
-      WHEN 'F'. lv_status_text = 'finished'.
-      WHEN 'A'. lv_status_text = 'aborted'.
-      WHEN 'Y'. lv_status_text = 'ready'.
-      WHEN 'P'. lv_status_text = 'released'.
-      WHEN OTHERS. lv_status_text = lv_status.
-    ENDCASE.
-
-    " Get spool list info if job finished
-    DATA lt_spool_ids TYPE string_table.
-
-    IF lv_status = 'F' OR lv_status = 'A'.
-      " Get spool list from job steps table (TBTCP has LISTIDENT field)
-      DATA lt_spool TYPE TABLE OF tbtcp.
-      SELECT * FROM tbtcp INTO TABLE lt_spool
-        WHERE jobname = lv_jobname
-          AND jobcount = lv_jobcount
-          AND listident <> ''.
-
-      LOOP AT lt_spool INTO DATA(ls_spool).
-        APPEND |"{ ls_spool-listident }"| TO lt_spool_ids.
-      ENDLOOP.
-    ENDIF.
-
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'jobname' iv_value = CONV #( lv_jobname ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'jobcount' iv_value = CONV #( lv_jobcount ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'status' iv_value = lv_status_text ) )
-      ( |"spool_ids":{ zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_spool_ids ) ) }| )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
-  ENDMETHOD.
-
-  METHOD handle_get_spool_output.
-    " Retrieve spool output by ID using TemSe API (APC-safe)
-    " RSPO_RETURN_SPOOLJOB uses SUBMIT which is forbidden in APC context
-    TYPES: BEGIN OF ty_line,
-             tdline TYPE c LENGTH 255,
-           END OF ty_line.
-    DATA: lv_spool_id TYPE rspoid,
-          lt_data     TYPE STANDARD TABLE OF ty_line,
-          lv_alldata  TYPE c.
-
-    DATA(lv_spool_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'spool_id' ).
-
-    IF lv_spool_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter spool_id is required' ).
-      RETURN.
-    ENDIF.
-
-    lv_spool_id = lv_spool_str.
-
-    " Get spool request info from TSP01
-    SELECT SINGLE rqo1name, rqo1clie FROM tsp01 INTO @DATA(ls_spool)
-      WHERE rqident = @lv_spool_id.
-    IF sy-subrc <> 0.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'SPOOL_NOT_FOUND'
-        iv_message = |Spool { lv_spool_id } not found| ).
-      RETURN.
-    ENDIF.
-
-    " Open TemSe object for reading line-by-line
-    " RSTS_OPEN_RL stores handle internally when own_fbhandle=' ' (default)
-    TRY.
-        CALL FUNCTION 'RSTS_OPEN_RL'
-          EXPORTING
-            name      = ls_spool-rqo1name
-            client    = ls_spool-rqo1clie
-          EXCEPTIONS
-            fb_error  = 1
-            fb_rsts_other = 2
-            no_object = 3
-            no_permission = 4
-            OTHERS    = 5.
-      CATCH cx_sy_dyn_call_param_missing INTO DATA(lx_open).
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'OPEN_PARAM_MISSING'
-          iv_message = |RSTS_OPEN_RL param missing: { lx_open->get_text( ) }| ).
-        RETURN.
-    ENDTRY.
-
-    IF sy-subrc <> 0.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'TEMSE_OPEN_ERROR'
-        iv_message = |Failed to open TemSe for spool { lv_spool_id }: RC={ sy-subrc }| ).
-      RETURN.
-    ENDIF.
-
-    " Read all TemSe content into table (uses internal handle)
-    DATA(lv_read_rc) = 0.
-    TRY.
-        CALL FUNCTION 'RSTS_READ'
-          IMPORTING
-            alldata   = lv_alldata
-          TABLES
-            datatab   = lt_data
-          EXCEPTIONS
-            fb_error  = 1
-            fb_rsts_other = 2
-            OTHERS    = 3.
-        lv_read_rc = sy-subrc.
-      CATCH cx_sy_dyn_call_param_missing INTO DATA(lx_read).
-        CALL FUNCTION 'RSTS_CLOSE' EXCEPTIONS OTHERS = 0.
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'READ_PARAM_MISSING'
-          iv_message = |RSTS_READ param missing: { lx_read->get_text( ) }| ).
-        RETURN.
-    ENDTRY.
-
-    " Close TemSe object (uses internal handle)
-    CALL FUNCTION 'RSTS_CLOSE'
-      EXCEPTIONS
-        OTHERS = 0.
-
-    IF lv_read_rc <> 0.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'TEMSE_READ_ERROR'
-        iv_message = |Failed to read TemSe for spool { lv_spool_id }: RC={ lv_read_rc }| ).
-      RETURN.
-    ENDIF.
-
-    " Build output string from lines
-    DATA lv_output TYPE string.
-    DATA lv_line_count TYPE i.
-    LOOP AT lt_data INTO DATA(ls_line).
-      IF lv_output IS NOT INITIAL.
-        lv_output = |{ lv_output }\n|.
-      ENDIF.
-      lv_output = |{ lv_output }{ ls_line-tdline }|.
-      lv_line_count = lv_line_count + 1.
-    ENDLOOP.
-
-    IF lv_line_count = 0.
-      lv_output = '[Spool exists but contains no readable data]'.
-      lv_line_count = 1.
-    ENDIF.
-
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'spool_id' iv_value = CONV #( lv_spool_id ) ) )
-      ( zcl_vsp_utils=>json_int( iv_key = 'lines' iv_value = lv_line_count ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'output' iv_value = lv_output ) )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_get_text_elements.
     DATA: lt_textpool TYPE TABLE OF textpool,
           lv_program  TYPE progname.
 
-    DATA(lv_prog_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'program' ).
-    DATA(lv_language) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'language' ).
+    DATA(lv_prog_str) = extract_param( iv_params = is_message-params iv_name = 'program' ).
+    DATA(lv_language) = extract_param( iv_params = is_message-params iv_name = 'language' ).
 
     IF lv_prog_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter program is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter program is required' ).
       RETURN.
     ENDIF.
 
@@ -510,52 +285,57 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
 
     READ TEXTPOOL lv_program INTO lt_textpool LANGUAGE lv_lang.
 
-    " Build selection_texts object
-    DATA lt_sel_texts TYPE string_table.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"program":"{ lv_program }","language":"{ lv_lang }","selection_texts":{ lv_o }|.
+
+    DATA lv_first TYPE abap_bool VALUE abap_true.
     DATA lv_entry_str TYPE string.
-    DATA lv_key TYPE string.
     LOOP AT lt_textpool INTO DATA(ls_text) WHERE id = 'S'.
-      lv_key = ls_text-key.
+      IF lv_first = abap_false.
+        lv_json = |{ lv_json },|.
+      ENDIF.
+      DATA(lv_key) = ls_text-key.
       CONDENSE lv_key.
       " Selection text entry has 8-char key prefix - strip it
       lv_entry_str = ls_text-entry.
       IF strlen( lv_entry_str ) > 8.
         lv_entry_str = lv_entry_str+8.
       ENDIF.
-      APPEND zcl_vsp_utils=>json_str( iv_key = lv_key iv_value = lv_entry_str ) TO lt_sel_texts.
+      lv_json = |{ lv_json }"{ lv_key }":"{ escape_json( lv_entry_str ) }"|.
+      lv_first = abap_false.
     ENDLOOP.
 
-    " Build text_symbols object
-    DATA lt_sym_texts TYPE string_table.
+    lv_json = |{ lv_json }{ lv_c },"text_symbols":{ lv_o }|.
+
+    lv_first = abap_true.
     LOOP AT lt_textpool INTO ls_text WHERE id = 'I'.
+      IF lv_first = abap_false.
+        lv_json = |{ lv_json },|.
+      ENDIF.
       lv_key = ls_text-key.
       CONDENSE lv_key.
-      APPEND zcl_vsp_utils=>json_str( iv_key = lv_key iv_value = CONV #( ls_text-entry ) ) TO lt_sym_texts.
+      lv_entry_str = ls_text-entry.
+      lv_json = |{ lv_json }"{ lv_key }":"{ escape_json( lv_entry_str ) }"|.
+      lv_first = abap_false.
     ENDLOOP.
 
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'program' iv_value = CONV #( lv_program ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'language' iv_value = CONV #( lv_lang ) ) )
-      ( |"selection_texts":{ zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_sel_texts ) ) }| )
-      ( |"text_symbols":{ zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_sym_texts ) ) }| )
-      ( |"heading_texts":{ zcl_vsp_utils=>json_obj( '' ) }| )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    lv_json = |{ lv_json }{ lv_c }{ lv_c }|.
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_set_text_elements.
     DATA: lt_textpool TYPE TABLE OF textpool,
           lv_program  TYPE progname.
 
-    DATA(lv_prog_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'program' ).
-    DATA(lv_language) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'language' ).
-    DATA(lv_sel_json) = zcl_vsp_utils=>extract_param_object( iv_params = is_message-params iv_name = 'selection_texts' ).
-    DATA(lv_sym_json) = zcl_vsp_utils=>extract_param_object( iv_params = is_message-params iv_name = 'text_symbols' ).
-    DATA(lv_head_json) = zcl_vsp_utils=>extract_param_object( iv_params = is_message-params iv_name = 'heading_texts' ).
+    DATA(lv_prog_str) = extract_param( iv_params = is_message-params iv_name = 'program' ).
+    DATA(lv_language) = extract_param( iv_params = is_message-params iv_name = 'language' ).
+    DATA(lv_sel_json) = extract_param_object( iv_params = is_message-params iv_name = 'selection_texts' ).
+    DATA(lv_sym_json) = extract_param_object( iv_params = is_message-params iv_name = 'text_symbols' ).
 
     IF lv_prog_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter program is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter program is required' ).
       RETURN.
     ENDIF.
 
@@ -573,7 +353,6 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
 
     DATA lv_sel_count TYPE i.
     DATA lv_sym_count TYPE i.
-    DATA lv_head_count TYPE i.
 
     IF lv_sel_json IS NOT INITIAL.
       DATA(lv_work) = lv_sel_json.
@@ -642,60 +421,25 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       ENDWHILE.
     ENDIF.
 
-    IF lv_head_json IS NOT INITIAL.
-      lv_work = lv_head_json.
-      WHILE lv_work CS '"'.
-        CLEAR: lv_key, lv_val.
-        FIND PCRE '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
-        IF sy-subrc = 0.
-          REPLACE ALL OCCURRENCES OF '\"' IN lv_val WITH '"'.
-          REPLACE ALL OCCURRENCES OF '\\' IN lv_val WITH '\'.
-
-          lv_textkey = lv_key.
-          READ TABLE lt_textpool ASSIGNING <fs> WITH KEY id = 'H' key = lv_textkey.
-          IF sy-subrc = 0.
-            <fs>-entry = lv_val.
-          ELSE.
-            APPEND VALUE textpool( id = 'H' key = lv_textkey entry = lv_val ) TO lt_textpool.
-          ENDIF.
-          lv_head_count = lv_head_count + 1.
-
-          FIND FIRST OCCURRENCE OF |"{ lv_key }"| IN lv_work MATCH OFFSET lv_off MATCH LENGTH lv_len.
-          IF sy-subrc = 0 AND strlen( lv_work ) > lv_off + lv_len.
-            lv_work = lv_work+lv_off.
-            lv_work = lv_work+lv_len.
-          ELSE.
-            EXIT.
-          ENDIF.
-        ELSE.
-          EXIT.
-        ENDIF.
-      ENDWHILE.
-    ENDIF.
-
     INSERT TEXTPOOL lv_program FROM lt_textpool LANGUAGE lv_lang.
 
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
     DATA(lv_status) = COND string( WHEN sy-subrc = 0 THEN 'success' ELSE 'error' ).
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'status' iv_value = lv_status ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'program' iv_value = CONV #( lv_program ) ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'language' iv_value = CONV #( lv_lang ) ) )
-      ( zcl_vsp_utils=>json_int( iv_key = 'selection_texts_set' iv_value = lv_sel_count ) )
-      ( zcl_vsp_utils=>json_int( iv_key = 'text_symbols_set' iv_value = lv_sym_count ) )
-      ( zcl_vsp_utils=>json_int( iv_key = 'heading_texts_set' iv_value = lv_head_count ) )
-    ) ) ).
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"status":"{ lv_status }","program":"{ lv_program }","language":"{ lv_lang }","selection_texts_set":{ lv_sel_count },"text_symbols_set":{ lv_sym_count }{ lv_c }|.
 
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_get_variants.
     DATA: lt_varid   TYPE TABLE OF varid,
           lv_report  TYPE progname.
 
-    DATA(lv_report_str) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'report' ).
+    DATA(lv_report_str) = extract_param( iv_params = is_message-params iv_name = 'report' ).
 
     IF lv_report_str IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
       RETURN.
     ENDIF.
 
@@ -706,21 +450,96 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       WHERE report = lv_report
       ORDER BY variant.
 
-    " Build variants array
-    DATA lt_variants TYPE string_table.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"report":"{ lv_report }","variants":[|.
+
+    DATA lv_first TYPE abap_bool VALUE abap_true.
     LOOP AT lt_varid INTO DATA(ls_var).
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-        ( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = CONV #( ls_var-variant ) ) )
-        ( zcl_vsp_utils=>json_bool( iv_key = 'protected' iv_value = ls_var-protected ) )
-      ) ) ) TO lt_variants.
+      IF lv_first = abap_false.
+        lv_json = |{ lv_json },|.
+      ENDIF.
+      DATA(lv_protected) = COND string( WHEN ls_var-protected = abap_true THEN 'true' ELSE 'false' ).
+      lv_json = |{ lv_json }{ lv_o }"name":"{ ls_var-variant }","protected":{ lv_protected }{ lv_c }|.
+      lv_first = abap_false.
     ENDLOOP.
 
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'report' iv_value = CONV #( lv_report ) ) )
-      ( |"variants":{ zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_variants ) ) }| )
-    ) ) ).
+    lv_json = |{ lv_json }]{ lv_c }|.
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
+  ENDMETHOD.
 
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+  METHOD extract_param.
+    DATA lv_name TYPE string.
+    lv_name = iv_name.
+    CONDENSE lv_name.
+
+    DATA lv_search TYPE string.
+    lv_search = |"{ lv_name }":|.
+    DATA lv_pos TYPE i.
+    FIND lv_search IN iv_params MATCH OFFSET lv_pos.
+    IF sy-subrc = 0.
+      DATA lv_rest TYPE string.
+      lv_rest = iv_params+lv_pos.
+      FIND PCRE ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD extract_param_object.
+    DATA lv_name TYPE string.
+    lv_name = iv_name.
+    CONDENSE lv_name.
+
+    DATA(lv_search) = |"{ lv_name }":|.
+    DATA lv_pos TYPE i.
+    FIND lv_search IN iv_params MATCH OFFSET lv_pos.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_rest) = iv_params+lv_pos.
+    DATA(lv_brace) = find( val = lv_rest sub = '{' ).
+    IF lv_brace < 0.
+      RETURN.
+    ENDIF.
+
+    DATA lv_depth TYPE i.
+    DATA lv_i TYPE i.
+    lv_i = lv_brace.
+    DATA(lv_len) = strlen( lv_rest ).
+    WHILE lv_i < lv_len.
+      DATA(lv_char) = lv_rest+lv_i(1).
+      IF lv_char = '{'.
+        lv_depth = lv_depth + 1.
+      ELSEIF lv_char = '}'.
+        lv_depth = lv_depth - 1.
+        IF lv_depth = 0.
+          DATA(lv_obj_len) = lv_i - lv_brace + 1.
+          rv_json = lv_rest+lv_brace(lv_obj_len).
+          RETURN.
+        ENDIF.
+      ENDIF.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+  ENDMETHOD.
+
+  METHOD escape_json.
+    rv_escaped = iv_string.
+    REPLACE ALL OCCURRENCES OF '\' IN rv_escaped WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN rv_escaped WITH '\"'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_escaped WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN rv_escaped WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN rv_escaped WITH '\t'.
+  ENDMETHOD.
+
+  METHOD build_error.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    rs_response = VALUE #(
+      id      = iv_id
+      success = abap_false
+      error   = |{ lv_o }"code":"{ iv_code }","message":"{ escape_json( iv_message ) }"{ lv_c }|
+    ).
   ENDMETHOD.
 
 ENDCLASS.

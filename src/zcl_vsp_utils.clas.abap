@@ -8,44 +8,29 @@ CLASS zcl_vsp_utils DEFINITION
 
   PUBLIC SECTION.
     "! Escape a string for safe JSON embedding
-    "! @parameter iv_string | Input string to escape
-    "! @parameter rv_escaped | JSON-safe escaped string
     CLASS-METHODS escape_json
       IMPORTING iv_string         TYPE string
       RETURNING VALUE(rv_escaped) TYPE string.
 
     "! Extract a string parameter from JSON params
-    "! @parameter iv_params | JSON params string
-    "! @parameter iv_name | Parameter name to extract
-    "! @parameter rv_value | Extracted value (empty if not found)
     CLASS-METHODS extract_param
       IMPORTING iv_params       TYPE string
                 iv_name         TYPE string
       RETURNING VALUE(rv_value) TYPE string.
 
     "! Extract an integer parameter from JSON params
-    "! @parameter iv_params | JSON params string
-    "! @parameter iv_name | Parameter name to extract
-    "! @parameter rv_value | Extracted integer value (0 if not found)
     CLASS-METHODS extract_param_int
       IMPORTING iv_params       TYPE string
                 iv_name         TYPE string
       RETURNING VALUE(rv_value) TYPE i.
 
     "! Extract a nested JSON object from params
-    "! @parameter iv_params | JSON params string
-    "! @parameter iv_name | Parameter name to extract
-    "! @parameter rv_json | Extracted JSON object (empty if not found)
     CLASS-METHODS extract_param_object
       IMPORTING iv_params      TYPE string
                 iv_name        TYPE string
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Build an error response
-    "! @parameter iv_id | Message ID
-    "! @parameter iv_code | Error code
-    "! @parameter iv_message | Error message
-    "! @parameter rs_response | Error response structure
     CLASS-METHODS build_error
       IMPORTING iv_id              TYPE string
                 iv_code            TYPE string
@@ -53,58 +38,40 @@ CLASS zcl_vsp_utils DEFINITION
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
     "! Build a success response
-    "! @parameter iv_id | Message ID
-    "! @parameter iv_data | Response data (JSON string)
-    "! @parameter rs_response | Success response structure
     CLASS-METHODS build_success
       IMPORTING iv_id              TYPE string
                 iv_data            TYPE string
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
     "! Wrap content in JSON object braces
-    "! @parameter iv_content | JSON content without outer braces
-    "! @parameter rv_json | Content wrapped in {}
     CLASS-METHODS json_obj
       IMPORTING iv_content      TYPE string
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Wrap content in JSON array brackets
-    "! @parameter iv_content | JSON content without outer brackets
-    "! @parameter rv_json | Content wrapped in []
     CLASS-METHODS json_arr
       IMPORTING iv_content      TYPE string
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Build a JSON key-value pair with string value
-    "! @parameter iv_key | JSON key
-    "! @parameter iv_value | String value (will be escaped)
-    "! @parameter rv_json | JSON fragment: "key":"value"
     CLASS-METHODS json_str
       IMPORTING iv_key         TYPE string
                 iv_value       TYPE string
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Build a JSON key-value pair with integer value
-    "! @parameter iv_key | JSON key
-    "! @parameter iv_value | Integer value
-    "! @parameter rv_json | JSON fragment: "key":123
     CLASS-METHODS json_int
       IMPORTING iv_key         TYPE string
                 iv_value       TYPE i
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Build a JSON key-value pair with boolean value
-    "! @parameter iv_key | JSON key
-    "! @parameter iv_value | Boolean value
-    "! @parameter rv_json | JSON fragment: "key":true/false
     CLASS-METHODS json_bool
       IMPORTING iv_key         TYPE string
                 iv_value       TYPE abap_bool
       RETURNING VALUE(rv_json) TYPE string.
 
     "! Join multiple JSON fragments with commas
-    "! @parameter it_parts | Table of JSON fragments
-    "! @parameter rv_json | Comma-separated JSON
     CLASS-METHODS json_join
       IMPORTING it_parts       TYPE string_table
       RETURNING VALUE(rv_json) TYPE string.
@@ -116,7 +83,6 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
 
   METHOD escape_json.
     rv_escaped = iv_string.
-    " Order matters: escape backslash first
     REPLACE ALL OCCURRENCES OF '\' IN rv_escaped WITH '\\'.
     REPLACE ALL OCCURRENCES OF '"' IN rv_escaped WITH '\"'.
     REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_escaped WITH '\n'.
@@ -130,7 +96,6 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
     lv_name = iv_name.
     CONDENSE lv_name.
 
-    " Build search pattern for "name":
     DATA(lv_search) = |"{ lv_name }":|.
     DATA lv_pos TYPE i.
     FIND lv_search IN iv_params MATCH OFFSET lv_pos.
@@ -169,7 +134,6 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Count braces to find matching closing brace
     DATA lv_depth TYPE i.
     DATA lv_i TYPE i.
     lv_i = lv_brace.
@@ -211,7 +175,6 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
 
 
   METHOD json_obj.
-    " Workaround for ABAP string template limitation with literal braces
     DATA(lv_open) = '{'.
     DATA(lv_close) = '}'.
     rv_json = |{ lv_open }{ iv_content }{ lv_close }|.
