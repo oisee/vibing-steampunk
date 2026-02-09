@@ -3,9 +3,9 @@
  <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
    <VSEOCLASS>
-    <CLSNAME>ZCL_ADT_00_AMDP_TEST</CLSNAME>
+    <CLSNAME>ZCL_VSP_TADIR_MOVE</CLSNAME>
     <LANGU>E</LANGU>
-    <DESCRIPT>AMDP Test Class for Debugging</DESCRIPT>
+    <DESCRIPT>TADIR Package Reassignment Helper</DESCRIPT>
     <STATE>1</STATE>
     <CLSCCINCL>X</CLSCCINCL>
     <FIXPT>X</FIXPT>
