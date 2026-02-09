@@ -478,44 +478,46 @@ gh workflow run sync-upstream.yml
 
 ---
 
-## Last Session Reference (2026-02-05)
+## Last Session Reference (2026-02-09)
 
-### Objective: Upstream Sync v2.26.0 + GitHub Actions Fix - COMPLETED ✅
+### Objective: Upstream Sync + GitHub Actions Workflow Fix - COMPLETED ✅
 
-Merged 10 commits from upstream `oisee/vibing-steampunk` (v2.23.0 → v2.26.0) and fixed GitHub Actions workflow.
+Merged 2 upstream commits, fixed the `gh pr create` fork targeting bug that caused 6/7 workflow runs to fail, and cleaned up orphaned branches.
 
 ### What Was Done
 
-1. ✅ **Synced with upstream**
-   - 10 new commits from oisee/vibing-steampunk
-   - Merged v2.24.0, v2.25.0, v2.26.0 releases
+1. ✅ **Fixed GitHub Actions sync workflow**
+   - Root cause: `gh pr create` defaults to parent repo in forks
+   - Fix: Added `--repo "${{ github.repository }}"` flag to target the fork
+   - 6 out of 7 previous workflow runs failed at "Create Pull Request" step due to this
 
-2. ✅ **Resolved CLAUDE.md conflict**
-   - Merged report index from both branches
-   - Added 4 new reports from 2026-02-03
+2. ✅ **Merged 2 upstream commits**
+   - `a94248c` - refactoring zcl_vsp_tadir_move (renamed from zadt_cl_tadir_move)
+   - `34eb727` - $ZADT_VSP sync (13 ABAP files, ~5,500 lines changed)
+   - Clean merge, no conflicts, no Go files touched
 
-3. ✅ **Updated dependencies**
-   - Ran `go mod tidy` (no changes needed)
-   - Build verified successfully
+3. ✅ **Verified build and tests**
+   - `go build` succeeds
+   - All unit tests pass
+   - No stale `oisee` import paths
 
-4. ✅ **Fixed GitHub Actions workflow**
-   - Added `permissions: contents: write, pull-requests: write`
-   - Simplified PR body to avoid YAML parsing issues
-   - Workflow now ready for automated syncing
+4. ✅ **Cleaned up orphaned branches**
+   - Deleted 3 remote branches from failed workflow runs:
+     - `sync-upstream-20260207-035720`
+     - `sync-upstream-20260208-042320`
+     - `sync-upstream-20260209-041332`
 
 5. ✅ **Pushed to fork**
    - All changes pushed to vinchacho/vibing-steampunk
 
-### New Features from Upstream (v2.23.0 - v2.26.0)
+### Upstream Changes (Feb 6)
 
-- **v2.24.0** - Transportable Edits Safety Feature (--allow-transportable-edits flag)
-- **v2.25.0** - CreatePackage with software_component, namespace URL encoding fixes
-- **v2.26.0** - Package validation fix for local packages with $ in name
-- **Test Infrastructure** - Namespace integration tests, improved test coverage
+- ABAP class renaming: `zadt_cl_tadir_move` → `zcl_vsp_tadir_move`, `zcl_adt_00_amdp_test` → `zcl_vsp_00_amdp_test`
+- Refactoring across VSP service classes (AMDP, APC handler, debug, report, RFC, git services)
+- New test class file: `zcl_vsp_00_amdp_test.clas.testclasses.abap`
 
-### Previous Session: Upstream Merge v2.23.0 + Automation Setup (2026-02-03)
+### Previous Session: Upstream Sync v2.26.0 + GitHub Actions Fix (2026-02-05)
 
-- Merged 13 commits from upstream (v2.22.0 → v2.23.0)
-- Created GitHub Actions workflow for automated syncing
-- Created manual sync script (./scripts/sync-upstream.sh)
-- Added comprehensive sync documentation
+- Merged 10 commits from upstream (v2.23.0 → v2.26.0)
+- Added workflow permissions (contents: write, pull-requests: write)
+- Simplified PR body to avoid YAML parsing issues
