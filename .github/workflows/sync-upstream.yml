@@ -130,6 +130,7 @@ jobs:
           COMMITS=$(git rev-list --count origin/main..HEAD)
 
           gh pr create \
+            --repo "${{ github.repository }}" \
             --title "Sync with upstream (${COMMITS} new commits)" \
             --body "Automated upstream sync - merged ${{ steps.check.outputs.commits_behind }} commits from oisee/vibing-steampunk. Review and merge if tests pass." \
             --base main \
