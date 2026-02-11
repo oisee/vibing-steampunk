@@ -406,6 +406,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"GetVariants":      true, // List report variants
 		"GetTextElements":  true, // Get program text elements
 		"SetTextElements":  true, // Set program text elements
+		"SetMessages":      true, // Add/update/delete messages in message class (SE91)
 
 		// Install/Setup tools
 		"InstallZADTVSP":   true, // Deploy ZADT_VSP WebSocket handler to SAP
@@ -618,6 +619,23 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		), s.handleGetMessages)
 	}
 
+	// SetMessages - Add/update/delete messages in a message class (SE91)
+	if shouldRegister("SetMessages") {
+		s.mcpServer.AddTool(mcp.NewTool("SetMessages",
+			mcp.WithDescription("Add, update, or delete messages in an ABAP message class (SE91). Performs Lock → Read → Modify → Write → Unlock → Activate workflow. Set message text to empty string to delete a message."),
+			mcp.WithString("message_class",
+				mcp.Required(),
+				mcp.Description("Name of the message class (e.g., 'ZRAY_00')"),
+			),
+			mcp.WithString("messages",
+				mcp.Required(),
+				mcp.Description("JSON object of message number to text (e.g., '{\"001\":\"Hello &1\",\"002\":\"World\"}'. Set text to empty string to delete a message.)"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional for $TMP)"),
+			),
+		), s.handleSetMessages)
+	}
 
 	// GetTransaction
 	if shouldRegister("GetTransaction") {
