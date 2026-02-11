@@ -20,6 +20,11 @@ go test ./...
 # Run integration tests (requires SAP system)
 SAP_URL=http://host:port SAP_USER=user SAP_PASSWORD=pass SAP_CLIENT=001 \
   go test -tags=integration -v ./pkg/adt/
+
+# Cross-compile (via Makefile)
+make build              # Current platform → build/vsp
+make build-all          # 3 common platforms (linux-amd64, darwin-arm64, windows-amd64)
+make build-all-all      # All 9 platforms
 ```
 
 ### Configuration (Priority: CLI > Env > .env > Defaults)
@@ -157,7 +162,7 @@ pkg/
     └── sqlite.go                    # SQLite cache (optional)
 
 embedded/
-├── abap/                            # ABAP source files (14 files)
+├── abap/                            # ABAP source files (13 files)
 │   ├── zcl_vsp_apc_handler.clas.abap        # APC WebSocket handler
 │   ├── zcl_vsp_amdp_service.clas.abap       # AMDP debug service
 │   ├── zcl_vsp_debug_service.clas.abap      # Debug service
@@ -173,6 +178,20 @@ embedded/
 │   └── zadt_test_simple_report.prog.abap    # Simple test report
 └── deps/                            # Dependency embeddings
     └── embed.go
+
+docs/                                # Project documentation
+├── adr/                             # Architecture Decision Records (3 ADRs)
+└── plans/                           # Phase planning docs
+
+articles/                            # Published articles
+
+abap/src/zadt_vsp/                   # ABAP source (abapGit-format mirror)
+
+Makefile                             # Cross-compilation (9 platforms)
+ARCHITECTURE.md                      # Architecture overview
+ROADMAP.md                           # Feature roadmap
+VISION.md                            # Project vision
+README_TOOLS.md                      # Tool reference (all 122 tools)
 ```
 
 ## Key Files for Common Tasks
@@ -530,24 +549,3 @@ gh workflow run sync-upstream.yml
 - ✅ Create PR for review
 - ⚠️ CLAUDE.md updates (template provided, manual review needed)
 
----
-
-## Last Session Reference (2026-02-11)
-
-### Objective: CLAUDE.md Comprehensive Refresh - COMPLETED ✅
-
-Updated CLAUDE.md to reflect actual codebase state. Key corrections:
-- Tool counts: 81 focused / 122 expert (was 54/99)
-- Unit tests: 499 (was 244)
-- Reports: 134 (was 29+6)
-- Codebase structure: added 12+ missing pkg/adt files, pkg/config package, 24 handler files, embedded/abap files
-- Added 8 missing feature rows to project status
-- Updated disabled groups to include all 9 codes (was 4)
-- Simplified reports section from individual listings to compact summary
-- Removed completed items from roadmap
-
-### Previous Session: Upstream Sync + GitHub Actions Fix (2026-02-09)
-
-- Merged 2 upstream commits (ABAP class renaming, VSP service refactoring)
-- Fixed `gh pr create` fork targeting bug
-- Cleaned up 3 orphaned remote branches

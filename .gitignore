@@ -63,3 +63,6 @@ abap-adt-api/
 
 # Session logs
 sessions/
+
+# Claude local context (session-specific, auto-discovered)
+.claude.local.md
