@@ -317,6 +317,8 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"GetInactiveObjects":  true,  // List pending activations
 		"CreatePackage":       true,  // Create local packages ($...)
 		"CreateTable":         true,  // Create DDIC tables from JSON
+		"CreateStructure":     true,  // Create DDIC structures from JSON
+		"CreateTableType":     true,  // Create DDIC table types
 		"CompareSource":       true,  // Diff two objects
 		"CloneObject":         true,  // Copy object to new name
 		"GetClassInfo":        true,  // Quick class metadata
@@ -1063,14 +1065,13 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// SyntaxCheck
 	if shouldRegister("SyntaxCheck") {
 		s.mcpServer.AddTool(mcp.NewTool("SyntaxCheck",
-		mcp.WithDescription("Check ABAP source code for syntax errors"),
+		mcp.WithDescription("Check ABAP source code for syntax errors. If content is omitted, checks the saved/activated version on the server."),
 		mcp.WithString("object_url",
 			mcp.Required(),
-			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST, /sap/bc/adt/oo/classes/zcl_test)"),
 		),
 		mcp.WithString("content",
-			mcp.Required(),
-			mcp.Description("ABAP source code to check"),
+			mcp.Description("ABAP source code to check. If omitted, checks the saved version on the server."),
 		),
 	), s.handleSyntaxCheck)
 	}
@@ -1293,6 +1294,62 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Delivery class: A=Application (default), C=Customizing, L=Temporary"),
 			),
 		), s.handleCreateTable)
+	}
+
+	// CreateStructure - Create DDIC structures from JSON
+	if shouldRegister("CreateStructure") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateStructure",
+			mcp.WithDescription("Create a DDIC structure from a simple JSON definition. Handles full workflow: create → set source → activate. Same field types as CreateTable but no MANDT auto-added."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Structure name (uppercase, max 30 chars, must start with Z/Y)"),
+			),
+			mcp.WithString("description",
+				mcp.Required(),
+				mcp.Description("Short description of the structure"),
+			),
+			mcp.WithString("fields",
+				mcp.Required(),
+				mcp.Description("JSON array of fields: [{\"name\":\"ID\",\"type\":\"CHAR32\",\"key\":true},{\"name\":\"VALUE\",\"type\":\"STRING\"}]. Types: CHAR/CHARnn, NUMC/NUMCnn, INT4, DEC, STRING, TIMESTAMPL, UUID, DATS, TIMS, or data element name."),
+			),
+			mcp.WithString("package",
+				mcp.Description("Target package (default: $TMP)"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional for $TMP)"),
+			),
+		), s.handleCreateStructure)
+	}
+
+	// CreateTableType - Create DDIC table types
+	if shouldRegister("CreateTableType") {
+		s.mcpServer.AddTool(mcp.NewTool("CreateTableType",
+			mcp.WithDescription("Create a DDIC table type from a row type (structure or table). Handles full workflow: create → set XML → activate. Example: create a STANDARD TABLE OF ZTEST2."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Table type name (uppercase, max 30 chars, must start with Z/Y)"),
+			),
+			mcp.WithString("description",
+				mcp.Required(),
+				mcp.Description("Short description of the table type"),
+			),
+			mcp.WithString("row_type",
+				mcp.Required(),
+				mcp.Description("Row type: name of a structure or table (e.g., BAPIRET2, ZTEST2)"),
+			),
+			mcp.WithString("package",
+				mcp.Description("Target package (default: $TMP)"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional for $TMP)"),
+			),
+			mcp.WithString("access_mode",
+				mcp.Description("Access mode: T=Standard table (default), S=Sorted table, H=Hashed table"),
+			),
+			mcp.WithString("key_def",
+				mcp.Description("Key definition: D=Default key (default), K=Key components defined"),
+			),
+		), s.handleCreateTableType)
 	}
 
 	// CompareSource - Diff two objects

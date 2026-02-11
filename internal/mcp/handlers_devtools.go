@@ -19,10 +19,8 @@ func (s *Server) handleSyntaxCheck(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError("object_url is required"), nil
 	}
 
-	content, ok := request.Params.Arguments["content"].(string)
-	if !ok || content == "" {
-		return newToolResultError("content is required"), nil
-	}
+	// content is optional - when empty, checks the saved/activated version
+	content, _ := request.Params.Arguments["content"].(string)
 
 	results, err := s.adtClient.SyntaxCheck(ctx, objectURL, content)
 	if err != nil {

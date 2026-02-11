@@ -26,17 +26,20 @@ type SyntaxCheckResult struct {
 // objectURL is the ADT URL of the object (e.g., "/sap/bc/adt/programs/programs/ZTEST")
 // For class includes (e.g., "/sap/bc/adt/oo/classes/ZCL_FOO/includes/testclasses"),
 // pass the include URL directly - no /source/main suffix will be added.
-// content is the source code to check
+// content is the source code to check. If empty, checks the saved/activated version on the server.
 func (c *Client) SyntaxCheck(ctx context.Context, objectURL string, content string) ([]SyntaxCheckResult, error) {
-	// Build the request body
+	// Build the source URL
 	// For class includes, the URL is used as-is (no /source/main suffix)
 	sourceURL := objectURL
 	if !strings.Contains(objectURL, "/includes/") {
 		sourceURL = objectURL + "/source/main"
 	}
-	encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
 
-	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+	var body string
+	if content != "" {
+		// Check unsaved content inline (base64-encoded)
+		encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+		body = fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <chkrun:checkObjectList xmlns:chkrun="http://www.sap.com/adt/checkrun" xmlns:adtcore="http://www.sap.com/adt/core">
   <chkrun:checkObject adtcore:uri="%s" chkrun:version="active">
     <chkrun:artifacts>
@@ -46,6 +49,13 @@ func (c *Client) SyntaxCheck(ctx context.Context, objectURL string, content stri
     </chkrun:artifacts>
   </chkrun:checkObject>
 </chkrun:checkObjectList>`, sourceURL, sourceURL, encodedContent)
+	} else {
+		// Check saved/activated version on the server (no inline content)
+		body = fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<chkrun:checkObjectList xmlns:chkrun="http://www.sap.com/adt/checkrun" xmlns:adtcore="http://www.sap.com/adt/core">
+  <chkrun:checkObject adtcore:uri="%s" chkrun:version="active"/>
+</chkrun:checkObjectList>`, sourceURL)
+	}
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/checkruns?reporters=abapCheckRun", &RequestOptions{
 		Method:      http.MethodPost,

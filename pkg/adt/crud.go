@@ -935,6 +935,238 @@ func (c *Client) CreateTable(ctx context.Context, opts CreateTableOptions) error
 	return nil
 }
 
+// CreateStructureOptions defines options for creating a DDIC structure.
+type CreateStructureOptions struct {
+	Name        string       `json:"name"`                  // Structure name (uppercase, max 30 chars, must start with Z/Y)
+	Description string       `json:"description"`           // Short description
+	Package     string       `json:"package"`               // Target package
+	Fields      []TableField `json:"fields"`                // Field definitions (reuses TableField)
+	Transport   string       `json:"transport,omitempty"`   // Transport request (optional for $TMP)
+}
+
+// CreateStructure creates a new DDIC structure from JSON-like options.
+// This is a high-level tool that handles the full workflow: create → set source → activate.
+func (c *Client) CreateStructure(ctx context.Context, opts CreateStructureOptions) error {
+	if err := c.checkSafety(OpCreate, "CreateStructure"); err != nil {
+		return err
+	}
+
+	// Validate input
+	opts.Name = strings.ToUpper(opts.Name)
+	if opts.Name == "" || len(opts.Name) > 30 {
+		return fmt.Errorf("structure name must be 1-30 characters")
+	}
+	if len(opts.Fields) == 0 {
+		return fmt.Errorf("at least one field is required")
+	}
+	if opts.Package == "" {
+		opts.Package = "$TMP"
+	}
+
+	// Generate DDL source
+	ddlSource := generateStructureDDL(opts)
+
+	// Step 1: Create structure object
+	createBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<blue:blueSource xmlns:blue="http://www.sap.com/wbobj/blue"
+                 xmlns:adtcore="http://www.sap.com/adt/core"
+                 adtcore:name="%s"
+                 adtcore:type="TABL/DS"
+                 adtcore:description="%s">
+  <adtcore:packageRef adtcore:name="%s"/>
+</blue:blueSource>`, opts.Name, escapeXML(opts.Description), opts.Package)
+
+	params := url.Values{}
+	if opts.Transport != "" {
+		params.Set("corrNr", opts.Transport)
+	}
+
+	_, err := c.transport.Request(ctx, "/sap/bc/adt/ddic/structures", &RequestOptions{
+		Method:      http.MethodPost,
+		Query:       params,
+		Body:        []byte(createBody),
+		ContentType: "application/vnd.sap.adt.structures.v2+xml",
+		Accept:      "application/vnd.sap.adt.structures.v2+xml",
+	})
+	if err != nil {
+		return fmt.Errorf("creating structure object: %w", err)
+	}
+
+	// Step 2: Lock, update source, unlock
+	structURL := fmt.Sprintf("/sap/bc/adt/ddic/structures/%s", strings.ToLower(opts.Name))
+	sourceURL := structURL + "/source/main"
+
+	lock, err := c.LockObject(ctx, structURL, "MODIFY")
+	if err != nil {
+		return fmt.Errorf("locking structure: %w", err)
+	}
+
+	params = url.Values{}
+	params.Set("lockHandle", lock.LockHandle)
+	if opts.Transport != "" {
+		params.Set("corrNr", opts.Transport)
+	}
+
+	_, err = c.transport.Request(ctx, sourceURL, &RequestOptions{
+		Method:      http.MethodPut,
+		Query:       params,
+		Body:        []byte(ddlSource),
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		c.UnlockObject(ctx, structURL, lock.LockHandle)
+		return fmt.Errorf("updating structure source: %w", err)
+	}
+
+	// Unlock BEFORE activation
+	c.UnlockObject(ctx, structURL, lock.LockHandle)
+
+	// Step 3: Activate
+	if _, err := c.Activate(ctx, structURL, opts.Name); err != nil {
+		return fmt.Errorf("activating structure: %w", err)
+	}
+
+	return nil
+}
+
+// generateStructureDDL converts CreateStructureOptions to CDS-style DDL source.
+func generateStructureDDL(opts CreateStructureOptions) string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("@EndUserText.label : '%s'\n", escapeQuote(opts.Description)))
+	sb.WriteString("@AbapCatalog.enhancement.category : #NOT_EXTENSIBLE\n")
+	sb.WriteString(fmt.Sprintf("define structure %s {\n\n", strings.ToLower(opts.Name)))
+
+	for _, f := range opts.Fields {
+		fieldName := strings.ToLower(f.Name)
+		fieldType := mapFieldType(f)
+
+		if f.IsKey {
+			sb.WriteString(fmt.Sprintf("  key %s : %s not null;\n", fieldName, fieldType))
+		} else if f.NotNull {
+			sb.WriteString(fmt.Sprintf("  %s : %s not null;\n", fieldName, fieldType))
+		} else {
+			sb.WriteString(fmt.Sprintf("  %s : %s;\n", fieldName, fieldType))
+		}
+	}
+
+	sb.WriteString("\n}\n")
+	return sb.String()
+}
+
+// CreateTableTypeOptions defines options for creating a DDIC table type.
+type CreateTableTypeOptions struct {
+	Name        string `json:"name"`                // Table type name (uppercase, max 30 chars, must start with Z/Y)
+	Description string `json:"description"`         // Short description
+	Package     string `json:"package"`             // Target package
+	RowType     string `json:"rowType"`             // Row type: structure/table name (e.g., ZTEST2, BAPIRET2)
+	Transport   string `json:"transport,omitempty"` // Transport request (optional for $TMP)
+	AccessMode  string `json:"accessMode,omitempty"` // T=Standard (default), S=Sorted, H=Hashed
+	KeyDef      string `json:"keyDef,omitempty"`    // D=Default key (default), K=Key components
+}
+
+// CreateTableType creates a new DDIC table type.
+// This is a high-level tool that handles the full workflow: create → set source → activate.
+// Table types use XML representation (no DDL source), unlike tables and structures.
+func (c *Client) CreateTableType(ctx context.Context, opts CreateTableTypeOptions) error {
+	if err := c.checkSafety(OpCreate, "CreateTableType"); err != nil {
+		return err
+	}
+
+	// Validate input
+	opts.Name = strings.ToUpper(opts.Name)
+	if opts.Name == "" || len(opts.Name) > 30 {
+		return fmt.Errorf("table type name must be 1-30 characters")
+	}
+	opts.RowType = strings.ToUpper(opts.RowType)
+	if opts.RowType == "" {
+		return fmt.Errorf("rowType is required")
+	}
+	if opts.Package == "" {
+		opts.Package = "$TMP"
+	}
+	if opts.AccessMode == "" {
+		opts.AccessMode = "T" // Standard table
+	}
+	if opts.KeyDef == "" {
+		opts.KeyDef = "D" // Default key
+	}
+
+	// Step 1: Create table type object via POST with full XML
+	createBody := generateTableTypeXML(opts)
+
+	params := url.Values{}
+	if opts.Transport != "" {
+		params.Set("corrNr", opts.Transport)
+	}
+
+	_, err := c.transport.Request(ctx, "/sap/bc/adt/ddic/tabletypes", &RequestOptions{
+		Method:      http.MethodPost,
+		Query:       params,
+		Body:        []byte(createBody),
+		ContentType: "application/*",
+	})
+	if err != nil {
+		return fmt.Errorf("creating table type object: %w", err)
+	}
+
+	// Step 2: Lock, update XML, unlock (to set full metadata)
+	ttURL := fmt.Sprintf("/sap/bc/adt/ddic/tabletypes/%s", strings.ToLower(opts.Name))
+
+	lock, err := c.LockObject(ctx, ttURL, "MODIFY")
+	if err != nil {
+		return fmt.Errorf("locking table type: %w", err)
+	}
+
+	params = url.Values{}
+	params.Set("lockHandle", lock.LockHandle)
+	if opts.Transport != "" {
+		params.Set("corrNr", opts.Transport)
+	}
+
+	_, err = c.transport.Request(ctx, ttURL, &RequestOptions{
+		Method:      http.MethodPut,
+		Query:       params,
+		Body:        []byte(createBody),
+		ContentType: "application/*",
+	})
+	if err != nil {
+		c.UnlockObject(ctx, ttURL, lock.LockHandle)
+		return fmt.Errorf("updating table type: %w", err)
+	}
+
+	// Unlock BEFORE activation
+	c.UnlockObject(ctx, ttURL, lock.LockHandle)
+
+	// Step 3: Activate
+	if _, err := c.Activate(ctx, ttURL, opts.Name); err != nil {
+		return fmt.Errorf("activating table type: %w", err)
+	}
+
+	return nil
+}
+
+// generateTableTypeXML creates the XML body for a table type.
+func generateTableTypeXML(opts CreateTableTypeOptions) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<tt:tableType xmlns:tt="http://www.sap.com/dictionary/tabletype"
+              xmlns:adtcore="http://www.sap.com/adt/core"
+              adtcore:name="%s"
+              adtcore:type="TTYP/DA"
+              adtcore:description="%s"
+              adtcore:language="EN">
+  <adtcore:packageRef adtcore:name="%s"/>
+  <tt:typeProperties tt:accessMode="%s" tt:keyDef="%s" tt:datatype="STRU"/>
+  <tt:rowType adtcore:name="%s" adtcore:type=""/>
+</tt:tableType>`,
+		opts.Name,
+		escapeXML(opts.Description),
+		opts.Package,
+		opts.AccessMode,
+		opts.KeyDef,
+		opts.RowType)
+}
+
 // generateTableDDL converts CreateTableOptions to CDS-style DDL source.
 func generateTableDDL(opts CreateTableOptions) string {
 	var sb strings.Builder

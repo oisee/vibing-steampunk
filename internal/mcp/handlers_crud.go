@@ -286,6 +286,136 @@ func (s *Server) handleCreateTable(ctx context.Context, request mcp.CallToolRequ
 	return mcp.NewToolResultText(string(output)), nil
 }
 
+func (s *Server) handleCreateStructure(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	description, ok := request.Params.Arguments["description"].(string)
+	if !ok || description == "" {
+		return newToolResultError("description is required"), nil
+	}
+
+	fieldsJSON, ok := request.Params.Arguments["fields"].(string)
+	if !ok || fieldsJSON == "" {
+		return newToolResultError("fields is required (JSON array)"), nil
+	}
+
+	// Parse fields JSON
+	var fields []adt.TableField
+	if err := json.Unmarshal([]byte(fieldsJSON), &fields); err != nil {
+		return newToolResultError(fmt.Sprintf("Invalid fields JSON: %v", err)), nil
+	}
+
+	if len(fields) == 0 {
+		return newToolResultError("At least one field is required"), nil
+	}
+
+	// Optional parameters
+	pkg := "$TMP"
+	if p, ok := request.Params.Arguments["package"].(string); ok && p != "" {
+		pkg = strings.ToUpper(p)
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok && t != "" {
+		transport = t
+	}
+
+	opts := adt.CreateStructureOptions{
+		Name:        name,
+		Description: description,
+		Package:     pkg,
+		Fields:      fields,
+		Transport:   transport,
+	}
+
+	err := s.adtClient.CreateStructure(ctx, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to create structure: %v", err)), nil
+	}
+
+	result := map[string]interface{}{
+		"status":      "created",
+		"structure":   strings.ToUpper(name),
+		"package":     pkg,
+		"description": description,
+		"fields":      len(fields),
+	}
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+func (s *Server) handleCreateTableType(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	description, ok := request.Params.Arguments["description"].(string)
+	if !ok || description == "" {
+		return newToolResultError("description is required"), nil
+	}
+
+	rowType, ok := request.Params.Arguments["row_type"].(string)
+	if !ok || rowType == "" {
+		return newToolResultError("row_type is required"), nil
+	}
+
+	// Optional parameters
+	pkg := "$TMP"
+	if p, ok := request.Params.Arguments["package"].(string); ok && p != "" {
+		pkg = strings.ToUpper(p)
+	}
+
+	transport := ""
+	if t, ok := request.Params.Arguments["transport"].(string); ok && t != "" {
+		transport = t
+	}
+
+	accessMode := "T"
+	if am, ok := request.Params.Arguments["access_mode"].(string); ok && am != "" {
+		accessMode = strings.ToUpper(am)
+	}
+
+	keyDef := "D"
+	if kd, ok := request.Params.Arguments["key_def"].(string); ok && kd != "" {
+		keyDef = strings.ToUpper(kd)
+	}
+
+	opts := adt.CreateTableTypeOptions{
+		Name:        name,
+		Description: description,
+		Package:     pkg,
+		RowType:     rowType,
+		Transport:   transport,
+		AccessMode:  accessMode,
+		KeyDef:      keyDef,
+	}
+
+	err := s.adtClient.CreateTableType(ctx, opts)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to create table type: %v", err)), nil
+	}
+
+	accessModeLabel := map[string]string{"T": "STANDARD", "S": "SORTED", "H": "HASHED"}[accessMode]
+	if accessModeLabel == "" {
+		accessModeLabel = accessMode
+	}
+
+	result := map[string]interface{}{
+		"status":      "created",
+		"table_type":  strings.ToUpper(name),
+		"row_type":    strings.ToUpper(rowType),
+		"access_mode": accessModeLabel,
+		"package":     pkg,
+		"description": description,
+	}
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
 func (s *Server) handleCompareSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	type1, _ := request.Params.Arguments["type1"].(string)
 	name1, _ := request.Params.Arguments["name1"].(string)
