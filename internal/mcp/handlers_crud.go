@@ -414,3 +414,34 @@ func (s *Server) handleMoveObject(ctx context.Context, request mcp.CallToolReque
 	}
 	return newToolResultError(fmt.Sprintf("Move failed: %s", result.Message)), nil
 }
+
+func (s *Server) handleSetMessages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	msgClass, ok := request.Params.Arguments["message_class"].(string)
+	if !ok || msgClass == "" {
+		return newToolResultError("message_class is required"), nil
+	}
+
+	messagesJSON, ok := request.Params.Arguments["messages"].(string)
+	if !ok || messagesJSON == "" {
+		return newToolResultError("messages is required (JSON object: {\"001\":\"Text\", \"002\":\"Other text\"})"), nil
+	}
+
+	transport, _ := request.Params.Arguments["transport"].(string)
+
+	// Parse the messages JSON
+	var messages map[string]string
+	if err := json.Unmarshal([]byte(messagesJSON), &messages); err != nil {
+		return newToolResultError(fmt.Sprintf("Invalid messages JSON: %v. Expected format: {\"001\":\"Message text\",\"002\":\"Another message\"}", err)), nil
+	}
+
+	if len(messages) == 0 {
+		return newToolResultError("messages must contain at least one entry"), nil
+	}
+
+	result, err := s.adtClient.SetMessages(ctx, msgClass, messages, transport)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("SetMessages failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(adt.FormatSetMessagesResult(result)), nil
+}

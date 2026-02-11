@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -458,6 +459,357 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 
 	mc.Name = msgClassName
 	return &mc, nil
+}
+
+// GetMessageClassRawXML retrieves the raw XML bytes of a message class.
+// The raw XML preserves the exact format (namespaces, prefixes) from the server,
+// which is critical for PUT round-tripping.
+func (c *Client) GetMessageClassRawXML(ctx context.Context, msgClassName string) ([]byte, error) {
+	msgClassName = strings.ToUpper(msgClassName)
+	path := fmt.Sprintf("/sap/bc/adt/messageclass/%s", url.PathEscape(strings.ToLower(msgClassName)))
+
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.mc.messageclass+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting message class XML: %w", err)
+	}
+
+	return resp.Body, nil
+}
+
+// UpdateMessageClassRaw sends raw XML bytes to update a message class via PUT.
+func (c *Client) UpdateMessageClassRaw(ctx context.Context, msgClassName string, xmlBody []byte, lockHandle, transport string) error {
+	if err := c.checkSafety(OpUpdate, "UpdateMessageClass"); err != nil {
+		return err
+	}
+
+	msgClassName = strings.ToUpper(msgClassName)
+	path := fmt.Sprintf("/sap/bc/adt/messageclass/%s", url.PathEscape(strings.ToLower(msgClassName)))
+
+	params := url.Values{}
+	params.Set("lockHandle", lockHandle)
+	if transport != "" {
+		params.Set("corrNr", transport)
+	}
+
+	_, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method:      http.MethodPut,
+		Query:       params,
+		Body:        xmlBody,
+		ContentType: "application/vnd.sap.adt.mc.messageclass+xml",
+	})
+	if err != nil {
+		return fmt.Errorf("updating message class: %w", err)
+	}
+
+	return nil
+}
+
+// LockMessage locks a specific message slot in a message class.
+// Returns the per-message lock handle needed for adding new messages.
+func (c *Client) LockMessage(ctx context.Context, msgClassName, msgNo string) (string, error) {
+	if err := c.checkSafety(OpLock, "LockMessage"); err != nil {
+		return "", err
+	}
+
+	msgClassName = strings.ToUpper(msgClassName)
+	path := fmt.Sprintf("/sap/bc/adt/messageclass/%s/messages/%s",
+		url.PathEscape(strings.ToLower(msgClassName)), msgNo)
+
+	params := url.Values{}
+	params.Set("_action", "LOCK_MSG")
+	params.Set("accessMode", "MODIFY")
+
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodPost,
+		Query:  params,
+		Accept: "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
+	})
+	if err != nil {
+		return "", fmt.Errorf("locking message %s: %w", msgNo, err)
+	}
+
+	// Parse lock result for the lock handle
+	lockResult, err := parseLockResult(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("parsing message lock result: %w", err)
+	}
+
+	return lockResult.LockHandle, nil
+}
+
+// modifyMessageClassXML modifies messages in raw message class XML.
+// For updates: modifies mc:msgtext in existing elements.
+// For adds: appends new mc:messages elements with mc:lockhandle.
+// For deletes: removes the entire message element.
+// msgLockHandles maps message numbers to their per-message lock handles (for new messages).
+func modifyMessageClassXML(rawXML []byte, messages map[string]string, msgLockHandles map[string]string) ([]byte, map[string]string, []string, error) {
+	xmlStr := string(rawXML)
+	updated := make(map[string]string)
+	var deleted []string
+
+	// Detect namespace prefix for messages (e.g., "mc:" or "")
+	msgPrefix := detectXMLPrefix(xmlStr, "messages")
+
+	// Process each message
+	for msgNo, msgText := range messages {
+		// Pad to 3 digits
+		for len(msgNo) < 3 {
+			msgNo = "0" + msgNo
+		}
+
+		// Escape XML special characters in text
+		escapedText := xmlEscapeAttr(msgText)
+
+		// Check if message already exists
+		msgnoPattern := msgPrefix + `msgno="` + msgNo + `"`
+		existIdx := strings.Index(xmlStr, msgnoPattern)
+
+		if msgText == "" {
+			// Delete: remove the entire message element
+			if existIdx >= 0 {
+				xmlStr = removeXMLElement(xmlStr, existIdx, msgPrefix+"messages")
+				deleted = append(deleted, msgNo)
+			}
+			continue
+		}
+
+		if existIdx >= 0 {
+			// Update: replace the msgtext value in the existing element
+			msgtextKey := msgPrefix + `msgtext="`
+			textIdx := strings.Index(xmlStr[existIdx:], msgtextKey)
+			if textIdx >= 0 {
+				textStart := existIdx + textIdx + len(msgtextKey)
+				textEnd := strings.Index(xmlStr[textStart:], `"`)
+				if textEnd >= 0 {
+					xmlStr = xmlStr[:textStart] + escapedText + xmlStr[textStart+textEnd:]
+				}
+			}
+			updated[msgNo] = msgText
+		} else {
+			// Add: insert new message element before closing tag
+			closingTag := "</" + msgPrefix + "messageClass>"
+			closeIdx := strings.LastIndex(xmlStr, closingTag)
+			if closeIdx < 0 {
+				return nil, nil, nil, fmt.Errorf("could not find closing messageClass tag in XML")
+			}
+
+			// Build new message element with lock handle (SAP requires this for new messages)
+			lockHandle := msgLockHandles[msgNo]
+			var newElement string
+			if lockHandle != "" {
+				newElement = fmt.Sprintf("<%smessages %slockhandle=\"%s\" %smsgno=\"%s\" %smsgtext=\"%s\"/>\n",
+					msgPrefix, msgPrefix, lockHandle, msgPrefix, msgNo, msgPrefix, escapedText)
+			} else {
+				newElement = fmt.Sprintf("<%smessages %smsgno=\"%s\" %smsgtext=\"%s\"/>\n",
+					msgPrefix, msgPrefix, msgNo, msgPrefix, escapedText)
+			}
+
+			xmlStr = xmlStr[:closeIdx] + newElement + xmlStr[closeIdx:]
+			updated[msgNo] = msgText
+		}
+	}
+
+	return []byte(xmlStr), updated, deleted, nil
+}
+
+// detectXMLPrefix finds the namespace prefix used for a given element name.
+// E.g., for "messages" in "<mc:messages ...>", returns "mc:".
+// Returns "" if no prefix is found.
+func detectXMLPrefix(xmlStr, elementName string) string {
+	pattern := ":" + elementName
+	idx := strings.Index(xmlStr, pattern)
+	if idx <= 0 {
+		return ""
+	}
+	// Scan backward from ":" to find the prefix start
+	for i := idx - 1; i >= 0; i-- {
+		if xmlStr[i] == '<' || xmlStr[i] == '/' || xmlStr[i] == ' ' {
+			return xmlStr[i+1:idx] + ":"
+		}
+	}
+	return ""
+}
+
+// removeXMLElement removes an XML element from the string, given a position within it.
+// Handles both self-closing (<.../>) and paired (<...>...</closing>) elements.
+// For paired elements with children (e.g. <mc:messages ...><atom:link .../></mc:messages>),
+// correctly uses the closing tag rather than a child's self-close.
+func removeXMLElement(xmlStr string, posInElement int, closingTagName string) string {
+	// Find the start of this element (scan back for '<')
+	start := strings.LastIndex(xmlStr[:posInElement], "<")
+	if start < 0 {
+		return xmlStr
+	}
+
+	end := -1
+	closingTag := "</" + closingTagName + ">"
+	pairClose := strings.Index(xmlStr[posInElement:], closingTag)
+	selfClose := strings.Index(xmlStr[posInElement:], "/>")
+
+	// Check if the element is self-closing or has children.
+	// If there's a plain ">" (not "/>") before the first "/>", the element has children.
+	isSelfClosing := false
+	if selfClose >= 0 {
+		// Check for a plain ">" that closes the opening tag before the "/>".
+		segment := xmlStr[posInElement : posInElement+selfClose]
+		plainClose := strings.Index(segment, ">")
+		if plainClose < 0 {
+			// No ">" found before "/>", so the element is self-closing
+			isSelfClosing = true
+		}
+	}
+
+	if isSelfClosing && (pairClose < 0 || selfClose < pairClose) {
+		end = posInElement + selfClose + 2
+	} else if pairClose >= 0 {
+		end = posInElement + pairClose + len(closingTag)
+	}
+
+	if end <= start {
+		return xmlStr
+	}
+
+	// Trim trailing whitespace/newlines
+	for end < len(xmlStr) && (xmlStr[end] == '\n' || xmlStr[end] == '\r' || xmlStr[end] == ' ') {
+		end++
+	}
+	return xmlStr[:start] + xmlStr[end:]
+}
+
+// xmlEscapeAttr escapes special XML characters for use in attribute values.
+func xmlEscapeAttr(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
+	return s
+}
+
+// SetMessagesResult represents the result of the SetMessages workflow.
+type SetMessagesResult struct {
+	MessageClass string            `json:"messageClass"`
+	Updated      map[string]string `json:"updated"`
+	Deleted      []string          `json:"deleted,omitempty"`
+	Total        int               `json:"total"`
+	Message      string            `json:"message"`
+}
+
+// SetMessages adds, updates, or deletes messages in a message class.
+// messages is a map of message number (3-digit string) to message text.
+// Set text to empty string to delete a message.
+// The workflow: Lock -> Read raw XML -> Modify XML -> PUT -> Unlock -> Activate.
+func (c *Client) SetMessages(ctx context.Context, msgClassName string, messages map[string]string, transport string) (*SetMessagesResult, error) {
+	if err := c.checkSafety(OpWorkflow, "SetMessages"); err != nil {
+		return nil, err
+	}
+	if err := c.checkTransportableEdit(transport, "SetMessages"); err != nil {
+		return nil, err
+	}
+
+	msgClassName = strings.ToUpper(msgClassName)
+	msgClassURL := fmt.Sprintf("/sap/bc/adt/messageclass/%s", url.PathEscape(strings.ToLower(msgClassName)))
+
+	result := &SetMessagesResult{
+		MessageClass: msgClassName,
+	}
+
+	// Step 1: Lock the message class
+	lock, err := c.LockObject(ctx, msgClassURL, "MODIFY")
+	if err != nil {
+		return nil, fmt.Errorf("locking message class: %w", err)
+	}
+
+	// Ensure we unlock on error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, msgClassURL, lock.LockHandle)
+		}
+	}()
+
+	// Step 2: Read raw XML (preserves exact format for round-trip)
+	rawXML, err := c.GetMessageClassRawXML(ctx, msgClassName)
+	if err != nil {
+		return nil, fmt.Errorf("reading message class: %w", err)
+	}
+
+	// Step 3: Lock individual new message slots
+	// SAP requires per-message locks for new messages (not for updates/deletes)
+	xmlStr := string(rawXML)
+	msgLockHandles := make(map[string]string)
+	for msgNo, msgText := range messages {
+		// Pad to 3 digits
+		for len(msgNo) < 3 {
+			msgNo = "0" + msgNo
+		}
+		if msgText == "" {
+			continue // No lock needed for deletes
+		}
+		// Check if message already exists in XML
+		prefix := detectXMLPrefix(xmlStr, "messages")
+		if strings.Contains(xmlStr, prefix+`msgno="`+msgNo+`"`) {
+			continue // No lock needed for updates
+		}
+		// Lock the new message slot
+		msgLock, err := c.LockMessage(ctx, msgClassName, msgNo)
+		if err != nil {
+			// Per-message lock may fail if it conflicts with object lock in some sessions.
+			// Use the object lock handle as fallback.
+			msgLockHandles[msgNo] = lock.LockHandle
+			continue
+		}
+		msgLockHandles[msgNo] = msgLock
+	}
+
+	// Step 4: Apply changes via string manipulation (preserves XML format)
+	modifiedXML, updated, deleted, err := modifyMessageClassXML(rawXML, messages, msgLockHandles)
+	if err != nil {
+		return nil, fmt.Errorf("modifying message class XML: %w", err)
+	}
+
+	result.Updated = updated
+	result.Deleted = deleted
+
+	// Step 5: PUT the modified XML
+	if err := c.UpdateMessageClassRaw(ctx, msgClassName, modifiedXML, lock.LockHandle, transport); err != nil {
+		return nil, fmt.Errorf("updating message class: %w", err)
+	}
+
+	// Step 6: Unlock BEFORE activation (SAP requirement)
+	err = c.UnlockObject(ctx, msgClassURL, lock.LockHandle)
+	if err != nil {
+		result.Message = fmt.Sprintf("Messages updated but unlock failed: %v", err)
+		result.Total = len(updated) + len(deleted)
+		return result, nil
+	}
+	unlocked = true
+
+	// Step 7: Activate
+	activation, err := c.Activate(ctx, msgClassURL, msgClassName)
+	if err != nil {
+		result.Message = fmt.Sprintf("Messages updated but activation failed: %v", err)
+	} else if activation != nil && !activation.Success {
+		msgs := make([]string, 0, len(activation.Messages))
+		for _, m := range activation.Messages {
+			msgs = append(msgs, m.ShortText)
+		}
+		result.Message = fmt.Sprintf("Messages updated but activation failed: %s", strings.Join(msgs, "; "))
+	} else {
+		result.Message = "Messages updated and activated successfully"
+	}
+
+	result.Total = len(updated) + len(deleted)
+
+	return result, nil
+}
+
+// FormatSetMessagesResult formats the result as a JSON string for MCP responses.
+func FormatSetMessagesResult(r *SetMessagesResult) string {
+	data, _ := json.MarshalIndent(r, "", "  ")
+	return string(data)
 }
 
 // --- Package Operations ---
