@@ -47,7 +47,7 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 	if !ok || objTypeStr == "" {
 		objTypeStr, ok = request.Params.Arguments["object_type"].(string)
 		if !ok || objTypeStr == "" {
-			return newToolResultError("object_type is required (e.g., PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD)"), nil
+			return newToolResultError("object_type is required (e.g., PROG, CLAS, INTF, FUGR, FUNC, DDLS, DDLX, BDEF, SRVD)"), nil
 		}
 	}
 
@@ -90,6 +90,8 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 	// RAP types
 	case "DDLS", "DDLS/DF":
 		objType = adt.ObjectTypeDDLS
+	case "DDLX", "DDLX/EX":
+		objType = adt.ObjectTypeDDLX
 	case "BDEF", "BDEF/BDO":
 		objType = adt.ObjectTypeBDEF
 	case "SRVD", "SRVD/SRV":

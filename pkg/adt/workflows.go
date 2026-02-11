@@ -869,6 +869,8 @@ func (c *Client) buildObjectURLWithParent(objType CreatableObjectType, name, par
 	// RAP object types
 	case ObjectTypeDDLS:
 		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", encodedName), nil
+	case ObjectTypeDDLX:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s", encodedName), nil
 	case ObjectTypeBDEF:
 		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", encodedName), nil
 	case ObjectTypeSRVD:
@@ -1033,6 +1035,8 @@ func (c *Client) SaveToFile(ctx context.Context, objType CreatableObjectType, ob
 	// RAP object types (using ABAPGit-compatible extensions)
 	case ObjectTypeDDLS:
 		ext = ".ddls.asddls"
+	case ObjectTypeDDLX:
+		ext = ".ddlx.asddlxs"
 	case ObjectTypeBDEF:
 		ext = ".bdef.asbdef"
 	case ObjectTypeSRVD:
@@ -1994,8 +1998,20 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 	case "INCL":
 		return c.GetInclude(ctx, name)
 
+	case "TABL":
+		return c.GetTable(ctx, name)
+
+	case "STRU":
+		return c.GetStructure(ctx, name)
+
+	case "TTYP":
+		return c.GetTableType(ctx, name)
+
 	case "DDLS":
 		return c.GetDDLS(ctx, name)
+
+	case "DDLX":
+		return c.GetDDLX(ctx, name)
 
 	case "VIEW":
 		return c.GetView(ctx, name)
@@ -2132,6 +2148,9 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 			objectExists = (err == nil)
 		case "DDLS":
 			_, err := c.GetDDLS(ctx, name)
+			objectExists = (err == nil)
+		case "DDLX":
+			_, err := c.GetDDLX(ctx, name)
 			objectExists = (err == nil)
 		case "BDEF":
 			_, err := c.GetBDEF(ctx, name)
@@ -2335,7 +2354,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 
 		return result, nil
 
-	case "DDLS", "BDEF", "SRVD":
+	case "DDLS", "DDLX", "BDEF", "SRVD":
 		// Get object type and URL
 		var objType CreatableObjectType
 		var objectURL string
@@ -2343,6 +2362,9 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		case "DDLS":
 			objType = ObjectTypeDDLS
 			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "DDLX":
+			objType = ObjectTypeDDLX
+			objectURL = GetObjectURL(ObjectTypeDDLX, name, "")
 		case "BDEF":
 			objType = ObjectTypeBDEF
 			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
@@ -2977,12 +2999,14 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 
 		return result, nil
 
-	case "DDLS", "BDEF", "SRVD":
+	case "DDLS", "DDLX", "BDEF", "SRVD":
 		// Get object URL
 		var objectURL string
 		switch objectType {
 		case "DDLS":
 			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "DDLX":
+			objectURL = GetObjectURL(ObjectTypeDDLX, name, "")
 		case "BDEF":
 			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
 		case "SRVD":

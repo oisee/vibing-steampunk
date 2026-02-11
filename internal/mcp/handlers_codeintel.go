@@ -359,7 +359,7 @@ func (s *Server) registerGetSource() {
 		mcp.WithDescription("Unified tool for reading ABAP source code across different object types. Replaces GetProgram, GetClass, GetInterface, GetFunction, GetInclude, GetFunctionGroup, GetClassInclude."),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), FUNC (function module), FUGR (function group), INCL (include), DDLS (CDS DDL source), VIEW (DDIC view), BDEF (behavior definition), SRVD (service definition), SRVB (service binding), MSAG (message class)"),
+			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), FUNC (function module), FUGR (function group), INCL (include), TABL (table), STRU (structure), TTYP (table type), DDLS (CDS DDL source), DDLX (CDS metadata extension), VIEW (DDIC view), BDEF (behavior definition), SRVD (service definition), SRVB (service binding), MSAG (message class)"),
 		),
 		mcp.WithString("name",
 			mcp.Required(),
@@ -380,10 +380,10 @@ func (s *Server) registerGetSource() {
 // registerWriteSource registers the unified WriteSource tool
 func (s *Server) registerWriteSource() {
 	s.mcpServer.AddTool(mcp.NewTool("WriteSource",
-		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Supports PROG, CLAS, INTF, and RAP types (DDLS, BDEF, SRVD)."),
+		mcp.WithDescription("Unified tool for writing ABAP source code with automatic create/update detection. Supports PROG, CLAS, INTF, and RAP types (DDLS, DDLX, BDEF, SRVD)."),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), DDLS (CDS view), BDEF (behavior definition), SRVD (service definition)"),
+			mcp.Description("Object type: PROG (program), CLAS (class), INTF (interface), DDLS (CDS view), DDLX (CDS metadata extension), BDEF (behavior definition), SRVD (service definition)"),
 		),
 		mcp.WithString("name",
 			mcp.Required(),
@@ -543,10 +543,10 @@ func (s *Server) registerGrepPackages() {
 // registerImportFromFile registers the ImportFromFile tool (alias for DeployFromFile)
 func (s *Server) registerImportFromFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ImportFromFile",
-		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type from file extension, creates or updates, activates. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For class includes (.clas.testclasses.abap, .clas.locals_def.abap, etc.), the parent class must exist."),
+		mcp.WithDescription("Import ABAP object from local file into SAP system. Auto-detects object type from file extension, creates or updates, activates. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), metadata extensions (DDLX), behavior definitions (BDEF), service definitions (SRVD). For class includes (.clas.testclasses.abap, .clas.locals_def.abap, etc.), the parent class must exist."),
 		mcp.WithString("file_path",
 			mcp.Required(),
-			mcp.Description("Absolute path to ABAP source file. Supported extensions: .prog.abap, .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, .srvd.srvdsrv"),
+			mcp.Description("Absolute path to ABAP source file. Supported extensions: .prog.abap, .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .ddlx.asddlxs, .bdef.asbdef, .srvd.srvdsrv"),
 		),
 		mcp.WithString("package_name",
 			mcp.Description("Target package name (required for new objects, not needed for class includes)"),
@@ -560,10 +560,10 @@ func (s *Server) registerImportFromFile() {
 // registerExportToFile registers the ExportToFile tool (alias for SaveToFile)
 func (s *Server) registerExportToFile() {
 	s.mcpServer.AddTool(mcp.NewTool("ExportToFile",
-		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), behavior definitions (BDEF), service definitions (SRVD). For classes, use 'include' parameter to export specific includes (testclasses, definitions, implementations, macros)."),
+		mcp.WithDescription("Export ABAP object from SAP system to local file. Saves source code with appropriate file extension. Supports: programs, classes (with includes), interfaces, function groups/modules, CDS views (DDLS), metadata extensions (DDLX), behavior definitions (BDEF), service definitions (SRVD). For classes, use 'include' parameter to export specific includes (testclasses, definitions, implementations, macros)."),
 		mcp.WithString("object_type",
 			mcp.Required(),
-			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC, DDLS, BDEF, SRVD"),
+			mcp.Description("Object type: PROG, CLAS, INTF, FUGR, FUNC, DDLS, DDLX, BDEF, SRVD"),
 		),
 		mcp.WithString("object_name",
 			mcp.Required(),

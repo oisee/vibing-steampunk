@@ -157,6 +157,7 @@ const (
 	ObjectTypePackage       CreatableObjectType = "DEVC/K"
 	// RAP object types (read-only via ADT, created via RAP generators)
 	ObjectTypeDDLS CreatableObjectType = "DDLS/DF"  // CDS DDL Source
+	ObjectTypeDDLX CreatableObjectType = "DDLX/EX"  // Metadata Extension
 	ObjectTypeBDEF CreatableObjectType = "BDEF/BDO" // Behavior Definition
 	ObjectTypeSRVD CreatableObjectType = "SRVD/SRV" // Service Definition
 	ObjectTypeSRVB CreatableObjectType = "SRVB/SVB" // Service Binding
@@ -241,6 +242,11 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 		creationPath: "/sap/bc/adt/ddic/ddl/sources",
 		rootName:     "ddl:ddlSource",
 		namespace:    `xmlns:ddl="http://www.sap.com/adt/ddic/ddlsources"`,
+	},
+	ObjectTypeDDLX: {
+		creationPath: "/sap/bc/adt/ddic/ddlx/sources",
+		rootName:     "ddlx:ddlxSource",
+		namespace:    `xmlns:ddlx="http://www.sap.com/adt/ddic/ddlxsources"`,
 	},
 	ObjectTypeBDEF: {
 		creationPath: "/sap/bc/adt/bo/behaviordefinitions",
@@ -627,6 +633,8 @@ func GetObjectURL(objectType CreatableObjectType, name string, parentName string
 	// RAP object types - use lowercase for CDS objects
 	case ObjectTypeDDLS:
 		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDDLX:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeBDEF:
 		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeSRVD:
@@ -928,8 +936,16 @@ func (c *Client) CreateTable(ctx context.Context, opts CreateTableOptions) error
 	c.UnlockObject(ctx, tableURL, lock.LockHandle)
 
 	// Step 3: Activate
-	if _, err := c.Activate(ctx, tableURL, opts.Name); err != nil {
+	activation, err := c.Activate(ctx, tableURL, opts.Name)
+	if err != nil {
 		return fmt.Errorf("activating table: %w", err)
+	}
+	if activation != nil && !activation.Success {
+		msgs := make([]string, 0, len(activation.Messages))
+		for _, m := range activation.Messages {
+			msgs = append(msgs, m.ShortText)
+		}
+		return fmt.Errorf("activation failed: %s", strings.Join(msgs, "; "))
 	}
 
 	return nil
@@ -1022,8 +1038,16 @@ func (c *Client) CreateStructure(ctx context.Context, opts CreateStructureOption
 	c.UnlockObject(ctx, structURL, lock.LockHandle)
 
 	// Step 3: Activate
-	if _, err := c.Activate(ctx, structURL, opts.Name); err != nil {
+	activation, err := c.Activate(ctx, structURL, opts.Name)
+	if err != nil {
 		return fmt.Errorf("activating structure: %w", err)
+	}
+	if activation != nil && !activation.Success {
+		msgs := make([]string, 0, len(activation.Messages))
+		for _, m := range activation.Messages {
+			msgs = append(msgs, m.ShortText)
+		}
+		return fmt.Errorf("activation failed: %s", strings.Join(msgs, "; "))
 	}
 
 	return nil
@@ -1139,8 +1163,16 @@ func (c *Client) CreateTableType(ctx context.Context, opts CreateTableTypeOption
 	c.UnlockObject(ctx, ttURL, lock.LockHandle)
 
 	// Step 3: Activate
-	if _, err := c.Activate(ctx, ttURL, opts.Name); err != nil {
+	activation, err := c.Activate(ctx, ttURL, opts.Name)
+	if err != nil {
 		return fmt.Errorf("activating table type: %w", err)
+	}
+	if activation != nil && !activation.Success {
+		msgs := make([]string, 0, len(activation.Messages))
+		for _, m := range activation.Messages {
+			msgs = append(msgs, m.ShortText)
+		}
+		return fmt.Errorf("activation failed: %s", strings.Join(msgs, "; "))
 	}
 
 	return nil

@@ -122,6 +122,8 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 	// RAP object types (ABAPGit-compatible extensions)
 	case strings.HasSuffix(baseName, ".ddls.asddls"):
 		info.ObjectType = ObjectTypeDDLS
+	case strings.HasSuffix(baseName, ".ddlx.asddlxs"):
+		info.ObjectType = ObjectTypeDDLX
 	case strings.HasSuffix(baseName, ".bdef.asbdef"):
 		info.ObjectType = ObjectTypeBDEF
 	case strings.HasSuffix(baseName, ".srvd.srvdsrv"):
@@ -130,7 +132,7 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 		// Generic .abap: detect from content
 		return parseFromContent(filePath)
 	default:
-		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
+		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .ddlx.asddlxs, .bdef.asbdef, or .srvd.srvdsrv)", ext)
 	}
 
 	// 2. Parse file content to extract name and metadata
