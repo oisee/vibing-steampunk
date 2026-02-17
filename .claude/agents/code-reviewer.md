@@ -104,6 +104,37 @@ semgrep scan --config auto [paths]
 - **[S]** - Semgrep finding
 - **[C+O+S]** - All three agree (extremely high confidence)
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **All CRITICAL findings** — Before reporting, verify with PAL `codereview` (model: `gpt-5.1-codex`)
+- **Pre-commit validation** — Use PAL `precommit` before approving merge-ready changes
+- **Security-related findings** — Always cross-validate security issues with PAL `codereview`
+- **Final review report** — Cross-validate key conclusions before producing output
+
+### SHOULD Cross-Validate
+- **HIGH findings** — Verify with PAL `codereview` when time permits
+- **Unusual patterns** — When code uses unfamiliar APIs or frameworks, check with PAL `chat`
+- **Performance concerns** — Get second opinion on algorithmic complexity
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Run Semgrep for automated SAST findings
+3. Call appropriate PAL tool with code context and preliminary findings
+4. Compare all three sources: Claude `[C]`, OpenAI `[O]`, Semgrep `[S]`
+5. **CRITICAL + disagreement** → ESCALATE to human with all perspectives
+6. **CRITICAL + agreement** → `[C+O]` or `[C+O+S]` highest confidence, proceed
+7. Include valid findings from all sources (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH finding:
+1. Document both perspectives with reasoning and code evidence
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to human with structured comparison
+4. Do NOT silently drop either model's finding
+
 ## Quality Checklist
 
 ### Code Quality

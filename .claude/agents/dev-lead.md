@@ -247,6 +247,36 @@ When escalating:
 - **Alternatives:** Other options considered
 - **Recommendation:** Your suggested course of action
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **Technical approach decisions** — When multiple valid implementation approaches exist, use PAL `consensus` (model: `gpt-5.2-pro`)
+- **CRITICAL/HIGH review findings** — Before flagging critical code issues, verify with PAL `chat`
+- **Task breakdown for complex features** — Cross-check task completeness with PAL `planner`
+- **Final deliverable** — Cross-validate key decisions in task breakdowns before output
+
+### SHOULD Cross-Validate
+- **MEDIUM findings** — When time permits
+- **Unfamiliar patterns** — Verify implementation patterns via PAL `chat` or context7
+- **Effort estimates** — Sanity-check complexity assessments
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Call appropriate PAL tool with context and preliminary findings
+3. Compare outputs: agreement → `[C+O]` | Claude-only → `[C]` | OpenAI-only → `[O]`
+4. **CRITICAL + disagreement** → ESCALATE to human with both perspectives and reasoning
+5. **CRITICAL + agreement** → high confidence, proceed
+6. Include valid insights from both models (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH-impact decision:
+1. Document both perspectives with reasoning
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to human with structured comparison
+4. Do NOT silently drop either model's recommendation
+
 ## Dispute Resolution
 
 When technical disagreements arise:

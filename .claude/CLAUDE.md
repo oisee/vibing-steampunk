@@ -1,11 +1,17 @@
 ﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-config -->
-<!-- Synced: 2026-02-17 22:11:43 -->
+<!-- Synced: 2026-02-17 22:40:51 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
 ## Requirements
 
 Never hallucinate or fabricate information. If you're unsure about anything, you MUST explicitly state your uncertainty. Say "I don't know" rather than guessing or making assumptions. Honesty about limitations is required.
+
+## Language & Terminology
+
+- **All code artifacts in English.** Code, comments, docstrings, variable/function names, README files, commit messages, and diagrams â€” always in English.
+- **No transliteration of English technical terms into Cyrillic.** If there is no established Russian equivalent, use the original term in Latin script (git stash, merge, rebase, commit, pull request), not Cyrillic transliterations like "ÑÑ‚ÑÑˆÐ¸Ñ‚ÑŒ", "Ð¼ÐµÑ€Ð¶Ð¸Ñ‚ÑŒ", "Ñ€ÐµÐ±ÐµÐ¹Ð·Ð¸Ñ‚ÑŒ", "ÐºÐ¾Ð¼Ð¼Ð¸Ñ‚".
+- **Conversation with the user** â€” in the language the user writes in.
 
 ## Research & Verification
 

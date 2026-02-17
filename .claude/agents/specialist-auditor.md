@@ -140,6 +140,36 @@ Every finding must include:
 - REJECT if CRITICAL/HIGH issues found
 - ESCALATE if ambiguous or requires human decision
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **All CRITICAL findings** — Before reporting, verify with PAL `thinkdeep` (model: `gpt-5.1-codex`)
+- **Incorrect assumption detection** — When finding that a plan assumption is wrong, verify via PAL `chat`
+- **Domain-specific technical claims** — Use PAL `codereview` for code-level validation
+- **Final audit verdict** — Cross-validate REJECT verdict before producing output
+
+### SHOULD Cross-Validate
+- **HIGH findings** — Verify with PAL `thinkdeep` when time permits
+- **Unfamiliar APIs/frameworks** — Validate via PAL `chat` or context7
+- **Edge case analysis** — Get second opinion on boundary conditions
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Call appropriate PAL tool with context, code snippets, and preliminary findings
+3. Compare outputs: agreement → `[C+O]` | Claude-only → `[C]` | OpenAI-only → `[O]`
+4. **CRITICAL + disagreement** → ESCALATE to Lead Auditor with both perspectives
+5. **CRITICAL + agreement** → high confidence, proceed
+6. Include valid findings from both models (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH finding:
+1. Document both perspectives with evidence and reasoning
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to Lead Auditor (not directly to human)
+4. Do NOT silently drop either model's finding
+
 ## Output Format
 
 ```markdown

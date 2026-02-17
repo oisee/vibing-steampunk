@@ -82,6 +82,36 @@ Before making any recommendation:
 5. **Review existing code** — Use gitlab MCP to search existing codebases for patterns and decisions
 6. **NEVER hallucinate** — If unsure, state uncertainty explicitly and recommend research or prototyping
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **Architecture decisions** — Before recommending architecture changes, use PAL `consensus` (model: `gpt-5.2-pro`)
+- **Technology selection** — Before recommending new frameworks/databases, use PAL `consensus`
+- **CRITICAL/HIGH risk assessments** — Before flagging critical risks, verify with PAL `thinkdeep`
+- **Final deliverable** — Cross-validate key conclusions in ADRs and design docs before output
+
+### SHOULD Cross-Validate
+- **MEDIUM risk assessments** — When time permits
+- **Novel technology patterns** — Verify assumptions about unfamiliar APIs via PAL `chat`
+- **Trade-off analysis** — Get second opinion on complex trade-offs
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Call appropriate PAL tool with context and preliminary findings
+3. Compare outputs: agreement → `[C+O]` | Claude-only → `[C]` | OpenAI-only → `[O]`
+4. **CRITICAL + disagreement** → ESCALATE to human with both perspectives and reasoning
+5. **CRITICAL + agreement** → high confidence, proceed
+6. Include valid insights from both models (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH-impact decision:
+1. Document both perspectives with reasoning
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to human with structured comparison
+4. Do NOT silently drop either model's recommendation
+
 ## Output Formats
 
 ### Architecture Decision Record (ADR)

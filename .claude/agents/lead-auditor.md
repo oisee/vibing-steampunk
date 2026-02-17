@@ -195,6 +195,36 @@ For CRITICAL or HIGH findings:
 **Re-Audit Scope**: [If iteration needed: what to re-review]
 ```
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **Cross-domain integration risks** — Use PAL `thinkdeep` (model: `gpt-5.2-pro`) for gaps no single specialist sees
+- **Architectural coherence decisions** — Use PAL `consensus` when specialist findings conflict
+- **All CRITICAL findings from any source** — Verify with PAL before including in final report
+- **Final verdict** — Cross-validate the overall APPROVE/REJECT/ESCALATE decision
+
+### SHOULD Cross-Validate
+- **HIGH findings** — When time permits
+- **Specialist delegation scope** — Validate that audit scope covers all risk areas
+- **Blast radius assessment** — Get second opinion on impact analysis
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Call appropriate PAL tool with context and preliminary findings
+3. Compare outputs: agreement → `[C+O]` | Claude-only → `[C]` | OpenAI-only → `[O]`
+4. **CRITICAL + disagreement** → ESCALATE to human with both perspectives and reasoning
+5. **CRITICAL + agreement** → high confidence, proceed
+6. Include valid insights from both models (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH finding:
+1. Document both perspectives with reasoning
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to human with structured comparison
+4. Do NOT silently drop either model's finding
+
 ## Audit Scope Checklist
 
 Ensure coverage of:

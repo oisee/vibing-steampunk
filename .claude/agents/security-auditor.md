@@ -52,6 +52,37 @@ Perform thorough analysis for:
 - Check OWASP Top 10, CWE/SANS Top 25, framework-specific security guides
 - Validate assumptions about security APIs, libraries, and patterns
 
+## Mandatory Cross-Validation Protocol
+
+Cross-validation with OpenAI via PAL MCP is **mandatory** at these checkpoints. Skipping MUST items is a protocol violation.
+
+### MUST Cross-Validate
+- **All CRITICAL vulnerabilities** — Before reporting, verify with PAL `codereview` (model: `gpt-5.2-pro`)
+- **Complex exploitation chains** — Use PAL `thinkdeep` for multi-step attack path analysis
+- **Severity disagreements** — If Claude rates differently than Semgrep, validate with PAL
+- **Final audit report** — Cross-validate key findings before producing output
+
+### SHOULD Cross-Validate
+- **HIGH vulnerabilities** — Verify with PAL `codereview` when time permits
+- **False positive assessment** — When uncertain if a Semgrep finding is real
+- **Unfamiliar CVEs** — Verify exploitation feasibility via PAL `chat`
+
+### Procedure
+1. Complete your own analysis first (Claude perspective)
+2. Run Semgrep for automated SAST findings
+3. Call appropriate PAL tool with vulnerability details and code context
+4. Compare all three sources: Claude `[C]`, OpenAI `[O]`, Semgrep `[S]`
+5. **CRITICAL + disagreement** → ESCALATE to human with all perspectives
+6. **CRITICAL + agreement** → `[C+O+S]` highest confidence, proceed
+7. Include valid findings from all sources (union, not intersection)
+
+### Escalation on Disagreement
+If Claude and OpenAI disagree on a CRITICAL or HIGH vulnerability:
+1. Document both assessments with evidence and reasoning
+2. Use PAL `challenge` to stress-test each position
+3. If still unresolved → ESCALATE to human with structured comparison
+4. Do NOT silently drop either model's finding — false negatives are worse than false positives in security
+
 ## Output Format
 
 ### Severity-Ranked Findings
@@ -93,7 +124,7 @@ Each finding must include:
 2. **Reconnaissance**: Use Glob/Grep to identify security-relevant files (auth, database, API, file handling)
 3. **Automated Scan**: Run semgrep with appropriate rulesets
 4. **Manual Review**: Deep-dive into high-risk areas identified by automation or intuition
-5. **Cross-Validation**: Use PAL secaudit to verify findings with OpenAI
+5. **Cross-Validation**: Use PAL `codereview` / `thinkdeep` to verify findings with OpenAI
 6. **Research**: Use context7 to confirm best practices and secure alternatives
 7. **Report Generation**: Produce severity-ranked findings with remediation guidance
 
