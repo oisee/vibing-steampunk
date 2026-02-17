@@ -2,6 +2,184 @@
 
 This file provides context for AI assistants (Claude, etc.) working on this project.
 
+## Requirements
+
+Never hallucinate or fabricate information. If you're unsure about anything, you MUST explicitly state your uncertainty. Say "I don't know" rather that questing or making assumptions. Honesty about limitations is required.
+
+## Connected MCP Servers Usage Guide
+
+This project leverages multiple MCP servers for comprehensive development capabilities. Use them strategically:
+
+### 1. VSP-SC3 (SAP ABAP Development Tools)
+
+**Primary Purpose:** SAP ABAP development, debugging, testing, and system analysis
+
+**When to Use:**
+- Reading/writing ABAP code (GetSource, WriteSource, EditSource)
+- Creating SAP objects (classes, programs, tables, CDS views)
+- Running unit tests, ATC checks, syntax validation
+- Debugging ABAP code (SetBreakpoint, DebuggerListen, DebuggerAttach)
+- Analyzing code structure (GetCallGraph, FindDefinition, FindReferences)
+- Transport management (ListTransports, GetTransport)
+- Runtime analysis (ListTraces, GetTrace, ListDumps, GetDump)
+- Database queries (GetTable, GetTableContents, RunQuery)
+- abapGit operations (GitExport, GitTypes, InstallAbapGit)
+
+**Key Tools by Category:**
+- **Read:** GetSource, GetClassInfo, GetTable, SearchObject
+- **Search:** SourceSearch (HANA fulltext), GrepObjects, GrepPackages
+- **Write:** WriteSource, EditSource, CreateTable
+- **Test:** RunUnitTests, RunATCCheck, SyntaxCheck
+- **Debug:** SetBreakpoint, DebuggerListen, DebuggerAttach, AMDPDebuggerStart
+- **Analysis:** GetCallGraph, GetCalleesOf, GetCallersOf, FindReferences
+- **Deploy:** Activate, ActivatePackage, MoveObject, InstallZADTVSP
+
+**Best Practices:**
+- Always use GetSource before EditSource to understand context
+- Use EditSource (surgical string replacement) instead of full WriteSource when possible
+- Run SyntaxCheck before Activate
+- Use method parameter for method-level operations (95% token reduction)
+- Leverage specialized agents (/code-gen, /debug-orchestrator, /test-gen) for complex workflows
+- Use safety controls in production (SAP_READ_ONLY, SAP_ALLOWED_PACKAGES)
+
+**Example Workflow:**
+```
+1. SearchObject to find classes
+2. GetSource to read code
+3. EditSource to make changes
+4. SyntaxCheck to validate
+5. Activate to deploy
+6. RunUnitTests to verify
+```
+
+### 2. Playwright (Browser Automation)
+
+**Primary Purpose:** Web browser automation and testing
+
+**When to Use:**
+- Testing web applications (UI5/Fiori apps, web frontends)
+- Automated browser interactions (navigation, clicks, form filling)
+- Visual regression testing (screenshots)
+- Web scraping and data extraction
+- Accessibility testing (browser_snapshot)
+- End-to-end testing workflows
+
+**Key Tools:**
+- **Navigation:** browser_navigate, browser_navigate_back, browser_tabs
+- **Interaction:** browser_click, browser_type, browser_fill_form, browser_select_option
+- **Analysis:** browser_snapshot, browser_take_screenshot, browser_console_messages
+- **Advanced:** browser_evaluate, browser_run_code, browser_wait_for
+
+**Best Practices:**
+- Use browser_snapshot instead of browser_take_screenshot for actions (more accessible)
+- Use browser_fill_form for multiple fields instead of individual browser_type calls
+- Always wait for elements with browser_wait_for before interaction
+- Handle dialogs with browser_handle_dialog
+- Use browser_console_messages to debug JavaScript errors
+- Prefer browser_run_code for complex Playwright sequences
+
+**Integration with VSP:**
+```
+VSP: Deploy UI5/Fiori app
+VSP: UI5GetApp to verify deployment
+Playwright: browser_navigate to app URL
+Playwright: browser_snapshot to analyze UI
+Playwright: browser_click/browser_type for interaction testing
+Playwright: browser_take_screenshot for visual verification
+```
+
+### 3. Context7 (Documentation & Code Examples)
+
+**Primary Purpose:** Retrieve up-to-date library documentation and code examples
+
+**When to Use:**
+- Learning new libraries or frameworks
+- Finding code examples for specific tasks
+- Understanding API usage patterns
+- Checking latest documentation (post-2025 updates)
+- Resolving "how do I" questions for third-party libraries
+
+**Key Tools:**
+- **resolve-library-id:** Convert library name to Context7 ID
+- **query-docs:** Query documentation with specific questions
+
+**Best Practices:**
+- ALWAYS call resolve-library-id first unless user provides exact library ID (/org/project)
+- Limit to 3 calls per question (avoid over-querying)
+- Include user's original question in query parameter for relevance ranking
+- Never include sensitive data (API keys, credentials) in queries
+- Use for third-party libraries, not internal SAP APIs (use VSP GetSource instead)
+
+**Example Usage:**
+```
+1. User asks: "How to implement JWT auth in Express.js?"
+2. resolve-library-id with libraryName="express.js" and user's question
+3. query-docs with returned libraryId and specific query
+4. Combine Context7 examples with VSP code generation
+```
+
+### Multi-MCP Integration Patterns
+
+**Pattern 1: Full-Stack SAP Development**
+```
+1. Context7: Get UI5 framework documentation
+2. VSP: Create UI5/BSP application (UI5GetApp, UI5GetFileContent)
+3. Playwright: Test deployed application
+4. VSP: Run ATC checks, activate, transport
+```
+
+**Pattern 2: Documentation-Driven Code Generation**
+```
+1. Context7: Query best practices for specific library
+2. VSP: Generate ABAP wrapper class using examples
+3. VSP: Create unit tests
+4. Playwright: Test web interface if applicable
+```
+
+**Pattern 3: Debugging & Root Cause Analysis**
+```
+1. VSP: ListDumps, GetDump to find runtime errors
+2. VSP: GetSource to read failing code
+3. Context7: Query solutions for error patterns
+4. VSP: EditSource to fix issue
+5. VSP: RunUnitTests to verify fix
+6. Playwright: End-to-end test if web-facing
+```
+
+**Pattern 4: Testing Pipeline**
+```
+1. VSP: RunUnitTests (ABAP unit tests)
+2. VSP: RunATCCheck (static code analysis)
+3. Playwright: browser_navigate + UI tests
+4. VSP: GetTrace for performance analysis
+5. VSP: Transport to quality system
+```
+
+### When NOT to Use MCP Servers
+
+**Don't use VSP for:**
+- Non-SAP development tasks
+- Questions about general programming (use Context7)
+- Browser automation (use Playwright)
+
+**Don't use Playwright for:**
+- SAP backend development
+- ABAP code analysis
+- Non-browser tasks
+
+**Don't use Context7 for:**
+- SAP-specific internal APIs (use VSP GetSource)
+- Questions you can answer from existing code
+- Queries that require system access
+
+### Performance Tips
+
+1. **Parallel Operations:** Run independent MCP calls simultaneously
+2. **Token Efficiency:** Use VSP method parameter for focused edits
+3. **Cache Awareness:** Context7 has 15-min cache, VSP can use SQLite cache
+4. **Batch Operations:** Use VSP batch tools (GrepPackages, ActivatePackage)
+5. **Agent Delegation:** Use specialized agents for multi-step workflows
+
 ## Project Overview
 
 **vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 54 essential tools (focused mode, default) or 99 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
@@ -61,6 +239,41 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_FEATURE_AMDP` / `--feature-amdp` | AMDP/HANA debugger: auto, on, off (default: auto) |
 | `SAP_FEATURE_UI5` / `--feature-ui5` | UI5/Fiori BSP management: auto, on, off (default: auto) |
 | `SAP_FEATURE_TRANSPORT` / `--feature-transport` | CTS transport management: auto, on, off (default: auto) |
+
+## Specialized Agents
+
+The project includes **6 specialized agents** (Claude Code skills) for complex workflows:
+
+| Agent | Invocation | Purpose |
+|-------|------------|---------|
+| **Code Generator** | `/code-gen` | Generate ABAP objects from natural language |
+| **Debug Orchestrator** | `/debug-orchestrator` | Autonomous debugging and root cause analysis |
+| **Test Generator** | `/test-gen` | Create comprehensive unit test coverage |
+| **Code Quality Guardian** | `/code-quality` | Code quality audits and security checks |
+| **Documentation Generator** | `/doc-gen` | Generate README, API docs, UML diagrams |
+| **Transport & Deployment** | `/transport-deploy` | Manage deployments with validation |
+
+**Agent Files**: [`.claude/commands/`](./.claude/commands/)
+
+**Complete Guide**: [docs/AGENTS.md](./docs/AGENTS.md)
+
+**When to Use Agents**:
+- Complex, multi-step workflows (create → test → deploy)
+- Need best practices applied automatically
+- Want comprehensive reports and tracking
+- Collaborative workflows (debug → fix → test)
+
+**Example Workflows**:
+```
+# Complete feature development
+/code-gen → /test-gen → /code-quality → /doc-gen → /transport-deploy
+
+# Bug fix workflow
+/debug-orchestrator → /code-gen → /test-gen → /transport-deploy
+
+# Code quality sprint
+/code-quality → /test-gen → /doc-gen
+```
 
 ## Codebase Structure
 
@@ -352,16 +565,17 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 99 (54 focused, 99 expert) |
+| **Tools** | 100 (55 focused, 100 expert) |
 | **Unit Tests** | 244 |
-| **Integration Tests** | 34 |
+| **Integration Tests** | 35 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
 | **Reports** | 29 numbered + 6 reference docs |
 | **Lua Scripting** | ✅ Complete (v2.14 - REPL, 40+ bindings, example scripts) |
 | **Cache Package** | ✅ Complete (in-memory + SQLite) |
 | **Safety System** | ✅ Complete (operation filtering, package restrictions) |
-| **Feature Detection** | ✅ Complete (GetFeatures tool, auto/on/off for abapGit, RAP, AMDP, UI5, Transport) |
+| **Feature Detection** | ✅ Complete (GetFeatures tool, auto/on/off for abapGit, RAP, AMDP, UI5, Transport, SourceSearch) |
+| **SourceSearch** | ✅ Complete (SRIS HANA fulltext search - requires SFW5 SRIS_SOURCE_SEARCH) |
 | **DSL Package** | ✅ Complete (fluent API, YAML workflows, test orchestration, batch import/export) |
 | **Batch Import/Export** | ✅ Complete (v2.12 - abapGit-compatible format, priority ordering) |
 | **Pipeline Builder** | ✅ Complete (v2.12 - DeployPipeline, RAPPipeline, ExportPipeline) |

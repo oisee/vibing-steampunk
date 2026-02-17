@@ -162,6 +162,31 @@
 | **File Deployment** | Bypass token limits - deploy large files directly from filesystem |
 | **Surgical Edits** | `EditSource` tool matches Claude's Edit pattern for precise changes |
 
+## Specialized Agents
+
+**6 high-level agents** that orchestrate multiple MCP tools for complex workflows:
+
+| Agent | Purpose | Use Case |
+|-------|---------|----------|
+| **Code Generator** (`/code-gen`) | Generate ABAP objects from natural language | Create classes, programs, interfaces, CDS views, tables |
+| **Debug Orchestrator** (`/debug-orchestrator`) | Autonomous debugging & RCA | Investigate crashes, analyze performance, live debugging |
+| **Test Generator** (`/test-gen`) | Create comprehensive unit test coverage | Generate test classes with positive/negative/edge case tests |
+| **Code Quality Guardian** (`/code-quality`) | Ensure code quality & compliance | Security audits, performance optimization, ATC checks |
+| **Documentation Generator** (`/doc-gen`) | Create technical documentation | README files, API references, UML diagrams, architecture guides |
+| **Transport & Deployment Manager** (`/transport-deploy`) | Manage deployments with validation | Pre-deployment checks, dependency ordering, rollback plans |
+
+**Quick Examples**:
+```
+/code-gen "Create a class ZCL_ORDER_VALIDATOR with method CHECK_ORDER"
+/debug-orchestrator "Investigate ZERODIVIDE crash in ZCL_PRICING"
+/test-gen "Generate unit tests for ZCL_ORDER_PROCESSOR with 80% coverage"
+/code-quality "Run security audit on $ZPROD package"
+/doc-gen "Generate complete documentation for $ZAPI package"
+/transport-deploy "Prepare $ZRAY package for production deployment"
+```
+
+See [docs/AGENTS.md](docs/AGENTS.md) for complete agent documentation and workflows.
+
 ## Quick Start
 
 ```bash
