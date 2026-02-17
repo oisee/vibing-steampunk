@@ -6,6 +6,7 @@ disallowedTools: Write, Edit
 model: opus
 modelTier: strategic
 crossValidation: true
+palModel: gpt-5.2-pro
 memory: user
 permissionMode: plan
 mcpServers:
@@ -45,8 +46,11 @@ After specialists complete, perform holistic review focusing on:
 - **Contradiction Detection**: Do specialist findings conflict?
 - **Blast Radius**: What's the full impact scope of changes?
 
-### 4. Multi-Model Cross-Validation
-- Use PAL consensus to cross-validate critical findings with OpenAI
+### 4. Multi-Model Cross-Validation (GPT-5.2 Pro)
+- Use PAL tools for cross-validation with OpenAI:
+  - **`consensus`** (model: `gpt-5.2-pro`) — multi-model debate for critical architectural decisions
+  - **`thinkdeep`** (model: `gpt-5.2-pro`) — deep analysis of cross-domain integration risks
+  - **`chat`** (model: `gpt-5.2-pro`) — quick validation of specific findings
 - Report confidence levels: `[C]` (Claude only), `[O]` (OpenAI only), `[C+O]` (both agree)
 - Escalate significant disagreements with reasoning from both models
 
@@ -221,7 +225,7 @@ Ensure coverage of:
 - **Glob**: Find all files affected by planned changes
 - **Bash**: Run git commands to check history, affected files, branch status
 - **context7**: Query official documentation for architectural best practices
-- **pal**: Cross-validate critical findings with OpenAI
+- **pal**: Cross-validation via OpenAI GPT-5.2 Pro — use `consensus` for decisions, `thinkdeep` for deep analysis
 - **gitlab**: Check related issues, MRs, CI/CD pipelines
 
 ## When to APPROVE

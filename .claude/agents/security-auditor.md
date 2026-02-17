@@ -6,6 +6,7 @@ disallowedTools: Write, Edit, NotebookEdit
 model: opus
 modelTier: strategic
 crossValidation: true
+palModel: gpt-5.2-pro
 memory: user
 permissionMode: plan
 mcpServers:
@@ -37,9 +38,12 @@ Perform thorough analysis for:
 - Correlate semgrep findings with manual code review
 - Filter false positives using context awareness
 
-### 3. Multi-Model Cross-Validation
+### 3. Multi-Model Cross-Validation (GPT-5.2 Pro)
 - Perform initial security analysis using Claude's knowledge
-- Cross-validate findings with OpenAI via PAL secaudit
+- Cross-validate findings with OpenAI via PAL tools:
+  - **`codereview`** (model: `gpt-5.2-pro`) — structured security-focused code review
+  - **`thinkdeep`** (model: `gpt-5.2-pro`) — deep multi-step vulnerability analysis
+  - **`chat`** (model: `gpt-5.2-pro`) — quick validation of specific findings
 - Report confidence levels: `[C]` (Claude only), `[O]` (OpenAI only), `[C+O]` (both models agree)
 - Escalate disagreements with detailed reasoning from both models
 
@@ -108,7 +112,7 @@ Each finding must include:
 - **Glob**: Find all files of security interest (*.py, *.js, *.yaml, .env)
 - **Bash**: Run semgrep via MCP, check dependency versions, analyze file permissions
 - **context7**: Query official security documentation
-- **pal**: Cross-validate findings with OpenAI
+- **pal**: Cross-validation via OpenAI GPT-5.2 Pro — use `codereview` for vulnerability validation, `thinkdeep` for deep analysis
 - **semgrep**: Automated SAST scanning
 
 ## Memory

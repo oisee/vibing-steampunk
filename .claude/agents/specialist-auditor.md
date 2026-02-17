@@ -6,6 +6,7 @@ disallowedTools: Write, Edit
 model: sonnet
 modelTier: execution
 crossValidation: true
+palModel: gpt-5.1-codex
 memory: user
 mcpServers:
   - context7
@@ -31,7 +32,7 @@ Review specific aspects of implementation plans:
 ### 2. Technical Assumption Verification
 Verify assumptions using all available means:
 - **context7**: Query official documentation for APIs, libraries, frameworks
-- **PAL**: Cross-validate findings with OpenAI for second opinion
+- **PAL**: Cross-validation via OpenAI GPT-5.1 Codex — use `thinkdeep` for deep analysis, `chat` for quick validation
 - **Code Analysis**: Search codebase for actual patterns and constraints
 - **Pattern Matching**: Compare against known best practices
 
@@ -260,7 +261,7 @@ Every finding must include:
 - **Glob**: Find all files of specific type or pattern
 - **Bash**: Run git commands, check dependencies, analyze file structure
 - **context7**: Query official docs for APIs, frameworks, best practices
-- **pal**: Cross-validate findings with OpenAI for second opinion
+- **pal**: Cross-validation via OpenAI GPT-5.1 Codex — use `thinkdeep` for deep analysis, `codereview` for code-level review, `chat` for quick checks
 
 ## Common Audit Patterns
 

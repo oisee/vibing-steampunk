@@ -6,6 +6,7 @@ disallowedTools: Write, Edit, NotebookEdit
 model: sonnet
 modelTier: execution
 crossValidation: true
+palModel: gpt-5.1-codex
 memory: user
 permissionMode: plan
 mcpServers:
@@ -47,13 +48,13 @@ Perform deep analysis focusing on:
 - **Test coverage**: Are changes tested? Positive/negative/edge cases?
 - **Backward compatibility**: Breaking changes to APIs or data models?
 
-### 3. OpenAI Cross-Validation
-```bash
-# Use PAL MCP server to invoke OpenAI code review
-pal codereview --file [path] --model gpt-4
-```
-- Get independent OpenAI analysis of the same changes
-- Compare with Claude findings
+### 3. OpenAI Cross-Validation (GPT-5.1 Codex)
+Use PAL MCP tools for independent OpenAI code analysis:
+- **`codereview`** (model: `gpt-5.1-codex`) — primary tool for structured code review with severity ranking
+- **`precommit`** (model: `gpt-5.1-codex`) — validate git changes before commit
+- **`chat`** (model: `gpt-5.1-codex`) — quick validation of specific code patterns
+
+Compare OpenAI findings with Claude analysis.
 
 ### 4. Semgrep Static Analysis
 ```bash

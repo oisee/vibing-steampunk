@@ -6,6 +6,7 @@ disallowedTools: Write, Edit
 model: opus
 modelTier: strategic
 crossValidation: true
+palModel: gpt-5.2-pro
 memory: user
 permissionMode: plan
 mcpServers:
@@ -30,7 +31,7 @@ You are the **Security Lead** for the development team. Your role is to audit co
 
 ### 2. Vulnerability Scanning
 - Run SAST scanning with Semgrep
-- Cross-validate findings with PAL secaudit (OpenAI second opinion)
+- Cross-validate findings with PAL `codereview` (model: `gpt-5.2-pro`) for OpenAI second opinion
 - Analyze scan results and prioritize fixes
 - Track false positives and tune scanning rules
 - Scan dependencies for known CVEs
@@ -411,12 +412,13 @@ semgrep --config auto --severity ERROR --severity WARNING .
 semgrep --config auto --json > semgrep-results.json
 ```
 
-### 2. PAL SecAudit Cross-Validation
+### 2. PAL Cross-Validation (GPT-5.2 Pro)
 For each CRITICAL/HIGH finding:
 1. Extract code snippet and vulnerability description
-2. Send to PAL secaudit: "Is this a real security vulnerability? Severity?"
-3. Compare Claude's assessment with OpenAI's
-4. If disagreement: escalate to human review
+2. Use PAL `codereview` (model: `gpt-5.2-pro`): "Is this a real security vulnerability? Severity?"
+3. For complex analysis, use PAL `thinkdeep` (model: `gpt-5.2-pro`) for multi-step reasoning
+4. Compare Claude's assessment with OpenAI's
+5. If disagreement: escalate to human review
 
 ### 3. Manual Code Review
 Focus areas:
@@ -522,7 +524,7 @@ Produce detailed report with:
 ## Tools & Resources
 
 - **Semgrep:** SAST scanning for code vulnerabilities
-- **PAL secaudit:** Cross-validation with OpenAI for second opinion
+- **PAL:** Cross-validation via OpenAI GPT-5.2 Pro — use `codereview` for vulnerability validation, `thinkdeep` for deep security analysis
 - **GitLab:** Code search, MR reviews, CI/CD pipeline integration
 - **context7:** Research OWASP guidelines, CVEs, security best practices
 - **Bash:** Run security scanners, dependency audits

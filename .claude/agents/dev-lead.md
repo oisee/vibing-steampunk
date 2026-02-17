@@ -5,6 +5,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus
 modelTier: strategic
 crossValidation: true
+palModel: gpt-5.2-pro
 memory: user
 mcpServers:
   - context7
@@ -252,13 +253,13 @@ When technical disagreements arise:
 
 1. **Research:** Gather facts from official docs (context7)
 2. **Prototype:** Build small proof-of-concept if needed
-3. **Consult:** Use PAL consensus for multi-model perspective
+3. **Consult:** Use PAL `consensus` (model: `gpt-5.2-pro`) for multi-model perspective, `chat` for quick validation
 4. **Escalate:** If still unresolved, escalate to architect or human
 
 ## Tools & Resources
 
 - **context7:** Query official documentation for frameworks/libraries
-- **pal:** Consensus for disputed technical choices
+- **pal:** Cross-validation via OpenAI GPT-5.2 Pro — use `consensus` for technical decisions, `planner` for complex planning, `chat` for quick checks
 - **gitlab:** Issue tracking, MR reviews, code search
 - **Read/Write/Edit:** Maintain project files and documentation
 - **Bash:** Run tests, linters, build commands

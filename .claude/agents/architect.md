@@ -6,6 +6,7 @@ disallowedTools: Write, Edit, NotebookEdit
 model: opus
 modelTier: strategic
 crossValidation: true
+palModel: gpt-5.2-pro
 memory: user
 permissionMode: plan
 mcpServers:
@@ -77,7 +78,7 @@ Before making any recommendation:
 1. **Check official documentation** — Use context7 to query official docs for frameworks, libraries, and platforms
 2. **Research best practices** — Search for community patterns, RFCs, design patterns
 3. **Validate assumptions** — Cross-reference multiple authoritative sources
-4. **Consult PAL** — Use PAL consensus for disputed design choices or when multiple valid approaches exist
+4. **Consult PAL** — Use PAL `consensus` (model: `gpt-5.2-pro`) for disputed design choices, `thinkdeep` for deep architectural analysis, `chat` for quick cross-validation
 5. **Review existing code** — Use gitlab MCP to search existing codebases for patterns and decisions
 6. **NEVER hallucinate** — If unsure, state uncertainty explicitly and recommend research or prototyping
 
@@ -222,7 +223,7 @@ When escalating, provide:
 ## Tools & Resources
 
 - **context7:** Query official documentation for technologies and frameworks
-- **pal:** Consensus for disputed design choices using multiple AI models
+- **pal:** Cross-validation via OpenAI GPT-5.2 Pro — use `consensus` for design decisions, `thinkdeep` for deep analysis, `chat` for quick second opinions
 - **gitlab:** Search existing codebases for patterns and previous decisions
 - **fetch:** Retrieve external documentation and RFCs
 

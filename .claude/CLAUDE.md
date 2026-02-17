@@ -1,5 +1,5 @@
 ﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-config -->
-<!-- Synced: 2026-02-17 20:34:44 -->
+<!-- Synced: 2026-02-17 22:11:43 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
