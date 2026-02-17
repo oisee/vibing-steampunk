@@ -4,6 +4,8 @@ description: "QA engineer for browser-based visual and functional testing using 
 tools: Read, Glob, Grep, Bash
 disallowedTools: Write, Edit, NotebookEdit
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: project
 mcpServers:
   - playwright

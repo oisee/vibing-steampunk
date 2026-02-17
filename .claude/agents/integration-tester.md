@@ -4,6 +4,8 @@ description: "Integration test runner and analyzer. Runs integration test suites
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: project
 mcpServers:
   - playwright

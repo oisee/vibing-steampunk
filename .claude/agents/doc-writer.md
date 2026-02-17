@@ -3,6 +3,8 @@ name: doc-writer
 description: "Documentation writer for README, ROADMAP, ANALYSIS, AGENTS, and API docs. Maintains project documentation accuracy and completeness. Use for documentation updates and creation."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: haiku
+modelTier: routine
+crossValidation: false
 memory: project
 mcpServers:
   - context7

@@ -107,6 +107,71 @@ Supported workflows:
 3. Report merged findings
 ```
 
+## Multi-Model Orchestration
+
+### Model Tier Routing
+
+Each agent has a `modelTier` in its frontmatter. Use `providers.json` to resolve which model to use:
+
+| Tier | Default (Claude Code) | Alternative Providers | When |
+|------|----------------------|----------------------|------|
+| **strategic** | Claude Opus | OpenAI o3, GPT-4o | Architecture, security, audits |
+| **execution** | Claude Sonnet | GPT-4o, DeepSeek Coder | Implementation, testing, review |
+| **routine** | Claude Haiku | GPT-4o-mini | Documentation, formatting |
+
+**In Claude Code runtime:** `model` field (opus/sonnet/haiku) is used directly.
+**In standalone runtime:** `modelTier` maps to `providers.json` for provider selection.
+
+### Cross-Validation Pattern
+
+Agents with `crossValidation: true` MUST get a second opinion from a different provider:
+
+```
+Primary agent (Claude) produces output
+  → PAL MCP calls OpenAI with same prompt
+  → Agent compares both outputs:
+     - Agreements → [C+O] high confidence
+     - Disagreements → flag for human with both views
+     - Union of findings → comprehensive coverage
+```
+
+Agents with cross-validation: architect, dev-lead, security-lead, lead-auditor, security-auditor, code-reviewer, specialist-auditor.
+
+### Agent Invocation Patterns
+
+**Pattern 1: Handoff (current default)**
+Agent A completes → returns NEEDS ASSISTANCE → Orchestrator invokes Agent B → Agent B takes over.
+Agent A is done; Agent B owns the task from here.
+
+**Pattern 2: Agent-as-Tool**
+Orchestrator invokes Agent B as a subtask → Agent B returns result → Orchestrator continues with result.
+Orchestrator keeps control. Agent B is a tool, not a successor.
+
+Use **Handoff** for pipeline stages (architect → dev-lead → backend-dev).
+Use **Agent-as-Tool** for consultation (backend-dev needs security-auditor opinion on one function).
+
+### Artifact Pattern (Context Between Agents)
+
+Instead of passing full conversation history, agents exchange context through files:
+
+```
+architect → writes docs/PLAN.md → dev-lead reads docs/PLAN.md
+dev-lead → writes docs/TASKS.md → backend-dev reads docs/TASKS.md
+code-reviewer → writes docs/REVIEW.md → backend-dev reads docs/REVIEW.md
+```
+
+Benefits:
+- No token waste on history forwarding
+- Works across model providers (file is model-agnostic)
+- Auditable — every artifact is a file in the project
+- Resumable — any agent can pick up from the last artifact
+
+Standard artifact locations:
+- `docs/PLAN.md` — architecture decisions
+- `docs/TASKS.md` — task breakdown
+- `docs/REVIEW.md` — code review findings
+- `docs/AUDIT.md` — audit results
+
 ## MCP Routing Rules
 
 When launching agents, you MUST:

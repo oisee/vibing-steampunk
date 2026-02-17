@@ -3,6 +3,8 @@ name: test-engineer
 description: "Test engineer for writing unit tests, integration tests, test fixtures, and test utilities. Creates comprehensive test coverage with positive, negative, and edge cases. Use for writing and improving tests."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: project
 mcpServers:
   - context7

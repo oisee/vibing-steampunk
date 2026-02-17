@@ -3,6 +3,8 @@ name: frontend-dev
 description: "Frontend developer for HTML, CSS, Jinja2 templates, HTMX, and JavaScript. Implements UI components, layouts, responsive design, and client-side interactions. Use for template, styling, and UI tasks."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: project
 mcpServers:
   - context7

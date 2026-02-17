@@ -4,6 +4,8 @@ description: "Security Lead for security audits, vulnerability scanning, OWASP c
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: opus
+modelTier: strategic
+crossValidation: true
 memory: user
 permissionMode: plan
 mcpServers:

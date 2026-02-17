@@ -4,6 +4,8 @@ description: "Deep security analyst with multi-model cross-validation. Performs 
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit
 model: opus
+modelTier: strategic
+crossValidation: true
 memory: user
 permissionMode: plan
 mcpServers:

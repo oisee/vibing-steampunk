@@ -4,6 +4,8 @@ description: "Lead Auditor for coordinating plan audits. Determines required exp
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: opus
+modelTier: strategic
+crossValidation: true
 memory: user
 permissionMode: plan
 mcpServers:

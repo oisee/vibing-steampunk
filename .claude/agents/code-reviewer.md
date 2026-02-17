@@ -4,6 +4,8 @@ description: "Expert code reviewer with multi-model cross-validation. Reviews co
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit
 model: sonnet
+modelTier: execution
+crossValidation: true
 memory: user
 permissionMode: plan
 mcpServers:

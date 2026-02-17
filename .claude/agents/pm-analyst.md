@@ -4,6 +4,8 @@ description: "Project Management Analyst for sprint planning, status reports, wo
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: user
 mcpServers:
   - gitlab

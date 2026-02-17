@@ -4,6 +4,8 @@ description: "DevOps Lead for CI/CD planning, Docker strategy, deployment planni
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: user
 mcpServers:
   - context7

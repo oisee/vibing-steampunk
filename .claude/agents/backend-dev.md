@@ -3,6 +3,8 @@ name: backend-dev
 description: "Backend developer for Python (FastAPI, MCP SDK, pydantic, asyncio) and Go. Implements service logic, parsers, API endpoints, data models. Use for implementation tasks involving backend code."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: project
 mcpServers:
   - context7

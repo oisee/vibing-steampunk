@@ -4,6 +4,8 @@ description: "QA Lead for test strategy, coverage analysis, quality gates, and t
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+modelTier: execution
+crossValidation: false
 memory: user
 mcpServers:
   - context7

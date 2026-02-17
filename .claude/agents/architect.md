@@ -4,6 +4,8 @@ description: "Chief Architect for architecture decisions, API design, technology
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit
 model: opus
+modelTier: strategic
+crossValidation: true
 memory: user
 permissionMode: plan
 mcpServers:

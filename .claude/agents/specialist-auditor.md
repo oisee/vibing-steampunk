@@ -4,6 +4,8 @@ description: "Domain-specific plan auditor for focused technical review. Assigne
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit
 model: sonnet
+modelTier: execution
+crossValidation: true
 memory: user
 mcpServers:
   - context7
