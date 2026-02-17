@@ -9,6 +9,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/oisee/vibing-steampunk/internal/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -78,6 +79,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&cfg.EnableTransports, "enable-transports", false, "Enable transport management operations (disabled by default for safety)")
 	rootCmd.Flags().BoolVar(&cfg.TransportReadOnly, "transport-read-only", false, "Only allow read operations on transports (list, get)")
 	rootCmd.Flags().StringSliceVar(&cfg.AllowedTransports, "allowed-transports", nil, "Restrict transport operations to specific transports (comma-separated, supports wildcards like A4HK*)")
+	rootCmd.Flags().BoolVar(&cfg.AllowTransportableEdits, "allow-transportable-edits", false, "Allow editing objects in transportable packages (requires transport parameter)")
 
 	// Mode options
 	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (19 essential tools) or expert (all 45 tools)")
@@ -85,6 +87,7 @@ func init() {
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default), "on", "off"
+	rootCmd.Flags().StringVar(&cfg.FeatureHANA, "feature-hana", "auto", "HANA database detection: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAbapGit, "feature-abapgit", "auto", "abapGit integration: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureRAP, "feature-rap", "auto", "RAP/OData development: auto, on, off")
 	rootCmd.Flags().StringVar(&cfg.FeatureAMDP, "feature-amdp", "auto", "AMDP/HANA debugger: auto, on, off")
@@ -114,11 +117,13 @@ func init() {
 	viper.BindPFlag("enable-transports", rootCmd.Flags().Lookup("enable-transports"))
 	viper.BindPFlag("transport-read-only", rootCmd.Flags().Lookup("transport-read-only"))
 	viper.BindPFlag("allowed-transports", rootCmd.Flags().Lookup("allowed-transports"))
+	viper.BindPFlag("allow-transportable-edits", rootCmd.Flags().Lookup("allow-transportable-edits"))
 	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
 	viper.BindPFlag("disabled-groups", rootCmd.Flags().Lookup("disabled-groups"))
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Feature configuration
+	viper.BindPFlag("feature-hana", rootCmd.Flags().Lookup("feature-hana"))
 	viper.BindPFlag("feature-abapgit", rootCmd.Flags().Lookup("feature-abapgit"))
 	viper.BindPFlag("feature-rap", rootCmd.Flags().Lookup("feature-rap"))
 	viper.BindPFlag("feature-amdp", rootCmd.Flags().Lookup("feature-amdp"))
@@ -187,8 +192,30 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if cfg.EnableTransports {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Transport management ENABLED\n")
 		}
+		if cfg.AllowTransportableEdits {
+			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: Transportable edits ENABLED (can modify non-local objects)\n")
+		}
 		if !cfg.ReadOnly && !cfg.BlockFreeSQL && cfg.AllowedOps == "" && cfg.DisallowedOps == "" && len(cfg.AllowedPackages) == 0 {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: UNRESTRICTED (no safety checks active)\n")
+		}
+	}
+
+	// Load granular tool visibility from .vsp.json if present
+	if systemsCfg, configPath, err := config.LoadSystems(); err == nil && systemsCfg != nil {
+		if systemsCfg.Tools != nil {
+			cfg.ToolsConfig = systemsCfg.Tools
+			if cfg.Verbose {
+				enabled := 0
+				disabled := 0
+				for _, v := range systemsCfg.Tools {
+					if v {
+						enabled++
+					} else {
+						disabled++
+					}
+				}
+				fmt.Fprintf(os.Stderr, "[VERBOSE] Tool config loaded from %s: %d enabled, %d disabled\n", configPath, enabled, disabled)
+			}
 		}
 	}
 
@@ -281,8 +308,9 @@ func resolveConfig(cmd *cobra.Command) {
 		cfg.DisallowedOps = viper.GetString("DISALLOWED_OPS")
 	}
 	if !cmd.Flags().Changed("allowed-packages") {
-		if pkgs := viper.GetStringSlice("ALLOWED_PACKAGES"); len(pkgs) > 0 {
-			cfg.AllowedPackages = pkgs
+		// Use GetString and split manually - GetStringSlice doesn't split comma-separated env vars
+		if pkgStr := viper.GetString("ALLOWED_PACKAGES"); pkgStr != "" {
+			cfg.AllowedPackages = splitCommaSeparated(pkgStr)
 		}
 	}
 	if !cmd.Flags().Changed("enable-transports") {
@@ -292,12 +320,21 @@ func resolveConfig(cmd *cobra.Command) {
 		cfg.TransportReadOnly = viper.GetBool("TRANSPORT_READ_ONLY")
 	}
 	if !cmd.Flags().Changed("allowed-transports") {
-		if transports := viper.GetStringSlice("ALLOWED_TRANSPORTS"); len(transports) > 0 {
-			cfg.AllowedTransports = transports
+		// Use GetString and split manually - GetStringSlice doesn't split comma-separated env vars
+		if transportStr := viper.GetString("ALLOWED_TRANSPORTS"); transportStr != "" {
+			cfg.AllowedTransports = splitCommaSeparated(transportStr)
 		}
+	}
+	if !cmd.Flags().Changed("allow-transportable-edits") {
+		cfg.AllowTransportableEdits = viper.GetBool("ALLOW_TRANSPORTABLE_EDITS")
 	}
 
 	// Feature configuration: flag > SAP_FEATURE_* env
+	if !cmd.Flags().Changed("feature-hana") {
+		if v := viper.GetString("FEATURE_HANA"); v != "" {
+			cfg.FeatureHANA = v
+		}
+	}
 	if !cmd.Flags().Changed("feature-abapgit") {
 		if v := viper.GetString("FEATURE_ABAPGIT"); v != "" {
 			cfg.FeatureAbapGit = v
@@ -414,6 +451,23 @@ func processCookieAuth(cmd *cobra.Command) error {
 	}
 
 	return nil
+}
+
+// splitCommaSeparated splits a comma-separated string into a slice, trimming whitespace.
+// This is needed because viper.GetStringSlice doesn't properly split comma-separated env vars.
+func splitCommaSeparated(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func main() {

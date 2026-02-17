@@ -2,6 +2,8 @@ package adt
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -93,4 +95,41 @@ func (c *DebugWebSocketClient) GetDebuggeeID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.debuggeeID
+}
+
+// AbapHelpResponse represents the response from get_abap_help WebSocket call.
+type AbapHelpResponse struct {
+	Keyword string `json:"keyword"`
+	HTML    string `json:"html"`
+	Found   bool   `json:"found"`
+}
+
+// GetAbapDocumentation retrieves ABAP keyword documentation via WebSocket (ZADT_VSP).
+// Uses CL_ABAP_DOCU on the SAP system to get the real documentation.
+func (c *DebugWebSocketClient) GetAbapDocumentation(ctx context.Context, keyword string) (*AbapHelpResponse, error) {
+	params := map[string]any{
+		"keyword": keyword,
+	}
+
+	resp, err := c.SendDomainRequest(ctx, "system", "get_abap_help", params, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("get_abap_help failed: %s - %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("get_abap_help failed")
+	}
+
+	// Parse the response data
+	result := &AbapHelpResponse{}
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, result); err != nil {
+			return nil, fmt.Errorf("failed to parse response: %w", err)
+		}
+	}
+
+	return result, nil
 }

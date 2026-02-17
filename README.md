@@ -11,6 +11,34 @@
 
 ## What's New
 
+**v2.25.0** - CreatePackage Software Component Support
+- **`software_component` Parameter**: Create transportable packages with proper software component (e.g., `HOME`, `ZLOCAL`)
+- **Viper Env Fix**: Comma-separated env vars (`SAP_ALLOWED_PACKAGES`, `SAP_ALLOWED_TRANSPORTS`) now parse correctly
+- **Closes #18**: Namespace URL encoding verified working
+- ⚠️ **Requires**: `--allow-transportable-edits` or `--enable-transports` flag for transportable packages
+
+**v2.24.0** - Transportable Edits Safety Feature
+- **Safety by Default**: Editing objects in transportable packages blocked unless explicitly enabled
+- **`--allow-transportable-edits`**: Opt-in flag to enable editing non-local objects
+- **Transport Whitelisting**: `--allowed-transports "A4HK*,DEVK*"` restricts allowed TRs
+- **Package Whitelisting**: `--allowed-packages "Z*,$TMP"` restricts editable packages
+- **Clear Error Messages**: Explains why edits are blocked and how to enable
+- **Transport Tool Visibility**: `ListTransports`/`GetTransport` visible when flag enabled
+- See [Transportable Edits Report](reports/2026-02-03-002-transportable-edits-safety-feature.md)
+
+**v2.23.0** - GitExport to Disk & GetAbapHelp via WebSocket
+- **GitExport saves ZIP to disk**: No more base64 - files written directly to `output_dir`
+- **GetAbapHelp via WebSocket**: Real SAP documentation from system (uses ZADT_VSP if connected)
+- **Lazy WebSocket Connection**: WebSocket connects on-demand for Git/Help operations
+- **Embedded ABAP Sync**: Updated all ZADT_VSP classes from SAP system (2026-02-02)
+
+**v2.22.0** - SAP GUI Debugger Integration
+- **SAP_TERMINAL_ID**: Share breakpoints between vsp and SAP GUI sessions
+- **MoveObject Tool**: Move ABAP objects between packages (via ZADT_VSP WebSocket)
+- **RunReport Refactor**: Uses background jobs with spool output - more reliable execution
+- **Cross-Tool Debugging**: Set breakpoint in vsp, hit it in SAP GUI (or vice versa)
+- Configure: `--terminal-id <id>` or `SAP_TERMINAL_ID=<id>` (get ID from SAP GUI registry/file)
+
 **v2.21.0** - Method-Level Source Operations
 - **GetSource with `method`**: Returns only the `METHOD...ENDMETHOD` block (~50 lines vs 1000+)
 - **EditSource with `method`**: Constrains find/replace to specific method - no accidental edits elsewhere
@@ -115,9 +143,10 @@
 
 **v2.11.0** - Transport Management & Safety Controls
 - **5 Transport Tools**: ListTransports, GetTransport, CreateTransport, ReleaseTransport, DeleteTransport
-- **Safety Controls**: `--enable-transports`, `--transport-read-only`, `--allowed-transports "A4HK*"`
+- **Safety Controls**: `--enable-transports`, `--allowed-transports "A4HK*"`, `--allowed-packages "Z*"`
 - **Tool Group "C"**: Disable all CTS tools with `--disabled-groups C`
 - Enterprise-grade transport governance for AI assistants
+- See also v2.24.0 for `--allow-transportable-edits` safety feature
 
 **v2.10.0** - UI5/BSP Management & Tool Groups
 - **7 UI5/BSP Tools**: List apps, read files, search content, view manifests
@@ -305,6 +334,10 @@ SAP_PASSWORD=secret
 | `--mode` | `SAP_MODE` | `focused` (default) or `expert` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification |
+| `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |
+| `--allow-transportable-edits` | `SAP_ALLOW_TRANSPORTABLE_EDITS` | Enable editing transportable objects |
+| `--allowed-transports` | `SAP_ALLOWED_TRANSPORTS` | Whitelist transports (wildcards: `A4HK*`) |
+| `--allowed-packages` | `SAP_ALLOWED_PACKAGES` | Whitelist packages (wildcards: `Z*,$TMP`) |
 
 </details>
 
@@ -347,6 +380,49 @@ Add `.mcp.json` to your project:
   }
 }
 ```
+
+### Transportable Packages Configuration
+
+To work with transportable packages (non-`$` prefixed), you **must** explicitly enable transport support:
+
+```json
+{
+  "mcpServers": {
+    "abap-adt": {
+      "command": "/path/to/vsp",
+      "env": {
+        "SAP_URL": "https://your-sap-host:44300",
+        "SAP_USER": "your-username",
+        "SAP_PASSWORD": "your-password",
+        "SAP_CLIENT": "001",
+        "SAP_ALLOW_TRANSPORTABLE_EDITS": "true",
+        "SAP_ALLOWED_TRANSPORTS": "DEVK*,A4HK*",
+        "SAP_ALLOWED_PACKAGES": "ZPROD,$TMP,$*,Z*"
+      }
+    }
+  }
+}
+```
+
+| Env Variable | Purpose |
+|-------------|---------|
+| `SAP_ALLOW_TRANSPORTABLE_EDITS` | Enable editing objects in transportable packages |
+| `SAP_ENABLE_TRANSPORTS` | Enable full transport management (create, release) |
+| `SAP_ALLOWED_TRANSPORTS` | Whitelist transport patterns (wildcards supported) |
+| `SAP_ALLOWED_PACKAGES` | Whitelist package patterns (wildcards supported) |
+
+**CreatePackage with software component:**
+```
+CreatePackage(
+  name="ZPROD_005",
+  description="Sub-package",
+  parent="ZPROD",
+  transport="DEVK900123",
+  software_component="HOME"
+)
+```
+
+Without these flags, operations on transportable packages will be blocked by the safety system.
 
 ## Focused vs Expert Mode
 
@@ -420,6 +496,120 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 See [docs/DSL.md](docs/DSL.md) for complete documentation.
 
+## RAP OData Service Creation
+
+VSP supports full RAP OData E2E development since v2.6.0. Create complete OData services via AI assistant:
+
+### Step-by-Step Workflow
+
+**1. Create CDS View (DDLS)**
+```
+WriteSource(
+  object_type="DDLS",
+  name="ZTRAVEL",
+  package="$TMP",
+  description="Travel Entity",
+  source=`
+@EndUserText.label: 'Travel'
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+define root view entity ZTRAVEL as select from ztravel_tab {
+  key travel_id as TravelId,
+  description as Description,
+  start_date as StartDate,
+  end_date as EndDate,
+  status as Status
+}
+`
+)
+```
+
+**2. Create Behavior Definition (BDEF)**
+```
+WriteSource(
+  object_type="BDEF",
+  name="ZTRAVEL",
+  package="$TMP",
+  description="Travel Behavior",
+  source=`
+managed implementation in class ZBP_TRAVEL unique;
+strict ( 2 );
+
+define behavior for ZTRAVEL alias Travel
+persistent table ztravel_tab
+lock master
+authorization master ( instance )
+{
+  field ( readonly ) TravelId;
+  field ( mandatory ) Description;
+
+  create;
+  update;
+  delete;
+
+  mapping for ztravel_tab {
+    TravelId = travel_id;
+    Description = description;
+    StartDate = start_date;
+    EndDate = end_date;
+    Status = status;
+  }
+}
+`
+)
+```
+
+**3. Create Service Definition (SRVD)**
+```
+WriteSource(
+  object_type="SRVD",
+  name="ZTRAVEL_SD",
+  package="$TMP",
+  description="Travel Service Definition",
+  source=`
+@EndUserText.label: 'Travel Service'
+define service ZTRAVEL_SD {
+  expose ZTRAVEL;
+}
+`
+)
+```
+
+**4. Create Service Binding (SRVB)**
+```
+WriteSource(
+  object_type="SRVB",
+  name="ZTRAVEL_SB",
+  package="$TMP",
+  description="Travel OData V4 Binding",
+  service_definition="ZTRAVEL_SD",
+  binding_version="V4"
+)
+```
+
+### Binding Options
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `binding_version` | `V2`, `V4` | OData protocol version |
+| `binding_category` | `0`, `1` | `0`=Web API, `1`=UI |
+
+### For Transportable Packages
+
+Add `transport` parameter to all WriteSource calls:
+```
+WriteSource(
+  object_type="DDLS",
+  name="ZTRAVEL",
+  package="ZPROD",
+  transport="DEVK900123",
+  ...
+)
+```
+
+### Related
+- [RAP OData Lessons Report](reports/2025-12-08-003-rap-odata-service-lessons.md)
+- DSL Pipeline: `dsl.RAPPipeline(client, "./src/", "$PKG", "ZSRV_SB")`
+
 ## ExecuteABAP
 
 Run arbitrary ABAP code via unit test wrapper:
@@ -465,7 +655,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
   - *Note: Breakpoints now managed via WebSocket (ZADT_VSP)*
-- **Write:** WriteSource, EditSource, ImportFromFile, ExportToFile
+- **Write:** WriteSource, EditSource, ImportFromFile, ExportToFile, MoveObject
 - **Dev:** SyntaxCheck, RunUnitTests, RunATCCheck, LockObject, UnlockObject
 - **Intelligence:** FindDefinition, FindReferences
 - **System:** GetSystemInfo, GetInstalledComponents, GetCallGraph, GetObjectStructure, GetFeatures

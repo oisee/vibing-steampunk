@@ -154,6 +154,16 @@ func WithAllowedTransports(transports ...string) Option {
 	}
 }
 
+// WithAllowTransportableEdits enables editing objects that require transport requests.
+// By default, only local objects ($TMP, $* packages) can be edited.
+// When enabled, users can provide transport parameters to EditSource/WriteSource.
+// WARNING: This allows modifications to non-local objects that may affect production systems.
+func WithAllowTransportableEdits() Option {
+	return func(c *Config) {
+		c.Safety.AllowTransportableEdits = true
+	}
+}
+
 // HasBasicAuth returns true if username and password are configured.
 func (c *Config) HasBasicAuth() bool {
 	return c.Username != "" && c.Password != ""
@@ -208,6 +218,7 @@ func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
 	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: c.InsecureSkipVerify,
 		},

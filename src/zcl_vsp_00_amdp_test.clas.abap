@@ -1,4 +1,4 @@
-CLASS zcl_adt_00_amdp_test DEFINITION
+CLASS zcl_vsp_00_amdp_test DEFINITION
   PUBLIC
   FINAL
   CREATE PUBLIC.
@@ -23,7 +23,7 @@ CLASS zcl_adt_00_amdp_test DEFINITION
   PRIVATE SECTION.
 ENDCLASS.
 
-CLASS zcl_adt_00_amdp_test IMPLEMENTATION.
+CLASS zcl_vsp_00_amdp_test IMPLEMENTATION.
 
   METHOD calculate_squares BY DATABASE PROCEDURE FOR HDB
                            LANGUAGE SQLSCRIPT

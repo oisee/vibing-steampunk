@@ -40,6 +40,10 @@ CLASS zcl_vsp_rfc_service DEFINITION
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
+    METHODS handle_run_report
+      IMPORTING is_message         TYPE zif_vsp_service=>ty_message
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
+
     METHODS get_func_interface
       IMPORTING iv_function       TYPE rs38l_fnam
       EXPORTING et_import         TYPE tt_param_info
@@ -55,6 +59,21 @@ CLASS zcl_vsp_rfc_service DEFINITION
     METHODS create_table_data
       IMPORTING is_param       TYPE ty_param_info
       RETURNING VALUE(ro_data) TYPE REF TO data.
+
+    METHODS extract_param
+      IMPORTING iv_params       TYPE string
+                iv_name         TYPE string
+      RETURNING VALUE(rv_value) TYPE string.
+
+    METHODS escape_json
+      IMPORTING iv_string         TYPE string
+      RETURNING VALUE(rv_escaped) TYPE string.
+
+    METHODS build_error
+      IMPORTING iv_id            TYPE string
+                iv_code          TYPE string
+                iv_message       TYPE string
+      RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
 
 ENDCLASS.
 
@@ -77,8 +96,10 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
         rs_response = handle_ping( is_message ).
       WHEN 'moveToPackage'.
         rs_response = handle_move_to_package( is_message ).
+      WHEN 'runReport'.
+        rs_response = handle_run_report( is_message ).
       WHEN OTHERS.
-        rs_response = zcl_vsp_utils=>build_error(
+        rs_response = build_error(
           iv_id      = is_message-id
           iv_code    = 'UNKNOWN_ACTION'
           iv_message = 'Action not supported'
@@ -91,22 +112,22 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
 
   METHOD handle_move_to_package.
     " Extract parameters: pgmid, object, obj_name, new_package
-    DATA(lv_pgmid) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'pgmid' ).
-    DATA(lv_object) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'object' ).
-    DATA(lv_obj_name) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'obj_name' ).
-    DATA(lv_new_pkg) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'new_package' ).
+    DATA(lv_pgmid) = extract_param( iv_params = is_message-params iv_name = 'pgmid' ).
+    DATA(lv_object) = extract_param( iv_params = is_message-params iv_name = 'object' ).
+    DATA(lv_obj_name) = extract_param( iv_params = is_message-params iv_name = 'obj_name' ).
+    DATA(lv_new_pkg) = extract_param( iv_params = is_message-params iv_name = 'new_package' ).
 
     " Validate required params
     IF lv_object IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter object is required (e.g., CLAS, PROG, INTF, SAPC)' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter object is required (e.g., CLAS, PROG, INTF, SAPC)' ).
       RETURN.
     ENDIF.
     IF lv_obj_name IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter obj_name is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter obj_name is required' ).
       RETURN.
     ENDIF.
     IF lv_new_pkg IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter new_package is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter new_package is required' ).
       RETURN.
     ENDIF.
 
@@ -124,38 +145,31 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     " Call ZADT_CL_TADIR_MOVE to perform the move
     DATA lv_result TYPE string.
     TRY.
-        " Note: Use move_object (not move_object_and_commit) because
-        " COMMIT WORK is not allowed in APC/WebSocket context.
-        " The change persists via TR_TADIR_INTERFACE's internal handling.
-        lv_result = zadt_cl_tadir_move=>move_object(
+        lv_result = zadt_cl_tadir_move=>move_object_and_commit(
           iv_pgmid    = CONV #( lv_pgmid )
           iv_object   = CONV #( lv_object )
           iv_obj_name = CONV #( lv_obj_name )
           iv_new_pkg  = CONV #( lv_new_pkg )
         ).
       CATCH cx_root INTO DATA(lx_error).
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MOVE_ERROR' iv_message = lx_error->get_text( ) ).
+        rs_response = build_error( iv_id = is_message-id iv_code = 'MOVE_ERROR' iv_message = lx_error->get_text( ) ).
         RETURN.
     ENDTRY.
 
-    " Build response using json helpers
-    DATA(lv_success_bool) = xsdbool( lv_result CP 'SUCCESS*' ).
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_bool( iv_key = 'success' iv_value = lv_success_bool ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'pgmid' iv_value = lv_pgmid ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'object' iv_value = lv_object ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'obj_name' iv_value = lv_obj_name ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'new_package' iv_value = lv_new_pkg ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'message' iv_value = lv_result ) )
-    ) ) ).
+    " Build response
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA(lv_success) = COND string( WHEN lv_result CP 'SUCCESS*' THEN 'true' ELSE 'false' ).
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"success":{ lv_success },"pgmid":"{ lv_pgmid }","object":"{ lv_object }","obj_name":"{ lv_obj_name }","new_package":"{ lv_new_pkg }","message":"{ escape_json( lv_result ) }"{ lv_c }|.
 
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_call.
-    DATA(lv_function) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'function' ).
+    DATA(lv_function) = extract_param( iv_params = is_message-params iv_name = 'function' ).
     IF lv_function IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter function is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter function is required' ).
       RETURN.
     ENDIF.
     TRANSLATE lv_function TO UPPER CASE.
@@ -168,7 +182,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     IF get_func_interface( EXPORTING iv_function = CONV #( lv_function )
                            IMPORTING et_import = lt_import et_export = lt_export
                                      et_changing = lt_changing et_tables = lt_tables ) = abap_false.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'FUNC_NOT_FOUND' iv_message = |Function { lv_function } not found| ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'FUNC_NOT_FOUND' iv_message = |Function { lv_function } not found| ).
       RETURN.
     ENDIF.
 
@@ -184,7 +198,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       CLEAR: ls_ptab, lo_data, lv_val.
       lo_data = create_param_data( ls_imp ).
       IF lo_data IS BOUND.
-        lv_val = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ).
+        lv_val = extract_param( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ).
         IF lv_val IS NOT INITIAL.
           ASSIGN lo_data->* TO <fs_val>.
           IF sy-subrc = 0.
@@ -232,98 +246,124 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
           PARAMETER-TABLE lt_ptab
           EXCEPTION-TABLE lt_etab.
       CATCH cx_root INTO DATA(lx_call).
-        rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'CALL_ERROR' iv_message = lx_call->get_text( ) ).
+        rs_response = build_error( iv_id = is_message-id iv_code = 'CALL_ERROR' iv_message = lx_call->get_text( ) ).
         RETURN.
     ENDTRY.
 
     DATA(lv_subrc) = sy-subrc.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"subrc":{ lv_subrc },"exports":{ lv_o }|.
 
-    " Build exports JSON
-    DATA lt_exports TYPE string_table.
+    DATA lv_first TYPE abap_bool VALUE abap_true.
     DATA lv_str TYPE string.
     LOOP AT lt_ptab INTO DATA(ls_out) WHERE kind = abap_func_importing.
       ASSIGN ls_out-value->* TO FIELD-SYMBOL(<fs_out>).
       IF sy-subrc = 0.
+        IF lv_first = abap_false.
+          lv_json = |{ lv_json },|.
+        ENDIF.
         DATA(lv_pname) = CONV string( ls_out-name ).
         CONDENSE lv_pname.
         DATA(lo_exp_type) = cl_abap_typedescr=>describe_by_data( <fs_out> ).
         IF lo_exp_type->kind = cl_abap_typedescr=>kind_elem.
           TRY.
               lv_str = <fs_out>.
+              lv_str = escape_json( lv_str ).
             CATCH cx_root.
               lv_str = ''.
           ENDTRY.
-          APPEND zcl_vsp_utils=>json_str( iv_key = lv_pname iv_value = lv_str ) TO lt_exports.
+          lv_json = |{ lv_json }"{ lv_pname }":"{ lv_str }"|.
         ELSE.
-          " Handle structure
-          DATA(lt_struct_parts) = VALUE string_table( ).
+          lv_json = |{ lv_json }"{ lv_pname }":{ lv_o }|.
           DATA(lo_exp_struc) = CAST cl_abap_structdescr( lo_exp_type ).
+          DATA lv_exp_first TYPE abap_bool.
+          lv_exp_first = abap_true.
           LOOP AT lo_exp_struc->components INTO DATA(ls_exp_comp).
+            IF lv_exp_first = abap_false.
+              lv_json = |{ lv_json },|.
+            ENDIF.
             ASSIGN COMPONENT ls_exp_comp-name OF STRUCTURE <fs_out> TO FIELD-SYMBOL(<fs_exp_comp>).
             IF sy-subrc = 0.
               DATA(lo_comp_type) = cl_abap_typedescr=>describe_by_data( <fs_exp_comp> ).
               IF lo_comp_type->kind = cl_abap_typedescr=>kind_elem.
                 TRY.
                     lv_str = <fs_exp_comp>.
+                    lv_str = escape_json( lv_str ).
                   CATCH cx_root.
                     lv_str = ''.
                 ENDTRY.
               ELSE.
                 lv_str = '[complex]'.
               ENDIF.
-              APPEND zcl_vsp_utils=>json_str( iv_key = CONV #( ls_exp_comp-name ) iv_value = lv_str ) TO lt_struct_parts.
+              lv_json = |{ lv_json }"{ ls_exp_comp-name }":"{ lv_str }"|.
             ENDIF.
+            lv_exp_first = abap_false.
           ENDLOOP.
-          APPEND |"{ lv_pname }":{ zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_struct_parts ) ) }| TO lt_exports.
+          lv_json = |{ lv_json }{ lv_c }|.
         ENDIF.
+        lv_first = abap_false.
       ENDIF.
     ENDLOOP.
 
-    " Build tables JSON
-    DATA lt_tables_json TYPE string_table.
+    lv_json = |{ lv_json }{ lv_c },"tables":{ lv_o }|.
+
+    lv_first = abap_true.
     LOOP AT lt_ptab INTO ls_out WHERE kind = abap_func_tables.
       ASSIGN ls_out-value->* TO FIELD-SYMBOL(<fs_tab>).
       IF sy-subrc = 0.
+        IF lv_first = abap_false.
+          lv_json = |{ lv_json },|.
+        ENDIF.
         lv_pname = CONV string( ls_out-name ).
         CONDENSE lv_pname.
-        DATA(lt_rows) = VALUE string_table( ).
+        lv_json = |{ lv_json }"{ lv_pname }":[|.
+        DATA lv_row_first TYPE abap_bool.
+        lv_row_first = abap_true.
         TRY.
             LOOP AT <fs_tab> ASSIGNING FIELD-SYMBOL(<fs_row>).
-              DATA(lt_row_parts) = VALUE string_table( ).
+              IF lv_row_first = abap_false.
+                lv_json = |{ lv_json },|.
+              ENDIF.
+              lv_json = |{ lv_json }{ lv_o }|.
               DATA(lo_struc) = CAST cl_abap_structdescr( cl_abap_typedescr=>describe_by_data( <fs_row> ) ).
+              DATA lv_comp_first TYPE abap_bool.
+              lv_comp_first = abap_true.
               LOOP AT lo_struc->components INTO DATA(ls_comp).
+                IF lv_comp_first = abap_false.
+                  lv_json = |{ lv_json },|.
+                ENDIF.
                 ASSIGN COMPONENT ls_comp-name OF STRUCTURE <fs_row> TO FIELD-SYMBOL(<fs_comp>).
                 IF sy-subrc = 0.
                   DATA(lo_type) = cl_abap_typedescr=>describe_by_data( <fs_comp> ).
                   IF lo_type->kind = cl_abap_typedescr=>kind_elem.
                     TRY.
                         lv_str = <fs_comp>.
+                        lv_str = escape_json( lv_str ).
                       CATCH cx_root.
                         lv_str = ''.
                     ENDTRY.
                   ELSE.
                     lv_str = '[complex]'.
                   ENDIF.
-                  APPEND zcl_vsp_utils=>json_str( iv_key = CONV #( ls_comp-name ) iv_value = lv_str ) TO lt_row_parts.
+                  lv_json = |{ lv_json }"{ ls_comp-name }":"{ lv_str }"|.
                 ENDIF.
+                lv_comp_first = abap_false.
               ENDLOOP.
-              APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_row_parts ) ) TO lt_rows.
+              lv_json = |{ lv_json }{ lv_c }|.
+              lv_row_first = abap_false.
             ENDLOOP.
           CATCH cx_root.
-            APPEND zcl_vsp_utils=>json_obj( `"error":"serialization failed"` ) TO lt_rows.
+            lv_json = |{ lv_json }{ lv_o }"error":"serialization failed"{ lv_c }|.
         ENDTRY.
-        APPEND |"{ lv_pname }":{ zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_rows ) ) }| TO lt_tables_json.
+        lv_json = |{ lv_json }]|.
+        lv_first = abap_false.
       ENDIF.
     ENDLOOP.
 
-    " Build final response
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_int( iv_key = 'subrc' iv_value = lv_subrc ) )
-      ( |"exports":{ zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_exports ) ) }| )
-      ( |"tables":{ zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( lt_tables_json ) ) }| )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    lv_json = |{ lv_json }{ lv_c }{ lv_c }|.
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD create_param_data.
@@ -368,9 +408,9 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD handle_get_metadata.
-    DATA(lv_function) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'function' ).
+    DATA(lv_function) = extract_param( iv_params = is_message-params iv_name = 'function' ).
     IF lv_function IS INITIAL.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter function is required' ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter function is required' ).
       RETURN.
     ENDIF.
     TRANSLATE lv_function TO UPPER CASE.
@@ -383,67 +423,56 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
     IF get_func_interface( EXPORTING iv_function = CONV #( lv_function )
                            IMPORTING et_import = lt_import et_export = lt_export
                                      et_changing = lt_changing et_tables = lt_tables ) = abap_false.
-      rs_response = zcl_vsp_utils=>build_error( iv_id = is_message-id iv_code = 'FUNC_NOT_FOUND' iv_message = |Function { lv_function } not found| ).
+      rs_response = build_error( iv_id = is_message-id iv_code = 'FUNC_NOT_FOUND' iv_message = |Function { lv_function } not found| ).
       RETURN.
     ENDIF.
 
-    " Build parameters array
-    DATA lt_params TYPE string_table.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"function":"{ lv_function }","parameters":[|.
+
+    DATA lv_first TYPE abap_bool VALUE abap_true.
 
     LOOP AT lt_import INTO DATA(ls_i).
+      IF lv_first = abap_false. lv_json = |{ lv_json },|. ENDIF.
       DATA(lv_typ) = COND string( WHEN strlen( ls_i-typ ) > 0 THEN ls_i-typ ELSE ls_i-dbfield ).
+      DATA(lv_opt) = COND string( WHEN ls_i-optional = abap_true THEN 'true' ELSE 'false' ).
       DATA(lv_pname) = CONV string( ls_i-parameter ).
       CONDENSE lv_pname.
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-        ( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = lv_pname ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'kind' iv_value = 'importing' ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = lv_typ ) )
-        ( zcl_vsp_utils=>json_bool( iv_key = 'optional' iv_value = ls_i-optional ) )
-      ) ) ) TO lt_params.
+      lv_json = |{ lv_json }{ lv_o }"name":"{ lv_pname }","kind":"importing","type":"{ lv_typ }","optional":{ lv_opt }{ lv_c }|.
+      lv_first = abap_false.
     ENDLOOP.
 
     LOOP AT lt_export INTO DATA(ls_e).
+      IF lv_first = abap_false. lv_json = |{ lv_json },|. ENDIF.
       lv_typ = COND string( WHEN strlen( ls_e-typ ) > 0 THEN ls_e-typ ELSE ls_e-dbfield ).
       lv_pname = CONV string( ls_e-parameter ).
       CONDENSE lv_pname.
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-        ( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = lv_pname ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'kind' iv_value = 'exporting' ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = lv_typ ) )
-        ( zcl_vsp_utils=>json_bool( iv_key = 'optional' iv_value = abap_true ) )
-      ) ) ) TO lt_params.
+      lv_json = |{ lv_json }{ lv_o }"name":"{ lv_pname }","kind":"exporting","type":"{ lv_typ }","optional":true{ lv_c }|.
+      lv_first = abap_false.
     ENDLOOP.
 
     LOOP AT lt_changing INTO DATA(ls_ch).
+      IF lv_first = abap_false. lv_json = |{ lv_json },|. ENDIF.
       lv_typ = COND string( WHEN strlen( ls_ch-typ ) > 0 THEN ls_ch-typ ELSE ls_ch-dbfield ).
       lv_pname = CONV string( ls_ch-parameter ).
       CONDENSE lv_pname.
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-        ( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = lv_pname ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'kind' iv_value = 'changing' ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = lv_typ ) )
-        ( zcl_vsp_utils=>json_bool( iv_key = 'optional' iv_value = abap_true ) )
-      ) ) ) TO lt_params.
+      lv_json = |{ lv_json }{ lv_o }"name":"{ lv_pname }","kind":"changing","type":"{ lv_typ }","optional":true{ lv_c }|.
+      lv_first = abap_false.
     ENDLOOP.
 
     LOOP AT lt_tables INTO DATA(ls_t).
+      IF lv_first = abap_false. lv_json = |{ lv_json },|. ENDIF.
       lv_typ = COND string( WHEN strlen( ls_t-typ ) > 0 THEN ls_t-typ ELSE ls_t-dbfield ).
       lv_pname = CONV string( ls_t-parameter ).
       CONDENSE lv_pname.
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-        ( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = lv_pname ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'kind' iv_value = 'tables' ) )
-        ( zcl_vsp_utils=>json_str( iv_key = 'type' iv_value = lv_typ ) )
-        ( zcl_vsp_utils=>json_bool( iv_key = 'optional' iv_value = abap_true ) )
-      ) ) ) TO lt_params.
+      lv_json = |{ lv_json }{ lv_o }"name":"{ lv_pname }","kind":"tables","type":"{ lv_typ }","optional":true{ lv_c }|.
+      lv_first = abap_false.
     ENDLOOP.
 
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_str( iv_key = 'function' iv_value = lv_function ) )
-      ( |"parameters":{ zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_params ) ) }| )
-    ) ) ).
-
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    lv_json = |{ lv_json }]{ lv_c }|.
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD get_func_interface.
@@ -493,7 +522,7 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
 
   METHOD handle_search.
     DATA lv_pattern TYPE string.
-    lv_pattern = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'pattern' ).
+    lv_pattern = extract_param( iv_params = is_message-params iv_name = 'pattern' ).
     IF lv_pattern IS INITIAL.
       lv_pattern = '%'.
     ENDIF.
@@ -506,25 +535,125 @@ CLASS zcl_vsp_rfc_service IMPLEMENTATION.
       WHERE funcname LIKE lv_pattern
       ORDER BY funcname.
 
-    " Build array of function names
-    DATA lt_items TYPE string_table.
+    DATA lv_json TYPE string.
+    DATA lv_first TYPE abap_bool VALUE abap_true.
+    lv_json = '['.
     LOOP AT lt_funcs INTO DATA(lv_func).
-      APPEND zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_str( iv_key = 'name' iv_value = CONV #( lv_func ) ) ) TO lt_items.
+      IF lv_first = abap_false.
+        CONCATENATE lv_json ',' INTO lv_json.
+      ENDIF.
+      CONCATENATE lv_json '{"name":"' lv_func '"}' INTO lv_json.
+      lv_first = abap_false.
     ENDLOOP.
+    CONCATENATE lv_json ']' INTO lv_json.
 
-    rs_response = zcl_vsp_utils=>build_success(
-      iv_id   = is_message-id
-      iv_data = zcl_vsp_utils=>json_arr( zcl_vsp_utils=>json_join( lt_items ) )
-    ).
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
   METHOD handle_ping.
-    DATA(lv_ts) = |{ sy-datum }{ sy-uzeit }|.
-    DATA(lv_data) = zcl_vsp_utils=>json_obj( zcl_vsp_utils=>json_join( VALUE #(
-      ( zcl_vsp_utils=>json_bool( iv_key = 'pong' iv_value = abap_true ) )
-      ( zcl_vsp_utils=>json_str( iv_key = 'timestamp' iv_value = lv_ts ) )
-    ) ) ).
-    rs_response = zcl_vsp_utils=>build_success( iv_id = is_message-id iv_data = lv_data ).
+    DATA lv_ts TYPE string.
+    lv_ts = sy-datum && sy-uzeit.
+    rs_response = VALUE #( id = is_message-id success = abap_true data = '{"pong":true,"timestamp":"' && lv_ts && '"}' ).
+  ENDMETHOD.
+
+  METHOD extract_param.
+    DATA lv_name TYPE string.
+    lv_name = iv_name.
+    CONDENSE lv_name.
+
+    DATA lv_regex TYPE string.
+    CONCATENATE '"' lv_name '":' INTO lv_regex.
+    DATA lv_pos TYPE i.
+    FIND lv_regex IN iv_params MATCH OFFSET lv_pos.
+    IF sy-subrc = 0.
+      DATA lv_rest TYPE string.
+      lv_rest = iv_params+lv_pos.
+      FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD escape_json.
+    rv_escaped = iv_string.
+    REPLACE ALL OCCURRENCES OF '\' IN rv_escaped WITH '\\'.
+    REPLACE ALL OCCURRENCES OF '"' IN rv_escaped WITH '\"'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf IN rv_escaped WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>newline IN rv_escaped WITH '\n'.
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>horizontal_tab IN rv_escaped WITH '\t'.
+  ENDMETHOD.
+
+  METHOD build_error.
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    rs_response = VALUE #(
+      id      = iv_id
+      success = abap_false
+      error   = |{ lv_o }"code":"{ iv_code }","message":"{ escape_json( iv_message ) }"{ lv_c }|
+    ).
+  ENDMETHOD.
+
+  METHOD handle_run_report.
+    " Run a report via async RFC - workaround for APC_ILLEGAL_STATEMENT with SUBMIT
+    " Uses STARTING NEW TASK to run in separate work process
+    DATA: lv_report  TYPE progname,
+          lv_variant TYPE raldb_vari,
+          lv_task    TYPE string.
+
+    DATA(lv_report_str) = extract_param( iv_params = is_message-params iv_name = 'report' ).
+    DATA(lv_variant_str) = extract_param( iv_params = is_message-params iv_name = 'variant' ).
+
+    IF lv_report_str IS INITIAL.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'MISSING_PARAM' iv_message = 'Parameter report is required' ).
+      RETURN.
+    ENDIF.
+
+    TRANSLATE lv_report_str TO UPPER CASE.
+    lv_report = lv_report_str.
+
+    IF lv_variant_str IS NOT INITIAL.
+      TRANSLATE lv_variant_str TO UPPER CASE.
+      lv_variant = lv_variant_str.
+    ENDIF.
+
+    " Verify report exists
+    SELECT SINGLE name FROM trdir INTO @DATA(lv_exists) WHERE name = @lv_report.
+    IF sy-subrc <> 0.
+      rs_response = build_error( iv_id = is_message-id iv_code = 'REPORT_NOT_FOUND' iv_message = |Report { lv_report } not found| ).
+      RETURN.
+    ENDIF.
+
+    " Generate unique task name
+    lv_task = |VSP_{ sy-uzeit }|.
+
+    " Call RFC async to run in separate work process
+    " This avoids APC_ILLEGAL_STATEMENT since SUBMIT happens in different process
+    TRY.
+        CALL FUNCTION 'RFC_ABAP_INSTALL_AND_RUN'
+          STARTING NEW TASK lv_task
+          EXPORTING
+            program_name = lv_report
+          EXCEPTIONS
+            system_failure        = 1
+            communication_failure = 2
+            resource_failure      = 3
+            OTHERS                = 4.
+
+        IF sy-subrc <> 0.
+          rs_response = build_error( iv_id = is_message-id iv_code = 'RFC_ERROR' iv_message = |Async RFC failed: { sy-subrc }| ).
+          RETURN.
+        ENDIF.
+
+      CATCH cx_root INTO DATA(lx_error).
+        rs_response = build_error( iv_id = is_message-id iv_code = 'RFC_ERROR' iv_message = lx_error->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    " Success response - note that execution is async
+    DATA(lv_o) = '{'.
+    DATA(lv_c) = '}'.
+    DATA lv_json TYPE string.
+    lv_json = |{ lv_o }"status":"started","report":"{ lv_report }","task":"{ lv_task }","mode":"async_rfc"{ lv_c }|.
+
+    rs_response = VALUE #( id = is_message-id success = abap_true data = lv_json ).
   ENDMETHOD.
 
 ENDCLASS.

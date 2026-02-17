@@ -57,6 +57,11 @@ type TransportInfo struct {
 	LockedInTask   string             `json:"lockedInTask,omitempty"`
 }
 
+const (
+	acceptTransportOrganizerV1     = "application/vnd.sap.adt.transportorganizer.v1+xml"
+	acceptTransportOrganizerTreeV1 = "application/vnd.sap.adt.transportorganizertree.v1+xml"
+)
+
 // --- Transport Operations ---
 
 // GetUserTransports retrieves all transport requests for a user.
@@ -69,41 +74,16 @@ func (c *Client) GetUserTransports(ctx context.Context, userName string) (*UserT
 
 	userName = strings.ToUpper(userName)
 
-	// Try with target parameter (systems may require explicit target specification)
-	query := map[string][]string{
-		"user": {userName},
-	}
-
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
-		Method:        http.MethodGet,
-		Query:         query,
-		Accept:        "application/vnd.sap.adt.transportorganizertree.v1+xml",
-		SkipSAPParams: true, // Only send user parameter, no sap-client/sap-language
+		Method: http.MethodGet,
+		Query:  map[string][]string{"user": {userName}, "targets": {"true"}},
+		Accept: acceptTransportOrganizerTreeV1 + ", " + acceptTransportOrganizerV1 + ";q=0.9",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get user transports failed: %w", err)
 	}
 
-	result, err := parseUserTransports(resp.Body)
-	if err != nil {
-		// Include XML in error for debugging
-		xmlPreview := string(resp.Body)
-		if len(xmlPreview) > 1000 {
-			xmlPreview = xmlPreview[:1000] + "..."
-		}
-		return nil, fmt.Errorf("parsing user transports: %w\nXML received:\n%s", err, xmlPreview)
-	}
-
-	// DEBUG: If no results, include XML for analysis
-	if len(result.Workbench) == 0 && len(result.Customizing) == 0 {
-		xmlPreview := string(resp.Body)
-		if len(xmlPreview) > 2000 {
-			xmlPreview = xmlPreview[:2000] + "..."
-		}
-		return nil, fmt.Errorf("[DEBUG] no transports found for user %s.\nXML received:\n%s", userName, xmlPreview)
-	}
-
-	return result, nil
+	return parseUserTransports(resp.Body)
 }
 
 func parseUserTransports(data []byte) (*UserTransports, error) {
@@ -450,7 +430,8 @@ type ReleaseTransportOptions struct {
 	SkipATC     bool
 }
 
-// ListTransports returns transport requests for a user
+// ListTransports returns transport requests for a user.
+// First tries ADT API, falls back to E070/E07T table query if ADT returns empty.
 func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSummary, error) {
 	// Safety check
 	if err := c.config.Safety.CheckTransport("", "ListTransports", false); err != nil {
@@ -461,84 +442,149 @@ func (c *Client) ListTransports(ctx context.Context, user string) ([]TransportSu
 		user = c.config.Username
 	}
 
-	// Try without version in Accept header, and skip sap-client/sap-language
+	// Try ADT API first
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
-		Method:        http.MethodGet,
-		Query:         map[string][]string{"user": {strings.ToUpper(user)}},
-		Accept:        "*/*",
-		SkipSAPParams: true, // Only send user parameter
+		Method: http.MethodGet,
+		Query:  map[string][]string{"user": {strings.ToUpper(user)}},
+		Accept: acceptTransportOrganizerTreeV1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing transports: %w", err)
 	}
 
-	// Parse the hierarchical transport tree
-	userTransports, err := parseUserTransports(resp.Body)
+	transports, err := parseTransportList(resp.Body)
 	if err != nil {
-		// Include XML in error for debugging
-		xmlPreview := string(resp.Body)
-		if len(xmlPreview) > 500 {
-			xmlPreview = xmlPreview[:500] + "..."
-		}
-		return nil, fmt.Errorf("parsing user transports: %w\nXML received:\n%s", err, xmlPreview)
+		return nil, err
 	}
 
-	// Flatten to TransportSummary list
-	var result []TransportSummary
-
-	// Add all workbench requests (removed status filter for debugging)
-	for _, req := range userTransports.Workbench {
-		result = append(result, TransportSummary{
-			Number:      req.Number,
-			Owner:       req.Owner,
-			Description: req.Description,
-			Type:        "K", // K=Workbench request
-			Status:      req.Status,
-			StatusText:  statusToText(req.Status),
-			Target:      req.Target,
-			Client:      c.config.Client,
-		})
+	// If ADT API returned results, use them
+	if len(transports) > 0 {
+		return transports, nil
 	}
 
-	// Add all customizing requests (removed status filter for debugging)
-	for _, req := range userTransports.Customizing {
-		result = append(result, TransportSummary{
-			Number:      req.Number,
-			Owner:       req.Owner,
-			Description: req.Description,
-			Type:        "W", // W=Customizing request
-			Status:      req.Status,
-			StatusText:  statusToText(req.Status),
-			Target:      req.Target,
-			Client:      c.config.Client,
-		})
-	}
-
-	// DEBUG: If no results, return error with XML for analysis
-	if len(result) == 0 {
-		xmlPreview := string(resp.Body)
-		if len(xmlPreview) > 1000 {
-			xmlPreview = xmlPreview[:1000] + "..."
-		}
-		return nil, fmt.Errorf("[DEBUG v2] no transports found for user %s. Parsed: %d workbench, %d customizing.\nXML received:\n%s",
-			user, len(userTransports.Workbench), len(userTransports.Customizing), xmlPreview)
-	}
-
-	return result, nil
+	// Fallback: query E070/E07T tables directly
+	// This works on systems without configured transport routes (sandboxes)
+	return c.listTransportsViaSQL(ctx, user)
 }
 
-// statusToText converts transport status code to text
-func statusToText(status string) string {
-	switch status {
-	case "D":
-		return "Modifiable"
-	case "L":
-		return "Locked"
-	case "R":
-		return "Released"
-	default:
-		return status
+// listTransportsViaSQL queries E070/E07T tables to get modifiable transports.
+// Used as fallback when ADT API returns empty (common on sandbox systems).
+func (c *Client) listTransportsViaSQL(ctx context.Context, user string) ([]TransportSummary, error) {
+	// Query modifiable workbench requests (K) for the user
+	// TRFUNCTION: K=Workbench request, W=Customizing request, S=Task
+	// TRSTATUS: D=Modifiable, R=Released, N=Released (import started)
+	query := `SELECT e070~TRKORR, e070~TRFUNCTION, e070~TRSTATUS, e070~TARSYSTEM,
+		e070~AS4USER, e070~AS4DATE, e070~AS4TIME, e07t~AS4TEXT
+		FROM E070 AS e070
+		LEFT OUTER JOIN E07T AS e07t ON e070~TRKORR = e07t~TRKORR AND e07t~LANGU = 'E'
+		WHERE e070~AS4USER = '` + strings.ToUpper(user) + `'
+		AND e070~TRSTATUS = 'D'
+		AND e070~TRFUNCTION IN ('K', 'W')
+		ORDER BY e070~TRKORR DESCENDING`
+
+	result, err := c.RunQuery(ctx, query, 100)
+	if err != nil {
+		// If SQL query fails, return empty list (not an error)
+		return []TransportSummary{}, nil
 	}
+
+	var transports []TransportSummary
+	for _, row := range result.Rows {
+		tr := TransportSummary{
+			Number:     getString(row, "TRKORR"),
+			Owner:      getString(row, "AS4USER"),
+			Description: getString(row, "AS4TEXT"),
+			Type:       getString(row, "TRFUNCTION"),
+			Status:     getString(row, "TRSTATUS"),
+			Target:     getString(row, "TARSYSTEM"),
+		}
+
+		// Map status code to text
+		switch tr.Status {
+		case "D":
+			tr.StatusText = "Modifiable"
+		case "R":
+			tr.StatusText = "Released"
+		case "N":
+			tr.StatusText = "Released (import started)"
+		}
+
+		// Map type code to text
+		switch tr.Type {
+		case "K":
+			tr.Type = "K"
+			tr.TargetDesc = "Workbench Request"
+		case "W":
+			tr.Type = "W"
+			tr.TargetDesc = "Customizing Request"
+		}
+
+		// Format date/time if available
+		date := getString(row, "AS4DATE")
+		time := getString(row, "AS4TIME")
+		if date != "" && time != "" {
+			tr.ChangedAt = date + time
+		}
+
+		transports = append(transports, tr)
+	}
+
+	return transports, nil
+}
+
+// getString safely extracts a string value from a row map
+func getString(row map[string]interface{}, key string) string {
+	if v, ok := row[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func parseTransportList(data []byte) ([]TransportSummary, error) {
+	// Strip namespace prefixes
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
+
+	type request struct {
+		Number      string `xml:"number,attr"`
+		Owner       string `xml:"owner,attr"`
+		Desc        string `xml:"desc,attr"`
+		Type        string `xml:"type,attr"`
+		Status      string `xml:"status,attr"`
+		StatusText  string `xml:"status_text,attr"`
+		Target      string `xml:"target,attr"`
+		TargetDesc  string `xml:"target_desc,attr"`
+		LastChanged string `xml:"lastchanged_timestamp,attr"`
+		Client      string `xml:"source_client,attr"`
+	}
+	type root struct {
+		Requests []request `xml:"request"`
+	}
+
+	var resp root
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err != nil {
+		return nil, fmt.Errorf("parsing transport list: %w", err)
+	}
+
+	var transports []TransportSummary
+	for _, req := range resp.Requests {
+		transports = append(transports, TransportSummary{
+			Number:      req.Number,
+			Owner:       req.Owner,
+			Description: req.Desc,
+			Type:        req.Type,
+			Status:      req.Status,
+			StatusText:  req.StatusText,
+			Target:      req.Target,
+			TargetDesc:  req.TargetDesc,
+			ChangedAt:   req.LastChanged,
+			Client:      req.Client,
+		})
+	}
+
+	return transports, nil
 }
 
 // GetTransport returns detailed transport information
@@ -556,7 +602,7 @@ func (c *Client) GetTransport(ctx context.Context, number string) (*TransportDet
 
 	resp, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.transportorganizer.v1+xml",
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting transport %s: %w", number, err)
@@ -761,7 +807,7 @@ func (c *Client) ReleaseTransportV2(ctx context.Context, number string, opts Rel
 
 	_, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodPost,
-		Accept: "application/vnd.sap.adt.transportrequests.v1+xml",
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return fmt.Errorf("releasing transport %s: %w", number, err)
@@ -785,6 +831,7 @@ func (c *Client) DeleteTransport(ctx context.Context, number string) error {
 
 	_, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodDelete,
+		Accept: acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return fmt.Errorf("deleting transport %s: %w", number, err)

@@ -54,6 +54,8 @@ type FeatureStatus struct {
 
 // FeatureConfig controls which optional features are enabled
 type FeatureConfig struct {
+	// HANA controls HANA database detection (default: auto)
+	HANA FeatureMode
 	// AbapGit controls abapGit integration (default: auto)
 	AbapGit FeatureMode
 	// RAP controls RAP/OData tools (default: auto, usually available)
@@ -71,6 +73,7 @@ type FeatureConfig struct {
 // DefaultFeatureConfig returns default feature configuration (all auto-detect)
 func DefaultFeatureConfig() FeatureConfig {
 	return FeatureConfig{
+		HANA:         FeatureModeAuto,
 		AbapGit:      FeatureModeAuto,
 		RAP:          FeatureModeAuto,
 		AMDP:         FeatureModeAuto,
@@ -83,6 +86,8 @@ func DefaultFeatureConfig() FeatureConfig {
 // GetMode returns the mode for a specific feature
 func (f *FeatureConfig) GetMode(id FeatureID) FeatureMode {
 	switch id {
+	case FeatureHANA:
+		return f.HANA
 	case FeatureAbapGit:
 		return f.AbapGit
 	case FeatureRAP:

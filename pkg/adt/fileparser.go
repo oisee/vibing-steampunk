@@ -25,6 +25,7 @@ type ABAPFileInfo struct {
 // extractFunctionGroupFromFilename extracts the function group name from abapGit-style filenames.
 // Pattern: {fugr_name}.fugr.{func_name}.func.abap → FUGR_NAME
 // Example: zvsp_report.fugr.z_vsp_run_report.func.abap → ZVSP_REPORT
+// Example: #aif#util.fugr.#aif#func.func.abap → /AIF/UTIL (namespaced)
 func extractFunctionGroupFromFilename(filePath string) string {
 	baseName := filepath.Base(filePath)
 	// Pattern: {fugr}.fugr.{func}.func.abap
@@ -33,7 +34,10 @@ func extractFunctionGroupFromFilename(filePath string) string {
 		lowerName := strings.ToLower(baseName)
 		fugrIdx := strings.Index(lowerName, ".fugr.")
 		if fugrIdx > 0 {
-			return strings.ToUpper(baseName[:fugrIdx])
+			name := strings.ToUpper(baseName[:fugrIdx])
+			// Convert # back to / for namespaced objects (abapGit convention)
+			name = strings.ReplaceAll(name, "#", "/")
+			return name
 		}
 	}
 	return ""
@@ -46,6 +50,7 @@ func extractFunctionGroupFromFilename(filePath string) string {
 //   - zcl_foo.clas.locals_imp.abap → ZCL_FOO
 //   - zcl_foo.clas.macros.abap → ZCL_FOO
 //   - zcl_foo.clas.abap → ZCL_FOO
+//   - #dmo#cl_flight.clas.abap → /DMO/CL_FLIGHT (namespaced)
 func extractClassNameFromFilename(filePath string) string {
 	baseName := filepath.Base(filePath)
 
@@ -61,7 +66,10 @@ func extractClassNameFromFilename(filePath string) string {
 	for _, suffix := range suffixes {
 		if strings.HasSuffix(strings.ToLower(baseName), suffix) {
 			name := baseName[:len(baseName)-len(suffix)]
-			return strings.ToUpper(name)
+			name = strings.ToUpper(name)
+			// Convert # back to / for namespaced objects (abapGit convention)
+			name = strings.ReplaceAll(name, "#", "/")
+			return name
 		}
 	}
 

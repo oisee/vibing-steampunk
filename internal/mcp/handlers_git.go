@@ -4,9 +4,13 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -80,18 +84,43 @@ func (s *Server) handleGitExport(ctx context.Context, request mcp.CallToolReques
 		return newToolResultError(fmt.Sprintf("GitExport failed: %v", err)), nil
 	}
 
+	// Determine output directory (default: current directory)
+	outputDir := "."
+	if dir, ok := request.Params.Arguments["output_dir"].(string); ok && dir != "" {
+		outputDir = dir
+	}
+
+	// Generate filename with timestamp
+	var zipName string
+	if len(params.Packages) > 0 {
+		// Use first package name (sanitize $ for filename)
+		pkgName := strings.ReplaceAll(params.Packages[0], "$", "")
+		zipName = fmt.Sprintf("%s_%s.zip", pkgName, time.Now().Format("20060102_150405"))
+	} else {
+		zipName = fmt.Sprintf("abapgit_export_%s.zip", time.Now().Format("20060102_150405"))
+	}
+	zipPath := filepath.Join(outputDir, zipName)
+
+	// Decode base64 and save ZIP
+	zipData, err := base64.StdEncoding.DecodeString(result.ZipBase64)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to decode ZIP: %v", err)), nil
+	}
+
+	if err := os.WriteFile(zipPath, zipData, 0644); err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to write ZIP file: %v", err)), nil
+	}
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Git Export Successful\n\n")
 	fmt.Fprintf(&sb, "Objects: %d\n", result.ObjectCount)
-	fmt.Fprintf(&sb, "Files: %d\n\n", result.FileCount)
+	fmt.Fprintf(&sb, "Files: %d\n", result.FileCount)
+	fmt.Fprintf(&sb, "ZIP: %s (%d bytes)\n\n", zipPath, len(zipData))
 
-	sb.WriteString("Files:\n")
+	sb.WriteString("Files in archive:\n")
 	for _, f := range result.Files {
 		fmt.Fprintf(&sb, "  %s (%d bytes)\n", f.Path, f.Size)
 	}
-
-	fmt.Fprintf(&sb, "\nZIP Base64 length: %d chars\n", len(result.ZipBase64))
-	sb.WriteString("Use base64 decode to extract the ZIP file.\n")
 
 	return mcp.NewToolResultText(sb.String()), nil
 }

@@ -172,6 +172,8 @@ type CreateObjectOptions struct {
 	Responsible string              `json:"responsible,omitempty"`
 	// For function modules - the function group name
 	ParentName string `json:"parentName,omitempty"`
+	// For packages - the software component (required for transportable packages)
+	SoftwareComponent string `json:"softwareComponent,omitempty"`
 
 	// RAP-specific options
 	// For BDEF: the root CDS entity name (e.g., "ZTRAVEL" for define behavior for ZTRAVEL)
@@ -282,16 +284,10 @@ func isLockConflictError(err error) bool {
 
 // packageExists checks if a package exists in the system.
 // Returns true if package exists, false otherwise.
-// Uses direct packages API which returns 404 for non-existing packages.
+// Uses GetPackage (nodestructure API) which passes the package name as a query
+// parameter, avoiding URL path encoding issues with $ in local package names.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
-	packageName = strings.ToUpper(packageName)
-	url := fmt.Sprintf("/sap/bc/adt/packages/%s", strings.ToLower(packageName))
-
-	_, err := c.transport.Request(ctx, url, &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.packages.v1+xml",
-	})
-
+	_, err := c.GetPackage(ctx, packageName)
 	return err == nil
 }
 
@@ -318,9 +314,16 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 		return err
 	}
 
-	// Additional validation for package creation: only local packages are supported
+	// Package creation validation: local packages always allowed, transportable requires opt-in
 	if opts.ObjectType == ObjectTypePackage && !strings.HasPrefix(opts.Name, "$") {
-		return fmt.Errorf("only local packages (starting with $) are supported for creation, got: %s", opts.Name)
+		// Transportable package - check if transports are enabled
+		if !c.config.Safety.EnableTransports && !c.config.Safety.AllowTransportableEdits {
+			return fmt.Errorf("creating transportable packages requires --enable-transports or --allow-transportable-edits flag. Package: %s", opts.Name)
+		}
+		// Transportable package requires a transport request
+		if opts.Transport == "" {
+			return fmt.Errorf("transport request is required for creating transportable package %s", opts.Name)
+		}
 	}
 
 	// CRITICAL: Validate package exists BEFORE calling SAP ADT CreateObject API.
@@ -397,8 +400,16 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 	}
 
 	// For packages, use special structure with attributes element
-	// Note: Only local packages (starting with $) are supported (validated in CreateObject)
+	// Local packages use "LOCAL" software component, transportable packages need explicit component
 	if opts.ObjectType == ObjectTypePackage {
+		// Determine software component based on package type
+		softwareComponent := "LOCAL"
+		transportLayer := ""
+		if !strings.HasPrefix(opts.Name, "$") {
+			// Transportable package - use provided software component or empty
+			// SAP requires explicit software component for transportable packages
+			softwareComponent = opts.SoftwareComponent
+		}
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <%s %s xmlns:adtcore="http://www.sap.com/adt/core"
   adtcore:description="%s"
@@ -409,8 +420,8 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
   <pack:superPackage adtcore:name="%s" adtcore:type="DEVC/K"/>
   <pack:applicationComponent/>
   <pack:transport>
-    <pack:softwareComponent pack:name="LOCAL"/>
-    <pack:transportLayer pack:name=""/>
+    <pack:softwareComponent pack:name="%s"/>
+    <pack:transportLayer pack:name="%s"/>
   </pack:transport>
   <pack:translation/>
   <pack:useAccesses/>
@@ -423,6 +434,8 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 			opts.ObjectType,
 			responsible,
 			opts.PackageName,
+			softwareComponent,
+			transportLayer,
 			typeInfo.rootName)
 	}
 
