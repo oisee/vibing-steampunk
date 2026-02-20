@@ -182,7 +182,7 @@ Playwright: browser_take_screenshot for visual verification
 
 ## Project Overview
 
-**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 54 essential tools (focused mode, default) or 99 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
+**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 89 essential tools (focused mode, default) or 126 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
 
 ## Quick Reference
 
@@ -281,7 +281,7 @@ The project includes **6 specialized agents** (Claude Code skills) for complex w
 ```
 cmd/vsp/main.go              # Entry point
 cmd/vsp/config_cmd.go        # Config subcommand (vsp config tools)
-internal/mcp/server.go       # MCP server (45 tool handlers, mode-aware)
+internal/mcp/server.go       # MCP server (126 tools, mode-aware registration)
 pkg/
 ├── adt/
 │   ├── client.go             # ADT client + read operations
@@ -422,14 +422,14 @@ See `embedded/abap/zcl_vsp_amdp_service.clas.abap` for ABAP service implementati
 
 ## Testing
 
-### Unit Tests (244 tests)
+### Unit Tests (238 tests)
 - Mock HTTP client (see `client_test.go`, `http_test.go`, `workflows_test.go`)
 - Cookie parsing tests (`cookies_test.go`)
 - Unified tools tests (GetSource, WriteSource, GrepObjects, GrepPackages)
 - Safety checks (`safety_test.go`)
 - Run: `go test ./...`
 
-### Integration Tests (21+ tests)
+### Integration Tests (56 tests)
 - Build tag: `integration`
 - Create objects in `$TMP` package, clean up after
 - Run: `go test -tags=integration -v ./pkg/adt/`
@@ -579,12 +579,12 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 103 (58 focused, 103 expert) |
-| **Unit Tests** | 252+ |
-| **Integration Tests** | 38+ |
+| **Tools** | 126 (89 focused, 126 expert) |
+| **Unit Tests** | 238 |
+| **Integration Tests** | 56 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
-| **Reports** | 29 numbered + 6 reference docs |
+| **Reports** | 96 numbered + 11 reference docs |
 | **Lua Scripting** | ✅ Complete (v2.14 - REPL, 40+ bindings, example scripts) |
 | **Cache Package** | ✅ Complete (in-memory + SQLite) |
 | **Safety System** | ✅ Complete (operation filtering, package restrictions, transportable edits protection) |

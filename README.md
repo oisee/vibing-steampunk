@@ -11,6 +11,14 @@
 
 ## What's New
 
+**v2.26.1** - Version History & Object Comparison
+- **GetRevisions**: List version history for any ABAP object (dates, authors, transports)
+- **GetRevisionSource**: Retrieve source code of any specific version
+- **CompareVersions**: Unified diff between any two versions (or vs current)
+- **SourceSearch**: HANA fulltext search via SRIS (requires SFW5 SRIS_SOURCE_SEARCH)
+- Supports PROG, CLAS, INTF, FUNC, INCL, DDLS, BDEF, SRVD
+- See [Version History Report](reports/2026-02-20-001-version-history-implementation.md)
+
 **v2.25.0** - CreatePackage Software Component Support
 - **`software_component` Parameter**: Create transportable packages with proper software component (e.g., `HOME`, `ZLOCAL`)
 - **Viper Env Fix**: Comma-separated env vars (`SAP_ALLOWED_PACKAGES`, `SAP_ALLOWED_TRANSPORTS`) now parse correctly
@@ -64,7 +72,7 @@
 - **GetClassInfo**: Quick class metadata via CAI (methods, attrs, interfaces)
 - **CreateTable**: Create DDIC tables from simple JSON definition
 - **GetSystemInfo**: Fixed to use SQL (CVERS/T000) - works across all SAP versions
-- **54 Focused / 99 Expert Tools** - see [Release Notes](reports/2026-01-05-001-v2.19.0-release-notes.md)
+- **89 Focused / 126 Expert Tools** as of v2.26.1
 
 **v2.18.1** - Interactive CLI Debugger
 - **`vsp debug` Command**: Standalone interactive ABAP debugger
@@ -152,7 +160,7 @@
 - **7 UI5/BSP Tools**: List apps, read files, search content, view manifests
 - **AMDP Debugger**: 5 tools for HANA stored procedure debugging
 - **Tool Groups**: Selectively disable features (`--disabled-groups 5THD`)
-- **94 Total Tools**: 46 focused mode, 94 expert mode
+- **126 Total Tools**: 89 focused mode, 126 expert mode
 
 **v2.8.0** - Full Debug Session Support
 - **DebuggerAttach/Detach** - Attach to caught debuggees, release sessions
@@ -173,7 +181,7 @@
 
 ---
 
-**Single binary** with **52 focused tools** (default) or **99 expert tools** for AI-assisted ABAP development.
+**Single binary** with **89 focused tools** (default) or **126 expert tools** for AI-assisted ABAP development.
 
 ## Key Features
 
@@ -181,7 +189,7 @@
 |---------|-------------|
 | **AI Debugger** | Breakpoints, listener, attach, step, inspect stack & variables |
 | **RAP OData E2E** | Create CDS views, Service Definitions, Bindings → Publish OData services |
-| **Focused Mode** | 37 curated tools optimized for AI assistants (50% token reduction) |
+| **Focused Mode** | 89 curated tools optimized for AI assistants (30% token reduction) |
 | **AI-Powered RCA** | Root cause analysis with dumps, traces, profiler + code intelligence |
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
 | **ExecuteABAP** | Run arbitrary ABAP code via unit test wrapper |
@@ -306,7 +314,7 @@ Configure multiple SAP systems in `.vsp.json`:
 ```bash
 vsp --url https://host:44300 --user admin --password secret
 vsp --url https://host:44300 --cookie-file cookies.txt
-vsp --mode expert  # Enable all 99 tools
+vsp --mode expert  # Enable all 126 tools
 ```
 
 ### Environment Variables
@@ -428,12 +436,12 @@ Without these flags, operations on transportable packages will be blocked by the
 
 | Aspect | Focused (Default) | Expert |
 |--------|-------------------|--------|
-| **Tools** | 52 essential | 99 complete |
-| **Token overhead** | ~2,800 | ~8,000 |
+| **Tools** | 89 essential | 126 complete |
+| **Token overhead** | ~5,000 | ~10,000 |
 | **Use case** | Daily development | Edge cases, debugging |
 | **Unified tools** | GetSource, WriteSource | + granular Get*/Write* |
 
-**Focused mode** consolidates 11 read/write tools into 2 unified tools, reducing cognitive load and token usage by 58%.
+**Focused mode** consolidates 11 read/write tools into 2 unified tools, reducing cognitive load and token usage by ~30%.
 
 Enable expert mode: `--mode=expert` or `SAP_MODE=expert`
 
@@ -650,21 +658,25 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**52 Focused Mode Tools:**
-- **Search:** SearchObject, GrepObjects, GrepPackages
-- **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
-- **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
-  - *Note: Breakpoints now managed via WebSocket (ZADT_VSP)*
-- **Write:** WriteSource, EditSource, ImportFromFile, ExportToFile, MoveObject
-- **Dev:** SyntaxCheck, RunUnitTests, RunATCCheck, LockObject, UnlockObject
-- **Intelligence:** FindDefinition, FindReferences
-- **System:** GetSystemInfo, GetInstalledComponents, GetCallGraph, GetObjectStructure, GetFeatures
-- **Diagnostics:** GetDumps, GetDump, ListTraces, GetTrace, GetSQLTraceState, ListSQLTraces
+**89 Focused Mode Tools** (see full list below):
+- **Search:** SearchObject, SourceSearch, GrepObjects, GrepPackages
+- **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies, GetMessages
+- **Write:** WriteSource, EditSource, CreateObject, DeleteObject, RenameObject, ImportFromFile, ExportToFile, MoveObject
+- **Dev:** SyntaxCheck, RunUnitTests, RunATCCheck, Activate, ActivatePackage, PrettyPrint, GetInactiveObjects, CreatePackage, CreateTable, CompareSource, CloneObject, GetClassInfo, LockObject, UnlockObject
+- **Version History:** GetRevisions, GetRevisionSource, CompareVersions
+- **Intelligence:** FindDefinition, FindReferences, ExecuteABAP, GetAbapHelp, GetFeatures
+- **Code Analysis:** GetCallGraph, GetObjectStructure, GetCallersOf, GetCalleesOf, AnalyzeCallGraph, CompareCallGraphs, TraceExecution
+- **Debugger:** SetBreakpoint, GetBreakpoints, DeleteBreakpoint, DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables, CallRFC
+- **AMDP Debugger:** AMDPDebuggerStart, AMDPDebuggerResume, AMDPDebuggerStop, AMDPDebuggerStep, AMDPGetVariables, AMDPSetBreakpoint, AMDPGetBreakpoints
+- **System:** GetSystemInfo, GetInstalledComponents
+- **Diagnostics:** ListDumps, GetDump, ListTraces, GetTrace, GetSQLTraceState, ListSQLTraces
+- **Transport:** ListTransports, GetTransport
 - **Git:** GitTypes, GitExport (requires abapGit on SAP)
-- **Reports:** RunReport, GetVariants, GetTextElements, SetTextElements
-- **Install:** InstallZADTVSP, InstallAbapGit, ListDependencies
+- **UI5/BSP:** UI5ListApps, UI5GetApp, UI5GetFileContent
+- **Reports:** RunReport, RunReportAsync, GetAsyncResult, GetVariants, GetTextElements, SetTextElements
+- **Install:** InstallZADTVSP, InstallAbapGit, ListDependencies, InstallDummyTest
 
-See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (99 tools).
+See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (126 tools).
 
 <details>
 <summary><strong>Capability Matrix</strong></summary>
@@ -689,7 +701,8 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (99 tools
 | RAP OData (DDLS/SRVD/SRVB) | Y | - | **Y** |
 | OData Service Publish | Y | - | **Y** |
 | abapGit Export | Y | - | **Y** (WebSocket) |
-| Debugging | Y | Y | N |
+| Version History | Y | Y | **Y** |
+| Debugging | Y | Y | **Y** (WebSocket) |
 
 </details>
 
@@ -702,7 +715,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (99 tools
 
 **vsp** is a Go rewrite with:
 - Single binary, zero dependencies
-- 62 tools (vs 13 original)
+- 126 tools (vs 13 original)
 - ~50x faster startup
 
 ## Optional: WebSocket Handler (ZADT_VSP)
@@ -736,7 +749,7 @@ See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) 
 
 | Document | Description |
 |----------|-------------|
-| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (94 tools) |
+| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (126 tools) |
 | [MCP_USAGE.md](MCP_USAGE.md) | AI agent usage guide |
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture |
@@ -767,8 +780,8 @@ make build          # Current platform
 make build-all      # All 9 platforms
 
 # Test
-go test ./...                              # Unit tests (249)
-go test -tags=integration -v ./pkg/adt/    # Integration tests (21+)
+go test ./...                              # Unit tests (238)
+go test -tags=integration -v ./pkg/adt/    # Integration tests (56)
 ```
 
 <details>
@@ -784,7 +797,7 @@ vibing-steampunk/
 │   ├── codeintel.go          # Definition, refs, completion
 │   ├── workflows.go          # High-level workflows
 │   └── http.go               # HTTP transport (CSRF, auth)
-├── internal/mcp/server.go    # MCP tool handlers (62 tools)
+├── internal/mcp/server.go    # MCP tool handlers (126 tools)
 └── pkg/dsl/                  # DSL & workflow engine
 ```
 
@@ -794,8 +807,8 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 99 (52 focused, 99 expert) |
-| **Unit Tests** | 270+ |
+| **Tools** | 126 (89 focused, 126 expert) |
+| **Unit Tests** | 238 |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
 <details>
@@ -822,6 +835,15 @@ vibing-steampunk/
 - [x] **Lua Scripting** - REPL, 40+ bindings, debug session management (v2.14.0)
 - [x] **WebSocket Debugging** - ZADT_VSP handler, TPDAPI integration (v2.15.0)
 - [x] **Force Replay** - Variable history, state injection (v2.15.0)
+- [x] **Transport Management** - 5 tools with safety controls, SQL fallback (v2.11.0)
+- [x] **Transportable Edits** - `--allow-transportable-edits` safety flag (v2.24.0)
+- [x] **Version History** - GetRevisions, GetRevisionSource, CompareVersions (v2.26.1)
+- [x] **SourceSearch** - HANA fulltext search via SRIS (v2.26.1)
+- [x] **Method-Level Ops** - GetSource/EditSource/WriteSource with `method` param (v2.21.0)
+- [x] **CLI Mode** - `vsp search`, `vsp source`, `vsp export`, multi-system config (v2.20.0)
+- [x] **Install Tools** - InstallZADTVSP, InstallAbapGit, ListDependencies (v2.17.0)
+- [x] **Report Execution** - RunReport, RunReportAsync, GetVariants (v2.18.0)
+- [x] **GetAbapHelp** - ABAP keyword docs, Level 2 via ZADT_VSP WebSocket (v2.22.0)
 
 ### Parked (Needs Further Work)
 - [ ] **AMDP Debugger** - Experimental: Session works, breakpoint triggering under investigation ([Report](reports/2025-12-22-001-amdp-debugging-investigation.md))

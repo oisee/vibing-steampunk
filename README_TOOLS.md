@@ -1,10 +1,10 @@
 # vsp Tool Reference
 
-Complete documentation for all 96 MCP tools available in vsp.
+Complete documentation for all 126 MCP tools available in vsp.
 
 **Mode Legend:**
-- **Focused** - Available in focused mode (48 tools, default)
-- **Expert** - Only available in expert mode (96 tools total)
+- **Focused** - Available in focused mode (89 tools, default)
+- **Expert** - Only available in expert mode (126 tools total)
 
 ---
 
@@ -386,10 +386,10 @@ Execute ABAP reports with parameters and capture ALV output. Includes async patt
 
 | Mode | Tools | Description |
 |------|-------|-------------|
-| **Focused** | 54 | Essential tools for AI-assisted development |
-| **Expert** | 99 | All tools including low-level operations and RAP creation |
+| **Focused** | 89 | Essential tools for AI-assisted development |
+| **Expert** | 126 | All tools including low-level operations and RAP creation |
 
 **Token Savings with Focused Mode:**
-- Tool definitions: 50% reduction (~5,000 → ~2,500 tokens)
-- Typical workflow: 60% reduction
-- Decision clarity: 48 choices instead of 96
+- Tool definitions: ~30% reduction (~10,000 → ~7,000 tokens)
+- Typical workflow: reduced tool selection overhead
+- Decision clarity: 89 choices instead of 126
