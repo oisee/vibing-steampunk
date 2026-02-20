@@ -332,6 +332,11 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"ApplyQuickFix":        true,  // Apply a quick fix proposal
 		"ApplyATCQuickFix":     true,  // Get details or apply ATC finding quick fix
 
+		// Testing & Quality tools (3)
+		"GetCodeCoverage":      true,  // Run tests with coverage and get line-level coverage data
+		"GetSQLExplainPlan":    true,  // Get SQL execution plan (HANA only)
+		"GetCheckRunResults":   true,  // Get detailed check run results
+
 		// Advanced/Edge cases (2)
 		"LockObject":   true,
 		"UnlockObject": true,
@@ -1547,6 +1552,47 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Step: details (get fix info) or apply (execute fix). Default: apply"),
 			),
 		), s.handleApplyATCQuickFix)
+	}
+
+	// --- Testing & Quality Tools ---
+
+	// GetCodeCoverage - Run unit tests with coverage enabled
+	if shouldRegister("GetCodeCoverage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCodeCoverage",
+			mcp.WithDescription("Run ABAP Unit tests with code coverage enabled. Returns line-level statement, branch, and procedure coverage data per source file. Uses the same test runner as RunUnitTests but with coverage capture active."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT URL of object to test (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
+			),
+			mcp.WithBoolean("include_dangerous",
+				mcp.Description("Include tests with risk level 'dangerous' (default: false)"),
+			),
+			mcp.WithBoolean("include_long",
+				mcp.Description("Include tests with duration 'long' (default: false)"),
+			),
+		), s.handleGetCodeCoverage)
+	}
+
+	// GetSQLExplainPlan - Get SQL execution plan (HANA-only)
+	if shouldRegister("GetSQLExplainPlan") {
+		s.mcpServer.AddTool(mcp.NewTool("GetSQLExplainPlan",
+			mcp.WithDescription("Get the SQL execution plan for a query. Shows operators, tables, indexes, row estimates, and cost. HANA-only feature — will fail on non-HANA systems. Use to analyze query performance and identify full table scans or missing indexes."),
+			mcp.WithString("sql_query",
+				mcp.Required(),
+				mcp.Description("SQL SELECT query to explain (e.g., SELECT * FROM SFLIGHT WHERE CARRID = 'LH')"),
+			),
+		), s.handleGetSQLExplainPlan)
+	}
+
+	// GetCheckRunResults - Get detailed check run findings
+	if shouldRegister("GetCheckRunResults") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCheckRunResults",
+			mcp.WithDescription("Get detailed results for a specific check run. Returns all messages with line numbers, severity (E=Error, W=Warning, I=Info), and summary counts. Use after SyntaxCheck or other check operations to get comprehensive error details."),
+			mcp.WithString("check_run_id",
+				mcp.Required(),
+				mcp.Description("Check run ID (from SyntaxCheck or other check operation)"),
+			),
+		), s.handleGetCheckRunResults)
 	}
 
 	// CloneObject - Copy object to new name

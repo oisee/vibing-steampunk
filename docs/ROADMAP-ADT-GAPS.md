@@ -73,42 +73,42 @@
 
 ---
 
-## Phase 2: Testing & Quality (3 tools)
+## Phase 2: Testing & Quality (3 tools) ✅ COMPLETED
 
 **Why second:** Coverage analysis and SQL explain complete the testing and optimization story.
 
-### Step 2.1: Code Coverage
-- [ ] Modify `RunUnitTests()` in `pkg/adt/devtools.go`:
-  - Add `requestCoverage` parameter
-  - Extend `UnitTestResult` with `Coverage map[string]*SourceCoverage`
-- [ ] Add XML types: `SourceCoverage`, `CoveredLine`
-- [ ] Update `RunUnitTests` MCP handler: add optional `coverage` boolean parameter
-- [ ] Register new MCP tool: `GetCodeCoverage` (runs tests + returns coverage summary)
-- [ ] Unit tests with mock coverage XML
-- [ ] Integration test: run tests with coverage on test class
+**Implementation date:** 2026-02-21
+**New files:** `pkg/adt/testing.go`, `internal/mcp/handlers_testing.go`, `pkg/adt/testing_test.go`
+**New tests:** 13 (4 coverage + 5 SQL explain + 4 check run)
+**Tools added:** GetCodeCoverage, GetSQLExplainPlan, GetCheckRunResults
 
-**Checkpoint:** `RunUnitTests` with `coverage=true` returns line-level coverage data
+### Step 2.1: Code Coverage ✅
+- [x] Create `pkg/adt/testing.go` with `GetCodeCoverage()` method
+  - Separate method (not modifying RunUnitTests) with `coverage active="true"` in XML body
+  - Returns `CoverageResult` with statement/branch/procedure stats + per-source breakdown
+- [x] Add types: `CoverageResult`, `CoverageStats`, `SourceCoverage`, `CoveredLine`
+- [x] Register MCP tool: `GetCodeCoverage` with optional `include_dangerous`, `include_long` params
+- [x] Unit tests: parse coverage XML, empty response, no coverage data, client-level round-trip
+- [ ] Integration test: run tests with coverage on test class (requires SAP system)
 
-### Step 2.2: SQL Explain Plan
-- [ ] Add to `pkg/adt/client.go`:
-  - `GetSQLExplainPlan(ctx, sqlQuery)` → *SQLExplainPlan
-- [ ] Add types: `SQLExplainPlan`, `PlanNode` (operator, table, cost, rows, index, children)
-- [ ] Register MCP tool: `GetSQLExplainPlan`
-- [ ] Feature detection: probe endpoint in `features.go` (HANA-only)
-- [ ] Unit tests
-- [ ] Integration test on HANA system
+### Step 2.2: SQL Explain Plan ✅
+- [x] Add `GetSQLExplainPlan()` to `pkg/adt/testing.go`
+  - Uses `/sap/bc/adt/datapreview/freestyle` with EXPLAIN PLAN prefix
+  - Fallback to `/sap/bc/adt/datapreview/ddlServices/explain` if first fails
+  - Returns tree of `SQLPlanNode` with operator, table, index, cost, rows, children
+- [x] Register MCP tool: `GetSQLExplainPlan`
+- [x] Unit tests: parse structured XML, empty, non-XML fallback, client round-trip, safety check
+- [ ] Integration test on HANA system (requires SAP system)
+- [ ] Feature detection: HANA-only (existing `FeatureHANA` probe can be used by caller)
 
-**Checkpoint:** `GetSQLExplainPlan` returns execution plan for a SELECT query
+### Step 2.3: Enhanced Check Run Results ✅
+- [x] Add `GetCheckRunResults()` to `pkg/adt/testing.go`
+  - GET `/sap/bc/adt/checkruns/{checkRunId}`
+  - Returns messages with line/column/severity + summary counts
+- [x] Register MCP tool: `GetCheckRunResults`
+- [x] Unit tests: parse check run XML, empty, no messages, client round-trip
 
-### Step 2.3: Enhanced Check Run Results
-- [ ] Add to `pkg/adt/devtools.go`:
-  - `GetCheckRunResults(ctx, checkRunId)` → detailed findings
-- [ ] Register MCP tool: `GetCheckRunResults`
-- [ ] Unit tests
-
-**Checkpoint:** SyntaxCheck → GetCheckRunResults gives detailed error list
-
-**Phase 2 total:** 3 new tools, effort ~12
+**Phase 2 total:** 3 new tools, 13 new unit tests, all passing
 
 ---
 
