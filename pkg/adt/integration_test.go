@@ -83,15 +83,15 @@ func TestIntegration_SourceSearch(t *testing.T) {
 		t.Fatalf("SourceSearch failed: %v", err)
 	}
 
-	t.Logf("Found %d matches for 'SELECT * FROM'", results.TotalCount)
+	t.Logf("Found %d total results for 'SELECT * FROM'", results.TotalResults)
 
-	if len(results.Matches) > 0 {
+	if len(results.Objects) > 0 {
 		t.Logf("First few matches:")
-		for i, m := range results.Matches {
+		for i, obj := range results.Objects {
 			if i >= 3 {
 				break
 			}
-			t.Logf("  %s (%s) line %d", m.Name, m.Type, m.Line)
+			t.Logf("  %s (%s)", obj.MainObject.Name, obj.MainObject.Type)
 		}
 	}
 
@@ -100,7 +100,7 @@ func TestIntegration_SourceSearch(t *testing.T) {
 	if err != nil {
 		t.Logf("SourceSearch with package filter: %v", err)
 	} else {
-		t.Logf("Found %d matches for 'WRITE' in $TMP", results.TotalCount)
+		t.Logf("Found %d results for 'WRITE' in $TMP", results.TotalResults)
 	}
 
 	// Test with object type filter
@@ -108,7 +108,7 @@ func TestIntegration_SourceSearch(t *testing.T) {
 	if err != nil {
 		t.Logf("SourceSearch with object type filter: %v", err)
 	} else {
-		t.Logf("Found %d matches for 'METHOD' in classes", results.TotalCount)
+		t.Logf("Found %d results for 'METHOD' in classes", results.TotalResults)
 	}
 }
 
@@ -1940,4 +1940,164 @@ func TestIntegration_DebugSessionAPIs(t *testing.T) {
 	t.Log("6. Get variables: client.DebuggerGetChildVariables([]string{\"@ROOT\"})")
 	t.Log("7. Step: client.DebuggerStep(DebugStepOver, \"\")")
 	t.Log("8. Detach: client.DebuggerDetach()")
+}
+
+// --- Version History (Revisions) Integration Tests ---
+
+func TestIntegration_GetRevisions(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try multiple objects — first one that exists and has versions wins
+	testObjects := []struct {
+		objType string
+		name    string
+	}{
+		{"CLAS", "/COCKPIT/CL_TOOLS"},
+		{"PROG", "SAPMV45A"},
+		{"PROG", "ZABAPGIT"},
+	}
+
+	var revisions []Revision
+	var testType, testName string
+	for _, obj := range testObjects {
+		var err error
+		revisions, err = client.GetRevisions(ctx, obj.objType, obj.name, nil)
+		if err != nil {
+			t.Logf("GetRevisions(%s %s): %v — trying next", obj.objType, obj.name, err)
+			continue
+		}
+		testType, testName = obj.objType, obj.name
+		break
+	}
+
+	if testType == "" {
+		t.Skip("No test objects with version history found on this system")
+	}
+
+	t.Logf("Found %d revisions for %s %s", len(revisions), testType, testName)
+	for i, rev := range revisions {
+		if i >= 5 {
+			t.Logf("  ... and %d more", len(revisions)-5)
+			break
+		}
+		t.Logf("  [%s] %s | %s | %s | transport: %s",
+			rev.Version, rev.Date, rev.Author, rev.VersionTitle, rev.Transport)
+	}
+
+	// If we have revisions, test fetching source of the first one
+	if len(revisions) > 0 && revisions[0].URI != "" {
+		source, err := client.GetRevisionSource(ctx, revisions[0].URI)
+		if err != nil {
+			t.Fatalf("GetRevisionSource failed: %v", err)
+		}
+		t.Logf("Version source length: %d chars", len(source))
+		if len(source) == 0 {
+			t.Error("Expected non-empty source for revision")
+		}
+	}
+}
+
+func TestIntegration_CompareVersions(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try objects with multiple versions
+	testObjects := []struct {
+		objType string
+		name    string
+	}{
+		{"CLAS", "/COCKPIT/CL_TOOLS"},
+		{"PROG", "SAPMV45A"},
+		{"PROG", "ZABAPGIT"},
+	}
+
+	var revisions []Revision
+	var testType, testName string
+	for _, obj := range testObjects {
+		var err error
+		revisions, err = client.GetRevisions(ctx, obj.objType, obj.name, nil)
+		if err != nil || len(revisions) < 2 {
+			continue
+		}
+		testType, testName = obj.objType, obj.name
+		break
+	}
+
+	if testType == "" || len(revisions) < 2 {
+		t.Skip("Need at least 2 revisions for compare test")
+	}
+
+	t.Logf("Comparing versions of %s %s (%d revisions available)", testType, testName, len(revisions))
+
+	// Compare two historical versions
+	diff, err := client.CompareVersions(ctx, testType, testName,
+		revisions[1].URI, revisions[0].URI, nil)
+	if err != nil {
+		t.Fatalf("CompareVersions failed: %v", err)
+	}
+
+	t.Logf("Diff: identical=%v, added=%d, removed=%d",
+		diff.Identical, diff.AddedLines, diff.RemovedLines)
+	if !diff.Identical && diff.Diff != "" {
+		lines := strings.Split(diff.Diff, "\n")
+		t.Logf("Diff preview (%d lines):", len(lines))
+		for i, line := range lines {
+			if i >= 20 {
+				t.Logf("  ... (%d more lines)", len(lines)-20)
+				break
+			}
+			t.Logf("  %s", line)
+		}
+	}
+
+	// Compare historical version against current
+	diff2, err := client.CompareVersions(ctx, testType, testName,
+		revisions[0].URI, "current", nil)
+	if err != nil {
+		t.Fatalf("CompareVersions (vs current) failed: %v", err)
+	}
+	t.Logf("Vs current: identical=%v, added=%d, removed=%d",
+		diff2.Identical, diff2.AddedLines, diff2.RemovedLines)
+}
+
+func TestIntegration_GetRevisions_Class(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try multiple classes — first one that works wins
+	classNames := []string{"/COCKPIT/CL_TOOLS", "/COCKPIT/CL_AP_CUSTOMIZING", "CL_GUI_ALV_GRID"}
+	var className string
+	var revisions []Revision
+	for _, cn := range classNames {
+		var err error
+		revisions, err = client.GetRevisions(ctx, "CLAS", cn, nil)
+		if err != nil {
+			t.Logf("GetRevisions for class %s: %v — trying next", cn, err)
+			continue
+		}
+		className = cn
+		break
+	}
+
+	if className == "" {
+		t.Skip("No classes with version history found on this system")
+	}
+
+	t.Logf("Found %d revisions for %s (main)", len(revisions), className)
+	for i, rev := range revisions {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  [%s] %s | %s", rev.Version, rev.Date, rev.Author)
+	}
+
+	// Try testclasses include
+	revTC, err := client.GetRevisions(ctx, "CLAS", className,
+		&GetSourceOptions{Include: "testclasses"})
+	if err != nil {
+		t.Logf("No testclasses revisions: %v", err)
+	} else {
+		t.Logf("Found %d revisions for testclasses include", len(revTC))
+	}
 }

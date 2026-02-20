@@ -12,6 +12,11 @@ const (
 	NSAtom    = "http://www.w3.org/2005/Atom"
 )
 
+// ADT link relation types
+const (
+	RelVersions = "http://www.sap.com/adt/relations/versions"
+)
+
 // ObjectReference represents a reference to an ABAP object.
 type ObjectReference struct {
 	XMLName     xml.Name `xml:"objectReference"`
@@ -29,6 +34,7 @@ type Link struct {
 	Rel     string   `xml:"rel,attr"`
 	Type    string   `xml:"type,attr,omitempty"`
 	Title   string   `xml:"title,attr,omitempty"`
+	Name    string   `xml:"http://www.sap.com/adt/core name,attr,omitempty"` // adtcore:name attribute
 }
 
 // AtomEntry represents an Atom feed entry.
@@ -375,4 +381,70 @@ func ExtractSourceLink(links []Link) string {
 		}
 	}
 	return ""
+}
+
+// --- Revision (Version History) Types ---
+
+// Revision represents a single version of an ABAP object in the revision history.
+type Revision struct {
+	URI          string `json:"uri"`                    // Content URL for fetching this version's source
+	Version      string `json:"version"`                // Version identifier (entry ID)
+	VersionTitle string `json:"versionTitle"`           // Human-readable version title
+	Date         string `json:"date"`                   // ISO 8601 timestamp
+	Author       string `json:"author"`                 // Username who made the change
+	Transport    string `json:"transport,omitempty"`     // Transport request number
+}
+
+// revisionFeedEntry is an internal type for parsing ADT version Atom feed entries.
+type revisionFeedEntry struct {
+	XMLName xml.Name `xml:"entry"`
+	ID      string   `xml:"id"`
+	Title   string   `xml:"title"`
+	Updated string   `xml:"updated"`
+	Author  struct {
+		Name string `xml:"name"`
+	} `xml:"author"`
+	Content struct {
+		Src  string `xml:"src,attr"`
+		Type string `xml:"type,attr"`
+	} `xml:"content"`
+	Links []Link `xml:"link"`
+}
+
+// revisionFeed is an internal type for parsing ADT version Atom feeds.
+type revisionFeed struct {
+	XMLName xml.Name            `xml:"feed"`
+	Title   string              `xml:"title"`
+	Entries []revisionFeedEntry `xml:"entry"`
+}
+
+// ParseRevisionFeed parses an ADT versions Atom feed into Revision entries.
+func ParseRevisionFeed(data []byte) ([]Revision, error) {
+	var feed revisionFeed
+	if err := xml.Unmarshal(data, &feed); err != nil {
+		return nil, fmt.Errorf("parsing revision feed: %w", err)
+	}
+
+	revisions := make([]Revision, 0, len(feed.Entries))
+	for _, entry := range feed.Entries {
+		rev := Revision{
+			URI:          entry.Content.Src,
+			VersionTitle: entry.Title,
+			Date:         entry.Updated,
+			Version:      entry.ID,
+			Author:       entry.Author.Name,
+		}
+		// Extract transport request from links (adtcore:name attribute)
+		for _, link := range entry.Links {
+			if strings.Contains(link.Type, "transportrequests") {
+				if link.Name != "" {
+					rev.Transport = link.Name
+				}
+				break
+			}
+		}
+		revisions = append(revisions, rev)
+	}
+
+	return revisions, nil
 }

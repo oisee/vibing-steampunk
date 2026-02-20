@@ -297,6 +297,7 @@ pkg/
 │   ├── safety_test.go        # Safety unit tests (25 tests)
 │   ├── features.go           # Feature detection (safety network)
 │   ├── help.go               # ABAP keyword documentation (GetAbapHelp)
+│   ├── revisions.go          # Object version history (GetRevisions, CompareVersions)
 │   ├── http.go               # HTTP transport (CSRF, sessions)
 │   ├── config.go             # Configuration
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
@@ -342,6 +343,7 @@ pkg/
 | Add UI5/BSP feature | `pkg/adt/ui5.go` |
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
+| Add version history feature | `pkg/adt/revisions.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
 | Add ABAP help feature | `pkg/adt/help.go` |
 | Configure tool visibility | `pkg/config/systems.go`, `cmd/vsp/config_cmd.go` |
@@ -577,9 +579,9 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 100 (55 focused, 100 expert) |
-| **Unit Tests** | 244+ |
-| **Integration Tests** | 35+ |
+| **Tools** | 103 (58 focused, 103 expert) |
+| **Unit Tests** | 252+ |
+| **Integration Tests** | 38+ |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
 | **Reports** | 29 numbered + 6 reference docs |
@@ -602,6 +604,7 @@ When creating a new report:
 | **AMDP Debugger** | ⚠️ Experimental (Session works, breakpoints need investigation - expert mode only) |
 | **Transport Mgmt** | ✅ Complete (5 tools with safety controls, SQL fallback for sandbox systems) |
 | **Transportable Edits** | ✅ Complete (v2.24.0 - --allow-transportable-edits safety flag) |
+| **Version History** | ✅ Complete (GetRevisions, GetRevisionSource, CompareVersions - Atom feed parsing) |
 | **UI5/BSP Mgmt** | ✅ Partial (Read ops work; Create needs alternate API) |
 | **Tool Groups** | ✅ Complete (--disabled-groups: 5/U, T, H, D, C) |
 | **Tool Visibility** | ✅ Complete (.vsp.json granular tool enable/disable) |
@@ -668,7 +671,17 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ## Last Session Reference (2026-02-20)
 
-### Objective: Upstream Sync (v2.22.0 → v2.26.0) - COMPLETED ✅
+### Objective: Version History Tools - COMPLETED ✅
+
+Added 3 new MCP tools for ABAP object version history and comparison:
+- **GetRevisions** — list version history (dates, authors, transports)
+- **GetRevisionSource** — get source of a specific version
+- **CompareVersions** — unified diff between two versions (reuses LCS diff from CompareSource)
+
+New files: `pkg/adt/revisions.go`, `pkg/adt/revisions_test.go`, `internal/mcp/handlers_revisions.go`
+Report: `reports/2026-02-20-001-version-history-implementation.md`
+
+### Previous Session: Upstream Sync (v2.22.0 → v2.26.0) - COMPLETED ✅
 
 Merged 25 upstream commits (5 releases) into our fork.
 
