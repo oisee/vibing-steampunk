@@ -1,5 +1,6 @@
 ---
 name: rules-architect
+color: orange
 description: "CLAUDE.md rule architect for crafting, structuring, and maintaining Claude Code instructions across projects. Use for creating or updating CLAUDE.md rules, agent definitions, and team configuration standards."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet

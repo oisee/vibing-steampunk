@@ -1,5 +1,6 @@
 ---
 name: specialist-auditor
+color: orange
 description: "Domain-specific plan auditor for focused technical review. Assigned a specific audit scope by the Lead Auditor. Use for reviewing specific aspects of implementation plans."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

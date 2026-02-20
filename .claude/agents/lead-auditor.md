@@ -1,5 +1,6 @@
 ---
 name: lead-auditor
+color: purple
 description: "Lead Auditor for coordinating plan audits. Determines required expertise, delegates to specialist auditors, performs Chief Architect cross-domain review. Use for auditing implementation plans before execution."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

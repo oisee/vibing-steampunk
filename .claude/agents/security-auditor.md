@@ -1,5 +1,6 @@
 ---
 name: security-auditor
+color: red
 description: "Deep security analyst with multi-model cross-validation. Performs thorough security audits on code, dependencies, and configurations. Use for detailed security analysis of specific components."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit

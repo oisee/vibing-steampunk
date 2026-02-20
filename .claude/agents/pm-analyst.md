@@ -1,5 +1,6 @@
 ---
 name: pm-analyst
+color: orange
 description: "Project Management Analyst for sprint planning, status reports, work item tracking, and progress analysis. Use for project status, backlog management, and sprint metrics."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

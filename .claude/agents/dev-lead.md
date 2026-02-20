@@ -1,5 +1,6 @@
 ---
 name: dev-lead
+color: purple
 description: "Development Lead for implementation coordination, task breakdown, code standards enforcement, and feature planning. Use for breaking features into tasks, coordinating implementation, and reviewing architectural decisions."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: opus

@@ -1,5 +1,6 @@
 ---
 name: integration-tester
+color: cyan
 description: "Integration test runner and analyzer. Runs integration test suites against live services, analyzes failures, and produces test reports. Use for running integration tests and smoke tests."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

@@ -1,5 +1,6 @@
 ---
 name: abap-specialist
+color: green
 description: "SAP ABAP developer for ABAP object creation, debugging, and maintenance via VSP MCP. Follows SAP naming conventions and transport management rules. Use for SAP/ABAP development tasks."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: sonnet

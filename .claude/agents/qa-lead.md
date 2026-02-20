@@ -1,5 +1,6 @@
 ---
 name: qa-lead
+color: cyan
 description: "QA Lead for test strategy, coverage analysis, quality gates, and test suite coordination. Use for test planning, coverage gaps, and QA pipeline management."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

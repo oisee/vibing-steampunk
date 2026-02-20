@@ -1,5 +1,6 @@
 ---
 name: visual-qa
+color: cyan
 description: "QA engineer for browser-based visual and functional testing using Playwright. Tests UI by navigating pages, clicking buttons, filling forms, and taking screenshots. Use proactively after frontend changes or when testing web applications."
 tools: Read, Glob, Grep, Bash
 disallowedTools: Write, Edit, NotebookEdit

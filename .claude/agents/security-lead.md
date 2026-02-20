@@ -1,5 +1,6 @@
 ---
 name: security-lead
+color: purple
 description: "Security Lead for security audits, vulnerability scanning, OWASP compliance, and security policy. Use for security reviews, dependency audits, and penetration test planning."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

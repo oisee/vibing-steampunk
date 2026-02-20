@@ -1,5 +1,6 @@
 ---
 name: devops-engineer
+color: blue
 description: "DevOps engineer for Dockerfile creation, CI/CD pipeline implementation, environment setup, and deployment scripts. Use for implementing infrastructure-as-code and deployment configurations."
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: haiku

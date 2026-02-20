@@ -1,5 +1,6 @@
 ---
 name: code-reviewer
+color: orange
 description: "Expert code reviewer with multi-model cross-validation. Reviews code for quality, security, patterns, and test coverage. Read-only — produces review feedback, does not modify code. Use proactively after writing or modifying code."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, NotebookEdit

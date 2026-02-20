@@ -1,5 +1,6 @@
 ---
 name: devops-lead
+color: blue
 description: "DevOps Lead for CI/CD planning, Docker strategy, deployment planning, and infrastructure decisions. Use for deployment preparation, CI/CD pipeline design, and environment management."
 tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit

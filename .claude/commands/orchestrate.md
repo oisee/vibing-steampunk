@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Orchestrate multi-agent workflows for feature development, bug fixes, deployments, audits, and QA pipelines"
+description: "Orchestrate multi-agent workflows: feature, bugfix, deploy, audit, qa, review, refactor, incident, migration, spike, perf, onboard"
 ---
 
 # Orchestrate Workflow
@@ -20,6 +20,12 @@ Supported workflows:
 - `audit` — Plan audit pipeline
 - `qa` — Full QA verification pipeline
 - `review` — Code review pipeline
+- `refactor` — Code refactoring without behavior change
+- `incident` — Production incident response and hotfix
+- `migration` — Library upgrade, API change, DB migration
+- `spike` — Research spike, feasibility study
+- `perf` — Performance optimization
+- `onboard` — Project onboarding and context documentation
 - `custom` — Describe your own workflow
 
 ## Workflow Definitions
@@ -117,6 +123,100 @@ Supported workflows:
 2. security-auditor — Security-focused review (if security-sensitive)
    → [CV-GATE:codereview] Mandatory OpenAI security review
 3. Report merged findings with [C], [O], [C+O], [S] markers
+```
+
+### Refactor Pipeline (`/orchestrate refactor "..."`)
+
+```
+1. architect — Analyze current structure, define target state
+   → Write refactoring plan to docs/PLAN.md
+   → [CV-GATE:consensus] Validate refactoring approach
+   → GATE: Plan approved
+2. backend-dev — Execute refactoring in small, atomic changes
+   → No behavior changes allowed
+3. test-engineer — Verify all existing tests pass unchanged
+   → Add missing coverage for refactored code
+   → GATE: All tests pass, no behavior change
+4. code-reviewer — Review refactoring correctness
+   → [CV-GATE:codereview] Cross-validate no behavior change
+   → GATE: No CRITICAL findings
+5. Human approval → Merge
+```
+
+### Incident Pipeline (`/orchestrate incident "..."`)
+
+```
+1. qa-lead — Triage: severity, blast radius, workaround
+   → Document reproduction steps
+   → GATE: Severity classified, reproduction confirmed
+2. backend-dev — Implement hotfix for root cause
+   → Include rollback plan in PR description
+3. test-engineer — Add regression test (FAIL without fix, PASS with fix)
+   → GATE: Regression test validates fix
+4. code-reviewer — Fast review of hotfix
+   → [CV-GATE:codereview] Cross-validate fix correctness
+   → GATE: No CRITICAL findings
+5. doc-writer — Write postmortem to docs/postmortems/
+   → Timeline, root cause, impact, action items
+6. Human approval → Merge + Deploy
+```
+
+### Migration Pipeline (`/orchestrate migration "..."`)
+
+```
+1. architect — Migration RFC: impact analysis, consumer inventory
+   → Write migration strategy to docs/PLAN.md
+   → [CV-GATE:consensus] Validate migration approach
+   → GATE: RFC approved
+2. dev-lead — Break into staged migration tasks
+   → Identify rollback points for each stage
+3. backend-dev — Execute migration stages
+   → Feature flags or dual-write for backward compatibility
+4. test-engineer — Backward compatibility tests + new version tests
+   → Verify both old and new paths
+   → GATE: All compatibility tests pass
+5. security-lead — Security review of migration
+   → [CV-GATE:thinkdeep] Review new deps, auth changes, data handling
+   → GATE: No CRITICAL or HIGH security findings
+6. code-reviewer — Final review of all migration changes
+   → [CV-GATE:codereview] Cross-validate staged rollout plan
+   → GATE: No CRITICAL findings
+7. Human approval → Staged rollout
+```
+
+### Spike Pipeline (`/orchestrate spike "..."`)
+
+```
+1. architect — Research options, evaluate trade-offs
+   → Write spike report to docs/spikes/YYYY-MM-DD-<topic>.md
+   → [CV-GATE:consensus] Validate analysis completeness
+   → GATE: Report includes options + recommendation + evidence
+2. dev-lead — Assess implementation effort, risks
+   → Add to backlog if approved, or archive spike
+```
+
+### Performance Pipeline (`/orchestrate perf "..."`)
+
+```
+1. qa-lead — Profile and measure: baselines, top-3 bottlenecks
+   → GATE: Bottlenecks identified with evidence
+2. backend-dev — Implement targeted optimizations
+3. test-engineer — Performance regression tests: before/after measurements
+   → GATE: Measurable improvement verified
+4. code-reviewer — Review optimizations for correctness
+   → [CV-GATE:codereview] Cross-validate no regressions
+   → GATE: No CRITICAL findings
+```
+
+### Onboard Pipeline (`/orchestrate onboard "..."`)
+
+```
+1. architect — System map: components, data flow, APIs, ownership
+   → Write to docs/onboarding/<project>.md
+2. doc-writer — Onboarding guide: setup, golden path, runbooks
+   → Local dev guide, first task suggestions
+3. rules-architect — CLAUDE.md review: agent config, sync, rules
+   → Verify project is ready for AI-assisted development
 ```
 
 ## Multi-Model Orchestration
