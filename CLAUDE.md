@@ -182,7 +182,7 @@ Playwright: browser_take_screenshot for visual verification
 
 ## Project Overview
 
-**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 89 essential tools (focused mode, default) or 126 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
+**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 94 essential tools (focused mode, default) or 129 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
 
 ## Quick Reference
 
@@ -281,7 +281,7 @@ The project includes **6 specialized agents** (Claude Code skills) for complex w
 ```
 cmd/vsp/main.go              # Entry point
 cmd/vsp/config_cmd.go        # Config subcommand (vsp config tools)
-internal/mcp/server.go       # MCP server (126 tools, mode-aware registration)
+internal/mcp/server.go       # MCP server (129 tools, mode-aware registration)
 pkg/
 ├── adt/
 │   ├── client.go             # ADT client + read operations
@@ -298,6 +298,8 @@ pkg/
 │   ├── features.go           # Feature detection (safety network)
 │   ├── help.go               # ABAP keyword documentation (GetAbapHelp)
 │   ├── revisions.go          # Object version history (GetRevisions, CompareVersions)
+│   ├── refactoring.go        # ADT-native refactoring (Rename, Extract Method)
+│   ├── quickfix.go           # Quick Fix proposals + ATC Quick Fix
 │   ├── http.go               # HTTP transport (CSRF, sessions)
 │   ├── config.go             # Configuration
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
@@ -344,6 +346,8 @@ pkg/
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
 | Add version history feature | `pkg/adt/revisions.go` |
+| Add refactoring tool | `pkg/adt/refactoring.go` |
+| Add quick fix tool | `pkg/adt/quickfix.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
 | Add ABAP help feature | `pkg/adt/help.go` |
 | Configure tool visibility | `pkg/config/systems.go`, `cmd/vsp/config_cmd.go` |
@@ -579,8 +583,8 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 126 (89 focused, 126 expert) |
-| **Unit Tests** | 238 |
+| **Tools** | 129 (94 focused, 129 expert) |
+| **Unit Tests** | 271 |
 | **Integration Tests** | 56 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
@@ -671,18 +675,26 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ## Last Session Reference (2026-02-21)
 
-### Bugfix: GetUserTransports empty on sandbox systems - COMPLETED ✅
+### ADT Refactoring Tools (Phase 1) - COMPLETED ✅
 
-`GetUserTransports` returned empty results on SC3 (sandbox, target=DUM) while `ListTransports` found 3 transports for the same user. Root cause: `targets=true` query param causes SAP to organize response by target system, but DUM is not a real target — so the tree response was empty.
+Added 5 new MCP tools for ADT-native refactoring and quick fixes:
+- **RenameRefactoring** — ADT-native rename with evaluate/preview/execute flow
+- **ExtractMethod** — Extract code selection into new method
+- **GetQuickFixProposals** — Get auto-fix suggestions at error position
+- **ApplyQuickFix** — Apply a specific quick fix
+- **ApplyATCQuickFix** — Apply ATC finding quick fix (details/apply)
 
-**Fix:** Added fallback in `GetUserTransports` — if tree-based response is empty, delegates to `ListTransports` (which has flat ADT + SQL fallback). Results are converted to `UserTransports` format with workbench/customizing grouping.
+New files: `pkg/adt/refactoring.go`, `pkg/adt/quickfix.go`, `internal/mcp/handlers_refactoring.go`
+New tests: `pkg/adt/refactoring_test.go` (19 tests), `pkg/adt/quickfix_test.go` (14 tests)
+Roadmap: `docs/ROADMAP-ADT-GAPS.md`
 
-Changed file: `pkg/adt/transport.go`
+### Previous: Bugfix: GetUserTransports empty on sandbox - COMPLETED ✅
 
-### Previous Session: Version History Tools (2026-02-20) - COMPLETED ✅
+Fix in `pkg/adt/transport.go` — fallback to `ListTransports` when tree-based response is empty.
 
-Added 3 new MCP tools: GetRevisions, GetRevisionSource, CompareVersions.
-New files: `pkg/adt/revisions.go`, `pkg/adt/revisions_test.go`, `internal/mcp/handlers_revisions.go`
+### Previous: Version History Tools (2026-02-20) - COMPLETED ✅
+
+Added 3 MCP tools: GetRevisions, GetRevisionSource, CompareVersions.
 
 ### TODO
 

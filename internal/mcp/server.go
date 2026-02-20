@@ -325,6 +325,13 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"CloneObject":         true,  // Copy object to new name
 		"GetClassInfo":        true,  // Quick class metadata
 
+		// Refactoring tools (5)
+		"RenameRefactoring":    true,  // ADT-native rename (evaluate/preview/execute)
+		"ExtractMethod":        true,  // Extract code block into new method
+		"GetQuickFixProposals": true,  // Get auto-fix proposals for errors/warnings
+		"ApplyQuickFix":        true,  // Apply a quick fix proposal
+		"ApplyATCQuickFix":     true,  // Get details or apply ATC finding quick fix
+
 		// Advanced/Edge cases (2)
 		"LockObject":   true,
 		"UnlockObject": true,
@@ -1415,6 +1422,131 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Function group name (required for FUNC type)"),
 			),
 		), s.handleCompareVersions)
+	}
+
+	// --- Refactoring Tools ---
+
+	// RenameRefactoring - ADT-native rename with cross-reference support
+	if shouldRegister("RenameRefactoring") {
+		s.mcpServer.AddTool(mcp.NewTool("RenameRefactoring",
+			mcp.WithDescription("ADT-native rename refactoring with full cross-reference support. Three-step flow: evaluate (check feasibility) → preview (see all changes) → execute (apply). Much better than manual rename — handles all references automatically."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT object URI (e.g., /sap/bc/adt/programs/programs/ZTEST or /sap/bc/adt/oo/classes/ZCL_FOO)"),
+			),
+			mcp.WithString("step",
+				mcp.Required(),
+				mcp.Description("Refactoring step: evaluate (check feasibility), preview (see all changes), execute (apply rename)"),
+			),
+			mcp.WithString("new_name",
+				mcp.Required(),
+				mcp.Description("The new name for the symbol"),
+			),
+			mcp.WithNumber("line",
+				mcp.Description("Line number of the symbol to rename (1-based)"),
+			),
+			mcp.WithNumber("column",
+				mcp.Description("Column number of the symbol to rename (1-based)"),
+			),
+			mcp.WithString("source",
+				mcp.Description("Current source code of the object (required for evaluate/preview/execute)"),
+			),
+		), s.handleRenameRefactoring)
+	}
+
+	// ExtractMethod - Extract code block into a new method
+	if shouldRegister("ExtractMethod") {
+		s.mcpServer.AddTool(mcp.NewTool("ExtractMethod",
+			mcp.WithDescription("Extract a selected code block into a new method. Three-step flow: evaluate (check feasibility, get inferred params) → preview (see new method + modified code) → execute (apply). Automatically infers parameters, return types."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT object URI (e.g., /sap/bc/adt/oo/classes/ZCL_FOO)"),
+			),
+			mcp.WithString("step",
+				mcp.Required(),
+				mcp.Description("Refactoring step: evaluate, preview, or execute"),
+			),
+			mcp.WithString("method_name",
+				mcp.Required(),
+				mcp.Description("Name for the new extracted method"),
+			),
+			mcp.WithString("source",
+				mcp.Required(),
+				mcp.Description("Current source code of the object"),
+			),
+			mcp.WithNumber("start_line",
+				mcp.Description("Start line of the code block to extract (1-based)"),
+			),
+			mcp.WithNumber("start_col",
+				mcp.Description("Start column of the code block (1-based)"),
+			),
+			mcp.WithNumber("end_line",
+				mcp.Description("End line of the code block to extract (1-based)"),
+			),
+			mcp.WithNumber("end_col",
+				mcp.Description("End column of the code block (1-based)"),
+			),
+		), s.handleExtractMethod)
+	}
+
+	// GetQuickFixProposals - Get auto-fix suggestions for errors/warnings
+	if shouldRegister("GetQuickFixProposals") {
+		s.mcpServer.AddTool(mcp.NewTool("GetQuickFixProposals",
+			mcp.WithDescription("Get available quick fix proposals for an error or warning at a specific position. Use after SyntaxCheck to get auto-fix suggestions. Returns proposal IDs to use with ApplyQuickFix."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT object URI (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+			),
+			mcp.WithString("source",
+				mcp.Required(),
+				mcp.Description("Current source code of the object"),
+			),
+			mcp.WithNumber("line",
+				mcp.Description("Line number of the error/warning (1-based, from SyntaxCheck)"),
+			),
+			mcp.WithNumber("column",
+				mcp.Description("Column number of the error/warning (1-based, from SyntaxCheck)"),
+			),
+		), s.handleGetQuickFixProposals)
+	}
+
+	// ApplyQuickFix - Apply a quick fix proposal
+	if shouldRegister("ApplyQuickFix") {
+		s.mcpServer.AddTool(mcp.NewTool("ApplyQuickFix",
+			mcp.WithDescription("Apply a specific quick fix proposal to source code. Use proposal_id from GetQuickFixProposals. Returns the corrected source code."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT object URI"),
+			),
+			mcp.WithString("proposal_id",
+				mcp.Required(),
+				mcp.Description("Proposal ID from GetQuickFixProposals"),
+			),
+			mcp.WithString("source",
+				mcp.Required(),
+				mcp.Description("Current source code of the object"),
+			),
+			mcp.WithNumber("line",
+				mcp.Description("Line number of the error/warning (1-based)"),
+			),
+			mcp.WithNumber("column",
+				mcp.Description("Column number of the error/warning (1-based)"),
+			),
+		), s.handleApplyQuickFix)
+	}
+
+	// ApplyATCQuickFix - Get details or apply ATC finding quick fix
+	if shouldRegister("ApplyATCQuickFix") {
+		s.mcpServer.AddTool(mcp.NewTool("ApplyATCQuickFix",
+			mcp.WithDescription("Get details or apply quick fix for an ATC finding. Use finding_id from RunATCCheck output (the quickfixInfo field). Two steps: details (check what the fix does) or apply (execute the fix)."),
+			mcp.WithString("finding_id",
+				mcp.Required(),
+				mcp.Description("Finding ID from RunATCCheck result (quickfixInfo field of an ATCFinding)"),
+			),
+			mcp.WithString("step",
+				mcp.Description("Step: details (get fix info) or apply (execute fix). Default: apply"),
+			),
+		), s.handleApplyATCQuickFix)
 	}
 
 	// CloneObject - Copy object to new name
