@@ -281,6 +281,35 @@ func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToo
 	return mcp.NewToolResultText(fmt.Sprintf("Transport %s released successfully.", transport)), nil
 }
 
+func (s *Server) handleAddObjectToTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	transport, ok := request.Params.Arguments["transport"].(string)
+	if !ok || transport == "" {
+		return newToolResultError("transport is required"), nil
+	}
+
+	objectType, ok := request.Params.Arguments["object_type"].(string)
+	if !ok || objectType == "" {
+		return newToolResultError("object_type is required"), nil
+	}
+
+	objectName, ok := request.Params.Arguments["object_name"].(string)
+	if !ok || objectName == "" {
+		return newToolResultError("object_name is required"), nil
+	}
+
+	pgmid, _ := request.Params.Arguments["pgmid"].(string)
+	if pgmid == "" {
+		pgmid = "R3TR"
+	}
+
+	err := s.adtClient.AddObjectToTransport(ctx, transport, pgmid, objectType, objectName)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("AddObjectToTransport failed: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Object %s %s %s added to transport %s.", pgmid, objectType, objectName, transport)), nil
+}
+
 func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	transport, ok := request.Params.Arguments["transport"].(string)
 	if !ok || transport == "" {

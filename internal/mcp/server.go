@@ -242,6 +242,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"C": { // CTS/Transport tools
 			"ListTransports", "GetTransport",
 			"CreateTransport", "ReleaseTransport", "DeleteTransport",
+			"AddObjectToTransport",
 		},
 		"G": { // Git/abapGit tools (via ZADT_VSP WebSocket)
 			"GitTypes", "GitExport",
@@ -615,6 +616,38 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	), s.handleGetStructure)
 	}
 
+	// GetSearchHelp
+	if shouldRegister("GetSearchHelp") {
+		s.mcpServer.AddTool(mcp.NewTool("GetSearchHelp",
+		mcp.WithDescription("Retrieve DDIC search help definition (SE11)"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the search help"),
+		),
+	), s.handleGetSearchHelp)
+	}
+
+	// GetLockObject (DDIC lock object, not edit lock)
+	if shouldRegister("GetLockObject") {
+		s.mcpServer.AddTool(mcp.NewTool("GetLockObject",
+		mcp.WithDescription("Retrieve DDIC lock object definition (SE11). Not to be confused with LockObject which acquires edit locks."),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the lock object"),
+		),
+	), s.handleGetLockObject)
+	}
+
+	// GetTypeGroup
+	if shouldRegister("GetTypeGroup") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTypeGroup",
+		mcp.WithDescription("Retrieve ABAP type group source (SE11)"),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Name of the type group"),
+		),
+	), s.handleGetTypeGroup)
+	}
 
 	// GetPackage
 	if shouldRegister("GetPackage") {
@@ -2496,6 +2529,28 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Transport request number"),
 			),
 		), s.handleDeleteTransport)
+	}
+
+	// AddObjectToTransport (expert mode only)
+	if shouldRegister("AddObjectToTransport") {
+		s.mcpServer.AddTool(mcp.NewTool("AddObjectToTransport",
+			mcp.WithDescription("Add an ABAP object to an existing transport request. Use pgmid=R3TR for main objects, pgmid=LIMU for sub-objects."),
+			mcp.WithString("transport",
+				mcp.Required(),
+				mcp.Description("Transport request or task number (e.g., S23K900123)"),
+			),
+			mcp.WithString("object_type",
+				mcp.Required(),
+				mcp.Description("ABAP object type (e.g., PROG, CLAS, TABL, FUGR, DDLS)"),
+			),
+			mcp.WithString("object_name",
+				mcp.Required(),
+				mcp.Description("Name of the ABAP object"),
+			),
+			mcp.WithString("pgmid",
+				mcp.Description("Program ID: R3TR (main objects, default), LIMU (sub-objects), CORR (corrections)"),
+			),
+		), s.handleAddObjectToTransport)
 	}
 
 	// --- Git/abapGit Integration (via ZADT_VSP WebSocket) ---

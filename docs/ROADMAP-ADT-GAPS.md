@@ -167,31 +167,37 @@
 
 ---
 
-## Phase 4: DDIC & Miscellaneous (3+ tools)
+## Phase 4: DDIC & Miscellaneous (4 tools) ✅ COMPLETED
 
-### Step 4.1: DDIC Object Type Reads
-- [x] `GetView(name)` — already in `client.go:617` ✅
-- [ ] Add 3 remaining client methods (follow GetTable/GetView pattern):
-  - `GetSearchHelp(ctx, name)` → `/sap/bc/adt/ddic/searchhelps/{name}`
-  - `GetLockObject(ctx, name)` → `/sap/bc/adt/ddic/lockobjects/{name}`
-  - `GetTypeGroup(ctx, name)` → `/sap/bc/adt/ddic/typegroups/{name}`
-- [ ] Add XML types for each
-- [ ] Consider extending `GetSource()` unified handler instead of separate tools
-- [ ] Unit tests
+**Implementation date:** 2026-02-21
+**New files:** `pkg/adt/ddic_test.go`
+**Modified files:** `pkg/adt/client.go` (GetSearchHelp, GetLockObject, GetTypeGroup), `pkg/adt/transport.go` (AddObjectToTransport), `internal/mcp/handlers_read.go` (3 DDIC handlers), `internal/mcp/handlers_transport.go` (AddObjectToTransport handler), `internal/mcp/server.go` (4 tools registered)
+**New tests:** 8 (4 DDIC reads + 4 transport)
+**Approach:** DDIC tools as separate MCP tools (expert mode). AddObjectToTransport in transport group (C).
 
-### Step 4.2: Transport Object Assignment
-- [ ] Add to `pkg/adt/transport.go`:
-  - `AddObjectToTransport(ctx, transportNumber, pgmid, object, objectName)` → error
-- [ ] Register MCP tool: `AddObjectToTransport`
-- [ ] **Needs validation:** exact `_action` parameter on real system
-- [ ] Unit + integration tests
+### Step 4.1: DDIC Object Type Reads ✅
+- [x] `GetView(name)` — already in `client.go` ✅
+- [x] `GetSearchHelp(ctx, name)` → `/sap/bc/adt/ddic/searchhelps/{name}/source/main`
+- [x] `GetLockObject(ctx, name)` → `/sap/bc/adt/ddic/lockobjects/{name}/source/main`
+- [x] `GetTypeGroup(ctx, name)` → `/sap/bc/adt/ddic/typegroups/{name}/source/main`
+- [x] Registered as separate MCP tools (expert mode only, simple DDIC reads)
+- [x] Unit tests: round-trip, uppercase conversion (4 tests)
+- [ ] Integration test (requires SAP system)
 
-### Step 4.3: Activity Feeds (if validated)
-- [ ] Validate endpoints exist via ADT discovery on real system
-- [ ] If confirmed: reuse Atom feed parser from `revisions.go`
-- [ ] Register tools: `GetObjectChangeFeed`, `GetUserActivityFeed`
+### Step 4.2: Transport Object Assignment ✅
+- [x] `AddObjectToTransport(ctx, transportNumber, pgmid, objectType, objectName)` in `transport.go`
+  - Uses PUT `/sap/bc/adt/cts/transportrequests/{number}` with tm:root XML body
+  - Defaults pgmid to "R3TR" if empty
+  - Full safety checks via `CheckTransport()`
+- [x] Register MCP tool: `AddObjectToTransport` (in "C" transport group)
+- [x] Unit tests: round-trip, default pgmid, missing params, read-only check (4 tests)
+- [ ] Integration test (requires SAP system)
 
-**Phase 4 total:** 3+ new tools, effort ~8+
+### Step 4.3: Activity Feeds — SKIPPED
+- Endpoints not validated on real system
+- Low priority, can be added later if ADT discovery confirms existence
+
+**Phase 4 total:** 4 new tools, 8 new unit tests, all passing
 
 ---
 

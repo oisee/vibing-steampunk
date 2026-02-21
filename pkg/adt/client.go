@@ -686,6 +686,46 @@ func (c *Client) GetStructure(ctx context.Context, structName string) (string, e
 	return string(resp.Body), nil
 }
 
+// GetSearchHelp retrieves the definition of a DDIC search help (SE11).
+func (c *Client) GetSearchHelp(ctx context.Context, name string) (string, error) {
+	name = strings.ToUpper(name)
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/searchhelps/%s/source/main", url.PathEscape(name))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting search help source: %w", err)
+	}
+	return string(resp.Body), nil
+}
+
+// GetLockObject retrieves the definition of a DDIC lock object (SE11).
+// Not to be confused with LockObject() in crud.go which acquires edit locks.
+func (c *Client) GetLockObject(ctx context.Context, name string) (string, error) {
+	name = strings.ToUpper(name)
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/lockobjects/%s/source/main", url.PathEscape(name))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting lock object source: %w", err)
+	}
+	return string(resp.Body), nil
+}
+
+// GetTypeGroup retrieves the source of an ABAP type group (SE11).
+func (c *Client) GetTypeGroup(ctx context.Context, name string) (string, error) {
+	name = strings.ToUpper(name)
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/typegroups/%s/source/main", url.PathEscape(name))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting type group source: %w", err)
+	}
+	return string(resp.Body), nil
+}
+
 // --- Table Contents (Data Preview) ---
 
 // TableContentsResult represents the result of a table contents query.

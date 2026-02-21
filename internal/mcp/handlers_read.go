@@ -222,6 +222,48 @@ func (s *Server) handleGetStructure(ctx context.Context, request mcp.CallToolReq
 	return mcp.NewToolResultText(source), nil
 }
 
+func (s *Server) handleGetSearchHelp(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	source, err := s.adtClient.GetSearchHelp(ctx, name)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get search help: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(source), nil
+}
+
+func (s *Server) handleGetLockObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	source, err := s.adtClient.GetLockObject(ctx, name)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get lock object: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(source), nil
+}
+
+func (s *Server) handleGetTypeGroup(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	name, ok := request.Params.Arguments["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+
+	source, err := s.adtClient.GetTypeGroup(ctx, name)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get type group: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(source), nil
+}
+
 func (s *Server) handleGetPackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	packageName, ok := request.Params.Arguments["package_name"].(string)
 	if !ok || packageName == "" {

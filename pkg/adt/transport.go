@@ -873,4 +873,51 @@ func (c *Client) DeleteTransport(ctx context.Context, number string) error {
 	return nil
 }
 
+// AddObjectToTransport adds an ABAP object to an existing transport request task.
+// Parameters:
+//   - transportNumber: the transport or task number (e.g., "S23K900123")
+//   - pgmid: program ID (e.g., "R3TR" for main objects, "LIMU" for sub-objects)
+//   - objectType: ABAP object type (e.g., "PROG", "CLAS", "TABL", "FUGR")
+//   - objectName: the object name (e.g., "ZTEST_PROGRAM")
+func (c *Client) AddObjectToTransport(ctx context.Context, transportNumber, pgmid, objectType, objectName string) error {
+	if err := c.config.Safety.CheckTransport(transportNumber, "AddObjectToTransport", true); err != nil {
+		return err
+	}
+
+	if transportNumber == "" {
+		return fmt.Errorf("transport number is required")
+	}
+	if pgmid == "" {
+		pgmid = "R3TR"
+	}
+	if objectType == "" {
+		return fmt.Errorf("object type is required")
+	}
+	if objectName == "" {
+		return fmt.Errorf("object name is required")
+	}
+
+	transportNumber = strings.ToUpper(transportNumber)
+	objectName = strings.ToUpper(objectName)
+
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm">
+  <tm:request tm:number="%s">
+    <tm:abap_object tm:pgmid="%s" tm:type="%s" tm:name="%s"/>
+  </tm:request>
+</tm:root>`, transportNumber, pgmid, objectType, objectName)
+
+	_, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/cts/transportrequests/%s", transportNumber), &RequestOptions{
+		Method:      http.MethodPut,
+		Body:        []byte(body),
+		ContentType: acceptTransportOrganizerV1,
+		Accept:      acceptTransportOrganizerV1,
+	})
+	if err != nil {
+		return fmt.Errorf("adding object to transport %s: %w", transportNumber, err)
+	}
+
+	return nil
+}
+
 // escapeXMLAttr is defined in ui5.go
