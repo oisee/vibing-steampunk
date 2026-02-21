@@ -160,6 +160,8 @@ const (
 	ObjectTypeBDEF CreatableObjectType = "BDEF/BDO" // Behavior Definition
 	ObjectTypeSRVD CreatableObjectType = "SRVD/SRV" // Service Definition
 	ObjectTypeSRVB CreatableObjectType = "SRVB/SVB" // Service Binding
+	ObjectTypeDDLX CreatableObjectType = "DDLX/EX"  // CDS Metadata Extension
+	ObjectTypeDCLS CreatableObjectType = "DCLS/DL"  // CDS Access Control
 )
 
 // CreateObjectOptions contains options for creating a new ABAP object.
@@ -256,6 +258,16 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 		creationPath: "/sap/bc/adt/businessservices/bindings",
 		rootName:     "srvb:serviceBinding",
 		namespace:    `xmlns:srvb="http://www.sap.com/adt/ddic/ServiceBindings"`,
+	},
+	ObjectTypeDDLX: {
+		creationPath: "/sap/bc/adt/ddic/ddlx/sources",
+		rootName:     "ddlx:ddlxSource",
+		namespace:    `xmlns:ddlx="http://www.sap.com/adt/ddic/ddlxsources"`,
+	},
+	ObjectTypeDCLS: {
+		creationPath: "/sap/bc/adt/acm/dcl/sources",
+		rootName:     "dcl:dclSource",
+		namespace:    `xmlns:dcl="http://www.sap.com/adt/acm/dclsources"`,
 	},
 }
 
@@ -633,6 +645,10 @@ func GetObjectURL(objectType CreatableObjectType, name string, parentName string
 		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeSRVB:
 		return fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDDLX:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDCLS:
+		return fmt.Sprintf("/sap/bc/adt/acm/dcl/sources/%s", url.PathEscape(strings.ToLower(name)))
 	default:
 		return ""
 	}

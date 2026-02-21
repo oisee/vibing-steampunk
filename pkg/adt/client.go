@@ -398,6 +398,45 @@ func (c *Client) GetSRVD(ctx context.Context, srvdName string) (string, error) {
 	return string(resp.Body), nil
 }
 
+// --- Metadata Extension (DDLX) Operations ---
+
+// GetDDLX retrieves the source code of a CDS Metadata Extension.
+// DDLX defines UI annotations, field labels, and other metadata for CDS views
+// outside the main CDS source (separation of concerns).
+func (c *Client) GetDDLX(ctx context.Context, ddlxName string) (string, error) {
+	ddlxName = strings.ToUpper(ddlxName)
+
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s/source/main", url.PathEscape(ddlxName))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "text/plain",
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting DDLX source: %w", err)
+	}
+
+	return string(resp.Body), nil
+}
+
+// --- Access Control (DCLS) Operations ---
+
+// GetDCLS retrieves the source code of a CDS Access Control.
+// DCLS defines authorization checks for CDS views using DCL (Data Control Language).
+func (c *Client) GetDCLS(ctx context.Context, dclsName string) (string, error) {
+	dclsName = strings.ToUpper(dclsName)
+
+	sourcePath := fmt.Sprintf("/sap/bc/adt/acm/dcl/sources/%s/source/main", url.PathEscape(dclsName))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "text/plain",
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting DCLS source: %w", err)
+	}
+
+	return string(resp.Body), nil
+}
+
 // ServiceBinding represents an OData Service Binding metadata
 type ServiceBinding struct {
 	Name            string `json:"name"`

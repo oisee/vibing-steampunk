@@ -337,6 +337,10 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"GetSQLExplainPlan":    true,  // Get SQL execution plan (HANA only)
 		"GetCheckRunResults":   true,  // Get detailed check run results
 
+		// CDS/RAP tools (2)
+		"GetCDSImpactAnalysis": true,  // CDS reverse where-used (downstream consumers)
+		"GetCDSElementInfo":    true,  // CDS view element/field metadata
+
 		// Advanced/Edge cases (2)
 		"LockObject":   true,
 		"UnlockObject": true,
@@ -1593,6 +1597,28 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Check run ID (from SyntaxCheck or other check operation)"),
 			),
 		), s.handleGetCheckRunResults)
+	}
+
+	// CDS Impact Analysis
+	if shouldRegister("GetCDSImpactAnalysis") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSImpactAnalysis",
+			mcp.WithDescription("Get REVERSE dependencies (where-used) for a CDS view. Returns all downstream consumers: other CDS views, programs, classes that reference this view. Complement to GetCDSDependencies which returns FORWARD dependencies."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (DDLS name, e.g., ZTRAVEL)"),
+			),
+		), s.handleGetCDSImpactAnalysis)
+	}
+
+	// CDS Element Info
+	if shouldRegister("GetCDSElementInfo") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSElementInfo",
+			mcp.WithDescription("Get metadata for all elements (fields) of a CDS view: field names, types, descriptions, annotations, and semantics. Useful for understanding CDS view structure without reading source."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (DDLS name, e.g., ZTRAVEL)"),
+			),
+		), s.handleGetCDSElementInfo)
 	}
 
 	// CloneObject - Copy object to new name

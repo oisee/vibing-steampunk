@@ -300,6 +300,8 @@ pkg/
 │   ├── revisions.go          # Object version history (GetRevisions, CompareVersions)
 │   ├── refactoring.go        # ADT-native refactoring (Rename, Extract Method)
 │   ├── quickfix.go           # Quick Fix proposals + ATC Quick Fix
+│   ├── testing.go            # Code coverage, SQL explain, check run results
+│   ├── cds_tools.go          # CDS impact analysis + element info
 │   ├── http.go               # HTTP transport (CSRF, sessions)
 │   ├── config.go             # Configuration
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
@@ -348,6 +350,8 @@ pkg/
 | Add version history feature | `pkg/adt/revisions.go` |
 | Add refactoring tool | `pkg/adt/refactoring.go` |
 | Add quick fix tool | `pkg/adt/quickfix.go` |
+| Add testing/quality tool | `pkg/adt/testing.go` |
+| Add CDS analysis tool | `pkg/adt/cds_tools.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
 | Add ABAP help feature | `pkg/adt/help.go` |
 | Configure tool visibility | `pkg/config/systems.go`, `cmd/vsp/config_cmd.go` |
@@ -583,8 +587,8 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 132 (97 focused, 132 expert) |
-| **Unit Tests** | 284 |
+| **Tools** | 134 (99 focused, 134 expert) |
+| **Unit Tests** | 294 |
 | **Integration Tests** | 56 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
@@ -675,26 +679,23 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ## Last Session Reference (2026-02-21)
 
-### ADT Refactoring Tools (Phase 1) - COMPLETED ✅
+### ADT Gaps Roadmap - Phases 1-3 COMPLETED ✅
 
-Added 5 new MCP tools for ADT-native refactoring and quick fixes:
-- **RenameRefactoring** — ADT-native rename with evaluate/preview/execute flow
-- **ExtractMethod** — Extract code selection into new method
-- **GetQuickFixProposals** — Get auto-fix suggestions at error position
-- **ApplyQuickFix** — Apply a specific quick fix
-- **ApplyATCQuickFix** — Apply ATC finding quick fix (details/apply)
+Implemented 3 phases of the ADT API gaps roadmap (`docs/ROADMAP-ADT-GAPS.md`):
 
-New files: `pkg/adt/refactoring.go`, `pkg/adt/quickfix.go`, `internal/mcp/handlers_refactoring.go`
-New tests: `pkg/adt/refactoring_test.go` (19 tests), `pkg/adt/quickfix_test.go` (14 tests)
-Roadmap: `docs/ROADMAP-ADT-GAPS.md`
+**Phase 1: Refactoring (5 tools)** — RenameRefactoring, ExtractMethod, GetQuickFixProposals, ApplyQuickFix, ApplyATCQuickFix
+- Files: `pkg/adt/refactoring.go`, `pkg/adt/quickfix.go`, `internal/mcp/handlers_refactoring.go`
+- Tests: 33 (19 refactoring + 14 quickfix)
 
-### Previous: Bugfix: GetUserTransports empty on sandbox - COMPLETED ✅
+**Phase 2: Testing & Quality (3 tools)** — GetCodeCoverage, GetSQLExplainPlan, GetCheckRunResults
+- Files: `pkg/adt/testing.go`, `internal/mcp/handlers_testing.go`
+- Tests: 13
 
-Fix in `pkg/adt/transport.go` — fallback to `ListTransports` when tree-based response is empty.
-
-### Previous: Version History Tools (2026-02-20) - COMPLETED ✅
-
-Added 3 MCP tools: GetRevisions, GetRevisionSource, CompareVersions.
+**Phase 3: CDS/RAP Completeness (2 tools + 2 object types)** — GetCDSImpactAnalysis, GetCDSElementInfo + DDLX/DCLS support in GetSource/WriteSource
+- Files: `pkg/adt/cds_tools.go`, `internal/mcp/handlers_cds.go`
+- Modified: `client.go` (GetDDLX, GetDCLS), `crud.go` (ObjectTypeDDLX, ObjectTypeDCLS), `workflows.go` (GetSource/WriteSource extended)
+- Tests: 10
+- ADT endpoints: DDLX → `/sap/bc/adt/ddic/ddlx/sources/`, DCLS → `/sap/bc/adt/acm/dcl/sources/`
 
 ### TODO
 

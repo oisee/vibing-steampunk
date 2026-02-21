@@ -112,50 +112,58 @@
 
 ---
 
-## Phase 3: CDS/RAP Completeness (4 tools)
+## Phase 3: CDS/RAP Completeness (4 tools) ✅ COMPLETED
 
 **Why third:** Completes the RAP development lifecycle for S/4HANA projects.
 
-### Step 3.1: Metadata Extension (MDE) Read/Write
-- [ ] Add to `pkg/adt/client.go`:
-  - `GetMDE(ctx, name)` → source string
-- [ ] Add object type to `objectTypes` map in `crud.go`:
-  - `ObjectTypeMDE` → path, create XML root/namespace
-- [ ] Extend `GetSource()` unified handler with MDE type
-- [ ] Extend `WriteSource()` with MDE support
-- [ ] Register as part of existing GetSource/WriteSource (type "MDE")
-- [ ] Unit tests
-- [ ] Integration test on S/4HANA
+**Implementation date:** 2026-02-21
+**New files:** `pkg/adt/cds_tools.go`, `pkg/adt/cds_tools_test.go`, `internal/mcp/handlers_cds.go`
+**Modified files:** `pkg/adt/client.go` (GetDDLX, GetDCLS), `pkg/adt/crud.go` (ObjectTypeDDLX, ObjectTypeDCLS), `pkg/adt/workflows.go` (GetSource/WriteSource extended), `internal/mcp/handlers_codeintel.go` (descriptions updated), `internal/mcp/server.go` (2 new tools registered)
+**New tests:** 10 (5 impact analysis + 5 element info)
+**Approach:** DDLX/DCLS integrated into existing GetSource/WriteSource unified tools (no separate MCP tools needed). Two new standalone MCP tools: GetCDSImpactAnalysis, GetCDSElementInfo.
 
-**Checkpoint:** GetSource + WriteSource work for MDE objects
+### Step 3.1: Metadata Extension (DDLX) Read/Write ✅
+- [x] Add `GetDDLX(ctx, name)` to `pkg/adt/client.go`
+  - Endpoint: `/sap/bc/adt/ddic/ddlx/sources/{name}/source/main`
+- [x] Add `ObjectTypeDDLX = "DDLX/EX"` to `objectTypes` map in `crud.go`
+  - Creation path: `/sap/bc/adt/ddic/ddlx/sources`
+  - Root: `ddlx:ddlxSource`, namespace: `http://www.sap.com/adt/ddic/ddlxsources`
+- [x] Extend `GetSource()` with DDLX type
+- [x] Extend `WriteSource()` with DDLX support (create + update)
+- [x] Extend `GetObjectURL()` with DDLX
+- [x] Update GetSource/WriteSource handler descriptions
+- [ ] Integration test on S/4HANA (requires SAP system)
 
-### Step 3.2: Access Control (DCL) Read/Write
-- [ ] Same pattern as MDE:
-  - Add `ObjectTypeDCLS` to objectTypes
-  - Extend GetSource/WriteSource handlers
-- [ ] Unit tests
+### Step 3.2: Access Control (DCLS) Read/Write ✅
+- [x] Add `GetDCLS(ctx, name)` to `pkg/adt/client.go`
+  - Endpoint: `/sap/bc/adt/acm/dcl/sources/{name}/source/main`
+- [x] Add `ObjectTypeDCLS = "DCLS/DL"` to `objectTypes` map in `crud.go`
+  - Creation path: `/sap/bc/adt/acm/dcl/sources`
+  - Root: `dcl:dclSource`, namespace: `http://www.sap.com/adt/acm/dclsources`
+- [x] Extend `GetSource()` with DCLS type
+- [x] Extend `WriteSource()` with DCLS support (create + update)
+- [x] Extend `GetObjectURL()` with DCLS
+- [ ] Integration test on S/4HANA (requires SAP system)
 
-**Checkpoint:** GetSource + WriteSource work for DCL objects
+### Step 3.3: CDS Impact Analysis ✅
+- [x] Create `pkg/adt/cds_tools.go`:
+  - `GetCDSImpactAnalysis(ctx, cdsViewName)` → *CDSImpactAnalysisResult
+  - Uses existing usageReferences endpoint with CDS view URI
+- [x] Add types: `CDSImpactedObject`, `CDSImpactAnalysisResult`
+- [x] Register MCP tool: `GetCDSImpactAnalysis`
+- [x] Unit tests: parse XML, empty response, invalid XML, client round-trip, read-only check (5 tests)
+- [ ] Integration test (requires SAP system)
 
-### Step 3.3: CDS Impact Analysis
-- [ ] Add to `pkg/adt/cds.go`:
-  - `GetCDSImpactAnalysis(ctx, cdsViewName)` → []ImpactedObject
-- [ ] Add types: `ImpactedObject` (name, type, severity, reason)
-- [ ] Register MCP tool: `GetCDSImpactAnalysis`
-- [ ] Unit tests
+### Step 3.4: CDS Element Info ✅
+- [x] Add to `pkg/adt/cds_tools.go`:
+  - `GetCDSElementInfo(ctx, cdsViewName)` → *CDSElementInfoResult
+  - Uses ADT DDL source metadata endpoint with `application/vnd.sap.adt.ddic.ddlsources.v2+xml`
+- [x] Add types: `CDSElementInfo`, `CDSElementInfoResult`
+- [x] Register MCP tool: `GetCDSElementInfo`
+- [x] Unit tests: parse elements with annotations, empty, invalid XML, client round-trip, read-only check (5 tests)
+- [ ] Integration test (requires SAP system)
 
-**Checkpoint:** GetCDSImpactAnalysis returns downstream consumers of a CDS view
-
-### Step 3.4: CDS Element Info
-- [ ] Add to `pkg/adt/cds.go`:
-  - `GetCDSElementInfo(ctx, cdsViewName, elementPath)` → *ElementInfo
-- [ ] Add types: `ElementInfo` (name, type, annotations, semantics)
-- [ ] Register MCP tool: `GetCDSElementInfo`
-- [ ] Unit tests
-
-**Checkpoint:** GetCDSElementInfo returns metadata for a CDS view field
-
-**Phase 3 total:** 4 new tools, effort ~13
+**Phase 3 total:** 2 new MCP tools + 2 object types added to GetSource/WriteSource, 10 new unit tests
 
 ---
 

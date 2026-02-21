@@ -2018,6 +2018,12 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		}
 		return string(data), nil
 
+	case "DDLX":
+		return c.GetDDLX(ctx, name)
+
+	case "DCLS":
+		return c.GetDCLS(ctx, name)
+
 	case "MSAG":
 		// GetMessageClass returns JSON metadata (message list), not source
 		mc, err := c.GetMessageClass(ctx, name)
@@ -2032,7 +2038,7 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		return string(data), nil
 
 	default:
-		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, VIEW, BDEF, SRVD, SRVB, MSAG)", objectType)
+		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, DDLX, DCLS, VIEW, BDEF, SRVD, SRVB, MSAG)", objectType)
 	}
 }
 
@@ -2109,10 +2115,10 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 
 	// Validate object type
 	switch objectType {
-	case "PROG", "CLAS", "INTF", "DDLS", "BDEF", "SRVD", "SRVB":
+	case "PROG", "CLAS", "INTF", "DDLS", "DDLX", "DCLS", "BDEF", "SRVD", "SRVB":
 		// Supported types
 	default:
-		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF, DDLS, BDEF, SRVD, SRVB)", objectType)
+		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF, DDLS, DDLX, DCLS, BDEF, SRVD, SRVB)", objectType)
 		return result, nil
 	}
 
@@ -2141,6 +2147,12 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 			objectExists = (err == nil)
 		case "SRVB":
 			_, err := c.GetSRVB(ctx, name)
+			objectExists = (err == nil)
+		case "DDLX":
+			_, err := c.GetDDLX(ctx, name)
+			objectExists = (err == nil)
+		case "DCLS":
+			_, err := c.GetDCLS(ctx, name)
 			objectExists = (err == nil)
 		}
 	}
@@ -2335,7 +2347,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 
 		return result, nil
 
-	case "DDLS", "BDEF", "SRVD":
+	case "DDLS", "DDLX", "DCLS", "BDEF", "SRVD":
 		// Get object type and URL
 		var objType CreatableObjectType
 		var objectURL string
@@ -2343,6 +2355,12 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		case "DDLS":
 			objType = ObjectTypeDDLS
 			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "DDLX":
+			objType = ObjectTypeDDLX
+			objectURL = GetObjectURL(ObjectTypeDDLX, name, "")
+		case "DCLS":
+			objType = ObjectTypeDCLS
+			objectURL = GetObjectURL(ObjectTypeDCLS, name, "")
 		case "BDEF":
 			objType = ObjectTypeBDEF
 			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
@@ -2977,12 +2995,16 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 
 		return result, nil
 
-	case "DDLS", "BDEF", "SRVD":
+	case "DDLS", "DDLX", "DCLS", "BDEF", "SRVD":
 		// Get object URL
 		var objectURL string
 		switch objectType {
 		case "DDLS":
 			objectURL = GetObjectURL(ObjectTypeDDLS, name, "")
+		case "DDLX":
+			objectURL = GetObjectURL(ObjectTypeDDLX, name, "")
+		case "DCLS":
+			objectURL = GetObjectURL(ObjectTypeDCLS, name, "")
 		case "BDEF":
 			objectURL = GetObjectURL(ObjectTypeBDEF, name, "")
 		case "SRVD":
