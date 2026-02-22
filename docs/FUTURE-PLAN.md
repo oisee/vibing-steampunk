@@ -9,10 +9,10 @@
 
 | Metric | Value |
 |--------|-------|
-| Total tools | 138 (97 focused, 138 expert) |
-| Unit tests | 297 |
-| ADT API coverage | ~84% |
-| Phases completed | Refactoring, Testing, CDS/RAP, DDIC |
+| Total tools | 145 (103 focused, 145 expert) |
+| Unit tests | 336 |
+| ADT API coverage | ~87% |
+| Phases completed | Refactoring, Testing, CDS/RAP, DDIC, Intelligence Layer |
 
 ### What was added (2026-02-21)
 
@@ -24,43 +24,43 @@
 
 ---
 
-## Priority 1: Intelligence Layer (High ROI)
+## Priority 1: Intelligence Layer (High ROI) — ✅ COMPLETE
 
-### 1.1 Impact Analysis & Dead Code
+**Detailed plan:** [docs/PLAN.md](PLAN.md)
+**Audit results:** [docs/AUDIT.md](AUDIT.md)
 
-**Why:** AI can't safely refactor without understanding blast radius.
+### 1.1 AI Code Review Tools (4 tools, 39 tests) ✅
+
+| Tool | Description | Status |
+|------|-------------|--------|
+| `AnalyzeSQLPerformance` | SQL explain plan analysis + ABAP SQL text fallback for non-HANA | ✅ Done |
+| `GetImpactAnalysis` | 4-layer blast radius: static refs → transitive → dynamic → config | ✅ Done |
+| `AnalyzeABAPCode` | 21-rule ABAP source analysis (two-pass statement assembler) | ✅ Done |
+| `CheckRegression` | Diff-based breaking change detection (signatures, removed methods) | ✅ Done |
+
+**New files (2026-02-22):**
+- `pkg/adt/sqlperf.go` + `sqlperf_test.go` (10 tests)
+- `pkg/adt/impact.go` + `impact_test.go` (7 tests)
+- `pkg/adt/codeanalysis.go` + `codeanalysis_test.go` (14 tests)
+- `pkg/adt/regression.go` + `regression_test.go` (8 tests)
+- `internal/mcp/handlers_intelligence.go`, `handlers_codeanalysis.go`
+
+**Key design decisions:**
+- Two-pass statement assembler (ABAP statements span multiple lines)
+- Dynamic calls: search for object NAME as string literal (not generic patterns)
+- Config-driven calls: source analysis + optional RunQuery on SXS_INTER, MODSAP, TNAPR
+- Regression > new code quality (transport release focus)
+- ABAP SQL-aware text analysis (strips @host vars, INTO TABLE, FOR ALL ENTRIES, UP TO n ROWS)
+
+### 1.2 Remaining Intelligence Ideas (deferred)
 
 | Tool | Description | Complexity |
 |------|-------------|------------|
-| `GetImpactAnalysis` | "If I change this, what breaks?" — combines CROSS/WBCROSSGT + test coverage | Medium |
 | `FindDeadCode` | Unreferenced methods/classes by package | Medium |
 | `DetectCyclicDependencies` | Find circular references between objects | Low |
-
-**Files:** `pkg/adt/analysis.go`, `internal/mcp/handlers_analysis.go`
-**Depends on:** Existing GetCallGraph, GetCalleesOf, GetCallersOf
-
-### 1.2 Semantic Code Search
-
-**Why:** Text search finds strings; semantic search finds intent.
-
-| Tool | Description | Complexity |
-|------|-------------|------------|
-| `FindPatterns` | Detect code smells, repeated patterns | Medium |
-| `FindDocumentationGaps` | Undocumented complex methods (complexity + comment ratio) | Low |
+| `FindDocumentationGaps` | Undocumented complex methods | Low |
 | `AnalyzeTechnicalDebt` | Prioritized list: age × change freq × coverage × complexity | Medium |
-
-**Depends on:** Existing SourceSearch (HANA), GrepPackages
-
-### 1.3 Performance Diagnostics
-
-**Why:** ABAP developers constantly fight performance issues.
-
-| Tool | Description | Complexity |
-|------|-------------|------------|
-| `AnalyzeSQLPerformance` | Extend GetSQLExplainPlan: detect full scans, missing indexes | Low |
 | `FindCachingOpportunities` | SELECT in loop? Suggest buffering | Medium |
-
-**Depends on:** Phase 2 GetSQLExplainPlan, existing GetTrace
 
 ---
 
@@ -147,25 +147,30 @@ Low priority items not yet implemented:
 
 | Quarter | Focus | New Tools |
 |---------|-------|-----------|
-| Q1 2026 | Intelligence Layer (1.1-1.3) | 5-7 |
+| Q1 2026 | Intelligence Layer (1.1) ✅ + Remaining (1.2) | 4 done + 5 deferred |
 | Q2 2026 | Workflow Enhancement (2.1-2.2) | 2-3 + templates |
 | Q3 2026 | CI/CD Integration (3.1-3.3) | 3-4 |
 | Q4 2026 | AI Enhancement (4.1-4.3) | 3-5 |
 
-**Projected total:** 150+ tools, 92%+ ADT coverage
+**Current:** 145 tools, ~87% ADT coverage
+**Projected total:** 155+ tools, 92%+ ADT coverage
 
 ---
 
 ## Integration Tests Backlog
 
-All new tools from the 4-phase implementation need integration testing on real SAP systems:
+All new tools need integration testing on real SAP systems:
 
 | Phase | Tools to test | System required |
 |-------|---------------|-----------------|
-| Phase 1 | RenameRefactoring, ExtractMethod, QuickFix | SC3 or S23 |
-| Phase 2 | GetCodeCoverage, GetSQLExplainPlan | S23 (HANA) |
-| Phase 3 | DDLX/DCLS GetSource/WriteSource, CDS tools | S23 (HANA) |
-| Phase 4 | DDIC reads, AddObjectToTransport | SC3 or S23 |
+| ADT Gaps Phase 1 | RenameRefactoring, ExtractMethod, QuickFix | SC3 or S23 |
+| ADT Gaps Phase 2 | GetCodeCoverage, GetSQLExplainPlan | S23 (HANA) |
+| ADT Gaps Phase 3 | DDLX/DCLS GetSource/WriteSource, CDS tools | S23 (HANA) |
+| ADT Gaps Phase 4 | DDIC reads, AddObjectToTransport | SC3 or S23 |
+| Intelligence Phase 1 | AnalyzeSQLPerformance (HANA explain plan) | S23 (HANA) |
+| Intelligence Phase 2 | GetImpactAnalysis (all 4 layers) | S23 (HANA + SourceSearch) |
+| Intelligence Phase 3 | AnalyzeABAPCode (via object_uri) | SC3 or S23 |
+| Intelligence Phase 4 | CheckRegression (version history) | SC3 or S23 |
 
 ---
 

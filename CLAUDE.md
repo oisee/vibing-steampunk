@@ -430,7 +430,7 @@ See `embedded/abap/zcl_vsp_amdp_service.clas.abap` for ABAP service implementati
 
 ## Testing
 
-### Unit Tests (297 tests)
+### Unit Tests (336 tests)
 - Mock HTTP client (see `client_test.go`, `http_test.go`, `workflows_test.go`)
 - Cookie parsing tests (`cookies_test.go`)
 - Unified tools tests (GetSource, WriteSource, GrepObjects, GrepPackages)
@@ -591,8 +591,8 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 138 (97 focused, 138 expert) |
-| **Unit Tests** | 297 |
+| **Tools** | 145 (103 focused, 145 expert) |
+| **Unit Tests** | 336 |
 | **Integration Tests** | 56 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
@@ -631,6 +631,7 @@ When creating a new report:
 | **Testing & Quality** | ✅ Complete (GetCodeCoverage, GetSQLExplainPlan, GetCheckRunResults — 3 tools, 13 tests) |
 | **CDS/RAP Extensions** | ✅ Complete (GetCDSImpactAnalysis, GetCDSElementInfo, DDLX/DCLS in GetSource/WriteSource) |
 | **DDIC Reads** | ✅ Complete (GetSearchHelp, GetLockObject, GetTypeGroup, AddObjectToTransport — 4 tools) |
+| **Intelligence Layer** | ✅ Complete (AnalyzeSQLPerformance, GetImpactAnalysis, AnalyzeABAPCode, CheckRegression — 4 tools, 39 tests) |
 
 ### DSL & Workflow Usage
 

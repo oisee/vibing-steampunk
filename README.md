@@ -1053,6 +1053,18 @@ AI Workflow:
 - [TAS & Scripting Report](reports/2025-12-21-001-tas-scripting-time-travel-vision.md) - Full technical design
 - [Test Extraction Report](reports/2025-12-21-002-test-extraction-isolated-replay.md) - Playground architecture
 
+## Related Projects
+
+Part of the [claude-team-control](https://gitlab.kofax.com/sap-ai/mcp/claude-team-control) ecosystem:
+
+| Project | Description |
+|---------|-------------|
+| [claude-team-control](https://gitlab.kofax.com/sap-ai/mcp/claude-team-control) | Central AI config, orchestrator, sync |
+| [pdap-hub](https://gitlab.kofax.com/sap-ai/mcp/pdap-hub) | Process Director web dashboard |
+| [pdap-rag-mcp](https://gitlab.kofax.com/sap-ai/mcp/pdap-rag-mcp) | RAG search over PD documentation |
+| [vibing-steampunk](https://gitlab.kofax.com/sap-ai/mcp/vibing-steampunk-mcp) | SAP ADT tools (Go/ABAP) |
+| [sap-gui-control](https://gitlab.kofax.com/sap-ai/mcp/sap-gui-control) | SAP GUI automation via COM |
+
 ## License
 
 MIT
