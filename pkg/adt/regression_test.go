@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +156,37 @@ ENDCLASS.`
 	findings := DetectExceptionChanges(old, new)
 	if len(findings) == 0 {
 		t.Error("expected changed_exception_handling for multi-line METHODS with RAISING change")
+	}
+}
+
+func TestDetectExceptionChanges_MultiMethodNoFalseAttribution(t *testing.T) {
+	// Two methods: only second has RAISING. Ensure RAISING is attributed to correct method.
+	old := `CLASS zcl_test DEFINITION.
+  PUBLIC SECTION.
+    METHODS do_simple
+      IMPORTING iv_value TYPE string.
+    METHODS do_complex
+      IMPORTING iv_data TYPE ref to data
+      RAISING cx_sy_open_sql_db.
+ENDCLASS.`
+
+	new := `CLASS zcl_test DEFINITION.
+  PUBLIC SECTION.
+    METHODS do_simple
+      IMPORTING iv_value TYPE string.
+    METHODS do_complex
+      IMPORTING iv_data TYPE ref to data
+      RAISING cx_sy_open_sql_db cx_sy_dynamic_osql_error.
+ENDCLASS.`
+
+	findings := DetectExceptionChanges(old, new)
+	if len(findings) == 0 {
+		t.Error("expected changed_exception_handling finding for do_complex")
+	}
+	for _, f := range findings {
+		if strings.Contains(f.Description, "do_simple") || strings.Contains(strings.ToLower(f.Match), "do_simple") {
+			t.Errorf("RAISING wrongly attributed to do_simple: %s", f.Description)
+		}
 	}
 }
 

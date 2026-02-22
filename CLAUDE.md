@@ -302,6 +302,10 @@ pkg/
 │   ├── quickfix.go           # Quick Fix proposals + ATC Quick Fix
 │   ├── testing.go            # Code coverage, SQL explain, check run results
 │   ├── cds_tools.go          # CDS impact analysis + element info
+│   ├── codeanalysis.go       # Intelligence Layer: ABAP code analysis (21 rules, statement assembler)
+│   ├── sqlperf.go            # Intelligence Layer: SQL performance analysis (plan + text)
+│   ├── impact.go             # Intelligence Layer: Impact analysis (4-layer composition)
+│   ├── regression.go         # Intelligence Layer: Regression detection (signature/method/interface changes)
 │   ├── http.go               # HTTP transport (CSRF, sessions)
 │   ├── config.go             # Configuration
 │   ├── cookies.go            # Cookie file parsing (Netscape format)
@@ -352,6 +356,10 @@ pkg/
 | Add quick fix tool | `pkg/adt/quickfix.go` |
 | Add testing/quality tool | `pkg/adt/testing.go` |
 | Add CDS analysis tool | `pkg/adt/cds_tools.go` |
+| Add code analysis rule | `pkg/adt/codeanalysis.go` |
+| Add SQL performance rule | `pkg/adt/sqlperf.go` |
+| Add impact analysis layer | `pkg/adt/impact.go` |
+| Add regression check | `pkg/adt/regression.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
 | Add ABAP help feature | `pkg/adt/help.go` |
 | Configure tool visibility | `pkg/config/systems.go`, `cmd/vsp/config_cmd.go` |
@@ -430,7 +438,7 @@ See `embedded/abap/zcl_vsp_amdp_service.clas.abap` for ABAP service implementati
 
 ## Testing
 
-### Unit Tests (336 tests)
+### Unit Tests (345 tests)
 - Mock HTTP client (see `client_test.go`, `http_test.go`, `workflows_test.go`)
 - Cookie parsing tests (`cookies_test.go`)
 - Unified tools tests (GetSource, WriteSource, GrepObjects, GrepPackages)
@@ -592,7 +600,7 @@ When creating a new report:
 | Metric | Value |
 |--------|-------|
 | **Tools** | 145 (103 focused, 145 expert) |
-| **Unit Tests** | 336 |
+| **Unit Tests** | 345 |
 | **Integration Tests** | 56 |
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
@@ -631,7 +639,7 @@ When creating a new report:
 | **Testing & Quality** | ✅ Complete (GetCodeCoverage, GetSQLExplainPlan, GetCheckRunResults — 3 tools, 13 tests) |
 | **CDS/RAP Extensions** | ✅ Complete (GetCDSImpactAnalysis, GetCDSElementInfo, DDLX/DCLS in GetSource/WriteSource) |
 | **DDIC Reads** | ✅ Complete (GetSearchHelp, GetLockObject, GetTypeGroup, AddObjectToTransport — 4 tools) |
-| **Intelligence Layer** | ✅ Complete (AnalyzeSQLPerformance, GetImpactAnalysis, AnalyzeABAPCode, CheckRegression — 4 tools, 39 tests) |
+| **Intelligence Layer** | ✅ Complete (AnalyzeSQLPerformance, GetImpactAnalysis, AnalyzeABAPCode, CheckRegression — 4 tools, 46 tests, 5 audit rounds) |
 
 ### DSL & Workflow Usage
 
@@ -677,7 +685,7 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 
 ### Roadmap
 See [docs/FUTURE-PLAN.md](docs/FUTURE-PLAN.md) for the full development plan.
-- **Priority 1:** Intelligence Layer — impact analysis, dead code, semantic search, SQL performance
+- **Priority 1:** ~~Intelligence Layer~~ ✅ DONE — impact analysis, SQL performance, code analysis, regression detection
 - **Priority 2:** Workflow Enhancement — DSL conditionals/parallel, pre-built workflow templates
 - **Priority 3:** CI/CD Integration — GitHub/GitLab Actions, ATC as PR comments, multi-system transport
 - **Priority 4:** AI Enhancement — autonomous RCA, coverage-driven test gen, AI-guided refactoring

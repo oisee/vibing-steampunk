@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // SQLPerformanceAnalysis is the combined result of SQL performance analysis.
@@ -306,6 +307,9 @@ func calculateSQLScore(findings []SQLPerformanceFinding) string {
 // Always runs text analysis on the input query.
 // If hanaAvailable is true, also attempts GetSQLExplainPlan for HANA execution plan analysis.
 func (c *Client) AnalyzeSQLPerformance(ctx context.Context, sqlQuery string, hanaAvailable bool) (*SQLPerformanceAnalysis, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	if err := c.checkSafety(OpRead, "AnalyzeSQLPerformance"); err != nil {
 		return nil, err
 	}

@@ -161,7 +161,7 @@ PAL reviewed the fixes and found 3 additional MEDIUM issues:
 | P2 | MEDIUM | Early returns in CheckRegression leave `riskLevel` empty | Added `riskLevel = "unknown"` on all 4 early return paths |
 | P3 | MEDIUM | `searchDynamicPatterns` swallows GrepPackages error | Changed to `([]DynamicCallRisk, error)`, caller adds warning |
 
-**Verdict: APPROVE** — all findings resolved. 7 new tests added. 343 total tests passing.
+**Verdict: APPROVE** — all findings resolved. 7 new tests added.
 
 ### Test Coverage Added for Fixes
 
@@ -174,3 +174,44 @@ PAL reviewed the fixes and found 3 additional MEDIUM issues:
 | `TestDetectExceptionChanges_MultiLineRaising` | Multi-line RAISING clause detection |
 | `TestParseObjectURIComponents` | URI → type/name parsing (6 subtests) |
 | `TestSanitizeForSQL` | SQL injection prevention (5 subtests) |
+
+---
+
+## Round 5: Deep Refactoring Review (2026-02-22)
+
+**Auditors:** Code Reviewer Agent (Claude Opus) + Architect Agent (Claude Opus) + PAL codereview (GPT-5.2-Pro)
+
+Three independent review passes over all Intelligence Layer files after Round 4 fixes.
+
+### Round 5a: Code Reviewer + Architect Findings (resolved)
+
+| # | Source | Severity | Finding | Resolution |
+|---|--------|----------|---------|------------|
+| C1 | Reviewer | **CRITICAL** | `reCallFuncDyn` false positive on static `CALL FUNCTION 'LITERAL'` | Changed regex to `(?i)CALL\s+FUNCTION\s+[^'"]` — rejects quote char |
+| H1 | Both | **HIGH** | 6+ inline `regexp.MustCompile` in impact.go + regression.go | Moved to package-level `var` blocks |
+| H2 | Reviewer | **HIGH** | `extractRaisingClauses` cross-method match via `[\s\S]*?` | Changed to `[^.]*?` — ABAP period-terminated statements prevent crossing |
+| H3 | Reviewer | **HIGH** | `dynamic_call_no_try` no TRY scope tracking → false positives | Added `TryDepth` to `scanContext`, skip finding when inside TRY block |
+| M1 | Reviewer | **MEDIUM** | `select_endselect` fires on `SELECT INTO @var` (single-row fetch) | Added exclusion for `INTO @` and `INTO (` patterns |
+| M2 | Reviewer | **MEDIUM** | `hardcoded_credentials` misses backtick and template strings | Extended regex to cover backtick and `\|...\|` patterns |
+| M3 | Reviewer | **MEDIUM** | `AnalyzeSQLPerformance` missing timeout | Added `context.WithTimeout(30s)` |
+| M4 | Reviewer | **MEDIUM** | Dead code `reNormalizeWS` | Removed |
+
+### Round 5b: PAL GPT-5.2-Pro Expert Findings (resolved)
+
+| # | Severity | Finding | Resolution |
+|---|----------|---------|------------|
+| P1 | **HIGH** | SELECT loop "sticking" — aggregate SELECT opens loop without ENDSELECT, cascading false positives | Added METHOD/FORM boundary reset + excluded aggregates (COUNT/SUM/MIN/MAX/AVG) from loop tracking |
+| P2 | **MEDIUM** | `extractPublicMethods`/`extractInterfaceDef` slices `source` by indices from `ToUpper()` — index mismatch risk | Changed to slice `upper` instead of `source` |
+| P3 | **MEDIUM** | RAISING regex `[\w\s]+?` doesn't support namespaced exceptions `/FOO/CX_BAR` | Added `/` to character class: `[\w/\s]+?` |
+| P4 | MEDIUM | `_` not escaped in LIKE for `queryConfigTables` — wildcard match | Accepted: graceful degradation, optional feature |
+| P5 | MEDIUM | Layer 3 searches bare name, not string literal | Accepted: broader search is intentional trade-off |
+| P6 | LOW | Indented `*` treated as ABAP comment | Accepted: liberal parsing for modern ABAP in classes |
+| P7 | LOW | Multiple statements per line not split | Known limitation, rare in practice |
+
+### Test Results After All Fixes
+
+- `go test ./pkg/adt/`: **279 tests PASS**
+- `go test ./...`: **345 tests PASS** (only `pkg/cache` SQLite fails — pre-existing CGO issue)
+- `go vet -tags=integration ./pkg/adt/`: clean
+
+**Verdict: APPROVE** — all CRITICAL and HIGH findings resolved. 3 MEDIUM accepted as documented trade-offs. 345 total tests passing.

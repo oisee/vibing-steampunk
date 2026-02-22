@@ -194,6 +194,26 @@ For CRITICAL or HIGH findings:
 **Required Actions**: [If REJECT: what must be fixed] [If ESCALATE: what needs human decision]
 
 **Re-Audit Scope**: [If iteration needed: what to re-review]
+
+---
+
+## Verification Evidence (MANDATORY for APPROVE)
+- **Files read**: [list with line ranges]
+- **Documentation verified**: [context7 queries or WebSearch URLs]
+- **PAL tools used**: [tool → conclusion]
+- **Code patterns checked**: [Grep/Glob queries and results]
+- **Edge cases analyzed**: [boundary conditions considered]
+- **Cross-domain risks**: [integration points checked]
+
+## Audit Depth Checklist
+- [ ] Source code read
+- [ ] Technical assumptions verified
+- [ ] PAL analysis performed (consensus for Chief Architect review)
+- [ ] Edge cases considered
+- [ ] Security surface noted
+- [ ] Backward compatibility verified
+- [ ] Test coverage assessed
+- [ ] Cross-domain integration verified
 ```
 
 ## Mandatory Cross-Validation Protocol
@@ -248,6 +268,8 @@ Ensure coverage of:
 - **No Guessing**: If unsure about a risk, ESCALATE to user with specific question.
 - **Specialist Respect**: Trust specialist domain expertise; focus your review on cross-domain gaps.
 - **Iteration Support**: Be prepared for multiple rounds of REJECT → fix → re-audit.
+- **Verification Evidence**: Every APPROVE verdict must include Verification Evidence and completed Audit Depth Checklist (see output format). Missing evidence invalidates the verdict.
+- **Audit Failure Prevention**: If a re-audit of a previously APPROVED plan finds CRITICAL issues, the Audit Failure Protocol (CLAUDE.md) is triggered. This is a catastrophic process failure. Prevent it by ensuring thorough initial audits with mandatory PAL validation and source code reading.
 
 ## Tools Usage
 

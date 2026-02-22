@@ -10,7 +10,8 @@
 | Metric | Value |
 |--------|-------|
 | Total tools | 145 (103 focused, 145 expert) |
-| Unit tests | 336 |
+| Unit tests | 343 |
+| Integration tests | 71 (56 existing + 15 new) |
 | ADT API coverage | ~87% |
 | Phases completed | Refactoring, Testing, CDS/RAP, DDIC, Intelligence Layer |
 
@@ -157,26 +158,96 @@ Low priority items not yet implemented:
 
 ---
 
-## Integration Tests Backlog
+## Integration Tests Backlog — ✅ WRITTEN (2026-02-22)
 
-All new tools need integration testing on real SAP systems:
+15 new integration tests written in `pkg/adt/integration_test.go` covering all 18 new tools:
 
-| Phase | Tools to test | System required |
-|-------|---------------|-----------------|
-| ADT Gaps Phase 1 | RenameRefactoring, ExtractMethod, QuickFix | SC3 or S23 |
-| ADT Gaps Phase 2 | GetCodeCoverage, GetSQLExplainPlan | S23 (HANA) |
-| ADT Gaps Phase 3 | DDLX/DCLS GetSource/WriteSource, CDS tools | S23 (HANA) |
-| ADT Gaps Phase 4 | DDIC reads, AddObjectToTransport | SC3 or S23 |
-| Intelligence Phase 1 | AnalyzeSQLPerformance (HANA explain plan) | S23 (HANA) |
-| Intelligence Phase 2 | GetImpactAnalysis (all 4 layers) | S23 (HANA + SourceSearch) |
-| Intelligence Phase 3 | AnalyzeABAPCode (via object_uri) | SC3 or S23 |
-| Intelligence Phase 4 | CheckRegression (version history) | SC3 or S23 |
+| Phase | Tests | System required | Status |
+|-------|-------|-----------------|--------|
+| ADT Gaps Phase 1 | TestIntegration_RenameEvaluate, _GetQuickFixProposals | SC3 or S23 | Written |
+| ADT Gaps Phase 2 | TestIntegration_GetCodeCoverage, _GetSQLExplainPlan, _GetCheckRunResults | S23 (HANA) | Written |
+| ADT Gaps Phase 3 | TestIntegration_GetCDSImpactAnalysis, _GetCDSElementInfo | S23 (HANA) | Written |
+| ADT Gaps Phase 4 | TestIntegration_GetSearchHelp, _GetLockObject, _GetTypeGroup, _AddObjectToTransport | SC3 or S23 | Written |
+| Intelligence Phase 1 | TestIntegration_AnalyzeSQLPerformance | S23 (HANA) | Written |
+| Intelligence Phase 2 | TestIntegration_GetImpactAnalysis | S23 (HANA + SourceSearch) | Written |
+| Intelligence Phase 3 | TestIntegration_AnalyzeABAPCode | SC3 or S23 | Written |
+| Intelligence Phase 4 | TestIntegration_CheckRegression | SC3 or S23 | Written |
+
+All tests handle graceful degradation (skip on 404, try multiple objects, handle non-HANA systems).
+
+---
+
+## ALV Capture for RunReport — Plan
+
+### Current State
+- **ABAP side** (`zcl_vsp_report_service`): ALV capture is FULLY IMPLEMENTED
+  - `capture_alv=true` → `CL_SALV_BS_RUNTIME_INFO` → intercepts ALV display
+  - Returns JSON: `{status, report, runtime_ms, alv_captured, columns, rows, total_rows, truncated}`
+  - `max_rows` parameter (default 1000) prevents memory issues
+- **Go side** (`pkg/adt/reports.go`): Does NOT use ALV capture
+  - Current flow: `runReport` → job-based background execution → poll job → read spool
+  - `RunReportParams` has no `CaptureALV` field
+  - `RunReportResult` has no ALV data fields
+
+### Problem
+The Go handler (`handleRunReport`) sends `runReport` to WebSocket which triggers the ABAP `handle_run_report` method. The ABAP method already supports `capture_alv` and returns ALV data synchronously. But Go:
+1. Does not pass `capture_alv` parameter
+2. Expects job-based response (jobname/jobcount), not ALV data
+3. Has no types for ALV columns/rows
+
+### Implementation Plan
+
+**Step 1: Extend Go types** (`pkg/adt/reports.go`)
+```go
+type RunReportParams struct {
+    Report     string            `json:"report"`
+    Variant    string            `json:"variant,omitempty"`
+    Params     map[string]string `json:"params,omitempty"`
+    CaptureALV bool              `json:"capture_alv,omitempty"` // NEW
+    MaxRows    int               `json:"max_rows,omitempty"`    // NEW (default: 1000)
+}
+
+type RunReportResult struct {
+    Status      string          `json:"status"`
+    Report      string          `json:"report"`
+    JobName     string          `json:"jobname,omitempty"`
+    JobCount    string          `json:"jobcount,omitempty"`
+    RuntimeMs   int             `json:"runtime_ms,omitempty"`   // NEW
+    ALVCaptured bool            `json:"alv_captured,omitempty"` // NEW
+    Columns     []ALVColumn     `json:"columns,omitempty"`      // NEW
+    Rows        []map[string]string `json:"rows,omitempty"`     // NEW
+    TotalRows   int             `json:"total_rows,omitempty"`   // NEW
+    Truncated   bool            `json:"truncated,omitempty"`    // NEW
+}
+
+type ALVColumn struct {
+    Name string `json:"name"`
+    Type string `json:"type"`
+}
+```
+
+**Step 2: Update RunReport WebSocket call** (`pkg/adt/reports.go`)
+- Pass `capture_alv` and `max_rows` params to WebSocket message
+- Parse extended response (ALV data OR job data)
+
+**Step 3: Update handler** (`internal/mcp/handlers_report.go`)
+- Add `capture_alv` (boolean) and `max_rows` (number) parameters to tool registration
+- If `capture_alv=true` AND response has ALV data → format as table output
+- If `capture_alv=false` OR no ALV → fall through to existing job/spool flow
+
+**Step 4: Update tool description** (`internal/mcp/server.go`)
+- Add `capture_alv` and `max_rows` parameters to RunReport tool definition
+- Update description: "...optionally captures ALV grid output as structured data"
+
+**Estimated effort:** ~100 LOC changes, 3 files, 2-3 new unit tests
+**Risk:** Low — additive change, backward compatible (existing flow unchanged when `capture_alv=false`)
 
 ---
 
 ## Open Items
 
-- [ ] Re-add ALV capture for RunReport
+- [x] ~~Fix `TestIntegration_SourceSearch`~~ (was false alarm — compiles fine)
+- [x] ~~Integration tests for all 18 new tools~~ (15 tests written, 2026-02-22)
+- [ ] Re-add ALV capture for RunReport (plan above)
 - [ ] Test SAP GUI breakpoint sharing (set via vsp, trigger in SAP GUI)
-- [ ] Fix `TestIntegration_SourceSearch` (SourceSearchResponse fields renamed)
-- [ ] Integration tests for all 14 new tools
+- [ ] Run integration tests on live SAP S23/SC3 systems

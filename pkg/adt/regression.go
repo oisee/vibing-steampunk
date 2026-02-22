@@ -248,8 +248,7 @@ func (c *Client) CheckRegression(ctx context.Context, objectURI, baseVersion str
 // Returns map of method_name → full definition line.
 func extractMethodDefs(source string) map[string]string {
 	result := make(map[string]string)
-	re := regexp.MustCompile(`(?im)^\s*METHODS\s+(\w+)\b(.*)$`)
-	matches := re.FindAllStringSubmatch(source, -1)
+	matches := reMethodDef.FindAllStringSubmatch(source, -1)
 	for _, m := range matches {
 		name := strings.ToUpper(m[1])
 		result[name] = strings.TrimSpace(m[0])
@@ -281,9 +280,8 @@ func extractPublicMethods(source string) map[string]bool {
 		}
 	}
 
-	publicBlock := source[pubIdx : pubIdx+endIdx]
-	re := regexp.MustCompile(`(?im)\bMETHODS\s+(\w+)`)
-	matches := re.FindAllStringSubmatch(publicBlock, -1)
+	publicBlock := upper[pubIdx : pubIdx+endIdx]
+	matches := reMethodName.FindAllStringSubmatch(publicBlock, -1)
 	for _, m := range matches {
 		result[strings.ToUpper(m[1])] = true
 	}
@@ -301,7 +299,7 @@ func extractInterfaceDef(source string) string {
 	if endIdx < 0 {
 		return ""
 	}
-	return source[startIdx : startIdx+endIdx+len("ENDINTERFACE")]
+	return upper[startIdx : startIdx+endIdx+len("ENDINTERFACE")]
 }
 
 // extractRaisingClauses extracts RAISING clauses from method definitions.
@@ -309,8 +307,7 @@ func extractInterfaceDef(source string) string {
 // RAISING appears on a different line than the METHODS keyword.
 func extractRaisingClauses(source string) map[string]string {
 	result := make(map[string]string)
-	re := regexp.MustCompile(`(?ims)METHODS\s+(\w+)\b[\s\S]*?(RAISING\s+[\w\s]+?)\.`)
-	matches := re.FindAllStringSubmatch(source, -1)
+	matches := reMethodRaising.FindAllStringSubmatch(source, -1)
 	for _, m := range matches {
 		name := strings.ToUpper(m[1])
 		result[name] = strings.TrimSpace(m[2])
@@ -348,7 +345,13 @@ func normalizeMethodDef(s string) string {
 	return normalizeWhitespace(strings.ToUpper(s))
 }
 
-var reWhitespace = regexp.MustCompile(`\s+`)
+// Pre-compiled regexes for regression analysis (compiled once at package init).
+var (
+	reWhitespace        = regexp.MustCompile(`\s+`)
+	reMethodDef         = regexp.MustCompile(`(?im)^\s*METHODS\s+(\w+)\b(.*)$`)
+	reMethodName        = regexp.MustCompile(`(?im)\bMETHODS\s+(\w+)`)
+	reMethodRaising     = regexp.MustCompile(`(?ims)METHODS\s+(\w+)\b[^.]*?(RAISING\s+[\w/\s]+?)\.`)
+)
 
 func normalizeWhitespace(s string) string {
 	return reWhitespace.ReplaceAllString(strings.TrimSpace(s), " ")

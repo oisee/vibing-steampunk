@@ -9,8 +9,13 @@ import (
 	"time"
 )
 
-// Pre-compiled regex for SQL sanitization (strips everything except alphanumeric, underscore, slash).
-var reSQLSanitize = regexp.MustCompile(`[^a-zA-Z0-9/_]`)
+// Pre-compiled regexes (compiled once at package init).
+var (
+	reSQLSanitize    = regexp.MustCompile(`[^a-zA-Z0-9/_]`)
+	reUserExitCall   = regexp.MustCompile(`(?i)CALL\s+FUNCTION\s+['"]EXIT_`)
+	reCrossProgramFM = regexp.MustCompile(`(?i)PERFORM\s+\w+.*IN\s+PROGRAM`)
+	reBAdIInterface  = regexp.MustCompile(`(?i)IF_EX_\w+|IF_BADI_\w+`)
+)
 
 // ImpactAnalysisOptions configures which layers to execute.
 type ImpactAnalysisOptions struct {
@@ -294,7 +299,7 @@ func DetectConfigPatterns(source, objectName string) []ConfigCallRisk {
 	}
 
 	// EXIT_ prefix in CALL FUNCTION
-	if regexp.MustCompile(`(?i)CALL\s+FUNCTION\s+['"]EXIT_`).MatchString(source) {
+	if reUserExitCall.MatchString(source) {
 		risks = append(risks, ConfigCallRisk{
 			Type:        "user_exit",
 			Name:        objectName,
@@ -304,7 +309,7 @@ func DetectConfigPatterns(source, objectName string) []ConfigCallRisk {
 	}
 
 	// PERFORM...IN PROGRAM
-	if regexp.MustCompile(`(?i)PERFORM\s+\w+.*IN\s+PROGRAM`).MatchString(source) {
+	if reCrossProgramFM.MatchString(source) {
 		risks = append(risks, ConfigCallRisk{
 			Type:        "cross_program",
 			Name:        objectName,
@@ -314,7 +319,7 @@ func DetectConfigPatterns(source, objectName string) []ConfigCallRisk {
 	}
 
 	// IF_EX_ or IF_BADI_ interface implementation
-	if regexp.MustCompile(`(?i)IF_EX_\w+|IF_BADI_\w+`).MatchString(source) {
+	if reBAdIInterface.MatchString(source) {
 		risks = append(risks, ConfigCallRisk{
 			Type:        "badi",
 			Name:        objectName,

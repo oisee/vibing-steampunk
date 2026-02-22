@@ -354,6 +354,24 @@ CALL FUNCTION lv_fname EXPORTING username = 'ADMIN'.`
 	}
 }
 
+func TestAnalyzeABAPSource_StaticCallFunctionNoFalsePositive(t *testing.T) {
+	// Static CALL FUNCTION with literal name should NOT trigger dynamic_call_no_try
+	source := `CALL FUNCTION 'BAPI_USER_GET_DETAIL'
+  EXPORTING username = 'ADMIN'
+  IMPORTING return = ls_return.
+IF sy-subrc <> 0.
+  MESSAGE ls_return-message TYPE 'E'.
+ENDIF.`
+
+	result := AnalyzeABAPSource(source)
+
+	for _, f := range result.Findings {
+		if f.Rule == "dynamic_call_no_try" {
+			t.Errorf("static CALL FUNCTION 'LITERAL' should not trigger dynamic_call_no_try, got: %s", f.Match)
+		}
+	}
+}
+
 func TestAnalyzeABAPSource_TodoFixme(t *testing.T) {
 	// Fix M1: todo_fixme rule should fire on comment lines
 	source := `* TODO: implement error handling

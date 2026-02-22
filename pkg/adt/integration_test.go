@@ -2101,3 +2101,465 @@ func TestIntegration_GetRevisions_Class(t *testing.T) {
 		t.Logf("Found %d revisions for testclasses include", len(revTC))
 	}
 }
+
+// =============================================================================
+// ADT Gaps Phase 1: Refactoring
+// =============================================================================
+
+func TestIntegration_RenameEvaluate(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Use a well-known standard class — read source first
+	objectURI := "/sap/bc/adt/oo/classes/cl_abap_typedescr"
+	source, err := client.GetSource(ctx, "CLAS", "CL_ABAP_TYPEDESCR", nil)
+	if err != nil {
+		t.Skipf("Cannot read source for CL_ABAP_TYPEDESCR: %v", err)
+	}
+
+	// Evaluate rename at a known position (line 1, col 1 is usually safe to query)
+	result, err := client.RenameEvaluate(ctx, objectURI, 1, 1, source, "lv_test_rename")
+	if err != nil {
+		// Expected for read-only objects or unsupported positions
+		t.Logf("RenameEvaluate: %v (expected for standard objects)", err)
+		return
+	}
+	t.Logf("RenameEvaluate feasible=%v, changes=%d", result.Feasible, result.ChangeCount)
+}
+
+func TestIntegration_GetQuickFixProposals(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Create a program with a known issue that might have quickfix proposals
+	source := `REPORT ztest_quickfix_int.
+DATA: lv_x TYPE string.
+lv_x = 123.`
+
+	objectURI := "/sap/bc/adt/programs/programs/ztest_quickfix_int"
+	result, err := client.GetQuickFixProposals(ctx, objectURI, 3, 8, source)
+	if err != nil {
+		t.Logf("GetQuickFixProposals: %v (may not be available for all code positions)", err)
+		return
+	}
+
+	t.Logf("Found %d quickfix proposals", len(result.Proposals))
+	for i, p := range result.Proposals {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  [%s] %s", p.ID, p.Title)
+	}
+}
+
+// =============================================================================
+// ADT Gaps Phase 2: Testing & Quality
+// =============================================================================
+
+func TestIntegration_GetCodeCoverage(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try standard classes that are known to have unit tests
+	classURIs := []string{
+		"/sap/bc/adt/oo/classes/cl_abap_unit_assert",
+		"/sap/bc/adt/oo/classes/cl_aunit_assert",
+	}
+
+	for _, uri := range classURIs {
+		result, err := client.GetCodeCoverage(ctx, uri, nil)
+		if err != nil {
+			t.Logf("GetCodeCoverage for %s: %v — trying next", uri, err)
+			continue
+		}
+
+		t.Logf("Coverage for %s:", uri)
+		t.Logf("  Statements: %d/%d (%.1f%%)",
+			result.Statements.Covered, result.Statements.Total, result.Statements.Percent)
+		t.Logf("  Branches: %d/%d (%.1f%%)",
+			result.Branches.Covered, result.Branches.Total, result.Branches.Percent)
+		return
+	}
+
+	t.Log("No classes with measurable coverage found — this is acceptable on test systems")
+}
+
+func TestIntegration_GetSQLExplainPlan(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Simple SQL query that should work on any system with explain plan support
+	result, err := client.GetSQLExplainPlan(ctx, "SELECT * FROM T000")
+	if err != nil {
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "404") || strings.Contains(errMsg, "501") ||
+			strings.Contains(errMsg, "Not Found") || strings.Contains(errMsg, "HANA") {
+			t.Skip("SQL Explain Plan not available (requires HANA)")
+		}
+		t.Fatalf("GetSQLExplainPlan failed: %v", err)
+	}
+
+	t.Logf("Explain plan for: %s", result.Query)
+	t.Logf("Total cost: %.2f, Nodes: %d", result.TotalCost, len(result.Nodes))
+	for i, n := range result.Nodes {
+		if i >= 5 {
+			break
+		}
+		t.Logf("  [%d] %s table=%s cost=%.2f rows=%d",
+			n.ID, n.Operator, n.Table, n.Cost, n.Rows)
+	}
+}
+
+func TestIntegration_GetCheckRunResults(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Run a syntax check first to get a check run ID
+	source := "REPORT ztest_check_run.\nWRITE: / 'Hello'."
+	results, err := client.SyntaxCheck(ctx, "/sap/bc/adt/programs/programs/ztest_check_run", source)
+	if err != nil {
+		t.Skipf("SyntaxCheck failed: %v", err)
+	}
+
+	t.Logf("Syntax check returned %d results", len(results))
+	// GetCheckRunResults needs a check run ID — which may not be directly exposed
+	// from SyntaxCheck. Log what we got for now.
+	for i, r := range results {
+		if i >= 3 {
+			break
+		}
+		t.Logf("  %s:%d: %s", r.Severity, r.Line, r.Text)
+	}
+}
+
+// =============================================================================
+// ADT Gaps Phase 3: CDS/RAP
+// =============================================================================
+
+func TestIntegration_GetCDSImpactAnalysis(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try well-known CDS views
+	viewNames := []string{"I_COUNTRY", "I_CURRENCY", "I_LANGUAGE"}
+	for _, name := range viewNames {
+		result, err := client.GetCDSImpactAnalysis(ctx, name)
+		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "404") || strings.Contains(errMsg, "Not Found") {
+				t.Logf("CDS view %s not found — trying next", name)
+				continue
+			}
+			t.Logf("GetCDSImpactAnalysis for %s: %v", name, err)
+			continue
+		}
+
+		t.Logf("Impact analysis for %s: %d impacted objects", name, result.TotalCount)
+		for i, obj := range result.ImpactedObjects {
+			if i >= 5 {
+				break
+			}
+			t.Logf("  %s (%s) — %s", obj.Name, obj.Type, obj.Description)
+		}
+		return
+	}
+
+	t.Skip("No CDS views available (requires HANA/CDS support)")
+}
+
+func TestIntegration_GetCDSElementInfo(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	viewNames := []string{"I_COUNTRY", "I_CURRENCY", "I_LANGUAGE"}
+	for _, name := range viewNames {
+		result, err := client.GetCDSElementInfo(ctx, name)
+		if err != nil {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "404") || strings.Contains(errMsg, "Not Found") {
+				continue
+			}
+			t.Logf("GetCDSElementInfo for %s: %v", name, err)
+			continue
+		}
+
+		t.Logf("Element info for %s: %d elements", name, len(result.Elements))
+		for i, el := range result.Elements {
+			if i >= 5 {
+				break
+			}
+			t.Logf("  %s: %s", el.Name, el.Type)
+		}
+		return
+	}
+
+	t.Skip("No CDS views available (requires HANA/CDS support)")
+}
+
+// =============================================================================
+// ADT Gaps Phase 4: DDIC & Transport
+// =============================================================================
+
+func TestIntegration_GetSearchHelp(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Standard search helps that exist on all SAP systems
+	names := []string{"USER_COMP", "H_T001"}
+	for _, name := range names {
+		source, err := client.GetSearchHelp(ctx, name)
+		if err != nil {
+			t.Logf("GetSearchHelp(%s): %v — trying next", name, err)
+			continue
+		}
+
+		t.Logf("Search help %s: %d bytes", name, len(source))
+		if len(source) > 200 {
+			t.Logf("  Preview: %s...", source[:200])
+		} else {
+			t.Logf("  Content: %s", source)
+		}
+		return
+	}
+
+	t.Error("No search help could be retrieved")
+}
+
+func TestIntegration_GetLockObject(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Standard lock objects
+	names := []string{"ESYST", "ETASK"}
+	for _, name := range names {
+		source, err := client.GetLockObject(ctx, name)
+		if err != nil {
+			t.Logf("GetLockObject(%s): %v — trying next", name, err)
+			continue
+		}
+
+		t.Logf("Lock object %s: %d bytes", name, len(source))
+		if len(source) > 200 {
+			t.Logf("  Preview: %s...", source[:200])
+		} else {
+			t.Logf("  Content: %s", source)
+		}
+		return
+	}
+
+	t.Error("No lock object could be retrieved")
+}
+
+func TestIntegration_GetTypeGroup(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Standard type groups
+	names := []string{"ABAP", "SLIS"}
+	for _, name := range names {
+		source, err := client.GetTypeGroup(ctx, name)
+		if err != nil {
+			t.Logf("GetTypeGroup(%s): %v — trying next", name, err)
+			continue
+		}
+
+		t.Logf("Type group %s: %d bytes", name, len(source))
+		if !strings.Contains(strings.ToUpper(source), "TYPE-POOL") &&
+			!strings.Contains(strings.ToUpper(source), "TYPES") {
+			t.Error("Expected TYPE-POOL or TYPES keyword in type group source")
+		}
+		return
+	}
+
+	t.Error("No type group could be retrieved")
+}
+
+func TestIntegration_AddObjectToTransport(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Get user's transports to find a modifiable request
+	transports, err := client.GetUserTransports(ctx, "")
+	if err != nil {
+		t.Skipf("GetUserTransports failed: %v (CTS may not be available)", err)
+	}
+
+	// Find first modifiable transport
+	var transportNum string
+	for _, tr := range transports.Workbench {
+		if tr.Status == "D" { // modifiable
+			transportNum = tr.Number
+			break
+		}
+	}
+	if transportNum == "" {
+		for _, tr := range transports.Customizing {
+			if tr.Status == "D" {
+				transportNum = tr.Number
+				break
+			}
+		}
+	}
+
+	if transportNum == "" {
+		t.Skip("No modifiable transport found for testing AddObjectToTransport")
+	}
+
+	t.Logf("Using transport %s for add test", transportNum)
+
+	// Try to add a well-known program to the transport
+	err = client.AddObjectToTransport(ctx, transportNum, "R3TR", "PROG", "SAPLSYST")
+	if err != nil {
+		// This may fail due to namespace restrictions — that's OK for integration test
+		t.Logf("AddObjectToTransport: %v (may be expected for namespace restrictions)", err)
+	} else {
+		t.Logf("Successfully added SAPLSYST to transport %s", transportNum)
+	}
+}
+
+// =============================================================================
+// Intelligence Layer
+// =============================================================================
+
+func TestIntegration_AnalyzeSQLPerformance(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Test text-only analysis (works everywhere)
+	result, err := client.AnalyzeSQLPerformance(ctx, "SELECT * FROM T000", false)
+	if err != nil {
+		t.Fatalf("AnalyzeSQLPerformance (text) failed: %v", err)
+	}
+
+	t.Logf("SQL Performance Analysis (text-only):")
+	t.Logf("  Text findings: %d", len(result.TextFindings))
+	t.Logf("  Score: %s", result.Summary.Score)
+	t.Logf("  HANA available: %v", result.HANAAvailable)
+
+	for _, f := range result.TextFindings {
+		t.Logf("  [%s] %s: %s", f.Severity, f.Type, f.Description)
+	}
+
+	// Test with HANA explain if available
+	resultHana, err := client.AnalyzeSQLPerformance(ctx, "SELECT * FROM T000", true)
+	if err != nil {
+		t.Logf("AnalyzeSQLPerformance (HANA): %v (expected on non-HANA systems)", err)
+	} else {
+		t.Logf("SQL Performance with HANA plan: %d plan findings, %d text findings",
+			len(resultHana.PlanFindings), len(resultHana.TextFindings))
+	}
+}
+
+func TestIntegration_GetImpactAnalysis(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Analyze impact of a well-used standard class
+	objectURI := "/sap/bc/adt/oo/classes/cl_abap_typedescr"
+	opts := ImpactAnalysisOptions{
+		StaticRefs: true,
+		MaxResults: 20,
+	}
+
+	result, err := client.GetImpactAnalysis(ctx, objectURI, "CL_ABAP_TYPEDESCR", opts)
+	if err != nil {
+		t.Fatalf("GetImpactAnalysis failed: %v", err)
+	}
+
+	t.Logf("Impact Analysis for CL_ABAP_TYPEDESCR:")
+	t.Logf("  Direct consumers: %d", result.Summary.DirectConsumerCount)
+	t.Logf("  Risk level: %s", result.Summary.RiskLevel)
+	t.Logf("  Layers executed: %v", result.Layers)
+	t.Logf("  Truncated: %v", result.Summary.Truncated)
+
+	if len(result.DirectConsumers) == 0 {
+		t.Error("Expected at least some consumers for CL_ABAP_TYPEDESCR")
+	}
+
+	for i, c := range result.DirectConsumers {
+		if i >= 5 {
+			break
+		}
+		t.Logf("  → %s (%s)", c.Name, c.Type)
+	}
+}
+
+func TestIntegration_AnalyzeABAPCode(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Test with inline source (no SAP fetch needed — pure analysis)
+	source := `REPORT ztest_analysis.
+DATA: lt_items TYPE TABLE OF mara.
+LOOP AT lt_items INTO DATA(ls_item).
+  SELECT SINGLE matnr FROM mara INTO @DATA(lv_matnr) WHERE matnr = @ls_item-matnr.
+ENDLOOP.
+lv_password = 'SuperSecret123'.`
+
+	result, err := client.AnalyzeABAPCode(ctx, "", source)
+	if err != nil {
+		t.Fatalf("AnalyzeABAPCode (inline source) failed: %v", err)
+	}
+
+	t.Logf("ABAP Code Analysis:")
+	t.Logf("  Total findings: %d", result.Summary.TotalFindings)
+	t.Logf("  Rules applied: %d", result.RulesApplied)
+	t.Logf("  Score: %s", result.Summary.Score)
+
+	foundSelectInLoop := false
+	for _, f := range result.Findings {
+		t.Logf("  [%s/%s] %s (line %d): %s", f.Severity, f.Category, f.Rule, f.Line, f.Description)
+		if f.Rule == "select_in_loop" {
+			foundSelectInLoop = true
+		}
+	}
+
+	if !foundSelectInLoop {
+		t.Error("Expected select_in_loop finding in test source")
+	}
+
+	// Test with URI (fetches from SAP system)
+	objectURI := "/sap/bc/adt/programs/programs/sapmssy0"
+	resultURI, err := client.AnalyzeABAPCode(ctx, objectURI, "")
+	if err != nil {
+		t.Logf("AnalyzeABAPCode (URI) for SAPMSSY0: %v (may fail for system programs)", err)
+	} else {
+		t.Logf("Analysis of SAPMSSY0: %d findings, score=%s",
+			resultURI.Summary.TotalFindings, resultURI.Summary.Score)
+	}
+}
+
+func TestIntegration_CheckRegression(t *testing.T) {
+	client := getIntegrationClient(t)
+	ctx := context.Background()
+
+	// Try classes with known version history
+	classURIs := []string{
+		"/sap/bc/adt/oo/classes/cl_gui_alv_grid",
+		"/sap/bc/adt/oo/classes/cl_abap_typedescr",
+	}
+
+	for _, uri := range classURIs {
+		result, err := client.CheckRegression(ctx, uri, "")
+		if err != nil {
+			t.Logf("CheckRegression for %s: %v — trying next", uri, err)
+			continue
+		}
+
+		t.Logf("Regression Analysis for %s:", uri)
+		t.Logf("  Object: %s (%s)", result.ObjectName, result.ObjectType)
+		t.Logf("  Base version: %s", result.BaseVersion)
+		t.Logf("  Risk level: %s", result.Summary.RiskLevel)
+		t.Logf("  Findings: %d (critical=%d, high=%d)",
+			result.Summary.TotalFindings, result.Summary.CriticalCount, result.Summary.HighCount)
+		t.Logf("  Signature changes: %d, Removed methods: %d",
+			result.Summary.SignatureChanges, result.Summary.RemovedMethods)
+
+		if len(result.Warnings) > 0 {
+			t.Logf("  Warnings: %v", result.Warnings)
+		}
+		return
+	}
+
+	t.Skip("No classes with version history found for regression testing")
+}

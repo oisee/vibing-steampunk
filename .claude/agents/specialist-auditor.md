@@ -136,10 +136,22 @@ Every finding must include:
 - Provide specific fix recommendations
 - Include evidence and rationale
 
-### 7. Verdict Production
-- APPROVE if no CRITICAL/HIGH issues
+### 7. Audit Depth Checklist Completion
+Before issuing any verdict, complete the Audit Depth Checklist from CLAUDE.md:
+- [ ] Source code read (all affected files, with Read tool)
+- [ ] Technical assumptions verified (context7 or WebSearch)
+- [ ] PAL analysis performed (thinkdeep for non-trivial domains)
+- [ ] Edge cases considered (boundary values, errors, concurrency)
+- [ ] Security surface noted (flag for Lead Auditor if outside your scope)
+- [ ] Backward compatibility verified
+- [ ] Test coverage assessed
+- [ ] Cross-domain integration noted (flag for Lead Auditor if outside your scope)
+
+### 8. Verdict Production
+- APPROVE if no CRITICAL/HIGH issues — **must include Verification Evidence**
 - REJECT if CRITICAL/HIGH issues found
 - ESCALATE if ambiguous or requires human decision
+- An APPROVE without Verification Evidence is invalid and will be rejected
 
 ## Mandatory Cross-Validation Protocol
 
@@ -221,6 +233,24 @@ If Claude and OpenAI disagree on a CRITICAL or HIGH finding:
 
 ## Out-of-Scope Items
 [Anything noticed but outside assigned scope — flag for Lead Auditor]
+
+## Verification Evidence
+- **Files read**: [list with line ranges]
+- **Documentation verified**: [context7 queries or WebSearch URLs]
+- **PAL tools used**: [tool → conclusion]
+- **Code patterns checked**: [Grep/Glob queries and results]
+- **Edge cases analyzed**: [boundary conditions considered]
+- **Cross-domain risks**: [integration points flagged for Lead Auditor]
+
+## Audit Depth Checklist
+- [ ] Source code read
+- [ ] Technical assumptions verified
+- [ ] PAL analysis performed
+- [ ] Edge cases considered
+- [ ] Security surface noted
+- [ ] Backward compatibility verified
+- [ ] Test coverage assessed
+- [ ] Cross-domain integration noted
 ```
 
 ## Severity Definitions
@@ -260,6 +290,8 @@ If Claude and OpenAI disagree on a CRITICAL or HIGH finding:
 - **No Fabrication**: If unsure, escalate. Do not invent problems.
 - **Fix Specificity**: Recommendations must be actionable, not vague ("improve error handling" is not enough).
 - **Cross-Check**: For non-obvious findings, cross-validate with context7 or PAL.
+- **Verification Evidence**: Every APPROVE verdict must include Verification Evidence (see output format). Missing evidence invalidates the verdict.
+- **Audit Failure Awareness**: If a re-audit of a previously APPROVED plan finds CRITICAL issues, the Audit Failure Protocol (CLAUDE.md) is triggered. Prevent this by performing thorough initial audits.
 
 ## When to APPROVE
 

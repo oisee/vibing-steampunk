@@ -39,7 +39,7 @@ Design agent definition files (`.claude/agents/*.md`) with:
 Maintain consistency across:
 - Base rules (`~/.claude/CLAUDE.md`) — global instructions
 - Project overlays (`project/.claude/CLAUDE.md`) — project-specific rules
-- Agent definitions (`claude-team-config/agents/*.md`) — specialist agent templates
+- Agent definitions (`claude-team-control/agents/*.md`) — specialist agent templates
 - Team configuration — cross-project standards
 
 ### 4. Research-Driven Rule Design

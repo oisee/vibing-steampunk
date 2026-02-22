@@ -1,11 +1,11 @@
 ---
 name: sync
-description: "Synchronize claude-team-config rules, agents, and skills to target projects"
+description: "Synchronize claude-team-control rules, agents, and skills to target projects"
 ---
 
 # Sync Command
 
-Synchronize CLAUDE.md rules, agents, and skills from claude-team-config to target projects.
+Synchronize CLAUDE.md rules, agents, and skills from claude-team-control to target projects.
 
 ## Usage
 
@@ -31,9 +31,9 @@ Available projects are defined in `projects.json` (see `projects.json` in the co
 ## Finding the Config Repo
 
 Resolve the config repo path in this order:
-1. If the current working directory IS claude-team-config (has `sync.ps1`) → use it
+1. If the current working directory IS claude-team-control (has `sync.ps1`) → use it
 2. If `.claude/.sync-manifest.json` exists in the current project → read `config_repo` from it
-3. Fallback → `~/claude-team-config`
+3. Fallback → `~/claude-team-control`
 
 ## Process
 

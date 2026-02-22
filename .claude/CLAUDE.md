@@ -1,5 +1,5 @@
-﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-config -->
-<!-- Synced: 2026-02-20 00:20:42 -->
+﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-control -->
+<!-- Synced: 2026-02-22 15:49:46 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
@@ -71,7 +71,7 @@ Use the **PAL MCP server** tools to externalize reasoning, validate plans, and a
 - **Never** put temporary files, test outputs, logs, or experimental scripts in the project root
 - **Never** create top-level directories without documenting their purpose
 
-### Config Repo Structure (claude-team-config)
+### Config Repo Structure (claude-team-control)
 
 This is the **source of truth** for all shared rules, agents, and skills. Edits happen here; `sync.ps1` distributes to target projects.
 
@@ -229,7 +229,7 @@ For multi-step tasks, use the orchestrator's pipeline tools instead of manually 
 - **`complete_step(pipeline_id, step_output)`** — Report step completion. Server runs CV-gate automatically if the step requires it. Returns next step instructions or HALT/PIPELINE_COMPLETE.
 - **`pipeline_status(pipeline_id)`** — Get current pipeline state. Use to check progress or resume after context window reset.
 
-**Pipeline types:** `feature` (9 steps), `bugfix` (4 steps), `deploy` (5 steps), `audit` (2 steps), `qa` (5 steps), `review` (2 steps).
+**Pipeline types:** `feature`, `bugfix`, `deploy`, `audit`, `qa`, `review`, `refactor`, `incident`, `migration`, `spike`, `perf`, `onboard`, `docs`, `techdebt`, `deep-validate`. See `skills/orchestrate.md` for full definitions and step counts.
 
 **Workflow:**
 1. Call `route_task(description)` — it returns the recommended `pipeline` type
@@ -276,17 +276,27 @@ After creating any implementation plan, a structured audit **must** be conducted
 2. **Specialist Auditor Agent(s)** — launched by the Lead Auditor (or in parallel by the orchestrator).
    - Each Specialist Auditor is given a focused scope (e.g., "audit database query patterns", "audit search algorithm correctness", "audit backward compatibility").
    - The Specialist Auditor **must verify technical assumptions** using all available means: external sources (WebSearch, context7, official docs), own knowledge/memory, and any relevant MCP tools. No single source is sufficient — cross-check when possible.
+   - **Mandatory depth requirements for audits involving code or architecture changes:**
+     - **Read actual source code** — never audit from plan text alone. Read affected files with `Read` tool, verify line ranges.
+     - **Use PAL `thinkdeep`** — externalize analysis for non-trivial domains. Surface-level reasoning is insufficient.
+     - **Verify docs via context7 or WebSearch** — every technical assumption (API behavior, library semantics, framework constraints) must be confirmed against official documentation, not assumed.
+     - **Check edge cases** — explicitly test boundary conditions, error paths, and concurrent access scenarios in the analysis.
+   - **For docs-only, config-only, or single-file trivial audits:** PAL usage is RECOMMENDED but not mandatory — consistent with Cost-Aware Development exceptions. Source code reading and documentation verification remain mandatory.
    - The Specialist Auditor produces a verdict:
      - **APPROVE** — no issues found, plan is sound
      - **REJECT with findings** — list of issues ranked by severity (CRITICAL / HIGH / MEDIUM / LOW) with specific fix recommendations
      - **ESCALATE to user** — unresolvable ambiguity or risk that requires human decision
+   - **Every verdict MUST include Verification Evidence** (see "Audit Verification Evidence" below). An APPROVE without evidence is invalid and will be rejected.
 
 3. **Chief Architect Review** — after all Specialist Auditors finish, the **Lead Auditor** performs a final holistic review as **Chief Architect**:
    - Has access to the full picture: all specialist findings + the original plan + codebase context
    - Focuses on **cross-domain gaps** that no single specialist could see
    - Validates that specialist findings don't contradict each other
    - Checks that the plan as a whole is coherent, not just that individual parts are correct
+   - **Must use PAL `consensus`** for cross-domain validation — single-model reasoning is insufficient for holistic review
+   - **Must read actual source code** for integration points between domains reviewed by different specialists
    - Produces the same verdict: APPROVE / REJECT with findings / ESCALATE
+   - **Every verdict MUST include Verification Evidence** (see below). An APPROVE without evidence is invalid.
 
 4. **No inventing, no guessing** — auditors at all levels must not fabricate concerns or imagine problems. Only concrete, verifiable findings based on actual code analysis and documentation. If unsure — escalate to user, do not assume.
 
@@ -295,6 +305,7 @@ After creating any implementation plan, a structured audit **must** be conducted
    - Re-submit to the same auditor for re-review
    - Repeat until APPROVE or ESCALATE
    - After specialist fixes, Chief Architect re-reviews the whole plan again
+   - **If re-audit finds CRITICAL issues in a previously APPROVED plan** — this triggers the Audit Failure Protocol (see "Zero CRITICAL on Re-audit" below). The initial audit was deficient and must be investigated.
 
 6. **Final outcome:**
    - **All auditors + Chief Architect APPROVE** → plan is approved, implementation begins
@@ -326,6 +337,56 @@ After the audit is fully approved (all levels APPROVE), the final plan **must** 
 - Untested paths, wrong assumptions about APIs/libraries
 - Performance regressions, deployment blind spots
 - Blast radius — which other components are affected by the change
+
+### Zero CRITICAL on Re-audit (ABSOLUTE RULE)
+
+If a plan passes audit (all levels APPROVE) and a subsequent audit, re-check, or implementation review discovers **CRITICAL-severity issues**, this constitutes an **AUDIT FAILURE** — the initial audit was deficient. This must never happen.
+
+**What this means:**
+- The initial auditors approved without sufficient depth — they missed something that should have been caught
+- The audit process failed its primary purpose: preventing CRITICAL issues from reaching implementation
+- Finding HIGH issues on re-audit is a warning; finding CRITICAL issues is unacceptable
+
+**Audit Failure Response Protocol:**
+1. **HALT** — stop all implementation immediately
+2. **Root cause analysis** — determine WHY the initial audit missed the CRITICAL issue. Document in `docs/AUDIT.md` under "Audit Failures" section
+3. **Full re-audit** — the entire plan must be re-audited from scratch with enhanced scrutiny, not just the area where the CRITICAL was found
+4. **Process update** — add the specific gap to the Audit Depth Checklist (below) to prevent recurrence
+5. **Run the deep-validate pipeline** (`/orchestrate deep-validate`) to achieve zero-finding state before proceeding. Note: deep-validate is currently skill-orchestrated only; backend pipeline registration is a follow-up task.
+
+### Audit Verification Evidence (MANDATORY)
+
+Every auditor verdict (specialist or Chief Architect) that returns **APPROVE** must include a **Verification Evidence** section. An APPROVE without this section is invalid and will be rejected by the orchestrator.
+
+**Required evidence format:**
+```
+## Verification Evidence
+- **Files read**: [list of files with line ranges actually examined]
+- **Documentation verified**: [context7 queries or WebSearch URLs consulted]
+- **PAL tools used**: [tool name → key conclusion for each invocation]
+- **Code patterns checked**: [Grep/Glob queries run, what was verified]
+- **Edge cases analyzed**: [boundary conditions, error paths, concurrency scenarios considered]
+- **Cross-domain risks**: [integration points with other components checked]
+```
+
+- If an auditor cannot fill all sections — they must explain why (e.g., "no cross-domain risks — single-module change") rather than leaving sections empty
+- The evidence must be **specific** — "read the code" is not evidence; "read `router.py:45-120`, verified route registration pattern" is evidence
+- Evidence is recorded in `docs/AUDIT.md` alongside the audit verdict
+
+### Audit Depth Checklist
+
+Before issuing an APPROVE verdict, every auditor must confirm completion of all applicable items:
+
+- [ ] **Source code read** — all files affected by the plan were read with `Read` tool (not just referenced)
+- [ ] **Technical assumptions verified** — every claim about API behavior, library semantics, or framework constraints confirmed via context7 or WebSearch
+- [ ] **PAL analysis performed** — `thinkdeep` (specialist) or `consensus` (Chief Architect) used for non-trivial analysis
+- [ ] **Edge cases considered** — boundary values, empty inputs, concurrent access, error propagation explicitly analyzed
+- [ ] **Security surface noted** — if changes may have security implications beyond your scope, flag for Lead Auditor to assign security specialist
+- [ ] **Backward compatibility verified** — existing consumers, callers, and dependents identified and checked for breakage
+- [ ] **Test coverage assessed** — existing tests reviewed for adequacy; gaps in test coverage flagged
+- [ ] **Cross-domain integration verified** — interaction points with other modules/services checked for consistency
+
+Auditors must report which checklist items were completed and which were not applicable (with justification).
 
 ### Rules Architect Agent
 
@@ -405,8 +466,109 @@ Maintain `docs/INDEX.md` as a table of contents for all decision artifacts (ADRs
 At the start of each session:
 1. Read `docs/PLAN.md` — check for in-progress plans
 2. Read `docs/ROADMAP.md` — check current phase status
-3. Check for uncompleted pipeline states (`pipeline_status` if orchestrator available)
-4. Report any pending work to user before accepting new tasks
+3. Call `list_active_pipelines()` — check for interrupted pipelines that need resume
+4. If active pipelines found: report them to user with resume instructions before accepting new tasks
+5. Report any other pending work to user before accepting new tasks
+
+## Context & Token Optimization (MANDATORY)
+
+Minimize token waste and keep the context window clean across phases, sessions, and task switches.
+
+### Between Phases / Task Switches
+
+- **Commit and document before switching** — Before moving to a different feature, phase, or task domain, ensure all current work is committed and documented in `docs/`. Do not carry stale context from one task into the next.
+- **Delegate to subagents for heavy research** — Use Task tool agents (Explore, Plan, general-purpose) for codebase exploration, documentation lookup, and multi-file analysis. This offloads token-heavy searches from the main context window.
+- **Summarize, don't echo** — When a subagent returns results, extract only the relevant findings for the main context. Do not paste full tool outputs verbatim unless the user needs them.
+- **Prefer targeted reads over broad scans** — Use Grep/Glob with specific patterns before resorting to reading entire files. Read only the lines you need (use `offset`/`limit` for large files).
+
+### Within a Session
+
+- **Avoid redundant reads** — Do not re-read files that were already read in the current conversation unless the file was modified since the last read.
+- **Batch independent tool calls** — Always make independent tool calls in parallel (single message, multiple tool uses). Sequential calls where parallel is possible wastes round-trips and tokens.
+- **Keep responses concise** — Answer in the minimum words needed. No filler phrases, no restating the question, no verbose explanations unless the user asks.
+- **Use TodoWrite for tracking, not prose** — Track multi-step progress with the todo list, not by writing status paragraphs in chat.
+
+### Between Sessions (Context Reset)
+
+- **Persist all state to files** — Before a session ends or context compresses, ensure: current progress in `docs/PLAN.md` or `docs/ROADMAP.md`, pipeline state via `complete_step`, key findings in relevant `docs/` files.
+- **MEMORY.md is the bridge** — Update auto-memory with current project state (phase, test counts, key decisions) so the next session starts informed.
+- **Plan files must be resumable** — Any developer or agent reading `docs/PLAN.md` should be able to continue from the last checkpoint without re-analyzing the codebase.
+- **Clean start protocol** — New sessions follow the Session Start Protocol (above) to reload state from files, not from conversation history.
+
+## Cost-Aware Development (MANDATORY)
+
+High token usage risks losing access to Claude. Prefer zero-cost tools over LLM calls whenever possible.
+
+### Scripts Over Agents
+
+Use simple CLI tools instead of LLM agents for these tasks:
+
+| Task | Use Script | NOT Agent |
+|------|-----------|-----------|
+| Linting | `ruff check .` | code-reviewer |
+| Formatting | `ruff format .` | precommit gate |
+| Type checking | `pyright` / `mypy` | codereview gate |
+| Dead code detection | `vulture .` | techdebt pipeline |
+| Dependency audit | `pip-audit` / `safety` | security-lead |
+| Secret scanning | `trufflehog` / `detect-secrets` | security-lead |
+| Import sorting | `isort --check .` | precommit gate |
+| Doc link checking | `markdown-link-check` | doc-writer |
+| Git diff stats | `git diff --stat` | code-reviewer |
+| Test runner | `pytest -q` | test-engineer |
+
+### When to Skip CV Gates
+
+- **Docs-only changes** — documentation updates do not need cross-validation
+- **Config/formatting changes** — `.gitignore`, `pyproject.toml`, linter config
+- **Single-file trivial fixes** — typos, log messages, comments
+- **Tech debt cleanup** — dead code removal, import sorting, lint fixes
+
+### When CV Gates ARE Needed
+
+- Architecture decisions (new components, API design, data models)
+- Security-sensitive changes (auth, crypto, input validation)
+- Multi-file refactoring that changes behavior
+- Production deployments and migrations
+
+### Cost Monitoring
+
+- Use the `cost_report` MCP tool for in-session analytics with optimization hints
+- If daily cost exceeds $1.00 — review the report and reduce CV gate usage
+
+### Zero-Token CLI Tools (config repo only)
+
+These scripts live in `claude-team-control/scripts/` and run without any LLM tokens:
+
+**Cost analytics** (`scripts/cost-report.py`):
+- `python scripts/cost-report.py` — full cost report to stdout
+- `python scripts/cost-report.py --days 7` — last 7 days only
+- `python scripts/cost-report.py --save` — persist to `docs/COST-REPORT.md`
+- `python scripts/cost-report.py --json` / `--csv` — machine-readable output
+- `python scripts/cost-report.py --budget 1.00` — warn if any day exceeds $1.00 (exit code 1)
+- `python scripts/cost-report.py --budget-total 5.00` — warn if total exceeds $5.00
+
+**Pipeline statistics** (`scripts/pipeline-stats.py`):
+- `python scripts/pipeline-stats.py` — completion rates, avg time, failure points
+- `python scripts/pipeline-stats.py --type feature` — filter by pipeline type
+- `python scripts/pipeline-stats.py --active` — only active/halted pipelines
+- `python scripts/pipeline-stats.py --json` — JSON output
+
+**Sync validation** (`scripts/sync-validate.py`):
+- `python scripts/sync-validate.py` — check all 5 projects + global for desync
+- `python scripts/sync-validate.py --project pdap-hub` — check single project
+- `python scripts/sync-validate.py --fix` — show fix commands
+- Exit code 1 if any project is desynced
+
+**Orchestrator management** (`scripts/orchestrate-cli.py`):
+- `python scripts/orchestrate-cli.py health` — check config, venv, costs, API key
+- `python scripts/orchestrate-cli.py pipelines` — list all pipelines (active/completed)
+- `python scripts/orchestrate-cli.py version` — show orchestrator version
+- Import-based commands (require `cd orchestrator && uv run`):
+  - `uv run python ../scripts/orchestrate-cli.py agents [--tier strategic]` — list agents
+  - `uv run python ../scripts/orchestrate-cli.py info <agent>` — agent details
+  - `uv run python ../scripts/orchestrate-cli.py route "<task>"` — route task locally
+
+Note: These scripts are NOT deployed to target projects. They are config-repo utilities only.
 
 ## Testing & Mock Data (CRITICAL)
 
@@ -414,6 +576,50 @@ At the start of each session:
 - **If real format is broken** — file a bug against the upstream service. Do not invent a workaround format for the fixture.
 - **Tests must verify real patterns** — Unit tests must include test cases using the real response format (not just mock format). A test that passes against fake data but fails on real data is worse than no test at all.
 - **Test what matters** — Tests that only verify fabricated formats provide zero value.
+
+## Agent Memory (ALL AGENTS)
+
+Agents have persistent memory via MEMORY.md in their agent-memory directory. This memory survives across sessions and must be maintained.
+
+### What to Save
+
+- **Project patterns** — coding conventions, mock structures, patching patterns specific to this project
+- **Key file locations** — important files, their purpose, line ranges of interest
+- **Gotchas discovered** — pitfalls, workarounds, framework quirks found during work
+- **Sprint/phase state** — current progress, test counts, what was done and what remains
+- **Decisions made** — technical choices and their rationale (so the next session doesn't re-debate)
+
+### What NOT to Save
+
+- Session-specific context (current task details, in-progress debugging)
+- Information that duplicates project docs (README, ROADMAP, etc.)
+- Unverified assumptions — only save confirmed patterns
+- Large code snippets — reference file paths and line numbers instead
+
+### When to Update
+
+- After completing a significant task (new feature, bug fix, sprint)
+- When discovering a new gotcha or pattern
+- At session end, before context is lost
+- After receiving correction from the user
+
+### Memory Format
+
+```markdown
+# <Agent Name> Memory — <Project Name>
+
+## Project State
+- Current phase/sprint and progress
+
+## Key Patterns
+- Coding conventions, frameworks, important abstractions
+
+## Gotchas
+- Known pitfalls and their workarounds
+
+## Files Modified
+- Recent significant changes with context
+```
 
 ## Collaboration Protocol (ALL AGENTS)
 

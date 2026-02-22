@@ -12,12 +12,11 @@ import (
 var (
 	reSelectStarABAP    = regexp.MustCompile(`(?i)^SELECT\s+(SINGLE\s+)?\*\s+FROM\b`)
 	reModifyDbtabAll    = regexp.MustCompile(`(?i)^(MODIFY|UPDATE)\s+\w+\s+FROM\b`)
-	reHardcodedCreds    = regexp.MustCompile(`(?i)(password|passwd|secret|api_key|apikey|token)\s*=\s*'[^']{3,}'`)
+	reHardcodedCreds    = regexp.MustCompile("(?i)(password|passwd|secret|api_key|apikey|token)\\s*=\\s*(?:'[^']{3,}'|`[^`]{3,}`|\\|[^|]{3,}\\|)")
 	reClientSpecABAP    = regexp.MustCompile(`(?i)\bCLIENT\s+SPECIFIED\b`)
 	reCatchCxRoot       = regexp.MustCompile(`(?i)\bCATCH\s+CX_ROOT\b`)
 	reCallMethodDyn     = regexp.MustCompile(`(?i)CALL\s+METHOD\s+\(`)
-	reCallFuncDyn       = regexp.MustCompile(`(?i)CALL\s+FUNCTION\s+(\(|\w+[^'"()])`)
-	reNormalizeWS       = regexp.MustCompile(`\s+`)
+	reCallFuncDyn       = regexp.MustCompile(`(?i)CALL\s+FUNCTION\s+[^'"]`)
 	reObsoleteMove      = regexp.MustCompile(`(?i)^MOVE\s+\S+\s+TO\s+`)
 	reObsoleteAdd       = regexp.MustCompile(`(?i)^ADD\s+\S+\s+TO\s+`)
 	reObsoleteSubtract  = regexp.MustCompile(`(?i)^SUBTRACT\s+\S+\s+FROM\s+`)
@@ -69,6 +68,7 @@ type abapStatement struct {
 type scanContext struct {
 	InLoop    bool
 	LoopDepth int
+	TryDepth  int
 	PrevStmt  *abapStatement
 }
 
@@ -211,7 +211,7 @@ func AnalyzeABAPSource(source string) *CodeAnalysisResult {
 	var findings []CodeFinding
 
 	ctx := &scanContext{}
-	totalRules := 21
+	totalRules := 21 // includes missing_authority_check (placeholder — always returns nil)
 
 	for i, stmt := range stmts {
 		if stmt.IsComment {
@@ -220,6 +220,14 @@ func AnalyzeABAPSource(source string) *CodeAnalysisResult {
 		}
 
 		upper := strings.ToUpper(stmt.Text)
+
+		// Reset context on method/form boundaries to prevent stale loop/TRY state
+		if strings.HasPrefix(upper, "METHOD ") || strings.HasPrefix(upper, "FORM ") ||
+			strings.HasPrefix(upper, "ENDMETHOD.") || strings.HasPrefix(upper, "ENDFORM.") {
+			ctx.InLoop = false
+			ctx.LoopDepth = 0
+			ctx.TryDepth = 0
+		}
 
 		// Track loop context
 		if isLoopStart(upper) {
@@ -231,6 +239,17 @@ func AnalyzeABAPSource(source string) *CodeAnalysisResult {
 			if ctx.LoopDepth <= 0 {
 				ctx.InLoop = false
 				ctx.LoopDepth = 0
+			}
+		}
+
+		// Track TRY/ENDTRY context
+		if strings.HasPrefix(upper, "TRY.") || upper == "TRY" {
+			ctx.TryDepth++
+		}
+		if strings.HasPrefix(upper, "ENDTRY.") || upper == "ENDTRY" {
+			ctx.TryDepth--
+			if ctx.TryDepth < 0 {
+				ctx.TryDepth = 0
 			}
 		}
 
@@ -252,7 +271,7 @@ func AnalyzeABAPSource(source string) *CodeAnalysisResult {
 		findings = append(findings, checkEmptyCatch(stmt, upper, stmts, i)...)
 		findings = append(findings, checkCatchCxRoot(stmt, upper)...)
 		findings = append(findings, checkObsoleteStatement(stmt, upper)...)
-		findings = append(findings, checkDynamicCallNoTry(stmt, upper)...)
+		findings = append(findings, checkDynamicCallNoTry(stmt, upper, ctx)...)
 		findings = append(findings, checkPerformUsage(stmt, upper)...)
 		findings = append(findings, checkCommitWorkAndWait(stmt, upper)...)
 
@@ -337,7 +356,12 @@ func isLoopStart(upper string) bool {
 		(strings.HasPrefix(upper, "SELECT ") && !strings.Contains(upper, " INTO TABLE ") &&
 			!strings.Contains(upper, " INTO CORRESPONDING ") &&
 			!strings.Contains(upper, " APPENDING ") &&
-			!strings.Contains(upper, " SINGLE "))
+			!strings.Contains(upper, " SINGLE ") &&
+			!strings.Contains(upper, " INTO @") &&
+			!strings.Contains(upper, " INTO (") &&
+			!strings.Contains(upper, "COUNT(") && !strings.Contains(upper, "SUM(") &&
+			!strings.Contains(upper, "MIN(") && !strings.Contains(upper, "MAX(") &&
+			!strings.Contains(upper, "AVG("))
 }
 
 func isLoopEnd(upper string) bool {
@@ -451,6 +475,10 @@ func checkSelectEndselect(stmt abapStatement, upper string) []CodeFinding {
 		strings.Contains(upper, " INTO CORRESPONDING ") ||
 		strings.Contains(upper, " APPENDING ") ||
 		strings.Contains(upper, " SINGLE ") {
+		return nil
+	}
+	// SELECT INTO @var or INTO (a,b,c) is single-row fetch, not a cursor select
+	if strings.Contains(upper, " INTO @") || strings.Contains(upper, " INTO (") {
 		return nil
 	}
 	return []CodeFinding{{
@@ -725,13 +753,16 @@ func checkObsoleteStatement(stmt abapStatement, upper string) []CodeFinding {
 }
 
 // Rule 18: dynamic_call_no_try (high/quality)
-func checkDynamicCallNoTry(stmt abapStatement, upper string) []CodeFinding {
+func checkDynamicCallNoTry(stmt abapStatement, upper string, ctx *scanContext) []CodeFinding {
 	// Match: CALL METHOD (var)=>method or CALL FUNCTION (var) or CALL FUNCTION lv_name
 	isDynamic := reCallMethodDyn.MatchString(upper) || reCallFuncDyn.MatchString(upper)
 	if !isDynamic {
 		return nil
 	}
-	// This is a simplified check — ideally we'd track TRY/ENDTRY scope
+	// Already inside TRY block — properly protected
+	if ctx.TryDepth > 0 {
+		return nil
+	}
 	return []CodeFinding{{
 		Rule:        "dynamic_call_no_try",
 		Category:    "quality",

@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Orchestrate multi-agent workflows: feature, bugfix, deploy, audit, qa, review, refactor, incident, migration, spike, perf, onboard"
+description: "Orchestrate multi-agent workflows: feature, bugfix, deploy, audit, qa, review, refactor, incident, migration, spike, perf, onboard, docs, techdebt, deep-validate"
 ---
 
 # Orchestrate Workflow
@@ -26,6 +26,7 @@ Supported workflows:
 - `spike` — Research spike, feasibility study
 - `perf` — Performance optimization
 - `onboard` — Project onboarding and context documentation
+- `deep-validate` — Exhaustive validation of changes/plans to zero-finding state
 - `custom` — Describe your own workflow
 
 ## Workflow Definitions
@@ -62,9 +63,12 @@ Supported workflows:
 4. code-reviewer — Review fix + test
    → [CV-GATE:codereview] Cross-validate fix correctness
    → GATE: No CRITICAL findings
-5. Re-verify: run all tests
+5. rspdn-writer (optional) — Generate RSPDN pre-correction note from transport changes
+   → Save to R:\RSPDN\<PRODUCT>\ and attach link to TFS bug
+   → Skipped if not an SAP bug fix
+6. Re-verify: run all tests
    → GATE: All tests pass
-6. Human approval → Merge
+7. Human approval → Merge
 ```
 
 ### Deployment Pipeline (`/orchestrate deploy "..."`)
@@ -86,15 +90,17 @@ Supported workflows:
 ### Audit Pipeline (`/orchestrate audit "..."`)
 
 ```
-1. lead-auditor — Read plan, determine required expertise
-   → [CV-GATE:consensus] Validate audit scope completeness
-2. PARALLEL specialist-auditors — Domain-scoped review
-   → Each specialist uses PAL per their Mandatory CV Protocol
-   → Each produces: APPROVE / REJECT / ESCALATE
-3. lead-auditor — Chief Architect cross-domain review
-   → [CV-GATE:thinkdeep] Cross-domain integration validation
-   → GATE: All APPROVE, or iterate until resolved
-4. Report final verdict
+1. lead-auditor — Review scope, determine expertise, assign domains
+   → Write audit scope to docs/AUDIT.md
+   [CV-GATE:consensus]
+2. specialist-auditor — Domain-specific audit per lead's scope
+   → Verdict: APPROVE / REJECT with findings / ESCALATE
+   [CV-GATE:thinkdeep]
+3. architect — Chief Architect review: cross-domain gaps, coherence
+   → Verdict: APPROVE / REJECT / ESCALATE
+   [CV-GATE:consensus]
+4. lead-auditor — Final audit summary: combine all findings
+   → Record in docs/AUDIT.md with verdicts and action items
 ```
 
 ### QA Pipeline (`/orchestrate qa "..."`)
@@ -218,6 +224,84 @@ Supported workflows:
 3. rules-architect — CLAUDE.md review: agent config, sync, rules
    → Verify project is ready for AI-assisted development
 ```
+
+### Docs Pipeline (`/orchestrate docs "..."`)
+
+```
+1. doc-writer — Write/update documentation: README, API docs, guides
+   → Verify accuracy against current codebase
+2. code-reviewer — Review docs: accuracy, completeness, stale refs
+   [CV-GATE:codereview]
+```
+
+### Tech Debt Pipeline (`/orchestrate techdebt "..."`)
+
+```
+1. backend-dev — Execute cleanup: dead code, linter warnings, deprecated APIs
+   → No behavior changes allowed
+2. test-engineer — Verify all tests pass, run linters, confirm no regressions
+3. code-reviewer — Review: no behavior change, improved quality
+   [CV-GATE:codereview]
+```
+
+### Deep-Validate Pipeline (`/orchestrate deep-validate "..."`)
+
+Use when: completed changes or plans need exhaustive validation to eliminate ALL gaps, errors, and issues — achieving a state where audit and PAL have zero findings. Typically invoked after an Audit Failure, before critical deployments, or when quality confidence is insufficient.
+
+```
+1. architect — Deep analysis of ALL changes against original requirements
+   → Read EVERY modified file with Read tool (not skim, not assume)
+   → PAL `thinkdeep`: systematic gap analysis — missing edge cases, logic errors,
+     integration issues, error handling gaps, concurrency problems
+   → context7: verify ALL technical assumptions against official documentation
+   → Cross-reference changes against project patterns (Grep for consistency)
+   → [CV-GATE:thinkdeep] Cross-validate analysis completeness
+   → GATE: Complete gap inventory documented in docs/REVIEW.md
+   → If gap inventory is empty — architect must justify with Verification Evidence
+
+2. security-lead — Security deep-dive on ALL changes
+   → Input validation, auth boundaries, data exposure, injection vectors
+   → PAL `thinkdeep`: security-focused analysis
+   → [CV-GATE:thinkdeep] Security cross-validation
+   → GATE: No CRITICAL or HIGH security findings
+
+3. backend-dev — Fix ALL identified gaps and issues
+   → One atomic fix per finding — no bundling
+   → Each fix must reference the finding ID from docs/REVIEW.md
+
+4. test-engineer — Validate fixes + run full test suite
+   → Every fix must have a corresponding test or justification why not
+   → GATE: All tests pass, all findings marked as addressed
+
+5. code-reviewer — Final comprehensive review of ALL changes (original + fixes)
+   → PAL `codereview` on every changed file
+   → [CV-GATE:codereview] Cross-validate all changes
+   → GATE: No CRITICAL findings, no HIGH findings
+
+6. lead-auditor — Final audit with FULL Verification Evidence
+   → Must complete entire Audit Depth Checklist (from CLAUDE.md)
+   → Must produce APPROVE with Verification Evidence or REJECT
+   → [CV-GATE:consensus] Final cross-validation
+   → GATE: APPROVE with complete Verification Evidence
+   → If REJECT with CRITICAL or HIGH findings → HALT pipeline
+   → After HALT: fix findings (steps 3-4), then re-submit step 6
+   → Max 3 HALT-fix-resubmit cycles. After 3 → ESCALATE to user
+
+7. PAL `precommit` — Final pre-commit validation
+   → Validate git changes, check for security issues, assess impact
+   → GATE: Clean precommit report with no CRITICAL findings
+```
+
+**Exit criteria:** Pipeline completes ONLY when step 6 returns APPROVE with Verification Evidence AND step 7 returns clean. No shortcuts, no "good enough" — zero CRITICAL and zero HIGH findings.
+
+**HALT behavior:** When step 6 HALTs, the pipeline pauses. Fix findings, re-run steps 3-4 (fix + test), then re-submit step 6 via `complete_step`. This uses the standard HALT + re-submission pattern — no special loop engine support required.
+
+**When to use this pipeline:**
+- After an Audit Failure (CRITICAL found in previously approved plan)
+- Before critical production deployments
+- When refactoring completed changes to improve quality
+- When user explicitly requests exhaustive validation
+- When confidence in change quality is low
 
 ## Multi-Model Orchestration
 
