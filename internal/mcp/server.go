@@ -533,7 +533,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// GetTableContents
 	if shouldRegister("GetTableContents") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTableContents",
-		mcp.WithDescription("Retrieve contents of an ABAP table. For simple queries use table_name + max_rows. For filtered queries use sql_query parameter with ABAP SQL syntax (use ASCENDING/DESCENDING, not ASC/DESC)."),
+		mcp.WithDescription("Retrieve contents of an ABAP table. For simple queries use table_name + max_rows. For filtered queries use sql_query parameter with ABAP SQL syntax (use ASCENDING/DESCENDING, not ASC/DESC). Use offset for pagination. Use columns_only=true for schema introspection."),
 		mcp.WithString("table_name",
 			mcp.Required(),
 			mcp.Description("Name of the ABAP table"),
@@ -541,8 +541,14 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		mcp.WithNumber("max_rows",
 			mcp.Description("Maximum number of rows to retrieve (default 100). Use this instead of SQL LIMIT clause"),
 		),
+		mcp.WithNumber("offset",
+			mcp.Description("Skip first N rows from results (default 0). Use with max_rows for pagination, e.g., offset=100, max_rows=100 for page 2"),
+		),
 		mcp.WithString("sql_query",
 			mcp.Description("Optional ABAP SQL SELECT statement. Uses ABAP syntax: ASCENDING/DESCENDING work, ASC/DESC fail. Example: SELECT * FROM T000 WHERE MANDT = '001' ORDER BY MANDT DESCENDING"),
+		),
+		mcp.WithBoolean("columns_only",
+			mcp.Description("If true, return only column metadata (name, type, length, key) without data rows. Use for schema introspection. Default: false"),
 		),
 	), s.handleGetTableContents)
 	}
