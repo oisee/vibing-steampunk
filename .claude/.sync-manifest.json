@@ -1,0 +1,205 @@
+{
+    "schema_version":  1,
+    "synced_at":  "2026-02-23T23:49:31Z",
+    "config_repo":  "C:/Users/stanislav.naumov/claude-team-control",
+    "project_name":  "vibing-steampunk",
+    "files":  {
+                  "CLAUDE.md":  {
+                                    "hash":  "sha256:d6b2f3f0a38cdf1f6bd36a478123224ea5f67aa985bc5755fc1ba6ba912450f7",
+                                    "sources":  [
+                                                    "base/CLAUDE.md",
+                                                    "overlays/vibing-steampunk.md"
+                                                ],
+                                    "composed":  true
+                                },
+                  "agents/abap-specialist.md":  {
+                                                    "hash":  "sha256:cc0f6f0be34c890f69f8efc7d53bdb71ba35102c7fa2c64f4c9fc81ec6edf186",
+                                                    "sources":  [
+                                                                    "agents/abap-specialist.md"
+                                                                ],
+                                                    "composed":  false
+                                                },
+                  "agents/architect.md":  {
+                                              "hash":  "sha256:93966a2d9d791b6fdd2d82b35a02adff15d0ea9684d3eb6372d1520259018708",
+                                              "sources":  [
+                                                              "agents/architect.md"
+                                                          ],
+                                              "composed":  false
+                                          },
+                  "agents/backend-dev.md":  {
+                                                "hash":  "sha256:88c23cbf4afa87fd5538696e930aecaf26a02e2137ff7ae0093c40eda8c1b732",
+                                                "sources":  [
+                                                                "agents/backend-dev.md"
+                                                            ],
+                                                "composed":  false
+                                            },
+                  "agents/code-reviewer.md":  {
+                                                  "hash":  "sha256:ac667bb359fe52909a7ca1ccd30b0cb37fddcce82cfe0dbc11906057f200a459",
+                                                  "sources":  [
+                                                                  "agents/code-reviewer.md"
+                                                              ],
+                                                  "composed":  false
+                                              },
+                  "agents/dev-lead.md":  {
+                                             "hash":  "sha256:29225087a2d5bdd0195060502bcf486446d5e7bbba130cb80647cb0bb8e3a36c",
+                                             "sources":  [
+                                                             "agents/dev-lead.md"
+                                                         ],
+                                             "composed":  false
+                                         },
+                  "agents/devops-engineer.md":  {
+                                                    "hash":  "sha256:debb1a7ded0af8b409fc05ef416df08682aef4b196d2a896f481c7707f2f74a6",
+                                                    "sources":  [
+                                                                    "agents/devops-engineer.md"
+                                                                ],
+                                                    "composed":  false
+                                                },
+                  "agents/devops-lead.md":  {
+                                                "hash":  "sha256:4e1e7d635a0e8e32a7a46e6ff46e72f3b8e18304f4bebcbb7a7b63e931622c36",
+                                                "sources":  [
+                                                                "agents/devops-lead.md"
+                                                            ],
+                                                "composed":  false
+                                            },
+                  "agents/doc-writer.md":  {
+                                               "hash":  "sha256:e9ad4038463ff973130ae76aeaacad7f0a2aef341a6a8dcbd9a9e9e636686fd0",
+                                               "sources":  [
+                                                               "agents/doc-writer.md"
+                                                           ],
+                                               "composed":  false
+                                           },
+                  "agents/frontend-dev.md":  {
+                                                 "hash":  "sha256:696b534a6d66587dd08827fb2f0224b4d6c9f0f54e1b5558ba3ef38d1e1b01f7",
+                                                 "sources":  [
+                                                                 "agents/frontend-dev.md"
+                                                             ],
+                                                 "composed":  false
+                                             },
+                  "agents/integration-tester.md":  {
+                                                       "hash":  "sha256:591a7a027bf717b6bf2b48fb389680a86b7e5e06a6ea8a7fd0de1ae3b164af90",
+                                                       "sources":  [
+                                                                       "agents/integration-tester.md"
+                                                                   ],
+                                                       "composed":  false
+                                                   },
+                  "agents/lead-auditor.md":  {
+                                                 "hash":  "sha256:706314b3c42ef842d3ea27d2e281399292d5baeee32a3153fa3ea535a8d35c72",
+                                                 "sources":  [
+                                                                 "agents/lead-auditor.md"
+                                                             ],
+                                                 "composed":  false
+                                             },
+                  "agents/pm-analyst.md":  {
+                                               "hash":  "sha256:e24a2b537370484f9c9e824db7eee5f5b251a5c4afec61ac0a594a2e0d2cb510",
+                                               "sources":  [
+                                                               "agents/pm-analyst.md"
+                                                           ],
+                                               "composed":  false
+                                           },
+                  "agents/qa-lead.md":  {
+                                            "hash":  "sha256:0f77a11832c24136b04e09fc9023a5c1148ae111eb4917d699d202b0da654253",
+                                            "sources":  [
+                                                            "agents/qa-lead.md"
+                                                        ],
+                                            "composed":  false
+                                        },
+                  "agents/rspdn-writer.md":  {
+                                                 "hash":  "sha256:b4dbea7b6cf20d2e3a8cb18265b4f77cffca730ce4f7b0e77e23fddf440a01b4",
+                                                 "sources":  [
+                                                                 "agents/rspdn-writer.md"
+                                                             ],
+                                                 "composed":  false
+                                             },
+                  "agents/rules-architect.md":  {
+                                                    "hash":  "sha256:bd0280f432d11285352d11e55ccf69e1be860f11204151a9d7c82732a02f110e",
+                                                    "sources":  [
+                                                                    "agents/rules-architect.md"
+                                                                ],
+                                                    "composed":  false
+                                                },
+                  "agents/security-auditor.md":  {
+                                                     "hash":  "sha256:dfca5038a0ce7a8d40947472a6e1a5f9a6f4a97fd049feb703bbeb9dbb24e0a0",
+                                                     "sources":  [
+                                                                     "agents/security-auditor.md"
+                                                                 ],
+                                                     "composed":  false
+                                                 },
+                  "agents/security-lead.md":  {
+                                                  "hash":  "sha256:f4453dce8326f9bf0d485151dca366c2ed0fa90801bb93fb97e8455d9816b60b",
+                                                  "sources":  [
+                                                                  "agents/security-lead.md"
+                                                              ],
+                                                  "composed":  false
+                                              },
+                  "agents/specialist-auditor.md":  {
+                                                       "hash":  "sha256:e6a78e038238e42593c5d199e03e9f4416f818ace9dcdd8a735dd0c25b1cc166",
+                                                       "sources":  [
+                                                                       "agents/specialist-auditor.md"
+                                                                   ],
+                                                       "composed":  false
+                                                   },
+                  "agents/test-engineer.md":  {
+                                                  "hash":  "sha256:8ddad5b5c9c7f94cd8f610fb02f18e9dad54e39b2325e5310802fcc4a3f401f4",
+                                                  "sources":  [
+                                                                  "agents/test-engineer.md"
+                                                              ],
+                                                  "composed":  false
+                                              },
+                  "agents/visual-qa.md":  {
+                                              "hash":  "sha256:1b7e32fc87c92cb48304e0313f775f46b9d779e1ec0588582f2f38c79ff2ac22",
+                                              "sources":  [
+                                                              "agents/visual-qa.md"
+                                                          ],
+                                              "composed":  false
+                                          },
+                  "commands/audit-plan.md":  {
+                                                 "hash":  "sha256:693342424e895d24a9fb26f53c63a59b0a4d06bb0a656affe7c6eea564c88bb6",
+                                                 "sources":  [
+                                                                 "skills/audit-plan.md"
+                                                             ],
+                                                 "composed":  false
+                                             },
+                  "commands/cross-validate.md":  {
+                                                     "hash":  "sha256:4aac76e6b82bc87ae3c1b3b01e7bbe56465f02600c0a7d6f1740f418dd28164b",
+                                                     "sources":  [
+                                                                     "skills/cross-validate.md"
+                                                                 ],
+                                                     "composed":  false
+                                                 },
+                  "commands/generate-rspdn.md":  {
+                                                     "hash":  "sha256:25e55e653ff7ef5fedec8c32880dc8771cfefb6edd86e3682cfdd197eb65aa2d",
+                                                     "sources":  [
+                                                                     "skills/generate-rspdn.md"
+                                                                 ],
+                                                     "composed":  false
+                                                 },
+                  "commands/orchestrate.md":  {
+                                                  "hash":  "sha256:a6190911bc166a936126555489ea3eb7f8edfd09dcfef2d092a25eed663826c7",
+                                                  "sources":  [
+                                                                  "skills/orchestrate.md"
+                                                              ],
+                                                  "composed":  false
+                                              },
+                  "commands/plan-feature.md":  {
+                                                   "hash":  "sha256:825f4bcca9b5e912174eb78e617e6530d50e7e32e0bea3ad8af1cc3bda19425d",
+                                                   "sources":  [
+                                                                   "skills/plan-feature.md"
+                                                               ],
+                                                   "composed":  false
+                                               },
+                  "commands/review-pr.md":  {
+                                                "hash":  "sha256:cc46668718b40dbd05cc3791cb444eec0b45d7ced1c0bb4c56b477b92fc50bff",
+                                                "sources":  [
+                                                                "skills/review-pr.md"
+                                                            ],
+                                                "composed":  false
+                                            },
+                  "commands/sync.md":  {
+                                           "hash":  "sha256:7cf5ddb1925d6f956e452cfee16d81823c3b6524ea96d2d8d68906eb15161b2a",
+                                           "sources":  [
+                                                           "skills/sync.md"
+                                                       ],
+                                           "composed":  false
+                                       }
+              }
+}

@@ -1,5 +1,5 @@
 ﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-control -->
-<!-- Synced: 2026-02-22 15:49:46 -->
+<!-- Synced: 2026-02-24 00:49:31 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
@@ -436,6 +436,31 @@ When working on phased implementation plans:
   - `MEMORY.md` — update project state (current phase, test counts, key lessons learned)
   - Code comments — ensure new/changed functions have accurate docstrings
   - This is a gate: no commit without documentation being current
+
+## Documentation Quality (MANDATORY)
+
+All markdown documentation must be visually clear and navigable. Use rich formatting for readability in VSCode, GitLab, and GitHub.
+
+### Required formatting for documents >100 lines
+
+- **Table of Contents** — anchor-linked TOC at the top of the file
+- **Mermaid diagrams** — for architecture, flows, timelines, state machines, decision trees. Use `mermaid` code blocks
+- **Collapsible sections** — `<details><summary>...</summary>...</details>` for verbose content (execution steps, audit details, alternative approaches)
+- **Unicode emoji markers** — use actual characters (✅ ❌ ⚠️ 🚧), NOT GitHub shortcodes (`:white_check_mark:` etc.) — shortcodes don't render in VSCode
+- **Bold blockquote callouts** — `> **📝 Note:**`, `> **⚠️ Warning:**`, `> **❗ Important:**` — NOT `> [!NOTE]` syntax (doesn't render in VSCode)
+- **Aligned tables** — use `:---|:---:|---:` for comparisons and inventories
+
+### Required formatting for all documents
+
+- **Syntax-highlighted code blocks** — always specify language tag (` ```python `, ` ```typescript `, ` ```abap `, ` ```json `)
+- **Bold emphasis** for key terms and decisions
+- **Horizontal rules** (`---`) between major sections
+
+### Compatibility rules
+
+- All formatting must render correctly in **VSCode Markdown Preview** (with bierner.markdown-mermaid extension), **GitLab**, and **GitHub**
+- Never use GitHub-only syntax (`> [!NOTE]`, emoji shortcodes) — use universal alternatives
+- Mermaid requires `bierner.markdown-mermaid` VSCode extension (auto-installed, documented in onboarding)
 
 ## Plan Persistence After Thinking (MANDATORY)
 

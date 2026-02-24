@@ -357,3 +357,29 @@ Layer 4: Config-Driven Calls (source + tables)   ← opt-in, needs scope/SQL
 4. `go test ./pkg/adt/ -run TestDetect` — Phase 4
 5. `go test ./...` — no regressions (~335+ tests)
 6. `go build ./cmd/vsp` — compiles
+
+---
+
+## Phase 5: Documentation Beautification — 🚧 PENDING
+
+> **⚠️ Warning:**
+> Prerequisite: `bierner.markdown-mermaid` VSCode extension must be installed for Mermaid preview.
+
+**Goal:** Bring all project documentation up to the visual quality standard defined in `base/CLAUDE.md` → Documentation Quality (MANDATORY).
+
+**Scope:**
+
+| File | Current State | Target |
+|------|--------------|--------|
+| `docs/PLAN.md` | Plain markdown, 360 lines, no TOC | TOC + Mermaid timeline + collapsible phases + emoji markers |
+| `README.md` | Basic | Mermaid architecture diagram (Go CLI + ADT + MCP) |
+
+**Steps:**
+
+- [ ] Step 5.1: Add TOC with anchor links to `PLAN.md`
+- [ ] Step 5.2: Add `timeline` Mermaid diagram showing Phases 1–4
+- [ ] Step 5.3: Wrap completed phase details in `<details><summary>` collapsible sections
+- [ ] Step 5.4: Add ✅/🚧/❌ status markers to all phases
+- [ ] Step 5.5: Add `> **📝 Note:**` / `> **⚠️ Warning:**` callouts for key decisions
+- [ ] Step 5.6: Add Mermaid `flowchart` diagram to README.md (ADT API → Go pkg → MCP handlers)
+- [ ] Step 5.7: Verify all formatting renders in VSCode + GitLab
