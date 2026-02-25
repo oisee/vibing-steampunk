@@ -13,13 +13,13 @@ import (
 // --- Service Binding Publish/Unpublish Handlers ---
 
 func (s *Server) handlePublishServiceBinding(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	serviceName, ok := request.Params.Arguments["service_name"].(string)
+	serviceName, ok := request.GetArguments()["service_name"].(string)
 	if !ok || serviceName == "" {
 		return newToolResultError("service_name is required"), nil
 	}
 
 	serviceVersion := "0001"
-	if sv, ok := request.Params.Arguments["service_version"].(string); ok && sv != "" {
+	if sv, ok := request.GetArguments()["service_version"].(string); ok && sv != "" {
 		serviceVersion = sv
 	}
 
@@ -33,13 +33,13 @@ func (s *Server) handlePublishServiceBinding(ctx context.Context, request mcp.Ca
 }
 
 func (s *Server) handleUnpublishServiceBinding(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	serviceName, ok := request.Params.Arguments["service_name"].(string)
+	serviceName, ok := request.GetArguments()["service_name"].(string)
 	if !ok || serviceName == "" {
 		return newToolResultError("service_name is required"), nil
 	}
 
 	serviceVersion := "0001"
-	if sv, ok := request.Params.Arguments["service_version"].(string); ok && sv != "" {
+	if sv, ok := request.GetArguments()["service_version"].(string); ok && sv != "" {
 		serviceVersion = sv
 	}
 
