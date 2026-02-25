@@ -14,12 +14,12 @@ import (
 // --- Development Tool Handlers ---
 
 func (s *Server) handleSyntaxCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
-	content, ok := request.Params.Arguments["content"].(string)
+	content, ok := request.GetArguments()["content"].(string)
 	if !ok || content == "" {
 		return newToolResultError("content is required"), nil
 	}
@@ -34,12 +34,12 @@ func (s *Server) handleSyntaxCheck(ctx context.Context, request mcp.CallToolRequ
 }
 
 func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
-	objectName, ok := request.Params.Arguments["object_name"].(string)
+	objectName, ok := request.GetArguments()["object_name"].(string)
 	if !ok || objectName == "" {
 		return newToolResultError("object_name is required"), nil
 	}
@@ -55,12 +55,12 @@ func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest
 
 func (s *Server) handleActivatePackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	packageName := ""
-	if pkg, ok := request.Params.Arguments["package"].(string); ok {
+	if pkg, ok := request.GetArguments()["package"].(string); ok {
 		packageName = pkg
 	}
 
 	maxObjects := 100
-	if max, ok := request.Params.Arguments["max_objects"].(float64); ok && max > 0 {
+	if max, ok := request.GetArguments()["max_objects"].(float64); ok && max > 0 {
 		maxObjects = int(max)
 	}
 
@@ -74,7 +74,7 @@ func (s *Server) handleActivatePackage(ctx context.Context, request mcp.CallTool
 }
 
 func (s *Server) handleRunUnitTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
@@ -82,11 +82,11 @@ func (s *Server) handleRunUnitTests(ctx context.Context, request mcp.CallToolReq
 	// Build flags from optional parameters
 	flags := adt.DefaultUnitTestFlags()
 
-	if includeDangerous, ok := request.Params.Arguments["include_dangerous"].(bool); ok && includeDangerous {
+	if includeDangerous, ok := request.GetArguments()["include_dangerous"].(bool); ok && includeDangerous {
 		flags.Dangerous = true
 	}
 
-	if includeLong, ok := request.Params.Arguments["include_long"].(bool); ok && includeLong {
+	if includeLong, ok := request.GetArguments()["include_long"].(bool); ok && includeLong {
 		flags.Long = true
 	}
 

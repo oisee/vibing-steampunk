@@ -36,7 +36,7 @@ func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallTo
 
 	// Start AMDP debug session
 	cascadeMode := "FULL"
-	if cm, ok := request.Params.Arguments["cascade_mode"].(string); ok && cm != "" {
+	if cm, ok := request.GetArguments()["cascade_mode"].(string); ok && cm != "" {
 		cascadeMode = cm
 	}
 
@@ -130,7 +130,7 @@ func (s *Server) handleAMDPDebuggerStep(ctx context.Context, request mcp.CallToo
 		return errResult, nil
 	}
 
-	stepType, ok := request.Params.Arguments["step_type"].(string)
+	stepType, ok := request.GetArguments()["step_type"].(string)
 	if !ok || stepType == "" {
 		return newToolResultError("step_type is required"), nil
 	}
@@ -180,12 +180,12 @@ func (s *Server) handleAMDPSetBreakpoint(ctx context.Context, request mcp.CallTo
 		return errResult, nil
 	}
 
-	procName, _ := request.Params.Arguments["proc_name"].(string)
+	procName, _ := request.GetArguments()["proc_name"].(string)
 	if procName == "" {
 		return newToolResultError("proc_name is required"), nil
 	}
 
-	lineFloat, ok := request.Params.Arguments["line"].(float64)
+	lineFloat, ok := request.GetArguments()["line"].(float64)
 	if !ok {
 		return newToolResultError("line is required"), nil
 	}

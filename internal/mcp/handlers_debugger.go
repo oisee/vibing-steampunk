@@ -35,7 +35,7 @@ func (s *Server) ensureDebugWSClient(ctx context.Context) error {
 
 func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Get breakpoint kind (default: "line")
-	kind, _ := request.Params.Arguments["kind"].(string)
+	kind, _ := request.GetArguments()["kind"].(string)
 	if kind == "" {
 		kind = "line"
 	}
@@ -51,19 +51,19 @@ func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRe
 
 	switch kind {
 	case "line":
-		program, ok := request.Params.Arguments["program"].(string)
+		program, ok := request.GetArguments()["program"].(string)
 		if !ok || program == "" {
 			return newToolResultError("program is required for line breakpoints"), nil
 		}
 
-		lineFloat, ok := request.Params.Arguments["line"].(float64)
+		lineFloat, ok := request.GetArguments()["line"].(float64)
 		if !ok || lineFloat <= 0 {
 			return newToolResultError("line is required and must be positive for line breakpoints"), nil
 		}
 		line := int(lineFloat)
 
 		// Optional method parameter for include-relative line numbers
-		method, _ := request.Params.Arguments["method"].(string)
+		method, _ := request.GetArguments()["method"].(string)
 
 		// Auto-convert class names to pool format (ZCL_TEST → ZCL_TEST================CP)
 		originalProgram := program
@@ -103,7 +103,7 @@ func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRe
 		}
 
 	case "statement":
-		statement, ok := request.Params.Arguments["statement"].(string)
+		statement, ok := request.GetArguments()["statement"].(string)
 		if !ok || statement == "" {
 			return newToolResultError("statement is required for statement breakpoints (e.g., 'CALL FUNCTION', 'SELECT', 'LOOP')"), nil
 		}
@@ -119,7 +119,7 @@ func (s *Server) handleSetBreakpoint(ctx context.Context, request mcp.CallToolRe
 		msg.WriteString("\nThis breakpoint will trigger on ALL occurrences of this statement type.\n")
 
 	case "exception":
-		exception, ok := request.Params.Arguments["exception"].(string)
+		exception, ok := request.GetArguments()["exception"].(string)
 		if !ok || exception == "" {
 			return newToolResultError("exception is required for exception breakpoints (e.g., 'CX_SY_ZERODIVIDE')"), nil
 		}
@@ -213,7 +213,7 @@ func (s *Server) handleGetBreakpoints(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleDeleteBreakpoint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	bpID, ok := request.Params.Arguments["breakpoint_id"].(string)
+	bpID, ok := request.GetArguments()["breakpoint_id"].(string)
 	if !ok || bpID == "" {
 		return newToolResultError("breakpoint_id is required"), nil
 	}
@@ -230,14 +230,14 @@ func (s *Server) handleDeleteBreakpoint(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	function, ok := request.Params.Arguments["function"].(string)
+	function, ok := request.GetArguments()["function"].(string)
 	if !ok || function == "" {
 		return newToolResultError("function is required"), nil
 	}
 
 	// Parse params if provided
 	params := make(map[string]string)
-	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
+	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
 		// Parse JSON params
 		var rawParams map[string]interface{}
 		if err := json.Unmarshal([]byte(paramsStr), &rawParams); err != nil {

@@ -34,6 +34,9 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 # Using cookie authentication
 ./vsp --url http://host:50000 --cookie-string "sap-usercontext=abc; SAP_SESSIONID=xyz"
 ./vsp --url http://host:50000 --cookie-file cookies.txt
+
+# Using HTTP Streamable transport (MCP endpoint at /mcp)
+./vsp --url http://host:50000 --user admin --password secret --transport http-streamable
 ```
 
 | Variable / Flag | Description |
@@ -47,6 +50,7 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_COOKIE_FILE` / `--cookie-file` | Path to Netscape-format cookie file |
 | `SAP_COOKIE_STRING` / `--cookie-string` | Cookie string (key1=val1; key2=val2) |
 | `SAP_MODE` / `--mode` | Tool mode: `focused` (20 tools, default) or `expert` (47 tools) |
+| `SAP_TRANSPORT` / `--transport` | MCP transport: `stdio` (default) or `http-streamable` |
 | `SAP_DISABLED_GROUPS` / `--disabled-groups` | Disable tool groups: `5`/`U`=UI5, `T`=Tests, `H`=HANA, `D`=Debug |
 | `SAP_VERBOSE` / `--verbose` | Enable verbose logging to stderr |
 | **Safety Configuration** | |
