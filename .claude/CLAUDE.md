@@ -1,5 +1,5 @@
 ﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-control -->
-<!-- Synced: 2026-02-24 00:49:31 -->
+<!-- Synced: 2026-02-27 11:29:15 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
@@ -323,6 +323,25 @@ After the audit is fully approved (all levels APPROVE), the final plan **must** 
 - Record commit hashes, test counts, and deviations inline after each phase completion
 - Save the plan to a persistent location (plan file or `docs/ROADMAP.md`) — not just in conversation memory
 
+### Per-Phase PAL Verification Gate (MANDATORY)
+
+Every phase of a phased implementation plan **must** end with a PAL verification gate before the next phase begins:
+
+1. **Automated checks pass**: run tests (`npm test`, `pytest`, etc.) — must be green with zero failures
+2. **PAL `codereview`**: review all files changed in this phase. Any CRITICAL finding → HALT, fix, re-review before proceeding.
+3. **PAL `thinkdeep`**: deep analysis of the phase's changes for correctness, edge cases, integration risks. Any CRITICAL → HALT.
+4. Only after all automated checks pass AND both PAL tools return no CRITICAL findings: mark phase complete and proceed to the next phase.
+
+### End-of-Plan Double Audit (MANDATORY)
+
+After **all phases** are complete and before committing:
+
+1. **PAL `precommit`**: full diff review — security scan, change impact assessment, no regressions
+2. **PAL `consensus`** (multi-model, ≥2 models): holistic architecture review — confirm all root-cause issues are structurally prevented, not just patched. Flag any design gaps the per-phase gates may have missed.
+3. If any finding ≥ HIGH: create a fix task, re-run the relevant phase gate, then re-run the double audit.
+
+**Rule**: No implementation is committed without passing the end-of-plan double audit. This is non-negotiable.
+
 ### When to run the audit
 
 - After plan design (before user approval / ExitPlanMode)
@@ -411,13 +430,15 @@ Rules and CLAUDE.md instructions must NOT be written ad-hoc by the implementatio
 
 ## Database Protection (CRITICAL — NEVER VIOLATE)
 
-- **NEVER delete databases** (ChromaDB `chroma_db/` directories, Docker volumes, SQLite files). This is an absolute rule with ZERO exceptions.
-- **Before full re-index or destructive operation**: ALWAYS create a backup first:
-  1. Copy database directory to `_archive/<db>_backup_YYYY-MM-DD/`
-  2. Verify the backup exists and has correct size
+Enforced automatically by `protect-db.sh` hook — hook blocks destructive commands on DB paths.
+
+- **NEVER delete any database** — absolute rule, zero exceptions. Protected path patterns (any DB technology): `*.db`, `*.sqlite`, `*.sqlite3`, `*chroma*`, `chroma_db/`, `pgdata`, `*redis*data`, `*mongo*data`, `*elastic*data`, `*mysql*data`, `*_db/`
+- **Before any destructive operation on a DB path**: create backup first:
+  1. `cp -r <db_dir> _archive/<db>_backup_$(date +%Y-%m-%d)/`
+  2. Verify: `ls -la _archive/<db>_backup_*/`
   3. Only then proceed
-- **Allowed operations**: backup, copy, archive, read. **Forbidden**: delete, drop, rm -rf, `shutil.rmtree()` on DB
-- **Double verification**: Any code that touches a database path destructively must be reviewed twice — once by the implementer, once by the audit agent
+- **Allowed**: backup, copy, archive, read. **Forbidden**: `rm -rf`, `rmdir`, `shutil.rmtree()`, `DROP TABLE/DATABASE`, `docker volume rm`
+- **Adding a new database**: add its path pattern to `hooks/protect-db.sh` `DB_PATTERN` and run `/sync`
 
 ## Plan Continuity & Documentation (MANDATORY)
 
@@ -505,6 +526,12 @@ Minimize token waste and keep the context window clean across phases, sessions, 
 - **Delegate to subagents for heavy research** — Use Task tool agents (Explore, Plan, general-purpose) for codebase exploration, documentation lookup, and multi-file analysis. This offloads token-heavy searches from the main context window.
 - **Summarize, don't echo** — When a subagent returns results, extract only the relevant findings for the main context. Do not paste full tool outputs verbatim unless the user needs them.
 - **Prefer targeted reads over broad scans** — Use Grep/Glob with specific patterns before resorting to reading entire files. Read only the lines you need (use `offset`/`limit` for large files).
+- **Never use `**/*.md` (or any `**/*` glob) on project roots** — Recursive globs hang on directories that contain large subdirs like `chroma_db/`, `node_modules/`, `.venv/`, `__pycache__/`. This blocks the main context and forces the user to interrupt. Use targeted patterns instead:
+  - ❌ `Glob("**/*.md", path="~/project")` — hangs
+  - ✅ `Glob("*.md", path="~/project")` — root only
+  - ✅ `Glob("docs/*.md", path="~/project")` — specific subdir
+  - ✅ `Bash("find ~/project -maxdepth 2 -name '*.md' -not -path '*/node_modules/*' -not -path '*/.venv/*'")` — safe find with limits
+  - ✅ Delegate to a Task agent — it handles scanning internally without blocking the main context
 
 ### Within a Session
 

@@ -1,11 +1,11 @@
 {
     "schema_version":  1,
-    "synced_at":  "2026-02-23T23:49:31Z",
+    "synced_at":  "2026-02-27T10:29:16Z",
     "config_repo":  "C:/Users/stanislav.naumov/claude-team-control",
     "project_name":  "vibing-steampunk",
     "files":  {
                   "CLAUDE.md":  {
-                                    "hash":  "sha256:d6b2f3f0a38cdf1f6bd36a478123224ea5f67aa985bc5755fc1ba6ba912450f7",
+                                    "hash":  "sha256:440db6a3b993c0fa0232b4dbb18f88726dc22bf7f6a124d6b033bb765b4700c1",
                                     "sources":  [
                                                     "base/CLAUDE.md",
                                                     "overlays/vibing-steampunk.md"
@@ -195,7 +195,7 @@
                                                 "composed":  false
                                             },
                   "commands/sync.md":  {
-                                           "hash":  "sha256:7cf5ddb1925d6f956e452cfee16d81823c3b6524ea96d2d8d68906eb15161b2a",
+                                           "hash":  "sha256:4378f6783c135808b0c437003a08671316440a32df1968131ef34eabb41688c7",
                                            "sources":  [
                                                            "skills/sync.md"
                                                        ],
