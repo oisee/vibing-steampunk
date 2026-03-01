@@ -1157,22 +1157,24 @@ func (c *Client) SaveClassIncludeToFile(ctx context.Context, className string, i
 
 // EditSourceResult represents the result of editing source code.
 type EditSourceResult struct {
-	Success       bool                `json:"success"`
-	ObjectURL     string              `json:"objectUrl"`
-	ObjectName    string              `json:"objectName"`
-	MatchCount    int                 `json:"matchCount"`
-	OldString     string              `json:"oldString,omitempty"`
-	NewString     string              `json:"newString,omitempty"`
-	SyntaxErrors  []string            `json:"syntaxErrors,omitempty"`
-	Activation    *ActivationResult   `json:"activation,omitempty"`
-	Message       string              `json:"message,omitempty"`
-	Method        string              `json:"method,omitempty"` // Method name if method-level edit
+	Success        bool                `json:"success"`
+	ObjectURL      string              `json:"objectUrl"`
+	ObjectName     string              `json:"objectName"`
+	MatchCount     int                 `json:"matchCount"`
+	OldString      string              `json:"oldString,omitempty"`
+	NewString      string              `json:"newString,omitempty"`
+	SyntaxErrors   []string            `json:"syntaxErrors,omitempty"`
+	SyntaxWarnings []string            `json:"syntaxWarnings,omitempty"`
+	Activation     *ActivationResult   `json:"activation,omitempty"`
+	Message        string              `json:"message,omitempty"`
+	Method         string              `json:"method,omitempty"` // Method name if method-level edit
 }
 
 // EditSourceOptions provides optional parameters for EditSource.
 type EditSourceOptions struct {
 	ReplaceAll      bool   // If true, replace all occurrences; if false, require unique match
 	SyntaxCheck     bool   // If true, validate syntax before saving (default: true if not set)
+	IgnoreWarnings  bool   // If true, only block on errors (E), allow warnings (W) and info (I)
 	CaseInsensitive bool   // If true, ignore case when matching
 	Method          string // For CLAS only: constrain search/replace to this method only
 	Transport       string // Transport request number (required for non-$TMP packages)
@@ -1464,21 +1466,39 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	// 4. Optional syntax check
 	if opts.SyntaxCheck {
 		// For class includes, pass the include URL directly - SyntaxCheck handles it
-		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, newSource)
+		syntaxResults, err := c.SyntaxCheck(ctx, objectURL, newSource)
 		if err != nil {
 			result.Message = fmt.Sprintf("Syntax check failed: %v", err)
 			return result, nil
 		}
 
-		if len(syntaxErrors) > 0 {
-			// Convert to string messages
-			errorMsgs := make([]string, len(syntaxErrors))
-			for i, e := range syntaxErrors {
-				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+		if len(syntaxResults) > 0 {
+			// Separate errors from warnings/info
+			var errors, warnings []string
+			for _, e := range syntaxResults {
+				msg := fmt.Sprintf("Line %d: %s", e.Line, e.Text)
+				if e.Severity == "E" {
+					errors = append(errors, msg)
+				} else {
+					warnings = append(warnings, msg)
+				}
 			}
-			result.SyntaxErrors = errorMsgs
-			result.Message = fmt.Sprintf("Edit would introduce %d syntax errors. Changes NOT saved.", len(syntaxErrors))
-			return result, nil
+
+			result.SyntaxWarnings = warnings
+
+			if len(errors) > 0 {
+				// Always block on actual errors
+				result.SyntaxErrors = errors
+				result.Message = fmt.Sprintf("Edit would introduce %d syntax error(s). Changes NOT saved.", len(errors))
+				return result, nil
+			}
+
+			if len(warnings) > 0 && !opts.IgnoreWarnings {
+				// Block on warnings unless ignore_warnings is set
+				result.SyntaxErrors = warnings
+				result.Message = fmt.Sprintf("Edit has %d syntax warning(s). Use ignore_warnings=true to proceed. Changes NOT saved.", len(warnings))
+				return result, nil
+			}
 		}
 	}
 
