@@ -242,7 +242,7 @@ func TestTransport_BuildURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := transport.buildURL(tt.path, tt.query)
+			got, err := transport.buildURL(tt.path, tt.query, "")
 			if err != nil {
 				t.Fatalf("buildURL failed: %v", err)
 			}

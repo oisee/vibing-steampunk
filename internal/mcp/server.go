@@ -246,6 +246,11 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"G": { // Git/abapGit tools (via ZADT_VSP WebSocket)
 			"GitTypes", "GitExport",
 		},
+		"N": { // i18N/Translation tools
+			"GetObjectTextsInLanguage", "GetDataElementLabels", "GetMessageClassTexts",
+			"WriteMessageClassTexts", "WriteDataElementLabels",
+			"GetTextPoolInLanguage", "CompareObjectLanguages",
+		},
 		"R": { // Report execution tools (via ZADT_VSP WebSocket)
 			"RunReport", "GetVariants", "GetTextElements", "SetTextElements",
 		},
@@ -398,6 +403,13 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		// Git/abapGit Integration (via ZADT_VSP WebSocket)
 		"GitTypes":  true, // List 158 supported object types
 		"GitExport": true, // Export packages/objects to abapGit ZIP
+
+		// i18n/Translation (read-only in focused mode, write in expert)
+		"GetObjectTextsInLanguage": true, // Get object source in specific language
+		"GetDataElementLabels":     true, // Get data element labels in language
+		"GetMessageClassTexts":     true, // Get message class texts in language
+		"GetTextPoolInLanguage":    true, // Get program text pool in language
+		"CompareObjectLanguages":   true, // Compare texts between two languages
 
 		// Report Execution (via ZADT_VSP WebSocket)
 		"RunReport":        true, // Execute reports with params/variants, capture ALV
@@ -2205,6 +2217,136 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 				mcp.Description("Transport request number"),
 			),
 		), s.handleDeleteTransport)
+	}
+
+	// --- i18n/Translation Tools ---
+
+	if shouldRegister("GetObjectTextsInLanguage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetObjectTextsInLanguage",
+			mcp.WithDescription("Get the source/content of an ABAP object in a specific language. Overrides the global SAP language for this request."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT source URL (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+		), s.handleGetObjectTextsInLanguage)
+	}
+
+	if shouldRegister("GetDataElementLabels") {
+		s.mcpServer.AddTool(mcp.NewTool("GetDataElementLabels",
+			mcp.WithDescription("Get the text labels (short, medium, long, heading) of a data element in a specific language."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Data element name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+		), s.handleGetDataElementLabels)
+	}
+
+	if shouldRegister("GetMessageClassTexts") {
+		s.mcpServer.AddTool(mcp.NewTool("GetMessageClassTexts",
+			mcp.WithDescription("Get all messages of a message class in a specific language."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Message class name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+		), s.handleGetMessageClassTexts)
+	}
+
+	if shouldRegister("WriteMessageClassTexts") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteMessageClassTexts",
+			mcp.WithDescription("Update message class texts in a specific language. Requires lock handle from LockObject. Expert mode only."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Message class name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+			mcp.WithString("lock_handle",
+				mcp.Required(),
+				mcp.Description("Lock handle from LockObject"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional, for transportable objects)"),
+			),
+		), s.handleWriteMessageClassTexts)
+	}
+
+	if shouldRegister("WriteDataElementLabels") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteDataElementLabels",
+			mcp.WithDescription("Update data element labels in a specific language. Requires lock handle from LockObject. Expert mode only."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Data element name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+			mcp.WithString("short",
+				mcp.Description("Short description label"),
+			),
+			mcp.WithString("medium",
+				mcp.Description("Medium description label"),
+			),
+			mcp.WithString("long",
+				mcp.Description("Long description label"),
+			),
+			mcp.WithString("heading",
+				mcp.Description("Heading/column header label"),
+			),
+			mcp.WithString("lock_handle",
+				mcp.Required(),
+				mcp.Description("Lock handle from LockObject"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional, for transportable objects)"),
+			),
+		), s.handleWriteDataElementLabels)
+	}
+
+	if shouldRegister("GetTextPoolInLanguage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTextPoolInLanguage",
+			mcp.WithDescription("Get the text pool (text elements/selection texts) of a program in a specific language."),
+			mcp.WithString("program_name",
+				mcp.Required(),
+				mcp.Description("ABAP program name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("SAP language code (e.g., EN, FR, DE)"),
+			),
+		), s.handleGetTextPoolInLanguage)
+	}
+
+	if shouldRegister("CompareObjectLanguages") {
+		s.mcpServer.AddTool(mcp.NewTool("CompareObjectLanguages",
+			mcp.WithDescription("Compare the text content of an ABAP object between two languages. Shows differences and missing translations."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT source URL (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+			),
+			mcp.WithString("source_language",
+				mcp.Required(),
+				mcp.Description("Source language code (e.g., EN)"),
+			),
+			mcp.WithString("target_language",
+				mcp.Required(),
+				mcp.Description("Target language code (e.g., FR)"),
+			),
+		), s.handleCompareObjectLanguages)
 	}
 
 	// --- Git/abapGit Integration (via ZADT_VSP WebSocket) ---

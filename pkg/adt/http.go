@@ -52,12 +52,13 @@ func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
 
 // RequestOptions contains options for an HTTP request.
 type RequestOptions struct {
-	Method      string
-	Headers     map[string]string
-	Query       url.Values
-	Body        []byte
-	ContentType string
-	Accept      string
+	Method           string
+	Headers          map[string]string
+	Query            url.Values
+	Body             []byte
+	ContentType      string
+	Accept           string
+	OverrideLanguage string // If set, overrides the global sap-language for this request
 }
 
 // Response wraps an HTTP response with convenience methods.
@@ -77,7 +78,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	}
 
 	// Build URL
-	reqURL, err := t.buildURL(path, opts.Query)
+	reqURL, err := t.buildURL(path, opts.Query, opts.OverrideLanguage)
 	if err != nil {
 		return nil, fmt.Errorf("building URL: %w", err)
 	}
@@ -186,7 +187,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 
 // retryRequest retries a request after CSRF token refresh.
 func (t *Transport) retryRequest(ctx context.Context, path string, opts *RequestOptions) (*Response, error) {
-	reqURL, err := t.buildURL(path, opts.Query)
+	reqURL, err := t.buildURL(path, opts.Query, opts.OverrideLanguage)
 	if err != nil {
 		return nil, fmt.Errorf("building URL: %w", err)
 	}
@@ -245,7 +246,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 // fetchCSRFToken retrieves a CSRF token from the server.
 // Uses /core/discovery with HEAD for optimal performance (~25ms vs ~56s for GET on /discovery)
 func (t *Transport) fetchCSRFToken(ctx context.Context) error {
-	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
+	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil, "")
 	if err != nil {
 		return fmt.Errorf("building URL: %w", err)
 	}
@@ -301,7 +302,8 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 }
 
 // buildURL constructs the full URL for an API request.
-func (t *Transport) buildURL(path string, query url.Values) (string, error) {
+// overrideLang, if non-empty, replaces the global sap-language for this request.
+func (t *Transport) buildURL(path string, query url.Values, overrideLang string) (string, error) {
 	base := strings.TrimSuffix(t.config.BaseURL, "/")
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -319,6 +321,9 @@ func (t *Transport) buildURL(path string, query url.Values) (string, error) {
 	}
 	if t.config.Language != "" {
 		q.Set("sap-language", t.config.Language)
+	}
+	if overrideLang != "" {
+		q.Set("sap-language", overrideLang)
 	}
 	for k, v := range query {
 		for _, val := range v {
