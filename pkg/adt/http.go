@@ -174,6 +174,16 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 			return t.retryRequest(ctx, path, opts)
 		}
 
+		// Handle 401 Unauthorized - re-authenticate and retry once
+		if resp.StatusCode == http.StatusUnauthorized {
+			t.setCSRFToken("")
+			t.setSessionID("")
+			if err := t.fetchCSRFToken(ctx); err != nil {
+				return nil, fmt.Errorf("re-authenticating after 401: %w", err)
+			}
+			return t.retryRequest(ctx, path, opts)
+		}
+
 		return nil, apiErr
 	}
 

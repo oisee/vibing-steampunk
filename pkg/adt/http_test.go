@@ -186,6 +186,71 @@ func TestTransport_Request_CSRFRefreshOn403(t *testing.T) {
 	}
 }
 
+func TestTransport_Request_RetryOn401(t *testing.T) {
+	mock := &mockHTTPClient{
+		responses: []*http.Response{
+			// First: GET returns 401 Unauthorized (session expired after idle)
+			newMockResponse(401, "Unauthorized", nil),
+			// Second: re-authenticate — fetch new CSRF token
+			newMockResponse(200, "OK", map[string]string{"X-CSRF-Token": "new-token"}),
+			// Third: retry original GET succeeds
+			newMockResponse(200, "Success", nil),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+
+	resp, err := transport.Request(context.Background(), "/sap/bc/adt/test", nil)
+	if err != nil {
+		t.Fatalf("Request should have succeeded after retry, got: %v", err)
+	}
+
+	if string(resp.Body) != "Success" {
+		t.Errorf("Response body = %v, want Success", string(resp.Body))
+	}
+
+	// Should have made 3 requests: original GET + CSRF fetch + retry GET
+	if len(mock.requests) != 3 {
+		t.Fatalf("Expected 3 requests, got %d", len(mock.requests))
+	}
+}
+
+func TestTransport_Request_RetryOn401_POST(t *testing.T) {
+	mock := &mockHTTPClient{
+		responses: []*http.Response{
+			// First: fetch initial CSRF token
+			newMockResponse(200, "OK", map[string]string{"X-CSRF-Token": "old-token"}),
+			// Second: POST returns 401 Unauthorized
+			newMockResponse(401, "Unauthorized", nil),
+			// Third: re-authenticate — fetch new CSRF token
+			newMockResponse(200, "OK", map[string]string{"X-CSRF-Token": "new-token"}),
+			// Fourth: retry POST succeeds
+			newMockResponse(200, "Success", nil),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+
+	resp, err := transport.Request(context.Background(), "/sap/bc/adt/test", &RequestOptions{
+		Method: http.MethodPost,
+		Body:   []byte("test body"),
+	})
+	if err != nil {
+		t.Fatalf("Request should have succeeded after retry, got: %v", err)
+	}
+
+	if string(resp.Body) != "Success" {
+		t.Errorf("Response body = %v, want Success", string(resp.Body))
+	}
+
+	// Should have made 4 requests: CSRF fetch + POST + CSRF refresh + retry POST
+	if len(mock.requests) != 4 {
+		t.Fatalf("Expected 4 requests, got %d", len(mock.requests))
+	}
+}
+
 func TestTransport_Request_ErrorResponse(t *testing.T) {
 	mock := &mockHTTPClient{
 		responses: []*http.Response{
