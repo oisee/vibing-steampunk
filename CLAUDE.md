@@ -79,10 +79,10 @@ cmd/vsp/                             # CLI entry point (6 files)
 ├── lua.go                           # Lua REPL command
 └── workflow.go                      # Workflow CLI commands
 
-internal/mcp/                        # MCP server (26 files)
+internal/mcp/                        # MCP server (27 files)
 ├── server.go                        # Server core, tool registration, mode/group logic
 ├── server_test.go                   # Server tests
-└── handlers_*.go                    # 24 domain-specific handler files:
+└── handlers_*.go                    # 25 domain-specific handler files:
     handlers_amdp.go                 #   AMDP/HANA debugger
     handlers_analysis.go             #   Code analysis (call graph, structure)
     handlers_atc.go                  #   ATC checks
@@ -91,6 +91,7 @@ internal/mcp/                        # MCP server (26 files)
     handlers_crud.go                 #   CRUD operations (create, update, delete)
     handlers_debugger.go             #   External debugger (WebSocket)
     handlers_debugger_legacy.go      #   Legacy HTTP debugger
+    handlers_deploy.go               #   abapGit ZIP deployment (3-phase bulk deploy)
     handlers_devtools.go             #   Dev tools (syntax, activate, pretty print)
     handlers_dumps.go                #   Runtime errors / short dumps
     handlers_fileio.go               #   File import/export
@@ -181,6 +182,9 @@ embedded/
 
 docs/                                # Project documentation
 ├── adr/                             # Architecture Decision Records (3 ADRs)
+├── architecture.md                  # Architecture diagrams (Mermaid)
+├── cli-agents/                      # CLI coding agents guide (4 languages)
+├── reviewer-guide.md                # Reviewer guide (8 hands-on tasks)
 └── plans/                           # Phase planning docs
 
 articles/                            # Published articles
@@ -211,6 +215,7 @@ README_TOOLS.md                      # Tool reference (all 122 tools)
 | Add report feature | `pkg/adt/reports.go` |
 | Add transport feature | `pkg/adt/transport.go` |
 | Add UI5/BSP feature | `pkg/adt/ui5.go` |
+| Add deployment feature | `internal/mcp/handlers_deploy.go` |
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
 | Add system config | `pkg/config/systems.go` |
@@ -470,6 +475,8 @@ When creating a new report:
 | **GitExport to Disk** | ✅ Complete (v2.23.0 - ZIP files written directly, no base64) |
 | **Tool Visibility** | ✅ Complete (v2.22.0 - .vsp.json for granular tool control) |
 | **HTTP Proxy** | ✅ Complete (v2.22.0 - HTTP_PROXY/HTTPS_PROXY support) |
+| **DeployZip** | ✅ Complete (3-phase bulk deploy from abapGit ZIP: create → upload → activate) |
+| **Iterative Activation** | ✅ Complete (ActivatePackageIterative with package filtering) |
 
 ### DSL & Workflow Usage
 
