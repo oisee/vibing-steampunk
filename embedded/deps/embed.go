@@ -52,6 +52,15 @@ func GetAvailableDependencies() []DependencyInfo {
 	}
 }
 
+// GetDependencyZIP returns the embedded ZIP data for a named dependency.
+// Returns nil if the dependency is not available (not yet embedded).
+func GetDependencyZIP(name string) []byte {
+	// TODO: Return actual embedded ZIP data when available.
+	// For now, no ZIPs are embedded — all dependencies return nil.
+	_ = name
+	return nil
+}
+
 // ABAPFile represents a parsed ABAP source file from abapGit ZIP.
 type ABAPFile struct {
 	// File info
