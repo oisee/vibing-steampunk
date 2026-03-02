@@ -1,6 +1,6 @@
 # CLI Coding Agents + VSP (SAP ADT MCP Server)
 
-Інструкція з налаштування CLI-асистентів для роботи з SAP через [VSP (vibing-steampunk)](https://github.com/oisee/vibing-steampunk).
+Інструкція з налаштування CLI-асистентів для роботи з SAP через [VSP (vibing-steampunk)](https://github.com/vinchacho/vibing-steampunk).
 
 **VSP** — MCP-сервер, який надає AI-асистентам доступ до SAP ADT API: читання/запис коду, налагодження, тести, транспорти тощо.
 
@@ -513,11 +513,11 @@ python3 /path/to/mcp-echo-server.py
 
 ```bash
 # Завантажити бінарник
-curl -LO https://github.com/oisee/vibing-steampunk/releases/latest/download/vsp-darwin-arm64
+curl -LO https://github.com/vinchacho/vibing-steampunk/releases/latest/download/vsp-darwin-arm64
 chmod +x vsp-darwin-arm64
 
 # Або зібрати з вихідного коду
-git clone https://github.com/oisee/vibing-steampunk.git
+git clone https://github.com/vinchacho/vibing-steampunk.git
 cd vibing-steampunk && make build
 ```
 
@@ -530,4 +530,4 @@ export SAP_CLIENT=001          # за замовчуванням
 export SAP_MODE=focused        # focused (48 інструментів) або expert (96)
 ```
 
-Докладніше: [VSP README](https://github.com/oisee/vibing-steampunk) | [MCP Usage Guide](https://github.com/oisee/vibing-steampunk/blob/main/MCP_USAGE.md)
+Докладніше: [VSP README](https://github.com/vinchacho/vibing-steampunk) | [MCP Usage Guide](https://github.com/vinchacho/vibing-steampunk/blob/main/MCP_USAGE.md)

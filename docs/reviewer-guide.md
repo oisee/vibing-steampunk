@@ -6,7 +6,7 @@
 ## Build It (30 seconds)
 
 ```bash
-git clone https://github.com/oisee/vibing-steampunk.git
+git clone https://github.com/vinchacho/vibing-steampunk.git
 cd vibing-steampunk
 go build -o vsp ./cmd/vsp
 ./vsp --version
@@ -42,7 +42,7 @@ That's it. Single binary, zero dependencies beyond Go 1.23+.
 go test ./...
 ```
 
-244+ unit tests, all pass without any SAP connection.
+499+ unit tests, all pass without any SAP connection.
 
 **Dig deeper:**
 
@@ -247,7 +247,7 @@ go list -m -u all 2>/dev/null | grep '\[' | head -10
 
 | File | What | Why It Matters |
 |------|------|---------------|
-| `internal/mcp/server.go` | All 122 tool handlers | The core of vsp |
+| `internal/mcp/server.go` | Tool registration & dispatch | The core of vsp |
 | `pkg/adt/client.go` | ADT HTTP client | Every SAP call goes through here |
 | `pkg/adt/safety.go` | Safety checks | Enterprise trust boundary |
 | `cmd/vsp/config_cmd.go` | Config management | Multi-system + tool visibility |
@@ -277,5 +277,5 @@ go list -m -u all 2>/dev/null | grep '\[' | head -10
 
 ## Found Something?
 
-- Open an issue: https://github.com/oisee/vibing-steampunk/issues
+- Open an issue: https://github.com/vinchacho/vibing-steampunk/issues
 - PRs welcome - especially for: test coverage, error messages, documentation, new MCP agent configs

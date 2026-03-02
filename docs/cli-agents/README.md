@@ -1,6 +1,6 @@
 # CLI Coding Agents + VSP (SAP ADT MCP Server)
 
-Guide for setting up CLI coding assistants to work with SAP via [VSP (vibing-steampunk)](https://github.com/oisee/vibing-steampunk).
+Guide for setting up CLI coding assistants to work with SAP via [VSP (vibing-steampunk)](https://github.com/vinchacho/vibing-steampunk).
 
 **VSP** is an MCP server that gives AI assistants access to SAP ADT API: read/write code, debug, test, transports, and more.
 
@@ -513,11 +513,11 @@ Example config (Claude Code / Codex / Gemini):
 
 ```bash
 # Download binary
-curl -LO https://github.com/oisee/vibing-steampunk/releases/latest/download/vsp-darwin-arm64
+curl -LO https://github.com/vinchacho/vibing-steampunk/releases/latest/download/vsp-darwin-arm64
 chmod +x vsp-darwin-arm64
 
 # Or build from source
-git clone https://github.com/oisee/vibing-steampunk.git
+git clone https://github.com/vinchacho/vibing-steampunk.git
 cd vibing-steampunk && make build
 ```
 
@@ -530,4 +530,4 @@ export SAP_CLIENT=001          # default
 export SAP_MODE=focused        # focused (48 tools) or expert (96)
 ```
 
-More info: [VSP README](https://github.com/oisee/vibing-steampunk) | [MCP Usage Guide](https://github.com/oisee/vibing-steampunk/blob/main/MCP_USAGE.md)
+More info: [VSP README](https://github.com/vinchacho/vibing-steampunk) | [MCP Usage Guide](https://github.com/vinchacho/vibing-steampunk/blob/main/MCP_USAGE.md)
