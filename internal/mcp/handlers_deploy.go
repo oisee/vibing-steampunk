@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/oisee/vibing-steampunk/embedded/deps"
-	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/embedded/deps"
+	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
 // objectTypeMapping maps deployment type strings to CreatableObjectType and URL patterns
