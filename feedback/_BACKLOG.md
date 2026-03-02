@@ -6,7 +6,9 @@ Aggregated action items from session feedback logs. Updated by `/session-wrap`.
 
 | Date | Session | Type | Description | Severity | Component | Status |
 |------|---------|------|-------------|----------|-----------|--------|
-| | | | *No items yet — run `/session-wrap` to populate* | | | |
+| 2026-03-02 | 001 | Bug | Upstream build broken: `GetDependencyZIP` missing in `embed.go` (commit 8d2c343) | Medium | upstream | Open |
+| 2026-03-02 | 001 | Gap | Sync script doesn't auto-resolve CLAUDE.md/README.md conflicts | Medium | scripts | Open — needs GH issue |
+| 2026-03-02 | 001 | Gap | Sync script doesn't fix `oisee` URLs in markdown files (only .go imports) | Low | scripts | Open — needs GH issue |
 
 ## Resolved Items
 

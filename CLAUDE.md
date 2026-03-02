@@ -555,4 +555,15 @@ gh workflow run sync-upstream.yml
 - ✅ Build & test verification
 - ✅ Create PR for review
 - ⚠️ CLAUDE.md updates (template provided, manual review needed)
+- ⚠️ Markdown URL fixes (`oisee` → `vinchacho` in `docs/` only, NOT `articles/`)
+- ⚠️ CLAUDE.md/README.md conflict resolution (script only handles `cmd/vsp/main.go`)
+
+### Conflict Resolution Strategy
+
+When resolving fork-vs-upstream conflicts:
+- **CLAUDE.md data sections** (test counts, feature lists, codebase structure): keep fork (HEAD) — it has richer, more accurate content
+- **CLAUDE.md new content** (new sections from upstream): merge in
+- **README.md URLs**: keep `vinchacho` URLs, incorporate new upstream content (links, badges)
+- **`docs/` markdown**: fix `oisee` → `vinchacho` in all repo URLs
+- **`articles/`**: do NOT change `oisee` references — these are published upstream author content referencing their own repos (`oisee/zork-abap`, `oisee/vivid-vibes`)
 
