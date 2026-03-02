@@ -25,25 +25,48 @@ var cfg = &mcp.Config{}
 
 var rootCmd = &cobra.Command{
 	Use:   "vsp",
-	Short: "MCP server for SAP ABAP Development Tools (ADT)",
-	Long: `vsp is a Model Context Protocol (MCP) server that provides
-ABAP Development Tools (ADT) functionality for AI assistants like Claude.
+	Short: "ABAP Development Tools for AI agents and DevOps",
+	Long: `vsp — ABAP Development Tools for AI agents and DevOps.
 
-It exposes 19 essential tools (focused mode, default) or 45 complete tools (expert mode) for reading, writing, and managing ABAP code in SAP systems.
+Single binary, 9 platforms, no dependencies. Download from GitHub releases,
+point your MCP config at it, done.
 
-Examples:
-  # Using environment variables
-  SAP_URL=https://host:44300 SAP_USER=user SAP_PASSWORD=pass vsp
+Two modes of operation:
 
-  # Using command-line flags
-  vsp --url https://host:44300 --user admin --password secret
+  MCP Server (default)  Connects Claude, Gemini CLI, Copilot, Codex, Qwen Code,
+                        and other MCP-compatible agents to SAP systems.
+                        81 tools in focused mode, 122 in expert mode.
 
-  # Using .env file
-  vsp  # reads from .env in current directory
+  CLI Mode              Direct terminal access: search, source, export, debug.
+                        Multi-system profiles. Useful for scripts and pipelines.
 
-  # Using cookie authentication
-  vsp --url https://host:44300 --cookie-string "session=abc123; token=xyz"
-  vsp --url https://host:44300 --cookie-file cookies.txt`,
+Quick start:
+  # 1. MCP server (reads .env or SAP_* env vars)
+  vsp --url https://host:44300 --user dev --password secret
+
+  # 2. CLI mode with saved system profile
+  vsp -s dev search "ZCL_ORDER*"
+  vsp -s dev source CLAS ZCL_ORDER_PROCESSING
+  vsp -s dev export '$ZPACKAGE' -o backup.zip
+
+  # 3. Enterprise safety (hand to AI without fear)
+  vsp --read-only                                    # no writes at all
+  vsp --allowed-packages 'Z*,$TMP' --block-free-sql  # sandbox AI to custom code
+  vsp --disallowed-ops CDUA                           # block create/delete/update/activate
+
+Configuration files:
+  .env          Default SAP connection (MCP server mode). SAP_URL, SAP_USER, etc.
+  .vsp.json     Multi-system profiles for CLI mode (vsp -s dev, vsp -s prod).
+  .mcp.json     MCP server entries for Claude Desktop / other MCP clients.
+
+  vsp config init       Generate example files (.env.example, .vsp.json.example, .mcp.json.example)
+  vsp config show       Display effective configuration
+  vsp config mcp-to-vsp Import systems from .mcp.json into .vsp.json
+  vsp config vsp-to-mcp Export .vsp.json systems to .mcp.json format
+  vsp config tools      Manage per-tool visibility in .vsp.json
+
+Configuration priority: CLI flags > env vars > .env file > defaults
+Ready-to-use configs for 8 AI agents: docs/cli-agents/`,
 	Version: fmt.Sprintf("%s (commit: %s, built: %s)", Version, Commit, BuildDate),
 	RunE:    runServer,
 }
@@ -82,7 +105,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&cfg.AllowTransportableEdits, "allow-transportable-edits", false, "Allow editing objects in transportable packages (requires transport parameter)")
 
 	// Mode options
-	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (19 essential tools) or expert (all 45 tools)")
+	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (81 essential tools) or expert (all 122 tools)")
 	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug (e.g., \"TH\" disables Tests and HANA)")
 
 	// Feature configuration (safety network)

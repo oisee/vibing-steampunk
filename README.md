@@ -8,8 +8,14 @@
 > Read code, write code, debug, deploy, run tests — all through natural language (or DSL for automation).
 >
 > See also: [OData ↔ MCP Bridge](https://github.com/vinchacho/odata_mcp_go) for SAP data access.
+>
+> **Want to review or test?** Start here: **[Reviewer Guide](docs/reviewer-guide.md)** — 8 hands-on tasks, no SAP needed.
 
 ![Vibing ABAP Developer](./media/vibing-steampunk.png)
+
+## 100 Stars!
+
+Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Community, and What's Cooking](articles/2026-02-18-100-stars-celebration.md)**
 
 ## What's New
 
@@ -175,7 +181,7 @@
 
 ---
 
-**Single binary** with **52 focused tools** (default) or **99 expert tools** for AI-assisted ABAP development.
+**Single binary** with **81 focused tools** (default) or **122 expert tools** for AI-assisted ABAP development.
 
 ## Key Features
 
@@ -204,6 +210,23 @@ chmod +x vsp-linux-amd64
 git clone https://github.com/vinchacho/vibing-steampunk.git && cd vibing-steampunk
 make build
 ```
+
+## CLI Coding Agents
+
+VSP works with **8 CLI coding agents** — not just Claude! Full setup guides with config templates:
+
+| Agent | LLM | Free? | Config |
+|-------|-----|-------|--------|
+| **Gemini CLI** | Gemini 2.5 Pro/Flash | Yes (1000 req/day) | `.gemini/settings.json` |
+| **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mo) | `.mcp.json` |
+| **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mo) | `.copilot/mcp-config.json` |
+| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | `.mcp.json` |
+| **Qwen Code** | Qwen3-Coder | Yes (1000 req/day) | `.qwen/settings.json` |
+| **OpenCode** | 75+ models (BYOK) | Yes (own key) | `opencode.json` |
+| **Goose** | 75+ providers (BYOK) | Yes (own key) | `~/.config/goose/config.yaml` |
+| **Mistral Vibe** | Devstral 2, local models | Yes (Ollama) | `.vibe/config.toml` |
+
+**[Full setup guide with config examples](docs/cli-agents/README.md)** | [Русский](docs/cli-agents/README_RU.md) | [Українська](docs/cli-agents/README_UA.md) | [Español](docs/cli-agents/README_ES.md)
 
 ## CLI Mode
 
@@ -283,7 +306,7 @@ Configure multiple SAP systems in `.vsp.json`:
 ```bash
 vsp --url https://host:44300 --user admin --password secret
 vsp --url https://host:44300 --cookie-file cookies.txt
-vsp --mode expert  # Enable all 99 tools
+vsp --mode expert  # Enable all 122 tools
 ```
 
 ### Environment Variables
@@ -641,7 +664,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 - **Reports:** RunReport, GetVariants, GetTextElements, SetTextElements
 - **Install:** InstallZADTVSP, InstallAbapGit, ListDependencies
 
-See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (99 tools).
+See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (122 tools).
 
 <details>
 <summary><strong>Capability Matrix</strong></summary>
@@ -713,12 +736,14 @@ See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) 
 
 | Document | Description |
 |----------|-------------|
+| [docs/architecture.md](docs/architecture.md) | Architecture diagrams (Mermaid) |
 | [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (94 tools) |
 | [MCP_USAGE.md](MCP_USAGE.md) | AI agent usage guide |
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture (detailed) |
 | [CLAUDE.md](CLAUDE.md) | AI development guidelines |
 | [embedded/abap/README.md](embedded/abap/README.md) | WebSocket handler deployment |
+| [docs/cli-agents/](docs/cli-agents/README.md) | CLI coding agents setup guide (8 agents, 4 languages) |
 | [Roadmap: Quick/Mid/Far Wins](reports/2026-01-02-005-roadmap-quick-mid-far-wins.md) | Prioritized feature backlog |
 | [Observations Since v2.12.5](reports/2025-12-22-observations-since-v2.12.5.md) | Recent changes & research summary |
 
@@ -771,7 +796,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 99 (52 focused, 99 expert) |
+| **Tools** | 122 (81 focused, 122 expert) |
 | **Unit Tests** | 270+ |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 

@@ -863,8 +863,8 @@ SAP_LANGUAGE=EN
 SAP_INSECURE=false
 
 # Tool Mode (optional)
-# focused = 19 essential tools (default)
-# expert = all 45+ tools
+# focused = 81 essential tools (default)
+# expert = all 122 tools
 SAP_MODE=focused
 
 # Safety Options (optional)

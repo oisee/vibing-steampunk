@@ -280,7 +280,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		}
 	}
 
-	// Define focused mode tool whitelist (41 essential tools)
+	// Define focused mode tool whitelist (81 essential tools)
 	focusedTools := map[string]bool{
 		// Unified tools (2)
 		"GetSource":   true,
