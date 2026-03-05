@@ -647,13 +647,9 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	if shouldRegister("GetAPIReleaseState") {
 		s.mcpServer.AddTool(mcp.NewTool("GetAPIReleaseState",
 			mcp.WithDescription("Get release state information for ABAP APIs (classes, methods, function modules). Returns whether API is released, neccessary for clean-core validation"),
-			mcp.WithString("object_id",
-			mcp.Required(),
-			mcp.Description("FQN of the object. Can be retrieved via SearchObject. Example /sap/bc/adt/oo/classes/zcl_classname"),
-			),
 			mcp.WithString("object_name",
 			mcp.Required(),
-			mcp.Description("Name of the ABAP object (e.g., 'CL_GUI_ALV_GRID', 'GET_FRONTEND_HELLO_WORLD', 'REUSE_ALV_GRID_DISPLAY')"),
+			mcp.Description("FQN/URI of the object. Can be retrieved via SearchObject. Example /sap/bc/adt/oo/classes/zcl_classname"),
 			),
 		), s.handleGetAPIReleaseState)
 	}
