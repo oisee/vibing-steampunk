@@ -282,3 +282,18 @@ func (s *Server) handleGetTypeInfo(ctx context.Context, request mcp.CallToolRequ
 	return mcp.NewToolResultText(string(result)), nil
 }
 
+func (s *Server) handleGetAPIReleaseState(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectName, ok := request.Params.Arguments["object_name"].(string)
+	if !ok || objectName == "" {
+		return newToolResultError("object_name is required"), nil
+	}
+
+	releaseState, err := s.adtClient.GetObjectAPIReleaseState(ctx, objectName)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to get API release state: %v", err)), nil
+	}
+
+	result, _ := json.MarshalIndent(releaseState, "", "  ")
+
+	return mcp.NewToolResultText(string(result)), nil
+}

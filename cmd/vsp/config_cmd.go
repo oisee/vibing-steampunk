@@ -820,7 +820,7 @@ func GetFocusedToolNames() []string {
 		"EditSource",
 		// Data/Metadata read
 		"GetTable", "GetTableContents", "RunQuery",
-		"GetPackage", "GetFunctionGroup", "GetCDSDependencies", "GetMessages",
+		"GetPackage", "GetFunctionGroup", "GetCDSDependencies", "GetMessages", "GetAPIReleaseState",
 		// Code intelligence
 		"FindDefinition", "FindReferences",
 		// Development tools
