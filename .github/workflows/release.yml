@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >
+          Version to release (e.g. v2.28.0 or 2.28.0).
+          Leave empty to auto-bump from the latest tag.
+        required: false
+        default: ""
+      bump:
+        description: "Bump type used when version is not specified"
+        required: false
+        default: "minor"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# Needed for goreleaser to create the GitHub release and push CHANGELOG
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ------------------------------------------------------------------ #
+      # 1. Checkout — full history required by git-cliff and goreleaser
+      # ------------------------------------------------------------------ #
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a PAT if you need to push to a branch protected by
+          # "require status checks" rules. For most repos GITHUB_TOKEN works.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ------------------------------------------------------------------ #
+      # 2. Set up Go (version comes from go.mod toolchain directive)
+      # ------------------------------------------------------------------ #
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # ------------------------------------------------------------------ #
+      # 3. Run tests — abort the release if anything is red
+      # ------------------------------------------------------------------ #
+      - name: Run tests
+        run: go test ./...
+
+      # ------------------------------------------------------------------ #
+      # 4. Determine the release version
+      #    Priority: manual input > auto-bump from latest tag
+      # ------------------------------------------------------------------ #
+      - name: Determine version
+        id: version
+        run: |
+          INPUT="${{ github.event.inputs.version }}"
+
+          if [[ -n "$INPUT" ]]; then
+            # Use the manually supplied version (add "v" prefix if missing)
+            VERSION="${INPUT#v}"
+            VERSION="v${VERSION}"
+          else
+            # Auto-bump: parse the latest semver tag
+            LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            # Strip leading "v" and split into parts
+            VERSION_CORE="${LATEST#v}"
+            MAJOR=$(echo "$VERSION_CORE" | cut -d. -f1)
+            MINOR=$(echo "$VERSION_CORE" | cut -d. -f2)
+            PATCH=$(echo "$VERSION_CORE" | cut -d. -f3 | cut -d- -f1)
+
+            case "${{ github.event.inputs.bump }}" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Releasing ${VERSION}"
+
+      # ------------------------------------------------------------------ #
+      # 5. Install git-cliff (pinned to a known-good release)
+      # ------------------------------------------------------------------ #
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff@2.12.0
+
+      # ------------------------------------------------------------------ #
+      # 6. Generate CHANGELOG.md and commit it
+      #    --tag assigns all commits since the previous tag to the new version,
+      #    so the output contains only released versions (no [Unreleased] block)
+      # ------------------------------------------------------------------ #
+      - name: Generate CHANGELOG.md
+        run: |
+          git-cliff --tag "${{ steps.version.outputs.version }}" --output CHANGELOG.md
+
+      - name: Commit CHANGELOG.md
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          # Only commit if CHANGELOG.md actually changed
+          if git diff --staged --quiet; then
+            echo "CHANGELOG.md unchanged — skipping commit"
+          else
+            git commit -m "chore: update CHANGELOG for ${{ steps.version.outputs.version }}"
+          fi
+
+      # ------------------------------------------------------------------ #
+      # 7. Tag and push
+      #    Push the commit first, then the tag so goreleaser finds it
+      # ------------------------------------------------------------------ #
+      - name: Tag and push
+        run: |
+          git tag "${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "${{ steps.version.outputs.version }}"
+
+      # ------------------------------------------------------------------ #
+      # 8. GoReleaser — builds all 9 platform binaries, creates GitHub release
+      #    Reads .goreleaser.yml + cliff.toml from the repo root
+      # ------------------------------------------------------------------ #
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -4,7 +4,7 @@ This file provides context for AI assistants (Claude, etc.) working on this proj
 
 ## Project Overview
 
-**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 54 essential tools (focused mode, default) or 99 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
+**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 81 essential tools (focused mode, default) or 122 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
 
 ## Quick Reference
 
@@ -49,7 +49,7 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_INSECURE` / `--insecure` | Skip TLS verification (default: false) |
 | `SAP_COOKIE_FILE` / `--cookie-file` | Path to Netscape-format cookie file |
 | `SAP_COOKIE_STRING` / `--cookie-string` | Cookie string (key1=val1; key2=val2) |
-| `SAP_MODE` / `--mode` | Tool mode: `focused` (20 tools, default) or `expert` (47 tools) |
+| `SAP_MODE` / `--mode` | Tool mode: `focused` (81 tools, default) or `expert` (122 tools) |
 | `SAP_TRANSPORT` / `--transport` | MCP transport: `stdio` (default) or `http-streamable` |
 | `SAP_DISABLED_GROUPS` / `--disabled-groups` | Disable tool groups: `5`/`U`=UI5, `T`=Tests, `H`=HANA, `D`=Debug |
 | `SAP_VERBOSE` / `--verbose` | Enable verbose logging to stderr |
@@ -71,7 +71,7 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 
 ```
 cmd/vsp/main.go       # Entry point
-internal/mcp/server.go       # MCP server (45 tool handlers, mode-aware)
+internal/mcp/server.go       # MCP server (122 tool handlers, mode-aware)
 pkg/
 ├── adt/
 │   ├── client.go             # ADT client + read operations
@@ -360,7 +360,7 @@ When creating a new report:
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 99 (54 focused, 99 expert) |
+| **Tools** | 122 (81 focused, 122 expert) |
 | **Unit Tests** | 244 |
 | **Integration Tests** | 34 |
 | **Platforms** | 9 |
