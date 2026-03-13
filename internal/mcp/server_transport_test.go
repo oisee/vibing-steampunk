@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -18,6 +20,10 @@ func (m *mockStreamableServer) Start(addr string) error {
 	m.startCalls++
 	m.startAddr = addr
 	return m.startErr
+}
+
+func (m *mockStreamableServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 func newTestConfig() *Config {
@@ -45,6 +51,13 @@ func installTransportHooks(
 		serveStdioFunc = oldStdio
 		newStreamableHTTPServerFunc = oldFactory
 	})
+}
+
+func installListenHook(t *testing.T, fn func(addr string, handler http.Handler) error) {
+	t.Helper()
+	old := listenAndServeFunc
+	listenAndServeFunc = fn
+	t.Cleanup(func() { listenAndServeFunc = old })
 }
 
 func TestServe_UsesStdioTransport(t *testing.T) {
@@ -100,10 +113,11 @@ func TestServe_EmptyTransportDefaultsToStdio(t *testing.T) {
 func TestServe_UsesHTTPStreamableTransport(t *testing.T) {
 	s := NewServer(newTestConfig())
 	expectedErr := errors.New("http streamable failure")
-	mock := &mockStreamableServer{startErr: expectedErr}
+	mock := &mockStreamableServer{}
 	stdioCalls := 0
 	factoryCalls := 0
 	optionCount := 0
+	var listenAddr string
 
 	installTransportHooks(
 		t,
@@ -117,6 +131,10 @@ func TestServe_UsesHTTPStreamableTransport(t *testing.T) {
 			return mock
 		},
 	)
+	installListenHook(t, func(addr string, _ http.Handler) error {
+		listenAddr = addr
+		return expectedErr
+	})
 
 	err := s.Serve("http-streamable")
 	if !errors.Is(err, expectedErr) {
@@ -131,11 +149,8 @@ func TestServe_UsesHTTPStreamableTransport(t *testing.T) {
 	if optionCount != 1 {
 		t.Fatalf("expected exactly one streamable HTTP option, got %d", optionCount)
 	}
-	if mock.startCalls != 1 {
-		t.Fatalf("expected streamable HTTP server to start once, got %d", mock.startCalls)
-	}
-	if mock.startAddr != DefaultStreamableHTTPAddr {
-		t.Fatalf("expected default addr %s, got %s", DefaultStreamableHTTPAddr, mock.startAddr)
+	if listenAddr != DefaultStreamableHTTPAddr {
+		t.Fatalf("expected default addr %s, got %s", DefaultStreamableHTTPAddr, listenAddr)
 	}
 }
 
@@ -154,6 +169,7 @@ func TestServe_InvalidTransport(t *testing.T) {
 func TestServeStreamableHTTP_UsesProvidedAddr(t *testing.T) {
 	s := NewServer(newTestConfig())
 	mock := &mockStreamableServer{}
+	var listenAddr string
 
 	installTransportHooks(
 		t,
@@ -162,19 +178,24 @@ func TestServeStreamableHTTP_UsesProvidedAddr(t *testing.T) {
 			return mock
 		},
 	)
+	installListenHook(t, func(addr string, _ http.Handler) error {
+		listenAddr = addr
+		return nil
+	})
 
-	addr := "127.0.0.1:9090"
-	if err := s.ServeStreamableHTTP(addr); err != nil {
+	customAddr := "127.0.0.1:9090"
+	if err := s.ServeStreamableHTTP(customAddr); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if mock.startAddr != addr {
-		t.Fatalf("expected streamable HTTP addr %s, got %s", addr, mock.startAddr)
+	if listenAddr != customAddr {
+		t.Fatalf("expected listen addr %s, got %s", customAddr, listenAddr)
 	}
 }
 
 func TestServeStreamableHTTP_BlankAddrUsesDefault(t *testing.T) {
 	s := NewServer(newTestConfig())
 	mock := &mockStreamableServer{}
+	var listenAddr string
 
 	installTransportHooks(
 		t,
@@ -183,11 +204,72 @@ func TestServeStreamableHTTP_BlankAddrUsesDefault(t *testing.T) {
 			return mock
 		},
 	)
+	installListenHook(t, func(addr string, _ http.Handler) error {
+		listenAddr = addr
+		return nil
+	})
 
 	if err := s.ServeStreamableHTTP("   "); err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if mock.startAddr != DefaultStreamableHTTPAddr {
-		t.Fatalf("expected default addr %s, got %s", DefaultStreamableHTTPAddr, mock.startAddr)
+	if listenAddr != DefaultStreamableHTTPAddr {
+		t.Fatalf("expected default addr %s, got %s", DefaultStreamableHTTPAddr, listenAddr)
+	}
+}
+
+func TestOriginValidationMiddleware_AllowsNoOrigin(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := originValidationMiddleware("127.0.0.1:8080", next)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	rw := httptest.NewRecorder()
+	handler.ServeHTTP(rw, req)
+
+	if rw.Code != http.StatusOK {
+		t.Fatalf("expected 200 for request with no Origin, got %d", rw.Code)
+	}
+}
+
+func TestOriginValidationMiddleware_AllowsMatchingOrigin(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := originValidationMiddleware("127.0.0.1:8080", next)
+
+	for _, origin := range []string{
+		"http://127.0.0.1:8080",
+		"http://localhost:8080",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Origin", origin)
+		rw := httptest.NewRecorder()
+		handler.ServeHTTP(rw, req)
+
+		if rw.Code != http.StatusOK {
+			t.Fatalf("expected 200 for origin %q, got %d", origin, rw.Code)
+		}
+	}
+}
+
+func TestOriginValidationMiddleware_BlocksForeignOrigin(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := originValidationMiddleware("127.0.0.1:8080", next)
+
+	for _, origin := range []string{
+		"http://evil.example.com",
+		"http://attacker.com:8080",
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		req.Header.Set("Origin", origin)
+		rw := httptest.NewRecorder()
+		handler.ServeHTTP(rw, req)
+
+		if rw.Code != http.StatusForbidden {
+			t.Fatalf("expected 403 for origin %q, got %d", origin, rw.Code)
+		}
 	}
 }

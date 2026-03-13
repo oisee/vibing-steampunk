@@ -52,12 +52,19 @@ func GetAvailableDependencies() []DependencyInfo {
 	}
 }
 
-// GetDependencyZIP returns embedded ZIP bytes by dependency name.
-// Current repository state ships placeholders only, so this returns nil until ZIPs are embedded.
+// GetDependencyZIP returns embedded ZIP bytes for a named dependency.
+// Returns nil when the dependency is unknown or not embedded in this build.
 func GetDependencyZIP(name string) []byte {
-	// Currently no ZIPs are embedded; return nil for all lookups.
-	_ = name
-	return nil
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "abapgit-standalone":
+		// Placeholder build: ZIP not embedded yet.
+		return nil
+	case "abapgit-dev":
+		// Placeholder build: ZIP not embedded yet.
+		return nil
+	default:
+		return nil
+	}
 }
 
 // ABAPFile represents a parsed ABAP source file from abapGit ZIP.

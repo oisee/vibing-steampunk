@@ -4,6 +4,9 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +24,7 @@ const (
 )
 
 type streamableHTTPStarter interface {
+	http.Handler
 	Start(addr string) error
 }
 
@@ -32,11 +36,15 @@ var newStreamableHTTPServerFunc = func(mcpServer *server.MCPServer, opts ...serv
 	return server.NewStreamableHTTPServer(mcpServer, opts...)
 }
 
+var listenAndServeFunc = func(addr string, handler http.Handler) error {
+	return (&http.Server{Addr: addr, Handler: handler}).ListenAndServe()
+}
+
 // AsyncTask represents a background task status.
 type AsyncTask struct {
 	ID        string      `json:"id"`
-	Type      string      `json:"type"`   // "report", "export", etc.
-	Status    string      `json:"status"` // "running", "completed", "error"
+	Type      string      `json:"type"`       // "report", "export", etc.
+	Status    string      `json:"status"`     // "running", "completed", "error"
 	StartedAt time.Time   `json:"started_at"`
 	EndedAt   *time.Time  `json:"ended_at,omitempty"`
 	Result    interface{} `json:"result,omitempty"`
@@ -45,13 +53,13 @@ type AsyncTask struct {
 
 // Server wraps the MCP server with ADT client.
 type Server struct {
-	mcpServer     *server.MCPServer
-	adtClient     *adt.Client
-	amdpWSClient  *adt.AMDPWebSocketClient  // WebSocket-based AMDP client (ZADT_VSP)
-	debugWSClient *adt.DebugWebSocketClient // WebSocket-based debug client (ZADT_VSP)
-	config        *Config                   // Server configuration for session manager creation
-	featureProber *adt.FeatureProber        // Feature detection system (safety network)
-	featureConfig adt.FeatureConfig         // Feature configuration
+	mcpServer      *server.MCPServer
+	adtClient      *adt.Client
+	amdpWSClient   *adt.AMDPWebSocketClient   // WebSocket-based AMDP client (ZADT_VSP)
+	debugWSClient  *adt.DebugWebSocketClient  // WebSocket-based debug client (ZADT_VSP)
+	config         *Config                    // Server configuration for session manager creation
+	featureProber  *adt.FeatureProber         // Feature detection system (safety network)
+	featureConfig  adt.FeatureConfig          // Feature configuration
 
 	// Async task management
 	asyncTasks   map[string]*AsyncTask
@@ -87,11 +95,11 @@ type Config struct {
 	Transport string
 
 	// Safety configuration
-	ReadOnly                bool
-	BlockFreeSQL            bool
-	AllowedOps              string
-	DisallowedOps           string
-	AllowedPackages         []string
+	ReadOnly         bool
+	BlockFreeSQL     bool
+	AllowedOps       string
+	DisallowedOps    string
+	AllowedPackages  []string
 	EnableTransports        bool     // Explicitly enable transport management (default: disabled)
 	TransportReadOnly       bool     // Only allow read operations on transports (list, get)
 	AllowedTransports       []string // Whitelist specific transports (supports wildcards like "A4HK*")
@@ -238,16 +246,55 @@ func (s *Server) ServeStdio() error {
 }
 
 // ServeStreamableHTTP starts the MCP server using streamable HTTP transport.
+// It validates the Origin header on all incoming connections to prevent DNS rebinding attacks,
+// as required by the MCP specification:
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 func (s *Server) ServeStreamableHTTP(addr string) error {
 	if strings.TrimSpace(addr) == "" {
 		addr = DefaultStreamableHTTPAddr
 	}
 
-	httpServer := newStreamableHTTPServerFunc(
+	mcpHandler := newStreamableHTTPServerFunc(
 		s.mcpServer,
 		server.WithEndpointPath(DefaultStreamableHTTPPath),
 	)
-	return httpServer.Start(addr)
+
+	mux := http.NewServeMux()
+	mux.Handle(DefaultStreamableHTTPPath, originValidationMiddleware(addr, mcpHandler))
+	return listenAndServeFunc(addr, mux)
+}
+
+// originValidationMiddleware returns an HTTP handler that validates the Origin header
+// on incoming requests to prevent DNS rebinding attacks per the MCP specification.
+// Requests without an Origin header are allowed (same-origin browser requests omit it).
+// Requests with an Origin whose host does not match the server's host are rejected with 403.
+func originValidationMiddleware(serverAddr string, next http.Handler) http.Handler {
+	serverHost, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		serverHost = serverAddr
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, parseErr := url.Parse(origin)
+			if parseErr != nil || !isSameOriginHost(u.Hostname(), serverHost) {
+				http.Error(w, "Forbidden: invalid Origin header", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isSameOriginHost reports whether originHost is the same logical host as serverHost,
+// treating 127.0.0.1, ::1 and localhost as equivalent.
+func isSameOriginHost(originHost, serverHost string) bool {
+	normalize := func(h string) string {
+		if h == "127.0.0.1" || h == "::1" {
+			return "localhost"
+		}
+		return h
+	}
+	return normalize(originHost) == normalize(serverHost)
 }
 
 // registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
@@ -327,7 +374,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		}
 	}
 
-	// Define focused mode tool whitelist (41 essential tools)
+	// Define focused mode tool whitelist (81 essential tools)
 	focusedTools := map[string]bool{
 		// Unified tools (2)
 		"GetSource":   true,
@@ -342,31 +389,31 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"EditSource": true,
 
 		// Data/Metadata read (6)
-		"GetTable":           true,
-		"GetTableContents":   true,
-		"RunQuery":           true,
-		"GetPackage":         true, // Metadata: package contents
-		"GetFunctionGroup":   true, // Metadata: function module list
-		"GetCDSDependencies": true, // CDS dependency tree
-		"GetMessages":        true, // Message class texts (SE91)
+		"GetTable":            true,
+		"GetTableContents":    true,
+		"RunQuery":            true,
+		"GetPackage":          true, // Metadata: package contents
+		"GetFunctionGroup":    true, // Metadata: function module list
+		"GetCDSDependencies":  true, // CDS dependency tree
+		"GetMessages":         true, // Message class texts (SE91)
 
 		// Code intelligence (2)
-		"FindDefinition": true,
-		"FindReferences": true,
+		"FindDefinition":  true,
+		"FindReferences":  true,
 
 		// Development tools (11)
-		"SyntaxCheck":        true,
-		"RunUnitTests":       true,
-		"RunATCCheck":        true, // Code quality checks
-		"Activate":           true, // Re-activate objects without editing
-		"ActivatePackage":    true, // Batch activation of all inactive objects
-		"PrettyPrint":        true, // Format ABAP code
-		"GetInactiveObjects": true, // List pending activations
-		"CreatePackage":      true, // Create local packages ($...)
-		"CreateTable":        true, // Create DDIC tables from JSON
-		"CompareSource":      true, // Diff two objects
-		"CloneObject":        true, // Copy object to new name
-		"GetClassInfo":       true, // Quick class metadata
+		"SyntaxCheck":         true,
+		"RunUnitTests":        true,
+		"RunATCCheck":         true,  // Code quality checks
+		"Activate":            true,  // Re-activate objects without editing
+		"ActivatePackage":     true,  // Batch activation of all inactive objects
+		"PrettyPrint":         true,  // Format ABAP code
+		"GetInactiveObjects":  true,  // List pending activations
+		"CreatePackage":       true,  // Create local packages ($...)
+		"CreateTable":         true,  // Create DDIC tables from JSON
+		"CompareSource":       true,  // Diff two objects
+		"CloneObject":         true,  // Copy object to new name
+		"GetClassInfo":        true,  // Quick class metadata
 
 		// Advanced/Edge cases (2)
 		"LockObject":   true,
@@ -377,7 +424,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"ExportToFile":   true, // SAP → File (replaces SaveToFile)
 
 		// System information (2)
-		"GetSystemInfo":          true, // System ID, release, kernel
+		"GetSystemInfo":         true, // System ID, release, kernel
 		"GetInstalledComponents": true, // Installed software components
 
 		// Code analysis (7)
@@ -447,12 +494,12 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"GitExport": true, // Export packages/objects to abapGit ZIP
 
 		// Report Execution (via ZADT_VSP WebSocket)
-		"RunReport":       true, // Execute reports with params/variants, capture ALV
-		"RunReportAsync":  true, // Background report execution with polling
-		"GetAsyncResult":  true, // Retrieve async task results
-		"GetVariants":     true, // List report variants
-		"GetTextElements": true, // Get program text elements
-		"SetTextElements": true, // Set program text elements
+		"RunReport":        true, // Execute reports with params/variants, capture ALV
+		"RunReportAsync":   true, // Background report execution with polling
+		"GetAsyncResult":   true, // Retrieve async task results
+		"GetVariants":      true, // List report variants
+		"GetTextElements":  true, // Get program text elements
+		"SetTextElements":  true, // Set program text elements
 
 		// Install/Setup tools
 		"InstallZADTVSP":   true, // Deploy ZADT_VSP WebSocket handler to SAP
@@ -488,158 +535,170 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		s.registerWriteSource()
 	}
 
+
 	// GetProgram
 	if shouldRegister("GetProgram") {
 		s.mcpServer.AddTool(mcp.NewTool("GetProgram",
-			mcp.WithDescription("Retrieve ABAP program source code"),
-			mcp.WithString("program_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP program"),
-			),
-		), s.handleGetProgram)
+		mcp.WithDescription("Retrieve ABAP program source code"),
+		mcp.WithString("program_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP program"),
+		),
+	), s.handleGetProgram)
 	}
+
 
 	// GetClass
 	if shouldRegister("GetClass") {
 		s.mcpServer.AddTool(mcp.NewTool("GetClass",
-			mcp.WithDescription("Retrieve ABAP class source code"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-		), s.handleGetClass)
+		mcp.WithDescription("Retrieve ABAP class source code"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+	), s.handleGetClass)
 	}
+
 
 	// GetInterface
 	if shouldRegister("GetInterface") {
 		s.mcpServer.AddTool(mcp.NewTool("GetInterface",
-			mcp.WithDescription("Retrieve ABAP interface source code"),
-			mcp.WithString("interface_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP interface"),
-			),
-		), s.handleGetInterface)
+		mcp.WithDescription("Retrieve ABAP interface source code"),
+		mcp.WithString("interface_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP interface"),
+		),
+	), s.handleGetInterface)
 	}
+
 
 	// GetFunction
 	if shouldRegister("GetFunction") {
 		s.mcpServer.AddTool(mcp.NewTool("GetFunction",
-			mcp.WithDescription("Retrieve ABAP Function Module source code"),
-			mcp.WithString("function_name",
-				mcp.Required(),
-				mcp.Description("Name of the function module"),
-			),
-			mcp.WithString("function_group",
-				mcp.Required(),
-				mcp.Description("Name of the function group"),
-			),
-		), s.handleGetFunction)
+		mcp.WithDescription("Retrieve ABAP Function Module source code"),
+		mcp.WithString("function_name",
+			mcp.Required(),
+			mcp.Description("Name of the function module"),
+		),
+		mcp.WithString("function_group",
+			mcp.Required(),
+			mcp.Description("Name of the function group"),
+		),
+	), s.handleGetFunction)
 	}
+
 
 	// GetFunctionGroup
 	if shouldRegister("GetFunctionGroup") {
 		s.mcpServer.AddTool(mcp.NewTool("GetFunctionGroup",
-			mcp.WithDescription("Retrieve ABAP Function Group source code"),
-			mcp.WithString("function_group",
-				mcp.Required(),
-				mcp.Description("Name of the function group"),
-			),
-		), s.handleGetFunctionGroup)
+		mcp.WithDescription("Retrieve ABAP Function Group source code"),
+		mcp.WithString("function_group",
+			mcp.Required(),
+			mcp.Description("Name of the function group"),
+		),
+	), s.handleGetFunctionGroup)
 	}
+
 
 	// GetInclude
 	if shouldRegister("GetInclude") {
 		s.mcpServer.AddTool(mcp.NewTool("GetInclude",
-			mcp.WithDescription("Retrieve ABAP Include Source Code"),
-			mcp.WithString("include_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP Include"),
-			),
-		), s.handleGetInclude)
+		mcp.WithDescription("Retrieve ABAP Include Source Code"),
+		mcp.WithString("include_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP Include"),
+		),
+	), s.handleGetInclude)
 	}
+
 
 	// GetTable
 	if shouldRegister("GetTable") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTable",
-			mcp.WithDescription("Retrieve ABAP table structure"),
-			mcp.WithString("table_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP table"),
-			),
-		), s.handleGetTable)
+		mcp.WithDescription("Retrieve ABAP table structure"),
+		mcp.WithString("table_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP table"),
+		),
+	), s.handleGetTable)
 	}
+
 
 	// GetTableContents
 	if shouldRegister("GetTableContents") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTableContents",
-			mcp.WithDescription("Retrieve contents of an ABAP table. For simple queries use table_name + max_rows. For filtered queries use sql_query parameter with ABAP SQL syntax (use ASCENDING/DESCENDING, not ASC/DESC)."),
-			mcp.WithString("table_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP table"),
-			),
-			mcp.WithNumber("max_rows",
-				mcp.Description("Maximum number of rows to retrieve (default 100). Use this instead of SQL LIMIT clause"),
-			),
-			mcp.WithString("sql_query",
-				mcp.Description("Optional ABAP SQL SELECT statement. Uses ABAP syntax: ASCENDING/DESCENDING work, ASC/DESC fail. Example: SELECT * FROM T000 WHERE MANDT = '001' ORDER BY MANDT DESCENDING"),
-			),
-		), s.handleGetTableContents)
+		mcp.WithDescription("Retrieve contents of an ABAP table. For simple queries use table_name + max_rows. For filtered queries use sql_query parameter with ABAP SQL syntax (use ASCENDING/DESCENDING, not ASC/DESC)."),
+		mcp.WithString("table_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP table"),
+		),
+		mcp.WithNumber("max_rows",
+			mcp.Description("Maximum number of rows to retrieve (default 100). Use this instead of SQL LIMIT clause"),
+		),
+		mcp.WithString("sql_query",
+			mcp.Description("Optional ABAP SQL SELECT statement. Uses ABAP syntax: ASCENDING/DESCENDING work, ASC/DESC fail. Example: SELECT * FROM T000 WHERE MANDT = '001' ORDER BY MANDT DESCENDING"),
+		),
+	), s.handleGetTableContents)
 	}
+
 
 	// RunQuery
 	if shouldRegister("RunQuery") {
 		s.mcpServer.AddTool(mcp.NewTool("RunQuery",
-			mcp.WithDescription("Execute a freestyle SQL query against the SAP database. IMPORTANT: Uses ABAP SQL syntax, NOT standard SQL. Use ASCENDING/DESCENDING instead of ASC/DESC. Use max_rows parameter instead of LIMIT. GROUP BY and WHERE work normally."),
-			mcp.WithString("sql_query",
-				mcp.Required(),
-				mcp.Description("ABAP SQL query. Example: SELECT carrid, COUNT(*) as cnt FROM sflight GROUP BY carrid ORDER BY cnt DESCENDING. Note: ASC/DESC keywords fail - use ASCENDING/DESCENDING"),
-			),
-			mcp.WithNumber("max_rows",
-				mcp.Description("Maximum number of rows to retrieve (default 100). Use this instead of SQL LIMIT clause"),
-			),
-		), s.handleRunQuery)
+		mcp.WithDescription("Execute a freestyle SQL query against the SAP database. IMPORTANT: Uses ABAP SQL syntax, NOT standard SQL. Use ASCENDING/DESCENDING instead of ASC/DESC. Use max_rows parameter instead of LIMIT. GROUP BY and WHERE work normally."),
+		mcp.WithString("sql_query",
+			mcp.Required(),
+			mcp.Description("ABAP SQL query. Example: SELECT carrid, COUNT(*) as cnt FROM sflight GROUP BY carrid ORDER BY cnt DESCENDING. Note: ASC/DESC keywords fail - use ASCENDING/DESCENDING"),
+		),
+		mcp.WithNumber("max_rows",
+			mcp.Description("Maximum number of rows to retrieve (default 100). Use this instead of SQL LIMIT clause"),
+		),
+	), s.handleRunQuery)
 	}
+
 
 	// GetCDSDependencies
 	if shouldRegister("GetCDSDependencies") {
 		s.mcpServer.AddTool(mcp.NewTool("GetCDSDependencies",
-			mcp.WithDescription("Retrieve CDS view FORWARD dependencies (tables/views this CDS reads FROM). Returns tree of base objects. Does NOT return reverse dependencies (where-used). Use with GetSource(DDLS) to read CDS source code."),
-			mcp.WithString("ddls_name",
-				mcp.Required(),
-				mcp.Description("CDS DDL source name (e.g., 'ZRAY_00_I_DOC_NODE_00'). Use SearchObject to find CDS views first."),
-			),
-			mcp.WithString("dependency_level",
-				mcp.Description("Level of dependency resolution: 'unit' (direct only) or 'hierarchy' (recursive). Default: 'hierarchy'"),
-			),
-			mcp.WithBoolean("with_associations",
-				mcp.Description("Include modeled associations in dependency tree. Default: false"),
-			),
-			mcp.WithString("context_package",
-				mcp.Description("Filter dependencies to specific package context"),
-			),
-		), s.handleGetCDSDependencies)
+		mcp.WithDescription("Retrieve CDS view FORWARD dependencies (tables/views this CDS reads FROM). Returns tree of base objects. Does NOT return reverse dependencies (where-used). Use with GetSource(DDLS) to read CDS source code."),
+		mcp.WithString("ddls_name",
+			mcp.Required(),
+			mcp.Description("CDS DDL source name (e.g., 'ZRAY_00_I_DOC_NODE_00'). Use SearchObject to find CDS views first."),
+		),
+		mcp.WithString("dependency_level",
+			mcp.Description("Level of dependency resolution: 'unit' (direct only) or 'hierarchy' (recursive). Default: 'hierarchy'"),
+		),
+		mcp.WithBoolean("with_associations",
+			mcp.Description("Include modeled associations in dependency tree. Default: false"),
+		),
+		mcp.WithString("context_package",
+			mcp.Description("Filter dependencies to specific package context"),
+		),
+	), s.handleGetCDSDependencies)
 	}
+
 
 	// GetStructure
 	if shouldRegister("GetStructure") {
 		s.mcpServer.AddTool(mcp.NewTool("GetStructure",
-			mcp.WithDescription("Retrieve ABAP Structure"),
-			mcp.WithString("structure_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP Structure"),
-			),
-		), s.handleGetStructure)
+		mcp.WithDescription("Retrieve ABAP Structure"),
+		mcp.WithString("structure_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP Structure"),
+		),
+	), s.handleGetStructure)
 	}
+
 
 	// GetPackage
 	if shouldRegister("GetPackage") {
 		s.mcpServer.AddTool(mcp.NewTool("GetPackage",
-			mcp.WithDescription("Retrieve ABAP package details"),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP package"),
-			),
-		), s.handleGetPackage)
+		mcp.WithDescription("Retrieve ABAP package details"),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP package"),
+		),
+	), s.handleGetPackage)
 	}
 
 	// GetMessages - Message class texts (SE91)
@@ -653,27 +712,30 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		), s.handleGetMessages)
 	}
 
+
 	// GetTransaction
 	if shouldRegister("GetTransaction") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTransaction",
-			mcp.WithDescription("Retrieve ABAP transaction details"),
-			mcp.WithString("transaction_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP transaction"),
-			),
-		), s.handleGetTransaction)
+		mcp.WithDescription("Retrieve ABAP transaction details"),
+		mcp.WithString("transaction_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP transaction"),
+		),
+	), s.handleGetTransaction)
 	}
+
 
 	// GetTypeInfo
 	if shouldRegister("GetTypeInfo") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTypeInfo",
-			mcp.WithDescription("Retrieve ABAP type information"),
-			mcp.WithString("type_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP type"),
-			),
-		), s.handleGetTypeInfo)
+		mcp.WithDescription("Retrieve ABAP type information"),
+		mcp.WithString("type_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP type"),
+		),
+	), s.handleGetTypeInfo)
 	}
+
 
 	// --- System Information ---
 
@@ -1071,6 +1133,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			mcp.WithDescription("Get variable values during a debug session. Use '@ROOT' to get top-level variables, or specific variable IDs to get their values."),
 			mcp.WithArray("variable_ids",
 				mcp.Description("Variable IDs to retrieve (e.g., ['@ROOT'] for top-level, or specific IDs like ['LV_COUNT', 'LS_DATA'])"),
+				mcp.Items(map[string]interface{}{"type": "string"}),
 			),
 		), s.handleDebuggerGetVariables)
 	}
@@ -1078,47 +1141,49 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// SearchObject
 	if shouldRegister("SearchObject") {
 		s.mcpServer.AddTool(mcp.NewTool("SearchObject",
-			mcp.WithDescription("Search for ABAP objects using quick search"),
-			mcp.WithString("query",
-				mcp.Required(),
-				mcp.Description("Search query string (use * wildcard for partial match)"),
-			),
-			mcp.WithNumber("maxResults",
-				mcp.Description("Maximum number of results to return (default 100)"),
-			),
-		), s.handleSearchObject)
+		mcp.WithDescription("Search for ABAP objects using quick search"),
+		mcp.WithString("query",
+			mcp.Required(),
+			mcp.Description("Search query string (use * wildcard for partial match)"),
+		),
+		mcp.WithNumber("maxResults",
+			mcp.Description("Maximum number of results to return (default 100)"),
+		),
+	), s.handleSearchObject)
 	}
+
 
 	// --- Development Tools ---
 
 	// SyntaxCheck
 	if shouldRegister("SyntaxCheck") {
 		s.mcpServer.AddTool(mcp.NewTool("SyntaxCheck",
-			mcp.WithDescription("Check ABAP source code for syntax errors"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("content",
-				mcp.Required(),
-				mcp.Description("ABAP source code to check"),
-			),
-		), s.handleSyntaxCheck)
+		mcp.WithDescription("Check ABAP source code for syntax errors"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("content",
+			mcp.Required(),
+			mcp.Description("ABAP source code to check"),
+		),
+	), s.handleSyntaxCheck)
 	}
+
 
 	// Activate
 	if shouldRegister("Activate") {
 		s.mcpServer.AddTool(mcp.NewTool("Activate",
-			mcp.WithDescription("Activate an ABAP object"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("object_name",
-				mcp.Required(),
-				mcp.Description("Technical name of the object (e.g., ZTEST)"),
-			),
-		), s.handleActivate)
+		mcp.WithDescription("Activate an ABAP object"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("object_name",
+			mcp.Required(),
+			mcp.Description("Technical name of the object (e.g., ZTEST)"),
+		),
+	), s.handleActivate)
 	}
 
 	// ActivatePackage - Batch activation of inactive objects
@@ -1137,18 +1202,18 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// RunUnitTests
 	if shouldRegister("RunUnitTests") {
 		s.mcpServer.AddTool(mcp.NewTool("RunUnitTests",
-			mcp.WithDescription("Run ABAP Unit tests for an object"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
-			),
-			mcp.WithBoolean("include_dangerous",
-				mcp.Description("Include dangerous risk level tests (default: false)"),
-			),
-			mcp.WithBoolean("include_long",
-				mcp.Description("Include long duration tests (default: false)"),
-			),
-		), s.handleRunUnitTests)
+		mcp.WithDescription("Run ABAP Unit tests for an object"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
+		),
+		mcp.WithBoolean("include_dangerous",
+			mcp.Description("Include dangerous risk level tests (default: false)"),
+		),
+		mcp.WithBoolean("include_long",
+			mcp.Description("Include long duration tests (default: false)"),
+		),
+	), s.handleRunUnitTests)
 	}
 
 	// --- ATC (Code Quality) ---
@@ -1177,120 +1242,124 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		), s.handleGetATCCustomizing)
 	}
 
+
 	// --- CRUD Operations ---
 
 	// LockObject
 	if shouldRegister("LockObject") {
 		s.mcpServer.AddTool(mcp.NewTool("LockObject",
-			mcp.WithDescription("Acquire an edit lock on an ABAP object"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("access_mode",
-				mcp.Description("Access mode: MODIFY (default) or READ"),
-			),
-		), s.handleLockObject)
+		mcp.WithDescription("Acquire an edit lock on an ABAP object"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("access_mode",
+			mcp.Description("Access mode: MODIFY (default) or READ"),
+		),
+	), s.handleLockObject)
 	}
+
 
 	// UnlockObject
 	if shouldRegister("UnlockObject") {
 		s.mcpServer.AddTool(mcp.NewTool("UnlockObject",
-			mcp.WithDescription("Release an edit lock on an ABAP object"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Required(),
-				mcp.Description("Lock handle from LockObject"),
-			),
-		), s.handleUnlockObject)
+		mcp.WithDescription("Release an edit lock on an ABAP object"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject"),
+		),
+	), s.handleUnlockObject)
 	}
+
 
 	// UpdateSource
 	if shouldRegister("UpdateSource") {
 		s.mcpServer.AddTool(mcp.NewTool("UpdateSource",
-			mcp.WithDescription("Write source code to an ABAP object (requires lock)"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP source code to write"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Required(),
-				mcp.Description("Lock handle from LockObject"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleUpdateSource)
+		mcp.WithDescription("Write source code to an ABAP object (requires lock)"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code to write"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleUpdateSource)
 	}
+
 
 	// CreateObject
 	if shouldRegister("CreateObject") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateObject",
-			mcp.WithDescription("Create a new ABAP object. Supports: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package), DDLS/DF (CDS view), BDEF/BDO (behavior definition), SRVD/SRV (service definition), SRVB/SVB (service binding)"),
-			mcp.WithString("object_type",
-				mcp.Required(),
-				mcp.Description("Object type: PROG/P, CLAS/OC, INTF/OI, PROG/I, FUGR/F, FUGR/FF, DEVC/K, DDLS/DF, BDEF/BDO, SRVD/SRV, SRVB/SVB"),
-			),
-			mcp.WithString("name",
-				mcp.Required(),
-				mcp.Description("Object name (e.g., ZTEST_PROGRAM)"),
-			),
-			mcp.WithString("description",
-				mcp.Required(),
-				mcp.Description("Object description"),
-			),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Package name (e.g., $TMP for local, ZPACKAGE for transportable)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (required for non-local packages)"),
-			),
-			mcp.WithString("parent_name",
-				mcp.Description("Parent name (required for function modules - the function group name)"),
-			),
-			// RAP-specific options
-			mcp.WithString("service_definition",
-				mcp.Description("For SRVB: the service definition name to bind"),
-			),
-			mcp.WithString("binding_version",
-				mcp.Description("For SRVB: OData version 'V2' or 'V4' (default: V2)"),
-			),
-			mcp.WithString("binding_category",
-				mcp.Description("For SRVB: '0' for Web API, '1' for UI (default: 0)"),
-			),
-		), s.handleCreateObject)
+		mcp.WithDescription("Create a new ABAP object. Supports: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package), DDLS/DF (CDS view), BDEF/BDO (behavior definition), SRVD/SRV (service definition), SRVB/SVB (service binding)"),
+		mcp.WithString("object_type",
+			mcp.Required(),
+			mcp.Description("Object type: PROG/P, CLAS/OC, INTF/OI, PROG/I, FUGR/F, FUGR/FF, DEVC/K, DDLS/DF, BDEF/BDO, SRVD/SRV, SRVB/SVB"),
+		),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Object name (e.g., ZTEST_PROGRAM)"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Object description"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP for local, ZPACKAGE for transportable)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for non-local packages)"),
+		),
+		mcp.WithString("parent_name",
+			mcp.Description("Parent name (required for function modules - the function group name)"),
+		),
+		// RAP-specific options
+		mcp.WithString("service_definition",
+			mcp.Description("For SRVB: the service definition name to bind"),
+		),
+		mcp.WithString("binding_version",
+			mcp.Description("For SRVB: OData version 'V2' or 'V4' (default: V2)"),
+		),
+		mcp.WithString("binding_category",
+			mcp.Description("For SRVB: '0' for Web API, '1' for UI (default: 0)"),
+		),
+	), s.handleCreateObject)
 	}
 
 	// CreatePackage - simplified package creation for focused mode
 	if shouldRegister("CreatePackage") {
 		s.mcpServer.AddTool(mcp.NewTool("CreatePackage",
-			mcp.WithDescription("Create a new ABAP package. Local packages ($*) work by default. Transportable packages require --enable-transports flag and transport parameter."),
-			mcp.WithString("name",
-				mcp.Required(),
-				mcp.Description("Package name (e.g., $ZTEST for local, ZPRODUCTION for transportable)"),
-			),
-			mcp.WithString("description",
-				mcp.Required(),
-				mcp.Description("Package description"),
-			),
-			mcp.WithString("parent",
-				mcp.Description("Parent package name (optional, e.g., $TMP, ZPROD). If not specified, creates a root-level package."),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (required for transportable packages, e.g., 'A4HK900114')"),
-			),
-			mcp.WithString("software_component",
-				mcp.Description("Software component name (required for transportable packages, e.g., 'HOME', 'ZLOCAL'). Use GetInstalledComponents to list available components."),
-			),
-		), s.handleCreatePackage)
+		mcp.WithDescription("Create a new ABAP package. Local packages ($*) work by default. Transportable packages require --enable-transports flag and transport parameter."),
+		mcp.WithString("name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $ZTEST for local, ZPRODUCTION for transportable)"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Package description"),
+		),
+		mcp.WithString("parent",
+			mcp.Description("Parent package name (optional, e.g., $TMP, ZPROD). If not specified, creates a root-level package."),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for transportable packages, e.g., 'A4HK900114')"),
+		),
+		mcp.WithString("software_component",
+			mcp.Description("Software component name (required for transportable packages, e.g., 'HOME', 'ZLOCAL'). Use GetInstalledComponents to list available components."),
+		),
+	), s.handleCreatePackage)
 	}
 
 	// CreateTable - Create DDIC tables from JSON
@@ -1393,240 +1462,251 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	// DeleteObject
 	if shouldRegister("DeleteObject") {
 		s.mcpServer.AddTool(mcp.NewTool("DeleteObject",
-			mcp.WithDescription("Delete an ABAP object (requires lock)"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Required(),
-				mcp.Description("Lock handle from LockObject"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleDeleteObject)
+		mcp.WithDescription("Delete an ABAP object (requires lock)"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleDeleteObject)
 	}
+
 
 	// --- Class Include Operations ---
 
 	// GetClassInclude
 	if shouldRegister("GetClassInclude") {
 		s.mcpServer.AddTool(mcp.NewTool("GetClassInclude",
-			mcp.WithDescription("Retrieve source code of a class include (definitions, implementations, macros, testclasses)"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-			mcp.WithString("include_type",
-				mcp.Required(),
-				mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
-			),
-		), s.handleGetClassInclude)
+		mcp.WithDescription("Retrieve source code of a class include (definitions, implementations, macros, testclasses)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("include_type",
+			mcp.Required(),
+			mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
+		),
+	), s.handleGetClassInclude)
 	}
+
 
 	// CreateTestInclude
 	if shouldRegister("CreateTestInclude") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateTestInclude",
-			mcp.WithDescription("Create the test classes include for a class (required before writing test code)"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Required(),
-				mcp.Description("Lock handle from LockObject (lock the parent class first)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleCreateTestInclude)
+		mcp.WithDescription("Create the test classes include for a class (required before writing test code)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject (lock the parent class first)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleCreateTestInclude)
 	}
+
 
 	// UpdateClassInclude
 	if shouldRegister("UpdateClassInclude") {
 		s.mcpServer.AddTool(mcp.NewTool("UpdateClassInclude",
-			mcp.WithDescription("Update source code of a class include (requires lock on parent class)"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-			mcp.WithString("include_type",
-				mcp.Required(),
-				mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP source code to write"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Required(),
-				mcp.Description("Lock handle from LockObject (lock the parent class first)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleUpdateClassInclude)
+		mcp.WithDescription("Update source code of a class include (requires lock on parent class)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("include_type",
+			mcp.Required(),
+			mcp.Description("Include type: main, definitions, implementations, macros, testclasses"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code to write"),
+		),
+		mcp.WithString("lock_handle",
+			mcp.Required(),
+			mcp.Description("Lock handle from LockObject (lock the parent class first)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleUpdateClassInclude)
 	}
+
 
 	// PublishServiceBinding
 	if shouldRegister("PublishServiceBinding") {
 		s.mcpServer.AddTool(mcp.NewTool("PublishServiceBinding",
-			mcp.WithDescription("Publish a service binding to make it available as OData service"),
-			mcp.WithString("service_name",
-				mcp.Required(),
-				mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
-			),
-			mcp.WithString("service_version",
-				mcp.Description("Service version (default: 0001)"),
-			),
-		), s.handlePublishServiceBinding)
+		mcp.WithDescription("Publish a service binding to make it available as OData service"),
+		mcp.WithString("service_name",
+			mcp.Required(),
+			mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
+		),
+		mcp.WithString("service_version",
+			mcp.Description("Service version (default: 0001)"),
+		),
+	), s.handlePublishServiceBinding)
 	}
+
 
 	// UnpublishServiceBinding
 	if shouldRegister("UnpublishServiceBinding") {
 		s.mcpServer.AddTool(mcp.NewTool("UnpublishServiceBinding",
-			mcp.WithDescription("Unpublish a service binding"),
-			mcp.WithString("service_name",
-				mcp.Required(),
-				mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
-			),
-			mcp.WithString("service_version",
-				mcp.Description("Service version (default: 0001)"),
-			),
-		), s.handleUnpublishServiceBinding)
+		mcp.WithDescription("Unpublish a service binding"),
+		mcp.WithString("service_name",
+			mcp.Required(),
+			mcp.Description("Service binding name (e.g., ZTRAVEL_SB)"),
+		),
+		mcp.WithString("service_version",
+			mcp.Description("Service version (default: 0001)"),
+		),
+	), s.handleUnpublishServiceBinding)
 	}
+
 
 	// --- Workflow Tools ---
 
 	// WriteProgram
 	if shouldRegister("WriteProgram") {
 		s.mcpServer.AddTool(mcp.NewTool("WriteProgram",
-			mcp.WithDescription("Update an existing program with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
-			mcp.WithString("program_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP program"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP source code"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleWriteProgram)
+		mcp.WithDescription("Update an existing program with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
+		mcp.WithString("program_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP program"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleWriteProgram)
 	}
+
 
 	// WriteClass
 	if shouldRegister("WriteClass") {
 		s.mcpServer.AddTool(mcp.NewTool("WriteClass",
-			mcp.WithDescription("Update an existing class with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP class source code (definition and implementation)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleWriteClass)
+		mcp.WithDescription("Update an existing class with syntax check and activation (Lock -> SyntaxCheck -> Update -> Unlock -> Activate)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP class source code (definition and implementation)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleWriteClass)
 	}
+
 
 	// CreateAndActivateProgram
 	if shouldRegister("CreateAndActivateProgram") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateAndActivateProgram",
-			mcp.WithDescription("Create a new program with source code and activate it (Create -> Lock -> Update -> Unlock -> Activate)"),
-			mcp.WithString("program_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP program"),
-			),
-			mcp.WithString("description",
-				mcp.Required(),
-				mcp.Description("Program description"),
-			),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Package name (e.g., $TMP for local)"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP source code"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (required for non-local packages)"),
-			),
-		), s.handleCreateAndActivateProgram)
+		mcp.WithDescription("Create a new program with source code and activate it (Create -> Lock -> Update -> Unlock -> Activate)"),
+		mcp.WithString("program_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP program"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Program description"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP for local)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for non-local packages)"),
+		),
+	), s.handleCreateAndActivateProgram)
 	}
+
 
 	// CreateClassWithTests
 	if shouldRegister("CreateClassWithTests") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateClassWithTests",
-			mcp.WithDescription("Create a new class with unit tests and run them (Create -> Lock -> Update -> CreateTestInclude -> UpdateTest -> Unlock -> Activate -> RunTests)"),
-			mcp.WithString("class_name",
-				mcp.Required(),
-				mcp.Description("Name of the ABAP class"),
-			),
-			mcp.WithString("description",
-				mcp.Required(),
-				mcp.Description("Class description"),
-			),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Package name (e.g., $TMP for local)"),
-			),
-			mcp.WithString("class_source",
-				mcp.Required(),
-				mcp.Description("ABAP class source code (definition and implementation)"),
-			),
-			mcp.WithString("test_source",
-				mcp.Required(),
-				mcp.Description("ABAP unit test source code"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (required for non-local packages)"),
-			),
-		), s.handleCreateClassWithTests)
+		mcp.WithDescription("Create a new class with unit tests and run them (Create -> Lock -> Update -> CreateTestInclude -> UpdateTest -> Unlock -> Activate -> RunTests)"),
+		mcp.WithString("class_name",
+			mcp.Required(),
+			mcp.Description("Name of the ABAP class"),
+		),
+		mcp.WithString("description",
+			mcp.Required(),
+			mcp.Description("Class description"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP for local)"),
+		),
+		mcp.WithString("class_source",
+			mcp.Required(),
+			mcp.Description("ABAP class source code (definition and implementation)"),
+		),
+		mcp.WithString("test_source",
+			mcp.Required(),
+			mcp.Description("ABAP unit test source code"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for non-local packages)"),
+		),
+	), s.handleCreateClassWithTests)
 	}
+
 
 	// --- File-Based Deployment Tools ---
 
 	// DeployFromFile (Recommended)
 	if shouldRegister("DeployFromFile") {
 		s.mcpServer.AddTool(mcp.NewTool("DeployFromFile",
-			mcp.WithDescription("✅ RECOMMENDED - Smart deploy from file: auto-detects if object exists and creates/updates accordingly. Solves token limit problem for large generated files (ML models, 3948+ lines). Example: DeployFromFile(file_path=\"/path/to/zcl_ml_iris.clas.abap\", package_name=\"$ZAML_IRIS\") deploys any size file. Workflow: Parse → Check existence → Create or Update → Lock → SyntaxCheck → Write → Unlock → Activate. Supports .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap. Use this for all file-based deployments."),
-			mcp.WithString("file_path",
-				mcp.Required(),
-				mcp.Description("Absolute path to ABAP source file"),
-			),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Package name (required for new objects, e.g., $ZAML_IRIS)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleDeployFromFile)
+		mcp.WithDescription("✅ RECOMMENDED - Smart deploy from file: auto-detects if object exists and creates/updates accordingly. Solves token limit problem for large generated files (ML models, 3948+ lines). Example: DeployFromFile(file_path=\"/path/to/zcl_ml_iris.clas.abap\", package_name=\"$ZAML_IRIS\") deploys any size file. Workflow: Parse → Check existence → Create or Update → Lock → SyntaxCheck → Write → Unlock → Activate. Supports .clas.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap. Use this for all file-based deployments."),
+		mcp.WithString("file_path",
+			mcp.Required(),
+			mcp.Description("Absolute path to ABAP source file"),
+		),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (required for new objects, e.g., $ZAML_IRIS)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleDeployFromFile)
 	}
+
 
 	// SaveToFile
 	if shouldRegister("SaveToFile") {
 		s.mcpServer.AddTool(mcp.NewTool("SaveToFile",
-			mcp.WithDescription("Save ABAP object source to local file (SAP → File). Enables BIDIRECTIONAL SYNC WORKFLOW: (1) SaveToFile downloads object from SAP, (2) edit locally with vim/VS Code/AI assistants, (3) DeployFromFile uploads changes back to SAP. Example: SaveToFile(objType=\"CLAS/OC\", objectName=\"ZCL_ML_IRIS\", outputPath=\"./src/\") creates ./src/zcl_ml_iris.clas.abap. Then edit locally and use DeployFromFile to sync back. Recommended for iterative development. Auto-determines file extension."),
-			mcp.WithString("objType",
-				mcp.Required(),
-				mcp.Description("Object type: CLAS/OC (class), PROG/P (program), INTF/OI (interface), FUGR/F (function group), FUGR/FF (function module)"),
-			),
-			mcp.WithString("objectName",
-				mcp.Required(),
-				mcp.Description("Object name (e.g., ZCL_ML_IRIS, ZAML_IRIS_DEMO)"),
-			),
-			mcp.WithString("outputPath",
-				mcp.Description("Output file path or directory. If directory, filename is auto-generated with correct extension. If omitted, saves to current directory."),
-			),
-		), s.handleSaveToFile)
+		mcp.WithDescription("Save ABAP object source to local file (SAP → File). Enables BIDIRECTIONAL SYNC WORKFLOW: (1) SaveToFile downloads object from SAP, (2) edit locally with vim/VS Code/AI assistants, (3) DeployFromFile uploads changes back to SAP. Example: SaveToFile(objType=\"CLAS/OC\", objectName=\"ZCL_ML_IRIS\", outputPath=\"./src/\") creates ./src/zcl_ml_iris.clas.abap. Then edit locally and use DeployFromFile to sync back. Recommended for iterative development. Auto-determines file extension."),
+		mcp.WithString("objType",
+			mcp.Required(),
+			mcp.Description("Object type: CLAS/OC (class), PROG/P (program), INTF/OI (interface), FUGR/F (function group), FUGR/FF (function module)"),
+		),
+		mcp.WithString("objectName",
+			mcp.Required(),
+			mcp.Description("Object name (e.g., ZCL_ML_IRIS, ZAML_IRIS_DEMO)"),
+		),
+		mcp.WithString("outputPath",
+			mcp.Description("Output file path or directory. If directory, filename is auto-generated with correct extension. If omitted, saves to current directory."),
+		),
+	), s.handleSaveToFile)
 	}
 
 	// ImportFromFile (alias for DeployFromFile - File → SAP, supports class includes)
@@ -1639,113 +1719,117 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		s.registerExportToFile()
 	}
 
+
 	// RenameObject
 	if shouldRegister("RenameObject") {
 		s.mcpServer.AddTool(mcp.NewTool("RenameObject",
-			mcp.WithDescription("Rename ABAP object by creating copy with new name and deleting old one. Useful for fixing naming conventions. Workflow: GetSource → Replace names → CreateNew → ActivateNew → DeleteOld"),
-			mcp.WithString("objType",
-				mcp.Required(),
-				mcp.Description("Object type: CLAS/OC (class), PROG/P (program), INTF/OI (interface), FUGR/F (function group)"),
-			),
-			mcp.WithString("oldName",
-				mcp.Required(),
-				mcp.Description("Current object name"),
-			),
-			mcp.WithString("newName",
-				mcp.Required(),
-				mcp.Description("New object name"),
-			),
-			mcp.WithString("packageName",
-				mcp.Required(),
-				mcp.Description("Package name for new object (e.g., $ZAML_IRIS)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for local packages)"),
-			),
-		), s.handleRenameObject)
+		mcp.WithDescription("Rename ABAP object by creating copy with new name and deleting old one. Useful for fixing naming conventions. Workflow: GetSource → Replace names → CreateNew → ActivateNew → DeleteOld"),
+		mcp.WithString("objType",
+			mcp.Required(),
+			mcp.Description("Object type: CLAS/OC (class), PROG/P (program), INTF/OI (interface), FUGR/F (function group)"),
+		),
+		mcp.WithString("oldName",
+			mcp.Required(),
+			mcp.Description("Current object name"),
+		),
+		mcp.WithString("newName",
+			mcp.Required(),
+			mcp.Description("New object name"),
+		),
+		mcp.WithString("packageName",
+			mcp.Required(),
+			mcp.Description("Package name for new object (e.g., $ZAML_IRIS)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (optional for local packages)"),
+		),
+	), s.handleRenameObject)
 	}
+
 
 	// --- Surgical Edit Tools ---
 
 	// EditSource
 	if shouldRegister("EditSource") {
 		s.mcpServer.AddTool(mcp.NewTool("EditSource",
-			mcp.WithDescription("Surgical string replacement on ABAP source code. Matches the Edit tool pattern for local files. Workflow: GetSource → FindReplace → SyntaxCheck → Lock → Update → Unlock → Activate. Example: EditSource(object_url=\"/sap/bc/adt/programs/programs/ZTEST\", old_string=\"METHOD foo.\\n  ENDMETHOD.\", new_string=\"METHOD foo.\\n  rv_result = 42.\\n  ENDMETHOD.\", replace_all=false, syntax_check=true). Requires unique match if replace_all=false. Use this for incremental edits between syntax checks - no need to download/upload full source!"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST, /sap/bc/adt/oo/classes/zcl_test)"),
-			),
-			mcp.WithString("old_string",
-				mcp.Required(),
-				mcp.Description("Exact string to find and replace. Must be unique in source if replace_all=false. Include enough context (surrounding lines) to ensure uniqueness."),
-			),
-			mcp.WithString("new_string",
-				mcp.Required(),
-				mcp.Description("Replacement string. Can be multiline (use \\n). Length can differ from old_string."),
-			),
-			mcp.WithBoolean("replace_all",
-				mcp.Description("If true, replace all occurrences. If false (default), require unique match. Default: false"),
-			),
-			mcp.WithBoolean("syntax_check",
-				mcp.Description("If true (default), validate syntax before saving. If syntax errors found, changes are NOT saved. Default: true"),
-			),
-			mcp.WithBoolean("case_insensitive",
-				mcp.Description("If true, ignore case when matching old_string. Useful for renaming variables regardless of case. Default: false"),
-			),
-			mcp.WithString("method",
-				mcp.Description("For CLAS only: constrain search/replace to this method only. Prevents accidental edits in other methods. (optional)"),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (required for objects not in $TMP package)"),
-			),
-		), s.handleEditSource)
+		mcp.WithDescription("Surgical string replacement on ABAP source code. Matches the Edit tool pattern for local files. Workflow: GetSource → FindReplace → SyntaxCheck → Lock → Update → Unlock → Activate. Example: EditSource(object_url=\"/sap/bc/adt/programs/programs/ZTEST\", old_string=\"METHOD foo.\\n  ENDMETHOD.\", new_string=\"METHOD foo.\\n  rv_result = 42.\\n  ENDMETHOD.\", replace_all=false, syntax_check=true). Requires unique match if replace_all=false. Use this for incremental edits between syntax checks - no need to download/upload full source!"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST, /sap/bc/adt/oo/classes/zcl_test)"),
+		),
+		mcp.WithString("old_string",
+			mcp.Required(),
+			mcp.Description("Exact string to find and replace. Must be unique in source if replace_all=false. Include enough context (surrounding lines) to ensure uniqueness."),
+		),
+		mcp.WithString("new_string",
+			mcp.Required(),
+			mcp.Description("Replacement string. Can be multiline (use \\n). Length can differ from old_string."),
+		),
+		mcp.WithBoolean("replace_all",
+			mcp.Description("If true, replace all occurrences. If false (default), require unique match. Default: false"),
+		),
+		mcp.WithBoolean("syntax_check",
+			mcp.Description("If true (default), validate syntax before saving. If syntax errors found, changes are NOT saved. Default: true"),
+		),
+		mcp.WithBoolean("case_insensitive",
+			mcp.Description("If true, ignore case when matching old_string. Useful for renaming variables regardless of case. Default: false"),
+		),
+		mcp.WithString("method",
+			mcp.Description("For CLAS only: constrain search/replace to this method only. Prevents accidental edits in other methods. (optional)"),
+		),
+		mcp.WithString("transport",
+			mcp.Description("Transport request number (required for objects not in $TMP package)"),
+		),
+	), s.handleEditSource)
 	}
+
 
 	// --- Grep/Search Tools ---
 
 	// GrepObject
 	if shouldRegister("GrepObject") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepObject",
-			mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing."),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
-			),
-			mcp.WithString("pattern",
-				mcp.Required(),
-				mcp.Description("Regular expression pattern (Go regexp syntax). Examples: 'TODO', 'lv_\\w+', 'SELECT.*FROM'"),
-			),
-			mcp.WithBoolean("case_insensitive",
-				mcp.Description("If true, perform case-insensitive matching. Default: false"),
-			),
-			mcp.WithNumber("context_lines",
-				mcp.Description("Number of lines to show before/after each match (like grep -C). Default: 0"),
-			),
-		), s.handleGrepObject)
+		mcp.WithDescription("Search for regex pattern in a single ABAP object's source code. Returns matches with line numbers and optional context. Use for finding TODO comments, string literals, patterns, or code snippets before editing."),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of object (e.g., /sap/bc/adt/programs/programs/ZTEST)"),
+		),
+		mcp.WithString("pattern",
+			mcp.Required(),
+			mcp.Description("Regular expression pattern (Go regexp syntax). Examples: 'TODO', 'lv_\\w+', 'SELECT.*FROM'"),
+		),
+		mcp.WithBoolean("case_insensitive",
+			mcp.Description("If true, perform case-insensitive matching. Default: false"),
+		),
+		mcp.WithNumber("context_lines",
+			mcp.Description("Number of lines to show before/after each match (like grep -C). Default: 0"),
+		),
+	), s.handleGrepObject)
 	}
+
 
 	// GrepPackage
 	if shouldRegister("GrepPackage") {
 		s.mcpServer.AddTool(mcp.NewTool("GrepPackage",
-			mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object. Use for package-wide analysis, finding patterns across multiple programs/classes."),
-			mcp.WithString("package_name",
-				mcp.Required(),
-				mcp.Description("Package name (e.g., $TMP, ZPACKAGE)"),
-			),
-			mcp.WithString("pattern",
-				mcp.Required(),
-				mcp.Description("Regular expression pattern (Go regexp syntax). Examples: 'TODO', 'lv_\\w+', 'SELECT.*FROM'"),
-			),
-			mcp.WithBoolean("case_insensitive",
-				mcp.Description("If true, perform case-insensitive matching. Default: false"),
-			),
-			mcp.WithString("object_types",
-				mcp.Description("Comma-separated object types to search (e.g., 'PROG/P,CLAS/OC'). Empty = search all source objects. Valid: PROG/P, CLAS/OC, INTF/OI, FUGR/F, FUGR/FF, PROG/I"),
-			),
-			mcp.WithNumber("max_results",
-				mcp.Description("Maximum number of matching objects to return. 0 = unlimited. Default: 100"),
-			),
-		), s.handleGrepPackage)
+		mcp.WithDescription("Search for regex pattern across all source objects in an ABAP package. Returns matches grouped by object. Use for package-wide analysis, finding patterns across multiple programs/classes."),
+		mcp.WithString("package_name",
+			mcp.Required(),
+			mcp.Description("Package name (e.g., $TMP, ZPACKAGE)"),
+		),
+		mcp.WithString("pattern",
+			mcp.Required(),
+			mcp.Description("Regular expression pattern (Go regexp syntax). Examples: 'TODO', 'lv_\\w+', 'SELECT.*FROM'"),
+		),
+		mcp.WithBoolean("case_insensitive",
+			mcp.Description("If true, perform case-insensitive matching. Default: false"),
+		),
+		mcp.WithString("object_types",
+			mcp.Description("Comma-separated object types to search (e.g., 'PROG/P,CLAS/OC'). Empty = search all source objects. Valid: PROG/P, CLAS/OC, INTF/OI, FUGR/F, FUGR/FF, PROG/I"),
+		),
+		mcp.WithNumber("max_results",
+			mcp.Description("Maximum number of matching objects to return. 0 = unlimited. Default: 100"),
+		),
+	), s.handleGrepPackage)
 	}
 
 	// GrepObjects (unified multi-object search)
@@ -1758,138 +1842,145 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		s.registerGrepPackages()
 	}
 
+
 	// --- Code Intelligence Tools ---
 
 	// FindDefinition
 	if shouldRegister("FindDefinition") {
 		s.mcpServer.AddTool(mcp.NewTool("FindDefinition",
-			mcp.WithDescription("Navigate to the definition of a symbol at a given position in source code"),
-			mcp.WithString("source_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("Full source code of the file"),
-			),
-			mcp.WithNumber("line",
-				mcp.Required(),
-				mcp.Description("Line number (1-based)"),
-			),
-			mcp.WithNumber("start_column",
-				mcp.Required(),
-				mcp.Description("Start column of the symbol (1-based)"),
-			),
-			mcp.WithNumber("end_column",
-				mcp.Required(),
-				mcp.Description("End column of the symbol (1-based)"),
-			),
-			mcp.WithBoolean("implementation",
-				mcp.Description("Navigate to implementation instead of definition (default: false)"),
-			),
-			mcp.WithString("main_program",
-				mcp.Description("Main program for includes (optional)"),
-			),
-		), s.handleFindDefinition)
+		mcp.WithDescription("Navigate to the definition of a symbol at a given position in source code"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("start_column",
+			mcp.Required(),
+			mcp.Description("Start column of the symbol (1-based)"),
+		),
+		mcp.WithNumber("end_column",
+			mcp.Required(),
+			mcp.Description("End column of the symbol (1-based)"),
+		),
+		mcp.WithBoolean("implementation",
+			mcp.Description("Navigate to implementation instead of definition (default: false)"),
+		),
+		mcp.WithString("main_program",
+			mcp.Description("Main program for includes (optional)"),
+		),
+	), s.handleFindDefinition)
 	}
+
 
 	// FindReferences
 	if shouldRegister("FindReferences") {
 		s.mcpServer.AddTool(mcp.NewTool("FindReferences",
-			mcp.WithDescription("Find all references to an ABAP object or symbol"),
-			mcp.WithString("object_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
-			),
-			mcp.WithNumber("line",
-				mcp.Description("Line number for position-based reference search (1-based, optional)"),
-			),
-			mcp.WithNumber("column",
-				mcp.Description("Column number for position-based reference search (1-based, optional)"),
-			),
-		), s.handleFindReferences)
+		mcp.WithDescription("Find all references to an ABAP object or symbol"),
+		mcp.WithString("object_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the object (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
+		),
+		mcp.WithNumber("line",
+			mcp.Description("Line number for position-based reference search (1-based, optional)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Description("Column number for position-based reference search (1-based, optional)"),
+		),
+	), s.handleFindReferences)
 	}
+
 
 	// CodeCompletion
 	if shouldRegister("CodeCompletion") {
 		s.mcpServer.AddTool(mcp.NewTool("CodeCompletion",
-			mcp.WithDescription("Get code completion suggestions at a position in source code"),
-			mcp.WithString("source_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("Full source code of the file"),
-			),
-			mcp.WithNumber("line",
-				mcp.Required(),
-				mcp.Description("Line number (1-based)"),
-			),
-			mcp.WithNumber("column",
-				mcp.Required(),
-				mcp.Description("Column number (1-based)"),
-			),
-		), s.handleCodeCompletion)
+		mcp.WithDescription("Get code completion suggestions at a position in source code"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Required(),
+			mcp.Description("Column number (1-based)"),
+		),
+	), s.handleCodeCompletion)
 	}
+
 
 	// PrettyPrint
 	if shouldRegister("PrettyPrint") {
 		s.mcpServer.AddTool(mcp.NewTool("PrettyPrint",
-			mcp.WithDescription("Format ABAP source code using the pretty printer"),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("ABAP source code to format"),
-			),
-		), s.handlePrettyPrint)
+		mcp.WithDescription("Format ABAP source code using the pretty printer"),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("ABAP source code to format"),
+		),
+	), s.handlePrettyPrint)
 	}
+
 
 	// GetPrettyPrinterSettings
 	if shouldRegister("GetPrettyPrinterSettings") {
 		s.mcpServer.AddTool(mcp.NewTool("GetPrettyPrinterSettings",
-			mcp.WithDescription("Get the current pretty printer (code formatter) settings"),
-		), s.handleGetPrettyPrinterSettings)
+		mcp.WithDescription("Get the current pretty printer (code formatter) settings"),
+	), s.handleGetPrettyPrinterSettings)
 	}
+
 
 	// SetPrettyPrinterSettings
 	if shouldRegister("SetPrettyPrinterSettings") {
 		s.mcpServer.AddTool(mcp.NewTool("SetPrettyPrinterSettings",
-			mcp.WithDescription("Update the pretty printer (code formatter) settings"),
-			mcp.WithBoolean("indentation",
-				mcp.Required(),
-				mcp.Description("Enable automatic indentation"),
-			),
-			mcp.WithString("style",
-				mcp.Required(),
-				mcp.Description("Keyword style: toLower, toUpper, keywordUpper, keywordLower, keywordAuto, none"),
-			),
-		), s.handleSetPrettyPrinterSettings)
+		mcp.WithDescription("Update the pretty printer (code formatter) settings"),
+		mcp.WithBoolean("indentation",
+			mcp.Required(),
+			mcp.Description("Enable automatic indentation"),
+		),
+		mcp.WithString("style",
+			mcp.Required(),
+			mcp.Description("Keyword style: toLower, toUpper, keywordUpper, keywordLower, keywordAuto, none"),
+		),
+	), s.handleSetPrettyPrinterSettings)
 	}
+
 
 	// GetTypeHierarchy
 	if shouldRegister("GetTypeHierarchy") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTypeHierarchy",
-			mcp.WithDescription("Get the type hierarchy (supertypes or subtypes) for a class/interface"),
-			mcp.WithString("source_url",
-				mcp.Required(),
-				mcp.Description("ADT URL of the source file"),
-			),
-			mcp.WithString("source",
-				mcp.Required(),
-				mcp.Description("Full source code of the file"),
-			),
-			mcp.WithNumber("line",
-				mcp.Required(),
-				mcp.Description("Line number (1-based)"),
-			),
-			mcp.WithNumber("column",
-				mcp.Required(),
-				mcp.Description("Column number (1-based)"),
-			),
-			mcp.WithBoolean("super_types",
-				mcp.Description("Get supertypes instead of subtypes (default: false = subtypes)"),
-			),
-		), s.handleGetTypeHierarchy)
+		mcp.WithDescription("Get the type hierarchy (supertypes or subtypes) for a class/interface"),
+		mcp.WithString("source_url",
+			mcp.Required(),
+			mcp.Description("ADT URL of the source file"),
+		),
+		mcp.WithString("source",
+			mcp.Required(),
+			mcp.Description("Full source code of the file"),
+		),
+		mcp.WithNumber("line",
+			mcp.Required(),
+			mcp.Description("Line number (1-based)"),
+		),
+		mcp.WithNumber("column",
+			mcp.Required(),
+			mcp.Description("Column number (1-based)"),
+		),
+		mcp.WithBoolean("super_types",
+			mcp.Description("Get supertypes instead of subtypes (default: false = subtypes)"),
+		),
+	), s.handleGetTypeHierarchy)
 	}
 
 	// GetClassComponents - get class structure (methods, attributes, events)
@@ -2414,15 +2505,15 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 		"es": {"EditSource", "Alias for EditSource - surgical string replacement", s.handleEditSource},
 
 		// Search
-		"so":  {"SearchObject", "Alias for SearchObject - find ABAP objects", s.handleSearchObject},
+		"so": {"SearchObject", "Alias for SearchObject - find ABAP objects", s.handleSearchObject},
 		"gro": {"GrepObjects", "Alias for GrepObjects - regex search in objects", s.handleGrepObjects},
 		"grp": {"GrepPackages", "Alias for GrepPackages - regex search in packages", s.handleGrepPackages},
 
 		// Common operations
-		"gt":  {"GetTable", "Alias for GetTable - get table structure", s.handleGetTable},
+		"gt": {"GetTable", "Alias for GetTable - get table structure", s.handleGetTable},
 		"gtc": {"GetTableContents", "Alias for GetTableContents - read table data", s.handleGetTableContents},
-		"rq":  {"RunQuery", "Alias for RunQuery - execute SQL query", s.handleRunQuery},
-		"sc":  {"SyntaxCheck", "Alias for SyntaxCheck - check ABAP syntax", s.handleSyntaxCheck},
+		"rq": {"RunQuery", "Alias for RunQuery - execute SQL query", s.handleRunQuery},
+		"sc": {"SyntaxCheck", "Alias for SyntaxCheck - check ABAP syntax", s.handleSyntaxCheck},
 		"act": {"Activate", "Alias for Activate - activate ABAP object", s.handleActivate},
 
 		// Testing
@@ -2434,15 +2525,15 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 	// Uncomment if you want short names like gs, ws, es, etc.
 	_ = aliases // suppress unused variable warning
 	/*
-		for alias, info := range aliases {
-			if shouldRegister(info.canonical) {
-				s.mcpServer.AddTool(mcp.NewTool(alias,
-					mcp.WithDescription(info.desc),
-					// Aliases inherit all parameters from the canonical tool
-					// The handler is the same, so parameters work identically
-				), info.handler)
-			}
+	for alias, info := range aliases {
+		if shouldRegister(info.canonical) {
+			s.mcpServer.AddTool(mcp.NewTool(alias,
+				mcp.WithDescription(info.desc),
+				// Aliases inherit all parameters from the canonical tool
+				// The handler is the same, so parameters work identically
+			), info.handler)
 		}
+	}
 	*/
 }
 
