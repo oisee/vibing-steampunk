@@ -13,10 +13,10 @@ import (
 // --- UI5/Fiori BSP Management Handlers ---
 
 func (s *Server) handleUI5ListApps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	query, _ := request.Params.Arguments["query"].(string)
+	query, _ := request.GetArguments()["query"].(string)
 
 	maxResults := 100
-	if mr, ok := request.Params.Arguments["max_results"].(float64); ok {
+	if mr, ok := request.GetArguments()["max_results"].(float64); ok {
 		maxResults = int(mr)
 	}
 
@@ -47,7 +47,7 @@ func (s *Server) handleUI5ListApps(ctx context.Context, request mcp.CallToolRequ
 }
 
 func (s *Server) handleUI5GetApp(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
@@ -85,12 +85,12 @@ func (s *Server) handleUI5GetApp(ctx context.Context, request mcp.CallToolReques
 }
 
 func (s *Server) handleUI5GetFileContent(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
 
-	filePath, ok := request.Params.Arguments["file_path"].(string)
+	filePath, ok := request.GetArguments()["file_path"].(string)
 	if !ok || filePath == "" {
 		return newToolResultError("file_path is required"), nil
 	}
@@ -104,22 +104,22 @@ func (s *Server) handleUI5GetFileContent(ctx context.Context, request mcp.CallTo
 }
 
 func (s *Server) handleUI5UploadFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
 
-	filePath, ok := request.Params.Arguments["file_path"].(string)
+	filePath, ok := request.GetArguments()["file_path"].(string)
 	if !ok || filePath == "" {
 		return newToolResultError("file_path is required"), nil
 	}
 
-	content, ok := request.Params.Arguments["content"].(string)
+	content, ok := request.GetArguments()["content"].(string)
 	if !ok {
 		return newToolResultError("content is required"), nil
 	}
 
-	contentType, _ := request.Params.Arguments["content_type"].(string)
+	contentType, _ := request.GetArguments()["content_type"].(string)
 
 	err := s.adtClient.UI5UploadFile(ctx, appName, filePath, []byte(content), contentType)
 	if err != nil {
@@ -130,12 +130,12 @@ func (s *Server) handleUI5UploadFile(ctx context.Context, request mcp.CallToolRe
 }
 
 func (s *Server) handleUI5DeleteFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
 
-	filePath, ok := request.Params.Arguments["file_path"].(string)
+	filePath, ok := request.GetArguments()["file_path"].(string)
 	if !ok || filePath == "" {
 		return newToolResultError("file_path is required"), nil
 	}
@@ -149,19 +149,19 @@ func (s *Server) handleUI5DeleteFile(ctx context.Context, request mcp.CallToolRe
 }
 
 func (s *Server) handleUI5CreateApp(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
 
-	description, _ := request.Params.Arguments["description"].(string)
+	description, _ := request.GetArguments()["description"].(string)
 
-	packageName, ok := request.Params.Arguments["package"].(string)
+	packageName, ok := request.GetArguments()["package"].(string)
 	if !ok || packageName == "" {
 		return newToolResultError("package is required"), nil
 	}
 
-	transport, _ := request.Params.Arguments["transport"].(string)
+	transport, _ := request.GetArguments()["transport"].(string)
 
 	err := s.adtClient.UI5CreateApp(ctx, appName, description, packageName, transport)
 	if err != nil {
@@ -172,12 +172,12 @@ func (s *Server) handleUI5CreateApp(ctx context.Context, request mcp.CallToolReq
 }
 
 func (s *Server) handleUI5DeleteApp(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	appName, ok := request.Params.Arguments["app_name"].(string)
+	appName, ok := request.GetArguments()["app_name"].(string)
 	if !ok || appName == "" {
 		return newToolResultError("app_name is required"), nil
 	}
 
-	transport, _ := request.Params.Arguments["transport"].(string)
+	transport, _ := request.GetArguments()["transport"].(string)
 
 	err := s.adtClient.UI5DeleteApp(ctx, appName, transport)
 	if err != nil {

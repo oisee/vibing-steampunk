@@ -88,15 +88,15 @@ type ABAPFile struct {
 func DeploymentOrder(files []ABAPFile) []ABAPFile {
 	// Priority order for object types
 	typePriority := map[string]int{
-		"INTF": 1, // Interfaces first (no dependencies)
-		"DOMA": 2, // Domains
-		"DTEL": 3, // Data elements
-		"TABL": 4, // Tables/structures
-		"DDLS": 5, // CDS views
-		"CLAS": 6, // Classes (depend on interfaces)
-		"PROG": 7, // Programs
-		"FUGR": 8, // Function groups
-		"FUNC": 9, // Function modules
+		"INTF": 1,  // Interfaces first (no dependencies)
+		"DOMA": 2,  // Domains
+		"DTEL": 3,  // Data elements
+		"TABL": 4,  // Tables/structures
+		"DDLS": 5,  // CDS views
+		"CLAS": 6,  // Classes (depend on interfaces)
+		"PROG": 7,  // Programs
+		"FUGR": 8,  // Function groups
+		"FUNC": 9,  // Function modules
 		"BDEF": 10, // Behavior definitions
 		"SRVD": 11, // Service definitions
 		"SRVB": 12, // Service bindings
@@ -319,11 +319,11 @@ func ExtractDescription(xmlContent string) string {
 
 // DeploymentPlan represents the plan for deploying a dependency.
 type DeploymentPlan struct {
-	Dependency  string
-	Package     string
-	TotalFiles  int
+	Dependency   string
+	Package      string
+	TotalFiles   int
 	TotalObjects int
-	Objects     []DeploymentObject
+	Objects      []DeploymentObject
 }
 
 // DeploymentObject represents a single object to deploy.

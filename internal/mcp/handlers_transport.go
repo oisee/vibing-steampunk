@@ -15,7 +15,7 @@ import (
 // --- Transport Management Handlers ---
 
 func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	userName, ok := request.Params.Arguments["user_name"].(string)
+	userName, ok := request.GetArguments()["user_name"].(string)
 	if !ok || userName == "" {
 		return newToolResultError("user_name is required"), nil
 	}
@@ -75,12 +75,12 @@ func formatTransportRequest(sb *strings.Builder, tr *adt.TransportRequest) {
 }
 
 func (s *Server) handleGetTransportInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
-	devClass, ok := request.Params.Arguments["dev_class"].(string)
+	devClass, ok := request.GetArguments()["dev_class"].(string)
 	if !ok || devClass == "" {
 		return newToolResultError("dev_class is required"), nil
 	}
@@ -113,26 +113,26 @@ func (s *Server) handleGetTransportInfo(ctx context.Context, request mcp.CallToo
 
 // handleExecuteABAP executes arbitrary ABAP code via unit test wrapper.
 func (s *Server) handleExecuteABAP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	code, ok := request.Params.Arguments["code"].(string)
+	code, ok := request.GetArguments()["code"].(string)
 	if !ok || code == "" {
 		return newToolResultError("code parameter is required"), nil
 	}
 
 	opts := &adt.ExecuteABAPOptions{}
 
-	if riskLevel, ok := request.Params.Arguments["risk_level"].(string); ok && riskLevel != "" {
+	if riskLevel, ok := request.GetArguments()["risk_level"].(string); ok && riskLevel != "" {
 		opts.RiskLevel = riskLevel
 	}
 
-	if returnVar, ok := request.Params.Arguments["return_variable"].(string); ok && returnVar != "" {
+	if returnVar, ok := request.GetArguments()["return_variable"].(string); ok && returnVar != "" {
 		opts.ReturnVariable = returnVar
 	}
 
-	if keepProgram, ok := request.Params.Arguments["keep_program"].(bool); ok {
+	if keepProgram, ok := request.GetArguments()["keep_program"].(bool); ok {
 		opts.KeepProgram = keepProgram
 	}
 
-	if prefix, ok := request.Params.Arguments["program_prefix"].(string); ok && prefix != "" {
+	if prefix, ok := request.GetArguments()["program_prefix"].(string); ok && prefix != "" {
 		opts.ProgramPrefix = prefix
 	}
 
@@ -179,7 +179,7 @@ func (s *Server) handleListTransports(ctx context.Context, request mcp.CallToolR
 		return newToolResultError(err.Error()), nil
 	}
 
-	user, _ := request.Params.Arguments["user"].(string)
+	user, _ := request.GetArguments()["user"].(string)
 
 	transports, err := s.adtClient.ListTransports(ctx, user)
 	if err != nil {
@@ -199,7 +199,7 @@ func (s *Server) handleListTransports(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleGetTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	transport, ok := request.Params.Arguments["transport"].(string)
+	transport, ok := request.GetArguments()["transport"].(string)
 	if !ok || transport == "" {
 		return newToolResultError("transport is required"), nil
 	}
@@ -228,18 +228,18 @@ func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallTool
 		return newToolResultError(err.Error()), nil
 	}
 
-	description, ok := request.Params.Arguments["description"].(string)
+	description, ok := request.GetArguments()["description"].(string)
 	if !ok || description == "" {
 		return newToolResultError("description is required"), nil
 	}
 
-	pkg, ok := request.Params.Arguments["package"].(string)
+	pkg, ok := request.GetArguments()["package"].(string)
 	if !ok || pkg == "" {
 		return newToolResultError("package is required"), nil
 	}
 
-	transportLayer, _ := request.Params.Arguments["transport_layer"].(string)
-	transportType, _ := request.Params.Arguments["type"].(string)
+	transportLayer, _ := request.GetArguments()["transport_layer"].(string)
+	transportType, _ := request.GetArguments()["type"].(string)
 
 	opts := adt.CreateTransportOptions{
 		Description:    description,
@@ -257,7 +257,7 @@ func (s *Server) handleCreateTransport(ctx context.Context, request mcp.CallTool
 }
 
 func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	transport, ok := request.Params.Arguments["transport"].(string)
+	transport, ok := request.GetArguments()["transport"].(string)
 	if !ok || transport == "" {
 		return newToolResultError("transport is required"), nil
 	}
@@ -267,8 +267,8 @@ func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToo
 		return newToolResultError(err.Error()), nil
 	}
 
-	ignoreLocks, _ := request.Params.Arguments["ignore_locks"].(bool)
-	skipATC, _ := request.Params.Arguments["skip_atc"].(bool)
+	ignoreLocks, _ := request.GetArguments()["ignore_locks"].(bool)
+	skipATC, _ := request.GetArguments()["skip_atc"].(bool)
 
 	opts := adt.ReleaseTransportOptions{
 		IgnoreLocks: ignoreLocks,
@@ -284,7 +284,7 @@ func (s *Server) handleReleaseTransport(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	transport, ok := request.Params.Arguments["transport"].(string)
+	transport, ok := request.GetArguments()["transport"].(string)
 	if !ok || transport == "" {
 		return newToolResultError("transport is required"), nil
 	}

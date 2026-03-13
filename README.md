@@ -149,6 +149,7 @@ Configure multiple SAP systems in `.vsp.json`:
 vsp --url https://host:44300 --user admin --password secret
 vsp --url https://host:44300 --cookie-file cookies.txt
 vsp --mode expert  # Enable all 122 tools
+vsp --transport http-streamable  # Expose MCP endpoint on /mcp
 ```
 
 ### Environment Variables
@@ -174,6 +175,7 @@ SAP_PASSWORD=secret
 | `--password` | `SAP_PASSWORD` | Password |
 | `--client` | `SAP_CLIENT` | Client (default: 001) |
 | `--mode` | `SAP_MODE` | `focused` (default) or `expert` |
+| `--transport` | `SAP_TRANSPORT` | MCP transport: `stdio` (default) or `http-streamable` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification |
 | `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |

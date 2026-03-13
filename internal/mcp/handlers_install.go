@@ -23,12 +23,12 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 	)
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 
 	cleanup := false
-	if cl, ok := request.Params.Arguments["cleanup"].(bool); ok {
+	if cl, ok := request.GetArguments()["cleanup"].(bool); ok {
 		cleanup = cl
 	}
 
@@ -280,17 +280,17 @@ ENDCLASS.`
 func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Parse parameters
 	packageName := "$ZADT_VSP"
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
+	if pkg, ok := request.GetArguments()["package"].(string); ok && pkg != "" {
 		packageName = strings.ToUpper(pkg)
 	}
 
 	skipGitService := false
-	if skip, ok := request.Params.Arguments["skip_git_service"].(bool); ok {
+	if skip, ok := request.GetArguments()["skip_git_service"].(bool); ok {
 		skipGitService = skip
 	}
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 
@@ -470,17 +470,17 @@ func (s *Server) handleListDependencies(ctx context.Context, request mcp.CallToo
 func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Parse parameters
 	edition := "standalone"
-	if ed, ok := request.Params.Arguments["edition"].(string); ok && ed != "" {
+	if ed, ok := request.GetArguments()["edition"].(string); ok && ed != "" {
 		edition = strings.ToLower(ed)
 	}
 
 	packageName := ""
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
+	if pkg, ok := request.GetArguments()["package"].(string); ok && pkg != "" {
 		packageName = strings.ToUpper(pkg)
 	}
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 
