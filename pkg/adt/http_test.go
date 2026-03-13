@@ -251,6 +251,37 @@ func TestTransport_Request_RetryOn401_POST(t *testing.T) {
 	}
 }
 
+func TestTransport_Request_RetryOn401_ReauthFails(t *testing.T) {
+	// Guards against regressions where a re-auth failure silently swallows the error
+	// or loses the original endpoint context. Simulates rotated/expired credentials.
+	mock := &mockHTTPClient{
+		responses: []*http.Response{
+			// Original GET → 401 (session expired)
+			newMockResponse(401, "Unauthorized", nil),
+			// fetchCSRFToken → also 401 (credentials no longer valid)
+			newMockResponse(401, "Unauthorized", nil),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "wrong-user", "wrong-pass")
+	transport := NewTransportWithClient(cfg, mock)
+
+	_, err := transport.Request(context.Background(), "/sap/bc/adt/test", nil)
+	if err == nil {
+		t.Fatal("Expected error when re-auth fails, got nil")
+	}
+
+	// Error must include the original path so callers know which endpoint triggered the 401
+	if !strings.Contains(err.Error(), "/sap/bc/adt/test") {
+		t.Errorf("Expected original path in error, got: %v", err)
+	}
+
+	// Only 2 requests: original GET + CSRF fetch attempt (no retry after failed re-auth)
+	if len(mock.requests) != 2 {
+		t.Fatalf("Expected 2 requests, got %d", len(mock.requests))
+	}
+}
+
 func TestTransport_Request_ErrorResponse(t *testing.T) {
 	mock := &mockHTTPClient{
 		responses: []*http.Response{
