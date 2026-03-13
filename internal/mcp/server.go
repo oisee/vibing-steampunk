@@ -112,7 +112,8 @@ func NewServer(cfg *Config) *Server {
 
 	// Configure safety settings
 	safety := adt.UnrestrictedSafetyConfig() // Default: unrestricted for backwards compatibility
-	if cfg.ReadOnly {
+	if cfg.ReadOnly || cfg.Mode == "readonly" {
+		// readonly mode implies ReadOnly safety (belt-and-suspenders)
 		safety.ReadOnly = true
 	}
 	if cfg.BlockFreeSQL {
@@ -204,8 +205,9 @@ func (s *Server) ServeStdio() error {
 }
 
 // registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
-// Mode "focused" registers essential tools.
-// Mode "expert" registers all tools.
+// Mode "focused" registers essential tools (81 tools).
+// Mode "expert" registers all tools (122 tools).
+// Mode "readonly" registers only read-only tools (~46 tools) and implicitly enables safety.ReadOnly.
 // DisabledGroups can disable specific tool groups using short codes:
 //   - "5" or "U" = UI5/BSP tools (3 tools, read-only)
 //   - "T" = Test tools: RunUnitTests, RunATCCheck (2 tools)
@@ -414,6 +416,87 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"InstallDummyTest": true, // Test tool for verifying Install* workflow
 	}
 
+	// Define readonly mode tool whitelist (~46 pure read-only tools).
+	// These tools only read from SAP and have no write side-effects.
+	// When mode is "readonly", safety.ReadOnly is also set to true (belt-and-suspenders).
+	readonlyTools := map[string]bool{
+		// Source reading (1)
+		"GetSource": true,
+
+		// Search (3)
+		"GrepObjects":  true,
+		"GrepPackages": true,
+		"SearchObject": true,
+
+		// Data / Metadata read (7)
+		"GetTable":           true,
+		"GetTableContents":   true,
+		"RunQuery":           true, // Can be blocked separately with --block-free-sql
+		"GetPackage":         true,
+		"GetFunctionGroup":   true,
+		"GetCDSDependencies": true,
+		"GetMessages":        true,
+
+		// Code intelligence (2)
+		"FindDefinition": true,
+		"FindReferences": true,
+
+		// Analysis – read-only (6)
+		"SyntaxCheck":        true,
+		"RunATCCheck":        true,
+		"GetInactiveObjects": true,
+		"CompareSource":      true,
+		"GetClassInfo":       true,
+
+		// Export (read from SAP, write to local file) (1)
+		"ExportToFile": true,
+
+		// System information (2)
+		"GetSystemInfo":          true,
+		"GetInstalledComponents": true,
+
+		// Code analysis (7)
+		"GetCallGraph":       true,
+		"GetObjectStructure": true,
+		"GetCallersOf":       true,
+		"GetCalleesOf":       true,
+		"AnalyzeCallGraph":   true,
+		"CompareCallGraphs":  true,
+		"TraceExecution":     true,
+
+		// Runtime errors / Short dumps (2)
+		"ListDumps": true,
+		"GetDump":   true,
+
+		// ABAP Profiler / Traces (2)
+		"ListTraces": true,
+		"GetTrace":   true,
+
+		// SQL Trace / ST05 (2)
+		"GetSQLTraceState": true,
+		"ListSQLTraces":    true,
+
+		// Breakpoints – read only (1)
+		"GetBreakpoints": true,
+
+		// UI5/Fiori BSP – all three are already read-only (3)
+		"UI5ListApps":       true,
+		"UI5GetApp":         true,
+		"UI5GetFileContent": true,
+
+		// CTS/Transport – read only (2)
+		"ListTransports": true,
+		"GetTransport":   true,
+
+		// Git/abapGit – list types + export from SAP (2)
+		"GitTypes":  true,
+		"GitExport": true,
+
+		// Report metadata – read only (2)
+		"GetVariants":     true,
+		"GetTextElements": true,
+	}
+
 	// Helper to check if tool should be registered
 	shouldRegister := func(toolName string) bool {
 		// Priority 1: Check granular tool config from .vsp.json (highest priority)
@@ -427,10 +510,14 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			return false
 		}
 		// Priority 3: Check mode
-		if mode == "expert" {
+		switch mode {
+		case "expert":
 			return true // Expert mode: register all tools (except disabled)
+		case "readonly":
+			return readonlyTools[toolName] // Readonly mode: only read-only tools
+		default:
+			return focusedTools[toolName] // Focused mode: only whitelisted tools (except disabled)
 		}
-		return focusedTools[toolName] // Focused mode: only whitelisted tools (except disabled)
 	}
 
 	// Unified Tools (Focused Mode) - NEW
