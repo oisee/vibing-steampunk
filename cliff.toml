@@ -20,9 +20,8 @@ body = """
 
 {% for commit in commits %}\
 - {% if commit.scope %}**{{ commit.scope }}:** {% endif %}\
-{{ commit.message | upper_first }}\
-{% if commit.remote.username %} by @{{ commit.remote.username }}{% endif %}\
- ([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/oisee/vibing-steampunk/commit/{{ commit.id }}))
+{{ commit.message | upper_first }} \
+([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/oisee/vibing-steampunk/commit/{{ commit.id }}))
 {% endfor %}
 
 {% endfor %}\n
@@ -31,7 +30,7 @@ body = """
 trim = true
 footer = ""
 # Render the changelog even if there are no releases
-render_always = true
+render_always = false
 
 [git]
 conventional_commits = true
@@ -44,17 +43,12 @@ commit_preprocessors = [
 ]
 
 commit_parsers = [
-  { message = "^feat",               group = "Features"      },
-  { message = "^fix",                group = "Bug Fixes"     },
-  { message = "^docs",               group = "Documentation" },
-  { message = "^refactor",           group = "Refactoring"   },
-  { message = "^perf",               group = "Performance"   },
-  { message = "^test",               group = "Tests"         },
-  { message = "^chore\\(deps\\)",    group = "Dependencies"  },
-  { message = "^chore",              group = "Chores"        },
-  { message = "^revert",             group = "Reverts"       },
-  # Skip merge commits
-  { message = "^Merge",              skip = true             },
+  { message = "^feat",            group = "Features"    },
+  { message = "^fix",             group = "Bug Fixes"   },
+  { message = "^perf",            group = "Performance" },
+  { message = "^revert",          group = "Reverts"     },
+  # Skip everything else — docs, tests, chores, refactors, ci, build, etc.
+  { message = ".*",               skip = true           },
 ]
 
 protect_breaking_commits = false

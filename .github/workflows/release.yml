@@ -98,7 +98,8 @@ jobs:
 
       # ------------------------------------------------------------------ #
       # 6. Generate CHANGELOG.md and commit it
-      #    --tag sets the version header for unreleased commits
+      #    --tag assigns all commits since the previous tag to the new version,
+      #    so the output contains only released versions (no [Unreleased] block)
       # ------------------------------------------------------------------ #
       - name: Generate CHANGELOG.md
         run: |
