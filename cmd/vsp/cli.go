@@ -276,9 +276,18 @@ var sourceCmd = &cobra.Command{
 Examples:
   vsp -s a4h source CLAS ZCL_MY_CLASS
   vsp source PROG ZTEST_PROGRAM
-  vsp source INTF ZIF_MY_INTERFACE`,
+  vsp source INTF ZIF_MY_INTERFACE
+  vsp source FUNC MY_FUNCTION_MODULE --parent MY_FUNCTION_GROUP
+  vsp source CLAS ZCL_MY_CLASS --include testclasses
+  vsp source CLAS ZCL_MY_CLASS --method MY_METHOD`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSource,
+}
+
+func init() {
+	sourceCmd.Flags().String("parent", "", "Function group name (required for FUNC type)")
+	sourceCmd.Flags().String("include", "", "Class include type: definitions, implementations, macros, testclasses (CLAS only)")
+	sourceCmd.Flags().String("method", "", "Method name to retrieve only that METHOD...ENDMETHOD block (CLAS only)")
 }
 
 func runSource(cmd *cobra.Command, args []string) error {
@@ -294,8 +303,18 @@ func runSource(cmd *cobra.Command, args []string) error {
 	objType := strings.ToUpper(args[0])
 	name := strings.ToUpper(args[1])
 
+	parent, _ := cmd.Flags().GetString("parent")
+	include, _ := cmd.Flags().GetString("include")
+	method, _ := cmd.Flags().GetString("method")
+
+	opts := &adt.GetSourceOptions{
+		Parent:  parent,
+		Include: include,
+		Method:  method,
+	}
+
 	ctx := context.Background()
-	source, err := client.GetSource(ctx, objType, name, nil)
+	source, err := client.GetSource(ctx, objType, name, opts)
 	if err != nil {
 		return fmt.Errorf("failed to get source: %w", err)
 	}
