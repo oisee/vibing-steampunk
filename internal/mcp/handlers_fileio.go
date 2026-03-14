@@ -205,6 +205,11 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 		method = m
 	}
 
+	ignoreWarnings := false
+	if iw, ok := request.Params.Arguments["ignore_warnings"].(bool); ok {
+		ignoreWarnings = iw
+	}
+
 	transport := ""
 	if t, ok := request.Params.Arguments["transport"].(string); ok {
 		transport = t
@@ -213,6 +218,7 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 	opts := &adt.EditSourceOptions{
 		ReplaceAll:      replaceAll,
 		SyntaxCheck:     syntaxCheck,
+		IgnoreWarnings:  ignoreWarnings,
 		CaseInsensitive: caseInsensitive,
 		Method:          method,
 		Transport:       transport,
