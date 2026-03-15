@@ -227,7 +227,15 @@ func (s *Server) ServeHTTP(host string, port int) error {
 	mux.Handle("/", sseServer)
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.Printf("MCP SSE server listening on http://%s/sse", addr)
-	return http.ListenAndServe(addr, mux)
+	// WriteTimeout is intentionally omitted — SSE connections are long-lived.
+	// ReadHeaderTimeout guards against slowloris; IdleTimeout reclaims abandoned connections.
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
 
 // registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
