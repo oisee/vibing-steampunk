@@ -154,6 +154,32 @@ func TestServe_UsesHTTPStreamableTransport(t *testing.T) {
 	}
 }
 
+func TestServe_UsesConfigHTTPAddr(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.HTTPAddr = "0.0.0.0:9999"
+	s := NewServer(cfg)
+	var listenAddr string
+
+	installTransportHooks(
+		t,
+		func(_ *mcpserver.MCPServer) error { return nil },
+		func(_ *mcpserver.MCPServer, _ ...mcpserver.StreamableHTTPOption) streamableHTTPStarter {
+			return &mockStreamableServer{}
+		},
+	)
+	installListenHook(t, func(addr string, _ http.Handler) error {
+		listenAddr = addr
+		return nil
+	})
+
+	if err := s.Serve("http-streamable"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if listenAddr != "0.0.0.0:9999" {
+		t.Fatalf("expected Config.HTTPAddr %q to be used, got %q", "0.0.0.0:9999", listenAddr)
+	}
+}
+
 func TestServe_InvalidTransport(t *testing.T) {
 	s := NewServer(newTestConfig())
 

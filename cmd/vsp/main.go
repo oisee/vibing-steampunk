@@ -108,6 +108,7 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (81 essential tools) or expert (all 122 tools)")
 	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug (e.g., \"TH\" disables Tests and HANA)")
 	rootCmd.Flags().StringVar(&cfg.Transport, "transport", "stdio", "MCP transport: stdio or http-streamable")
+	rootCmd.Flags().StringVar(&cfg.HTTPAddr, "http-addr", "", "Listen address for http-streamable transport (default: 127.0.0.1:8080, use 0.0.0.0:8080 for Docker/remote)")
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default), "on", "off"
@@ -145,6 +146,7 @@ func init() {
 	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
 	viper.BindPFlag("disabled-groups", rootCmd.Flags().Lookup("disabled-groups"))
 	viper.BindPFlag("transport", rootCmd.Flags().Lookup("transport"))
+	viper.BindPFlag("http-addr", rootCmd.Flags().Lookup("http-addr"))
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Feature configuration
@@ -248,7 +250,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Create and start MCP server
 	server := mcp.NewServer(cfg)
 	if cfg.Verbose && cfg.Transport == "http-streamable" {
-		fmt.Fprintf(os.Stderr, "Starting MCP streamable HTTP server on http://%s%s\n", mcp.DefaultStreamableHTTPAddr, mcp.DefaultStreamableHTTPPath)
+		addr := cfg.HTTPAddr
+		if addr == "" {
+			addr = mcp.DefaultStreamableHTTPAddr
+		}
+		fmt.Fprintf(os.Stderr, "Starting MCP streamable HTTP server on http://%s%s\n", addr, mcp.DefaultStreamableHTTPPath)
 	}
 	return server.Serve(cfg.Transport)
 }
@@ -322,6 +328,13 @@ func resolveConfig(cmd *cobra.Command) {
 	if !cmd.Flags().Changed("transport") {
 		if envTransport := viper.GetString("TRANSPORT"); envTransport != "" {
 			cfg.Transport = envTransport
+		}
+	}
+
+	// HTTPAddr: flag > SAP_HTTP_ADDR env > default (empty = 127.0.0.1:8080)
+	if !cmd.Flags().Changed("http-addr") {
+		if envAddr := viper.GetString("HTTP_ADDR"); envAddr != "" {
+			cfg.HTTPAddr = envAddr
 		}
 	}
 

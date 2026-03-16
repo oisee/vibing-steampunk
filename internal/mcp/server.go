@@ -94,6 +94,10 @@ type Config struct {
 	// Transport mode: stdio (default) or http-streamable
 	Transport string
 
+	// HTTPAddr is the listen address for the http-streamable transport (default: 127.0.0.1:8080).
+	// Set to 0.0.0.0:8080 when running in Docker or to accept remote connections.
+	HTTPAddr string
+
 	// Safety configuration
 	ReadOnly         bool
 	BlockFreeSQL     bool
@@ -229,12 +233,17 @@ func parseFeatureMode(s string) adt.FeatureMode {
 }
 
 // Serve starts the MCP server using the selected transport.
+// For http-streamable, the listen address is taken from Config.HTTPAddr (falling back to DefaultStreamableHTTPAddr).
 func (s *Server) Serve(transport string) error {
 	switch strings.ToLower(strings.TrimSpace(transport)) {
 	case "", "stdio":
 		return s.ServeStdio()
 	case "http-streamable":
-		return s.ServeStreamableHTTP(DefaultStreamableHTTPAddr)
+		addr := s.config.HTTPAddr
+		if strings.TrimSpace(addr) == "" {
+			addr = DefaultStreamableHTTPAddr
+		}
+		return s.ServeStreamableHTTP(addr)
 	default:
 		return fmt.Errorf("unsupported transport: %s (must be 'stdio' or 'http-streamable')", transport)
 	}
