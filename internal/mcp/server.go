@@ -302,6 +302,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		"GetFunctionGroup":    true, // Metadata: function module list
 		"GetCDSDependencies":  true, // CDS dependency tree
 		"GetMessages":         true, // Message class texts (SE91)
+		"GetAPIReleaseState":  true, // Release state information
 
 		// Code intelligence (2)
 		"FindDefinition":  true,
@@ -640,6 +641,17 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			mcp.Description("Name of the ABAP type"),
 		),
 	), s.handleGetTypeInfo)
+	}
+
+	// GetAPIReleaseState
+	if shouldRegister("GetAPIReleaseState") {
+		s.mcpServer.AddTool(mcp.NewTool("GetAPIReleaseState",
+			mcp.WithDescription("Get release state information for ABAP APIs (classes, methods, function modules). Returns whether API is released, neccessary for clean-core validation"),
+			mcp.WithString("object_name",
+			mcp.Required(),
+			mcp.Description("FQN/URI of the object. Can be retrieved via SearchObject. Example /sap/bc/adt/oo/classes/zcl_classname"),
+			),
+		), s.handleGetAPIReleaseState)
 	}
 
 
