@@ -318,6 +318,8 @@ func isSameOriginHost(originHost, serverHost string) bool {
 //   - "G" = Git/abapGit tools (2 tools)
 //   - "R" = Report tools (4 tools)
 //   - "I" = Install tools (4 tools)
+//   - "W" = Write/modify tools (all tools that create, update, delete, or execute code)
+//           Use with SAP_READ_ONLY=true for a clean read-only context with no write tools visible.
 //   - "X" = EXPERIMENTAL: All debugger + RunReport (17 tools) - use to disable unreliable features
 //
 // toolsConfig from .vsp.json has highest priority:
@@ -368,6 +370,37 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
 			// RunReport - requires ZADT_VSP, APC context limitations
 			"RunReport",
+		},
+		"W": { // Write/modify tools — hide these for a clean read-only context
+			// Source editing
+			"WriteSource", "EditSource", "UpdateSource",
+			"WriteProgram", "WriteClass", "UpdateClassInclude",
+			// Object lifecycle
+			"CreateObject", "DeleteObject", "RenameObject", "MoveObject", "CloneObject",
+			"CreatePackage", "CreateTable", "CreateTestInclude",
+			"CreateAndActivateProgram", "CreateClassWithTests",
+			// Lock/Unlock (needed only before writing)
+			"LockObject", "UnlockObject",
+			// Activation
+			"Activate", "ActivatePackage",
+			// Code formatting (writes source)
+			"PrettyPrint", "SetPrettyPrinterSettings",
+			// Text elements write
+			"SetTextElements",
+			// File import / deploy
+			"ImportFromFile", "DeployFromFile",
+			// Code execution
+			"ExecuteABAP", "CallRFC",
+			// Breakpoints (state changes)
+			"SetBreakpoint", "DeleteBreakpoint", "AMDPSetBreakpoint",
+			// OData service publishing
+			"PublishServiceBinding", "UnpublishServiceBinding",
+			// Transport writes (Create/Release/Delete — read ops ListTransports/GetTransport kept)
+			"CreateTransport", "ReleaseTransport", "DeleteTransport",
+			// Install/deploy tools
+			"InstallZADTVSP", "InstallAbapGit", "InstallDummyTest",
+			// UI5 write ops
+			"UI5UploadFile", "UI5DeleteFile", "UI5CreateApp", "UI5DeleteApp",
 		},
 	}
 	// Map "U" to same tools as "5"
