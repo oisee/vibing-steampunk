@@ -128,12 +128,27 @@ func (s *Server) handleGetTableContents(ctx context.Context, request mcp.CallToo
 		maxRows = int(mr)
 	}
 
+	offset := 0
+	if o, ok := request.Params.Arguments["offset"].(float64); ok && o > 0 {
+		offset = int(o)
+	}
+
 	sqlQuery := ""
 	if sq, ok := request.Params.Arguments["sql_query"].(string); ok {
 		sqlQuery = sq
 	}
 
-	contents, err := s.adtClient.GetTableContents(ctx, tableName, maxRows, sqlQuery)
+	columnsOnly := false
+	if co, ok := request.Params.Arguments["columns_only"].(bool); ok {
+		columnsOnly = co
+	}
+
+	contents, err := s.adtClient.GetTableContentsWithOptions(ctx, tableName, &adt.GetTableContentsOptions{
+		MaxRows:     maxRows,
+		Offset:      offset,
+		SQLFilter:   sqlQuery,
+		ColumnsOnly: columnsOnly,
+	})
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get table contents: %v", err)), nil
 	}

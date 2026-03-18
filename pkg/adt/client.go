@@ -609,37 +609,92 @@ type TableColumn struct {
 	IsKey       bool
 }
 
+// GetTableContentsOptions provides optional parameters for GetTableContents.
+type GetTableContentsOptions struct {
+	MaxRows     int    // Maximum rows to retrieve (default 100)
+	Offset      int    // Skip first N rows from results (default 0)
+	SQLFilter   string // Optional ABAP SQL WHERE clause or full SELECT
+	ColumnsOnly bool   // If true, return only column metadata (no data rows)
+}
+
 // GetTableContents retrieves data from a database table.
 // Optional sqlQuery can be a full SELECT statement to filter/transform results
 // (e.g., "SELECT * FROM T000 WHERE MANDT = '001'").
 func (c *Client) GetTableContents(ctx context.Context, tableName string, maxRows int, sqlFilter string) (*TableContentsResult, error) {
+	return c.GetTableContentsWithOptions(ctx, tableName, &GetTableContentsOptions{
+		MaxRows:   maxRows,
+		SQLFilter: sqlFilter,
+	})
+}
+
+// GetTableContentsWithOptions retrieves data from a database table with extended options.
+func (c *Client) GetTableContentsWithOptions(ctx context.Context, tableName string, opts *GetTableContentsOptions) (*TableContentsResult, error) {
 	tableName = strings.ToUpper(tableName)
+	if opts == nil {
+		opts = &GetTableContentsOptions{}
+	}
+
+	maxRows := opts.MaxRows
 	if maxRows <= 0 {
 		maxRows = 100
 	}
 
+	// For columns_only, we still need to query but with minimal rows
+	if opts.ColumnsOnly {
+		maxRows = 1
+	}
+
+	// Request extra rows to handle offset client-side
+	fetchRows := maxRows
+	if opts.Offset > 0 {
+		fetchRows = maxRows + opts.Offset
+	}
+
 	params := url.Values{}
-	params.Set("rowNumber", fmt.Sprintf("%d", maxRows))
+	params.Set("rowNumber", fmt.Sprintf("%d", fetchRows))
 	params.Set("ddicEntityName", tableName)
 
-	opts := &RequestOptions{
+	reqOpts := &RequestOptions{
 		Method: http.MethodPost,
 		Query:  params,
 		Accept: "application/*",
 	}
 
 	// Add SQL filter as request body if provided
-	if sqlFilter != "" {
-		opts.Body = []byte(sqlFilter)
-		opts.ContentType = "text/plain"
+	if opts.SQLFilter != "" {
+		reqOpts.Body = []byte(opts.SQLFilter)
+		reqOpts.ContentType = "text/plain"
 	}
 
-	resp, err := c.transport.Request(ctx, "/sap/bc/adt/datapreview/ddic", opts)
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/datapreview/ddic", reqOpts)
 	if err != nil {
 		return nil, fmt.Errorf("getting table contents: %w", err)
 	}
 
-	return parseTableContents(resp.Body)
+	result, err := parseTableContents(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply columns_only: strip all rows
+	if opts.ColumnsOnly {
+		result.Rows = nil
+		return result, nil
+	}
+
+	// Apply offset: skip first N rows
+	if opts.Offset > 0 && opts.Offset < len(result.Rows) {
+		result.Rows = result.Rows[opts.Offset:]
+	} else if opts.Offset >= len(result.Rows) {
+		result.Rows = nil
+	}
+
+	// Trim to requested max_rows after offset
+	if len(result.Rows) > maxRows {
+		result.Rows = result.Rows[:maxRows]
+	}
+
+	return result, nil
 }
 
 // RunQuery executes a freestyle SQL query against the SAP database.
