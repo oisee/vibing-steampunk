@@ -22,7 +22,7 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 	}
 
 	// Parse parameters
-	report, _ := request.Params.Arguments["report"].(string)
+	report, _ := request.GetArguments()["report"].(string)
 	if report == "" {
 		return newToolResultError("report parameter is required"), nil
 	}
@@ -31,11 +31,11 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 		Report: report,
 	}
 
-	if variant, ok := request.Params.Arguments["variant"].(string); ok {
+	if variant, ok := request.GetArguments()["variant"].(string); ok {
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
+	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
 		var p map[string]string
 		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
 			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
@@ -110,7 +110,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 	}
 
 	// Parse parameters
-	report, _ := request.Params.Arguments["report"].(string)
+	report, _ := request.GetArguments()["report"].(string)
 	if report == "" {
 		return newToolResultError("report parameter is required"), nil
 	}
@@ -119,11 +119,11 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 		Report: report,
 	}
 
-	if variant, ok := request.Params.Arguments["variant"].(string); ok {
+	if variant, ok := request.GetArguments()["variant"].(string); ok {
 		params.Variant = variant
 	}
 
-	if paramsStr, ok := request.Params.Arguments["params"].(string); ok && paramsStr != "" {
+	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
 		var p map[string]string
 		if err := json.Unmarshal([]byte(paramsStr), &p); err != nil {
 			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
@@ -247,12 +247,12 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleGetAsyncResult(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	taskID, _ := request.Params.Arguments["task_id"].(string)
+	taskID, _ := request.GetArguments()["task_id"].(string)
 	if taskID == "" {
 		return newToolResultError("task_id parameter is required"), nil
 	}
 
-	wait, _ := request.Params.Arguments["wait"].(bool)
+	wait, _ := request.GetArguments()["wait"].(bool)
 
 	if wait {
 		// Block until complete or timeout
@@ -306,7 +306,7 @@ func (s *Server) handleGetVariants(ctx context.Context, request mcp.CallToolRequ
 		return errResult, nil
 	}
 
-	report, _ := request.Params.Arguments["report"].(string)
+	report, _ := request.GetArguments()["report"].(string)
 	if report == "" {
 		return newToolResultError("report parameter is required"), nil
 	}
@@ -339,12 +339,12 @@ func (s *Server) handleGetTextElements(ctx context.Context, request mcp.CallTool
 		return errResult, nil
 	}
 
-	program, _ := request.Params.Arguments["program"].(string)
+	program, _ := request.GetArguments()["program"].(string)
 	if program == "" {
 		return newToolResultError("program parameter is required"), nil
 	}
 
-	language, _ := request.Params.Arguments["language"].(string)
+	language, _ := request.GetArguments()["language"].(string)
 
 	result, err := s.amdpWSClient.GetTextElements(ctx, program, language)
 	if err != nil {
@@ -381,7 +381,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 		return errResult, nil
 	}
 
-	program, _ := request.Params.Arguments["program"].(string)
+	program, _ := request.GetArguments()["program"].(string)
 	if program == "" {
 		return newToolResultError("program parameter is required"), nil
 	}
@@ -390,11 +390,11 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 		Program: program,
 	}
 
-	if language, ok := request.Params.Arguments["language"].(string); ok {
+	if language, ok := request.GetArguments()["language"].(string); ok {
 		params.Language = language
 	}
 
-	if selTextsStr, ok := request.Params.Arguments["selection_texts"].(string); ok && selTextsStr != "" {
+	if selTextsStr, ok := request.GetArguments()["selection_texts"].(string); ok && selTextsStr != "" {
 		var selTexts map[string]string
 		if err := json.Unmarshal([]byte(selTextsStr), &selTexts); err != nil {
 			return newToolResultError(fmt.Sprintf("Invalid selection_texts JSON: %v", err)), nil
@@ -402,7 +402,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 		params.SelectionTexts = selTexts
 	}
 
-	if textSymsStr, ok := request.Params.Arguments["text_symbols"].(string); ok && textSymsStr != "" {
+	if textSymsStr, ok := request.GetArguments()["text_symbols"].(string); ok && textSymsStr != "" {
 		var textSyms map[string]string
 		if err := json.Unmarshal([]byte(textSymsStr), &textSyms); err != nil {
 			return newToolResultError(fmt.Sprintf("Invalid text_symbols JSON: %v", err)), nil
@@ -410,7 +410,7 @@ func (s *Server) handleSetTextElements(ctx context.Context, request mcp.CallTool
 		params.TextSymbols = textSyms
 	}
 
-	if headTextsStr, ok := request.Params.Arguments["heading_texts"].(string); ok && headTextsStr != "" {
+	if headTextsStr, ok := request.GetArguments()["heading_texts"].(string); ok && headTextsStr != "" {
 		var headTexts map[string]string
 		if err := json.Unmarshal([]byte(headTextsStr), &headTexts); err != nil {
 			return newToolResultError(fmt.Sprintf("Invalid heading_texts JSON: %v", err)), nil

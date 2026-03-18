@@ -4,6 +4,9 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +15,30 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+const (
+	// DefaultStreamableHTTPAddr is the default listen address for streamable HTTP transport.
+	DefaultStreamableHTTPAddr = "127.0.0.1:8080"
+	// DefaultStreamableHTTPPath is the MCP endpoint path for streamable HTTP transport.
+	DefaultStreamableHTTPPath = "/mcp"
+)
+
+type streamableHTTPStarter interface {
+	http.Handler
+	Start(addr string) error
+}
+
+var serveStdioFunc = func(mcpServer *server.MCPServer) error {
+	return server.ServeStdio(mcpServer)
+}
+
+var newStreamableHTTPServerFunc = func(mcpServer *server.MCPServer, opts ...server.StreamableHTTPOption) streamableHTTPStarter {
+	return server.NewStreamableHTTPServer(mcpServer, opts...)
+}
+
+var listenAndServeFunc = func(addr string, handler http.Handler) error {
+	return (&http.Server{Addr: addr, Handler: handler}).ListenAndServe()
+}
 
 // AsyncTask represents a background task status.
 type AsyncTask struct {
@@ -63,6 +90,13 @@ type Config struct {
 	// 5/U = UI5/BSP tools, T = Test tools, H = HANA/AMDP debugger, D = ABAP Debugger
 	// Example: "TH" disables Tests and HANA debugger tools
 	DisabledGroups string
+
+	// Transport mode: stdio (default) or http-streamable
+	Transport string
+
+	// HTTPAddr is the listen address for the http-streamable transport (default: 127.0.0.1:8080).
+	// Set to 0.0.0.0:8080 when running in Docker or to accept remote connections.
+	HTTPAddr string
 
 	// Safety configuration
 	ReadOnly         bool
@@ -198,9 +232,78 @@ func parseFeatureMode(s string) adt.FeatureMode {
 	}
 }
 
+// Serve starts the MCP server using the selected transport.
+// For http-streamable, the listen address is taken from Config.HTTPAddr (falling back to DefaultStreamableHTTPAddr).
+func (s *Server) Serve(transport string) error {
+	switch strings.ToLower(strings.TrimSpace(transport)) {
+	case "", "stdio":
+		return s.ServeStdio()
+	case "http-streamable":
+		addr := s.config.HTTPAddr
+		if strings.TrimSpace(addr) == "" {
+			addr = DefaultStreamableHTTPAddr
+		}
+		return s.ServeStreamableHTTP(addr)
+	default:
+		return fmt.Errorf("unsupported transport: %s (must be 'stdio' or 'http-streamable')", transport)
+	}
+}
+
 // ServeStdio starts the MCP server on stdin/stdout.
 func (s *Server) ServeStdio() error {
-	return server.ServeStdio(s.mcpServer)
+	return serveStdioFunc(s.mcpServer)
+}
+
+// ServeStreamableHTTP starts the MCP server using streamable HTTP transport.
+// It validates the Origin header on all incoming connections to prevent DNS rebinding attacks,
+// as required by the MCP specification:
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
+func (s *Server) ServeStreamableHTTP(addr string) error {
+	if strings.TrimSpace(addr) == "" {
+		addr = DefaultStreamableHTTPAddr
+	}
+
+	mcpHandler := newStreamableHTTPServerFunc(
+		s.mcpServer,
+		server.WithEndpointPath(DefaultStreamableHTTPPath),
+	)
+
+	mux := http.NewServeMux()
+	mux.Handle(DefaultStreamableHTTPPath, originValidationMiddleware(addr, mcpHandler))
+	return listenAndServeFunc(addr, mux)
+}
+
+// originValidationMiddleware returns an HTTP handler that validates the Origin header
+// on incoming requests to prevent DNS rebinding attacks per the MCP specification.
+// Requests without an Origin header are allowed (same-origin browser requests omit it).
+// Requests with an Origin whose host does not match the server's host are rejected with 403.
+func originValidationMiddleware(serverAddr string, next http.Handler) http.Handler {
+	serverHost, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		serverHost = serverAddr
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, parseErr := url.Parse(origin)
+			if parseErr != nil || !isSameOriginHost(u.Hostname(), serverHost) {
+				http.Error(w, "Forbidden: invalid Origin header", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isSameOriginHost reports whether originHost is the same logical host as serverHost,
+// treating 127.0.0.1, ::1 and localhost as equivalent.
+func isSameOriginHost(originHost, serverHost string) bool {
+	normalize := func(h string) string {
+		if h == "127.0.0.1" || h == "::1" {
+			return "localhost"
+		}
+		return h
+	}
+	return normalize(originHost) == normalize(serverHost)
 }
 
 // registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
@@ -215,6 +318,8 @@ func (s *Server) ServeStdio() error {
 //   - "G" = Git/abapGit tools (2 tools)
 //   - "R" = Report tools (4 tools)
 //   - "I" = Install tools (4 tools)
+//   - "W" = Write/modify tools (all tools that create, update, delete, or execute code)
+//           Use with SAP_READ_ONLY=true for a clean read-only context with no write tools visible.
 //   - "X" = EXPERIMENTAL: All debugger + RunReport (17 tools) - use to disable unreliable features
 //
 // toolsConfig from .vsp.json has highest priority:
@@ -266,6 +371,37 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 			"AMDPDebuggerStep", "AMDPGetVariables", "AMDPSetBreakpoint", "AMDPGetBreakpoints",
 			// RunReport - requires ZADT_VSP, APC context limitations
 			"RunReport",
+		},
+		"W": { // Write/modify tools — hide these for a clean read-only context
+			// Source editing
+			"WriteSource", "EditSource", "UpdateSource",
+			"WriteProgram", "WriteClass", "UpdateClassInclude",
+			// Object lifecycle
+			"CreateObject", "DeleteObject", "RenameObject", "MoveObject", "CloneObject",
+			"CreatePackage", "CreateTable", "CreateTestInclude",
+			"CreateAndActivateProgram", "CreateClassWithTests",
+			// Lock/Unlock (needed only before writing)
+			"LockObject", "UnlockObject",
+			// Activation
+			"Activate", "ActivatePackage",
+			// Code formatting (writes source)
+			"PrettyPrint", "SetPrettyPrinterSettings",
+			// Text elements write
+			"SetTextElements",
+			// File import / deploy
+			"ImportFromFile", "DeployFromFile",
+			// Code execution
+			"ExecuteABAP", "CallRFC",
+			// Breakpoints (state changes)
+			"SetBreakpoint", "DeleteBreakpoint", "AMDPSetBreakpoint",
+			// OData service publishing
+			"PublishServiceBinding", "UnpublishServiceBinding",
+			// Transport writes (Create/Release/Delete — read ops ListTransports/GetTransport kept)
+			"CreateTransport", "ReleaseTransport", "DeleteTransport",
+			// Install/deploy tools
+			"InstallZADTVSP", "InstallAbapGit", "InstallDummyTest",
+			// UI5 write ops
+			"UI5UploadFile", "UI5DeleteFile", "UI5CreateApp", "UI5DeleteApp",
 		},
 	}
 	// Map "U" to same tools as "5"

@@ -107,6 +107,8 @@ func init() {
 	// Mode options
 	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (81 essential tools) or expert (all 122 tools)")
 	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug (e.g., \"TH\" disables Tests and HANA)")
+	rootCmd.Flags().StringVar(&cfg.Transport, "transport", "stdio", "MCP transport: stdio or http-streamable")
+	rootCmd.Flags().StringVar(&cfg.HTTPAddr, "http-addr", "", "Listen address for http-streamable transport (default: 127.0.0.1:8080, use 0.0.0.0:8080 for Docker/remote)")
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default), "on", "off"
@@ -143,6 +145,8 @@ func init() {
 	viper.BindPFlag("allow-transportable-edits", rootCmd.Flags().Lookup("allow-transportable-edits"))
 	viper.BindPFlag("mode", rootCmd.Flags().Lookup("mode"))
 	viper.BindPFlag("disabled-groups", rootCmd.Flags().Lookup("disabled-groups"))
+	viper.BindPFlag("transport", rootCmd.Flags().Lookup("transport"))
+	viper.BindPFlag("http-addr", rootCmd.Flags().Lookup("http-addr"))
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 
 	// Feature configuration
@@ -183,6 +187,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "[VERBOSE] Starting vsp server\n")
+		fmt.Fprintf(os.Stderr, "[VERBOSE] Transport: %s\n", cfg.Transport)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] Mode: %s\n", cfg.Mode)
 		if cfg.DisabledGroups != "" {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Disabled groups: %s (5/U=UI5, T=Tests, H=HANA, D=Debug)\n", cfg.DisabledGroups)
@@ -244,7 +249,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	// Create and start MCP server
 	server := mcp.NewServer(cfg)
-	return server.ServeStdio()
+	if cfg.Verbose && cfg.Transport == "http-streamable" {
+		addr := cfg.HTTPAddr
+		if addr == "" {
+			addr = mcp.DefaultStreamableHTTPAddr
+		}
+		fmt.Fprintf(os.Stderr, "Starting MCP streamable HTTP server on http://%s%s\n", addr, mcp.DefaultStreamableHTTPPath)
+	}
+	return server.Serve(cfg.Transport)
 }
 
 func resolveConfig(cmd *cobra.Command) {
@@ -309,6 +321,20 @@ func resolveConfig(cmd *cobra.Command) {
 	if !cmd.Flags().Changed("disabled-groups") {
 		if envGroups := viper.GetString("DISABLED_GROUPS"); envGroups != "" {
 			cfg.DisabledGroups = envGroups
+		}
+	}
+
+	// Transport: flag > SAP_TRANSPORT env > default (stdio)
+	if !cmd.Flags().Changed("transport") {
+		if envTransport := viper.GetString("TRANSPORT"); envTransport != "" {
+			cfg.Transport = envTransport
+		}
+	}
+
+	// HTTPAddr: flag > SAP_HTTP_ADDR env > default (empty = 127.0.0.1:8080)
+	if !cmd.Flags().Changed("http-addr") {
+		if envAddr := viper.GetString("HTTP_ADDR"); envAddr != "" {
+			cfg.HTTPAddr = envAddr
 		}
 	}
 
@@ -400,6 +426,15 @@ func validateConfig() error {
 	// Validate mode
 	if cfg.Mode != "focused" && cfg.Mode != "expert" {
 		return fmt.Errorf("invalid mode: %s (must be 'focused' or 'expert')", cfg.Mode)
+	}
+
+	// Validate transport
+	cfg.Transport = strings.ToLower(strings.TrimSpace(cfg.Transport))
+	if cfg.Transport == "" {
+		cfg.Transport = "stdio"
+	}
+	if cfg.Transport != "stdio" && cfg.Transport != "http-streamable" {
+		return fmt.Errorf("invalid transport: %s (must be 'stdio' or 'http-streamable')", cfg.Transport)
 	}
 
 	// Check if we have either basic auth or cookies will be processed

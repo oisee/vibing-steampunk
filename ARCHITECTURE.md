@@ -37,7 +37,7 @@ flowchart TB
         ADTApi[ADT REST API<br/>/sap/bc/adt/*]
     end
 
-    AI <-->|JSON-RPC/stdio| Server
+    AI <-->|MCP: JSON-RPC/stdio<br/>or Streamable HTTP| Server
     Modes --> Client2
     Modes --> CRUD
     Modes --> Dev
@@ -205,7 +205,7 @@ flowchart TD
 │                           MCP Client (Claude)                          │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
-                              JSON-RPC/stdio
+                       MCP transport (stdio or HTTP)
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -324,7 +324,7 @@ Entry point for the MCP server with full CLI support:
 - **godotenv** for .env file loading
 - Configuration priority: CLI flags > env vars > .env > defaults
 - Authentication: Basic auth or cookie-based (mutually exclusive)
-- Starts MCP server on stdio
+- Starts MCP server via selected transport (`stdio` default, or `http-streamable` via `--transport` / `SAP_TRANSPORT`)
 
 ### internal/mcp/server.go
 
