@@ -58,6 +58,10 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 		fmt.Fprintf(&sb, "  → %s\n", msg)
 	}
 
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	cleanupPkgSafety := s.adtClient.AllowPackageTemporarily(testPackage)
+	defer cleanupPkgSafety()
+
 	// Step 1: Check/Create package (upsert strategy)
 	step("Package Check/Create")
 	pkg, err := s.adtClient.GetPackage(ctx, testPackage)
@@ -356,6 +360,11 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultText(sb.String()), nil
 	}
 
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	// Install operations are self-contained bootstrap operations that should not be blocked.
+	cleanupPkgSafety := s.adtClient.AllowPackageTemporarily(packageName)
+	defer cleanupPkgSafety()
+
 	// Phase 2: Create package if needed
 	if !packageExists {
 		fmt.Fprintf(&sb, "Creating package %s...\n", packageName)
@@ -538,6 +547,10 @@ func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("  https://github.com/abapGit/abapGit\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	}
+
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	cleanupPkg := s.adtClient.AllowPackageTemporarily(packageName)
+	defer cleanupPkg()
 
 	// TODO: Implement actual deployment when ZIPs are embedded
 	// This is the workflow:
