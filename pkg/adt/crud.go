@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -286,9 +287,27 @@ func isLockConflictError(err error) bool {
 // Returns true if package exists, false otherwise.
 // Uses GetPackage (nodestructure API) which passes the package name as a query
 // parameter, avoiding URL path encoding issues with $ in local package names.
+// Server-side errors (5xx) are treated as "assume exists" to avoid false negatives
+// when the SAP system is temporarily under load.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
 	_, err := c.GetPackage(ctx, packageName)
-	return err == nil
+	if err == nil {
+		return true
+	}
+	// A 5xx server error means SAP is temporarily under load, not that the package
+	// is missing. Returning true lets CreateObject proceed and report the real SAP
+	// error. We detect 5xx two ways:
+	//   1. Structured APIError (status >= 500)
+	//   2. CSRF-token fetch failure (plain error containing "HTTP 5")
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode >= 500 {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "HTTP 5") || strings.Contains(msg, "status 5") {
+		return true
+	}
+	return false
 }
 
 // CreateObject creates a new ABAP object.
