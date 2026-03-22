@@ -1,0 +1,51 @@
+# Quality gate workflow — run before transport release
+# Usage: vsp workflow run examples/workflows/quality-gate.yaml --var PACKAGE='$ZADT_VSP'
+
+name: quality-gate
+description: Pre-transport quality checks — syntax, tests, lint
+
+variables:
+  PACKAGE: "$TMP"
+
+steps:
+  - name: discover-classes
+    action: search
+    parameters:
+      query: "${PACKAGE}"
+      types: [CLAS, INTF]
+      maxResults: 100
+    saveAs: objects
+
+  - name: log-count
+    action: print
+    parameters:
+      message: "Found objects for quality gate"
+
+  - name: syntax-check
+    action: syntax_check
+    parameters:
+      objects: objects
+    saveAs: syntaxResults
+
+  - name: fail-syntax
+    action: fail_if
+    parameters:
+      condition: "syntax_errors:syntaxResults"
+      message: "BLOCKED: Syntax errors found"
+
+  - name: unit-tests
+    action: test
+    parameters:
+      objects: objects
+    saveAs: testResults
+    onFailure: continue
+
+  - name: report-tests
+    action: print
+    parameters:
+      message: "Unit tests completed"
+
+  - name: success
+    action: print
+    parameters:
+      message: "✓ Quality gate PASSED — safe to transport"

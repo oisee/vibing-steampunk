@@ -184,6 +184,13 @@ Force Replay (Phase 5.5) - THE KILLER FEATURE:
   forceReplay(recordingId, [step]) Inject state from saved recording
   replayFromStep(stepNumber)      Inject state from current recording
 
+Query & Analysis:
+  query(sql, [maxRows])           Query SAP tables (returns table of rows)
+  lint(source)                    Run ABAP lint (returns table of issues)
+  parse(source)                   Parse ABAP into statements (returns table)
+  context(type, name, [maxDeps])  Get source with dependency context
+  systemInfo()                    Get SAP system information
+
 Utilities:
   print(...)                      Print values
   sleep(seconds)                  Sleep for N seconds
