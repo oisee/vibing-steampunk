@@ -1,6 +1,5 @@
 CLASS zcl_wasm_codegen DEFINITION PUBLIC FINAL CREATE PUBLIC.
   PUBLIC SECTION.
-    " Compile a parsed WASM module to ABAP source (single REPORT with FORMs)
     METHODS compile
       IMPORTING io_module  TYPE REF TO zcl_wasm_module
                 iv_name    TYPE string DEFAULT 'ZWASM_OUT'
