@@ -397,18 +397,17 @@ CLASS zcl_wasm_codegen IMPLEMENTATION.
     DATA(lv_saved) = mv_out.
     CLEAR mv_out.
     emit_instructions( is_func-code ).
-    " Close any unclosed blocks (from parse failures)
-    WHILE lines( mt_block_kinds ) > 0.
-      DATA(lv_bk) = mt_block_kinds[ lines( mt_block_kinds ) ].
-      DELETE mt_block_kinds INDEX lines( mt_block_kinds ).
-      mv_indent = mv_indent - 1.
-      CASE lv_bk.
-        WHEN c_block OR c_loop. line( |ENDDO.| ).
-        WHEN c_if. line( |ENDIF.| ).
-      ENDCASE.
-    ENDWHILE.
-    IF lv_has_result = abap_true AND mv_stack_depth > 0.
-      line( |rv = { peek( ) }.| ).
+    " If blocks remain unclosed, this function was partially parsed — discard body
+    IF lines( mt_block_kinds ) > 0.
+      CLEAR: mv_out, mt_block_kinds.
+      mv_indent = 1.
+      IF lv_has_result = abap_true.
+        line( |rv = 0.| ).
+      ENDIF.
+    ELSE.
+      IF lv_has_result = abap_true AND mv_stack_depth > 0.
+        line( |rv = { peek( ) }.| ).
+      ENDIF.
     ENDIF.
     flush( ).
     DATA(lv_body) = mv_out.
