@@ -87,6 +87,11 @@ type Config struct {
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
 
+	// Session keep-alive interval (0 = disabled)
+	// Sends periodic pings to prevent session timeout during idle periods.
+	// Useful for cookie/browser-auth where sessions expire server-side.
+	KeepAliveInterval time.Duration
+
 	// Granular tool visibility (from .vsp.json)
 	// Key: tool name, Value: true=enabled, false=disabled
 	// Takes highest priority over mode and disabled groups
@@ -182,6 +187,11 @@ func NewServer(cfg *Config) *Server {
 
 	// Register tools based on mode, disabled groups, and granular tool config
 	s.registerTools(cfg.Mode, cfg.DisabledGroups, cfg.ToolsConfig)
+
+	// Start session keep-alive if configured
+	if cfg.KeepAliveInterval > 0 {
+		adtClient.StartKeepAlive(cfg.KeepAliveInterval, cfg.Verbose)
+	}
 
 	return s
 }

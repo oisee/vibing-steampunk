@@ -7,12 +7,19 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Client is the main ADT API client.
 type Client struct {
 	transport *Transport
 	config    *Config
+
+	// Keep-alive goroutine management
+	keepAliveCancel context.CancelFunc
+	keepAliveDone   chan struct{}
+	keepAliveMu     sync.Mutex
 }
 
 // NewClient creates a new ADT client with the given configuration.
@@ -30,6 +37,71 @@ func NewClientWithTransport(cfg *Config, transport *Transport) *Client {
 	return &Client{
 		transport: transport,
 		config:    cfg,
+	}
+}
+
+// StartKeepAlive starts a background goroutine that periodically pings the SAP server
+// to keep the session alive. This is especially useful for cookie/browser-auth sessions
+// which can time out during idle periods. The interval should be shorter than the SAP
+// server's session timeout. A reasonable default is 5 minutes.
+// Calling StartKeepAlive again stops any existing keep-alive before starting a new one.
+func (c *Client) StartKeepAlive(interval time.Duration, verbose bool) {
+	c.keepAliveMu.Lock()
+	defer c.keepAliveMu.Unlock()
+
+	// Stop existing keep-alive if running
+	c.stopKeepAliveLocked()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.keepAliveCancel = cancel
+	c.keepAliveDone = make(chan struct{})
+
+	go func() {
+		defer close(c.keepAliveDone)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		if verbose {
+			fmt.Fprintf(LogOutput, "[KEEPALIVE] Started (interval: %s)\n", interval)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				if verbose {
+					fmt.Fprintf(LogOutput, "[KEEPALIVE] Stopped\n")
+				}
+				return
+			case <-ticker.C:
+				if err := c.transport.Ping(ctx); err != nil {
+					if ctx.Err() != nil {
+						return // context cancelled, expected
+					}
+					if verbose {
+						fmt.Fprintf(LogOutput, "[KEEPALIVE] Ping failed: %v\n", err)
+					}
+				} else if verbose {
+					fmt.Fprintf(LogOutput, "[KEEPALIVE] Ping OK\n")
+				}
+			}
+		}
+	}()
+}
+
+// StopKeepAlive stops the background keep-alive goroutine if running.
+func (c *Client) StopKeepAlive() {
+	c.keepAliveMu.Lock()
+	defer c.keepAliveMu.Unlock()
+	c.stopKeepAliveLocked()
+}
+
+// stopKeepAliveLocked stops the keep-alive goroutine. Must be called with keepAliveMu held.
+func (c *Client) stopKeepAliveLocked() {
+	if c.keepAliveCancel != nil {
+		c.keepAliveCancel()
+		<-c.keepAliveDone
+		c.keepAliveCancel = nil
+		c.keepAliveDone = nil
 	}
 }
 

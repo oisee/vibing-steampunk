@@ -101,6 +101,9 @@ func init() {
 	rootCmd.Flags().String("browser-exec", "", "Path to Chromium-based browser (default: auto-detect Edge, Chrome, Chromium)")
 	rootCmd.Flags().String("cookie-save", "", "Save browser auth cookies to file for reuse with --cookie-file")
 
+	// Session keep-alive
+	rootCmd.Flags().Duration("keepalive", 5*time.Minute, "Session keep-alive interval (e.g., 60s, 5m). Prevents session timeout during idle periods. 0 = disabled")
+
 	// Safety options
 	rootCmd.Flags().BoolVar(&cfg.ReadOnly, "read-only", false, "Block all write operations (create, update, delete, activate)")
 	rootCmd.Flags().BoolVar(&cfg.BlockFreeSQL, "block-free-sql", false, "Block execution of arbitrary SQL queries via RunQuery")
@@ -144,6 +147,7 @@ func init() {
 	viper.BindPFlag("browser-auth-timeout", rootCmd.Flags().Lookup("browser-auth-timeout"))
 	viper.BindPFlag("browser-exec", rootCmd.Flags().Lookup("browser-exec"))
 	viper.BindPFlag("cookie-save", rootCmd.Flags().Lookup("cookie-save"))
+	viper.BindPFlag("keepalive", rootCmd.Flags().Lookup("keepalive"))
 	viper.BindPFlag("read-only", rootCmd.Flags().Lookup("read-only"))
 	viper.BindPFlag("block-free-sql", rootCmd.Flags().Lookup("block-free-sql"))
 	viper.BindPFlag("allowed-ops", rootCmd.Flags().Lookup("allowed-ops"))
@@ -237,6 +241,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 		if !cfg.ReadOnly && !cfg.BlockFreeSQL && cfg.AllowedOps == "" && cfg.DisallowedOps == "" && len(cfg.AllowedPackages) == 0 {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Safety: UNRESTRICTED (no safety checks active)\n")
+		}
+		if cfg.KeepAliveInterval > 0 {
+			fmt.Fprintf(os.Stderr, "[VERBOSE] Session keep-alive: %s\n", cfg.KeepAliveInterval)
 		}
 	}
 
@@ -408,6 +415,17 @@ func resolveConfig(cmd *cobra.Command) {
 		if v := viper.GetString("TERMINAL_ID"); v != "" {
 			cfg.TerminalID = v
 		}
+	}
+
+	// Keep-alive interval: flag > SAP_KEEPALIVE env
+	if !cmd.Flags().Changed("keepalive") {
+		if v := viper.GetString("KEEPALIVE"); v != "" {
+			if d, err := time.ParseDuration(v); err == nil {
+				cfg.KeepAliveInterval = d
+			}
+		}
+	} else {
+		cfg.KeepAliveInterval, _ = cmd.Flags().GetDuration("keepalive")
 	}
 }
 

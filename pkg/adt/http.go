@@ -473,3 +473,9 @@ func IsSessionExpiredError(err error) bool {
 	}
 	return false
 }
+
+// Ping sends a lightweight HEAD request to /sap/bc/adt/core/discovery to keep the session alive.
+// It refreshes the CSRF token as a side effect.
+func (t *Transport) Ping(ctx context.Context) error {
+	return t.fetchCSRFToken(ctx)
+}
