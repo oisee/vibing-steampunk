@@ -113,16 +113,76 @@ The AI only sends/receives the method block (~30 lines). vsp fetches the full cl
 
 > *Built-in ABAP parser based on [abaplint](https://github.com/abaplint/abaplint) by [Lars Hvam](https://github.com/larshp) — the same parser that powers abaplint's 392 ABAP statement types.*
 
+### Native Go ABAP Lexer — abaplint in Go
+
+The [abaplint](https://github.com/abaplint/abaplint) lexer has been mechanically ported from TypeScript to native Go (`pkg/abaplint`). This is the same lexer that powers abaplint — 48 token types, all 6 lexer modes (normal, string, backtick, template, comment, pragma), with full whitespace-context encoding.
+
+**Verified via oracle-based differential testing** against the real TypeScript abaplint:
+
+```
+=== DIFFERENTIAL KPI ===
+Files:   29/29 passed (100.0%)
+Tokens:  22,612 total
+  Full match:  22,612 (100.0%)  — str + type + row + col
+  Str match:   22,612 (100.0%)
+  Type match:  22,612 (100.0%)
+  Pos match:   22,612 (100.0%)
+```
+
+Zero dependencies, zero FFI. Pure Go, ~3.5M tokens/sec, ready for lint rules in Phase 2.
+
 ### ABAP LSP — Real-Time Diagnostics
 
 `vsp lsp --stdio` gives Claude Code (and other editors) **automatic** error detection and navigation for ABAP files. No explicit tool calls — the LSP pushes diagnostics on every save and compressed dependency context on file open.
 
 See [LSP setup](#abap-lsp-for-claude-code) for configuration.
 
+### WASM-to-ABAP Compiler — Run Any Language on SAP
+
+Compile WebAssembly binaries to native ABAP. Three paths, one goal:
+
+```
+.wasm binary → pkg/wasmcomp (Go)  → ABAP source files     ← AOT compiler
+.ts source   → pkg/ts2abap (Go)   → clean OO ABAP classes  ← direct transpiler
+.wasm binary → zcl_wasm_compiler  → ABAP (on SAP itself!)  ← self-hosting, 785 lines
+```
+
+**Proven on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP.
+
+| What | Size | Status |
+|------|:----:|:------:|
+| QuickJS → ABAP | 101K lines | Compiled |
+| abaplint → ABAP | 396K lines | Compiled |
+| abaplint lexer (TS→ABAP) | 495 lines | Running on SAP |
+| Self-hosting compiler | 785 lines | Running on SAP |
+| Batch deploy | `vsp deploy *.clas.abap` | 40 classes, 0 failures |
+
+> *Branch: `feat/wasm-abap`. See [reports/2026-03-20-001](reports/2026-03-20-001-wasm-abap-achievement.md) for full details.*
+
+### Full CLI Toolchain — SAP from the Terminal
+
+28 commands. No SAP GUI, no Eclipse, no IDE. Most work with standard ADT; `lint`/`parse`/`compile` work fully offline.
+
+```bash
+vsp query T000 --top 5                           # query tables
+vsp grep "SELECT.*mara" --package '$TMP'          # search source code
+vsp graph CLAS ZCL_FOO --direction callers        # who uses this class?
+vsp deps '$ZFINANCE' --format summary             # transport readiness check
+vsp lint --file myclass.clas.abap                 # offline ABAP linter
+vsp compile wasm program.wasm --class ZCL_DEMO    # WASM→ABAP compiler
+vsp parse --stdin --format json < source.abap     # ABAP parser
+vsp context CLAS ZCL_FOO --depth 2                # compressed deps (2 levels)
+vsp system info                                   # system version + ZADT_VSP check
+```
+
+`graph` and `deps` use WBCROSSGT/CROSS tables as fallback when ADT call graph API is unavailable — works on any SAP system with ADT.
+
+See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature requirements matrix.
+
 ### Other Highlights
-- **CLI DevOps Surface**: Full ABAP DevOps from the terminal — `vsp source read/write/edit/context`, `vsp test`, `vsp atc`, `vsp deploy`, `vsp transport list/get`, `vsp install zadt-vsp/abapgit`. Pipe source code, script CI/CD pipelines, bootstrap SAP systems without MCP.
+- **Lua Scripting Engine**: `vsp lua` — interactive REPL + scripts with 50+ SAP bindings. Query tables, lint code, parse ABAP, debug with breakpoints, record execution, replay state. See [example scripts](examples/scripts/).
+- **YAML Workflows**: `vsp workflow run pipeline.yaml` — CI/CD automation with variable substitution, step chaining, and error handling. See [example workflows](examples/workflows/).
 - **Bootstrap from CLI**: `vsp install abapgit` + `vsp install zadt-vsp` — deploy dependencies to SAP systems directly from the command line. No SAP GUI needed.
-- **Codebase Decomposition**: `server.go` (2,539→256 lines), `workflows.go` (3,564→402 lines) split into domain-specific files. Easier to contribute, review, and maintain.
 
 ## Key Features
 

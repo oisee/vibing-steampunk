@@ -72,10 +72,12 @@ var contextCmd = &cobra.Command{
 	Use:   "context <type> <name>",
 	Short: "Get source with compressed dependency contracts",
 	Long: `Retrieve source code with auto-appended dependency contracts (shortcut for 'vsp source context').
+Use --depth 2 or 3 to expand transitive dependencies (deps of deps).
 
 Examples:
   vsp context CLAS ZCL_MY_CLASS
-  vsp context PROG ZTEST --max-deps 30`,
+  vsp context CLAS ZCL_FOO --max-deps 30
+  vsp context CLAS ZCL_DEEP --depth 2   # deps of deps`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSourceContext,
 }
@@ -250,7 +252,9 @@ func init() {
 
 	// Source context and context shortcut flags
 	sourceContextCmd.Flags().Int("max-deps", 20, "Maximum number of dependencies to resolve")
+	sourceContextCmd.Flags().Int("depth", 1, "Dependency expansion depth (1-3)")
 	contextCmd.Flags().Int("max-deps", 20, "Maximum number of dependencies to resolve")
+	contextCmd.Flags().Int("depth", 1, "Dependency expansion depth (1-3)")
 
 	// Test flags
 	testCmd.Flags().String("package", "", "Run tests for entire package")
@@ -436,9 +440,11 @@ func runSourceContext(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get source: %w", err)
 	}
 
+	depth, _ := cmd.Flags().GetInt("depth")
+
 	// Create adapter and compress
 	provider := ctxcomp.NewMultiSourceProvider("", &cliSourceAdapter{client: client})
-	compressor := ctxcomp.NewCompressor(provider, maxDeps)
+	compressor := ctxcomp.NewCompressor(provider, maxDeps).WithDepth(depth)
 	result, err := compressor.Compress(ctx, source, name, objType)
 	if err != nil {
 		return fmt.Errorf("context compression failed: %w", err)

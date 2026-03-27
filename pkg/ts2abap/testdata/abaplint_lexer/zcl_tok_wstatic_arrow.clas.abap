@@ -1,0 +1,4 @@
+CLASS zcl_tok_wstatic_arrow DEFINITION PUBLIC FINAL CREATE PUBLIC INHERITING FROM zcl_abstract_token.
+ENDCLASS.
+CLASS zcl_tok_wstatic_arrow IMPLEMENTATION.
+ENDCLASS.

@@ -1,0 +1,4 @@
+CLASS zcl_tok_paren_leftw DEFINITION PUBLIC FINAL CREATE PUBLIC INHERITING FROM zcl_abstract_token.
+ENDCLASS.
+CLASS zcl_tok_paren_leftw IMPLEMENTATION.
+ENDCLASS.

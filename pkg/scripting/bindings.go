@@ -5,7 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"context"
+
+	"github.com/oisee/vibing-steampunk/pkg/abaplint"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/ctxcomp"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -74,6 +78,13 @@ func (e *LuaEngine) registerADTBindings() {
 	// Force Replay (Phase 5.5)
 	e.L.SetGlobal("forceReplay", e.L.NewFunction(e.luaForceReplay))
 	e.L.SetGlobal("replayFromStep", e.L.NewFunction(e.luaReplayFromStep))
+
+	// Query & Analysis (new in v2.32)
+	e.L.SetGlobal("query", e.L.NewFunction(e.luaQuery))
+	e.L.SetGlobal("lint", e.L.NewFunction(e.luaLint))
+	e.L.SetGlobal("parse", e.L.NewFunction(e.luaParse))
+	e.L.SetGlobal("context", e.L.NewFunction(e.luaContext))
+	e.L.SetGlobal("systemInfo", e.L.NewFunction(e.luaSystemInfo))
 
 	// Diagnostics
 	e.L.SetGlobal("listDumps", e.L.NewFunction(e.luaGetDumps)) // New canonical name
@@ -1474,4 +1485,147 @@ func (e *LuaEngine) luaReplayFromStep(L *lua.LState) int {
 	L.Push(lua.LBool(true))
 	L.Push(lua.LNumber(injected))
 	return 2
+}
+
+// --- Query & Analysis (v2.32) ---
+
+// query(sql, [maxRows]) → table of rows
+func (e *LuaEngine) luaQuery(L *lua.LState) int {
+	sql := L.ToString(1)
+	maxRows := L.OptInt(2, 100)
+
+	result, err := e.client.RunQuery(e.ctx, sql, maxRows)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	tbl := L.NewTable()
+	for i, row := range result.Rows {
+		rowTbl := L.NewTable()
+		for _, col := range result.Columns {
+			val := fmt.Sprintf("%v", row[col.Name])
+			L.SetField(rowTbl, col.Name, lua.LString(val))
+		}
+		L.RawSetInt(tbl, i+1, rowTbl)
+	}
+
+	L.Push(tbl)
+	return 1
+}
+
+// lint(source) → table of issues
+func (e *LuaEngine) luaLint(L *lua.LState) int {
+	source := L.ToString(1)
+	if source == "" {
+		L.Push(lua.LNil)
+		return 1
+	}
+
+	linter := abaplint.NewLinter()
+	issues := linter.Run("lua", source)
+
+	tbl := L.NewTable()
+	for i, iss := range issues {
+		row := L.NewTable()
+		L.SetField(row, "key", lua.LString(iss.Key))
+		L.SetField(row, "message", lua.LString(iss.Message))
+		L.SetField(row, "row", lua.LNumber(iss.Row))
+		L.SetField(row, "col", lua.LNumber(iss.Col))
+		L.SetField(row, "severity", lua.LString(iss.Severity))
+		L.RawSetInt(tbl, i+1, row)
+	}
+
+	L.Push(tbl)
+	return 1
+}
+
+// parse(source) → table of statements
+func (e *LuaEngine) luaParse(L *lua.LState) int {
+	source := L.ToString(1)
+
+	lex := &abaplint.Lexer{}
+	tokens := lex.Run(source)
+	parser := &abaplint.StatementParser{}
+	stmts := parser.Parse(tokens)
+	matcher := abaplint.NewStatementMatcher()
+	matcher.ClassifyStatements(stmts)
+
+	tbl := L.NewTable()
+	for i, s := range stmts {
+		row := L.NewTable()
+		L.SetField(row, "type", lua.LString(s.Type))
+		L.SetField(row, "text", lua.LString(s.ConcatTokens()))
+		L.SetField(row, "tokens", lua.LNumber(len(s.Tokens)))
+		L.RawSetInt(tbl, i+1, row)
+	}
+
+	L.Push(tbl)
+	return 1
+}
+
+// context(objectType, name, [maxDeps]) → string (prologue + source)
+func (e *LuaEngine) luaContext(L *lua.LState) int {
+	objType := L.ToString(1)
+	name := L.ToString(2)
+	maxDeps := L.OptInt(3, 20)
+
+	source, err := e.client.GetSource(e.ctx, objType, name, nil)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	provider := ctxcomp.NewMultiSourceProvider("", &luaSourceAdapter{engine: e})
+	compressor := ctxcomp.NewCompressor(provider, maxDeps)
+	result, err := compressor.Compress(e.ctx, source, strings.ToUpper(name), strings.ToUpper(objType))
+	if err != nil {
+		L.Push(lua.LString(source))
+		return 1
+	}
+
+	output := ""
+	if result.Prologue != "" {
+		output = result.Prologue + "\n"
+	}
+	output += source
+
+	L.Push(lua.LString(output))
+	return 1
+}
+
+// systemInfo() → table
+func (e *LuaEngine) luaSystemInfo(L *lua.LState) int {
+	info, err := e.client.GetSystemInfo(e.ctx)
+	if err != nil {
+		L.Push(lua.LNil)
+		L.Push(lua.LString(err.Error()))
+		return 2
+	}
+
+	tbl := L.NewTable()
+	L.SetField(tbl, "systemId", lua.LString(info.SystemID))
+	L.SetField(tbl, "client", lua.LString(info.Client))
+	L.SetField(tbl, "sapRelease", lua.LString(info.SAPRelease))
+	L.SetField(tbl, "kernelRelease", lua.LString(info.KernelRelease))
+	L.SetField(tbl, "databaseSystem", lua.LString(info.DatabaseSystem))
+	L.SetField(tbl, "hostName", lua.LString(info.HostName))
+
+	L.Push(tbl)
+	return 1
+}
+
+// luaSourceAdapter wraps the Lua engine's client for ctxcomp.ADTSourceFetcher.
+type luaSourceAdapter struct {
+	engine *LuaEngine
+}
+
+func (a *luaSourceAdapter) GetSource(ctx context.Context, objectType, name string, opts interface{}) (string, error) {
+	var adtOpts *adt.GetSourceOptions
+	if o, ok := opts.(*adt.GetSourceOptions); ok {
+		adtOpts = o
+	}
+	return a.engine.client.GetSource(ctx, objectType, name, adtOpts)
 }

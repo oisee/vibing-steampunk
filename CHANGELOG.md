@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.32.0] - 2026-03-22
+### Features
+
+- **CLI Toolchain** — 28 commands, full ABAP DevOps from the terminal:
+  - `vsp query <table> --top N --where "..."` — query SAP tables
+  - `vsp grep <pattern> --package PKG` — search source code
+  - `vsp graph CLAS ZCL_FOO --direction callers` — call graph with WBCROSSGT/CROSS fallback
+  - `vsp deps '$PKG' --format summary` — package dependency analysis + transport readiness
+  - `vsp system info` — SAP version, kernel, ZADT_VSP availability check
+  - `vsp lint --file src.abap` — offline ABAP linter (8 rules, abaplint-compatible)
+  - `vsp parse --stdin --format json` — offline ABAP parser
+  - `vsp compile wasm prog.wasm --class ZCL_DEMO` — WASM→ABAP compiler (offline)
+  - `vsp compile ts lexer.ts --prefix zcl_` — TypeScript→ABAP transpiler
+  - `vsp execute "WRITE 'hello'."` — run ABAP on SAP
+  - `vsp context CLAS ZCL_FOO --depth 2` — multi-level dependency context
+- **Graph with Fallback** — `vsp graph` tries ADT call graph API first, falls back to WBCROSSGT+CROSS table queries. Supports CLAS, INTF, PROG, FUGR, TRAN (resolves via TSTC).
+- **Package Deps Analysis** — `vsp deps` classifies all references as internal/external-custom/SAP-standard. Shows transport readiness: "self-contained" vs "needs prerequisites".
+- **CLI Documentation** — `docs/cli-guide.md`: complete reference, feature requirements matrix, pipeline examples, multi-system profiles.
+- **WASM Self-Host Verified** — 3-way correctness proof (Native 51/51, Go compiler OK, ABAP self-host 11/11). 12 functions including recursion, loops, if-result blocks, select.
+- **Native ABAP Lexer+Parser** — abaplint port: 100% oracle match on 22K tokens, 3K statements, 91 types.
+- **ABAP Linter** — 8 rules, 100% oracle match on 4 verified rules, 795μs/file.
+- **TS→Go Transpiler** — `pkg/ts2go`: produces valid Go from abaplint TypeScript (LexerBuffer, LexerStream, Lexer all compile).
+- **Lua Bindings** — 5 new functions: `query()`, `lint()`, `parse()`, `context()`, `systemInfo()`. Total: 50+ Lua→SAP bindings.
+- **Example Scripts** — `package-audit.lua` (lint+parse package), `table-explorer.lua` (SQL queries), `dependency-check.lua` (transport readiness).
+- **YAML Workflow** — `quality-gate.yaml` for pre-transport quality checks.
+
+## [2.31.0] - 2026-03-20
+### Features
+
+- **Native Go ABAP Lexer** (`pkg/abaplint`): Mechanical port of the [abaplint](https://github.com/abaplint/abaplint) TypeScript lexer to native Go. 48 token types, 6 lexer modes (normal, string, backtick, template, comment, pragma), whitespace-context encoding. Oracle-verified: 100% match on 22,612 tokens across 29 ABAP files. ~3.5M tokens/sec, zero dependencies.
+- **Dependency Context Depth** (`pkg/ctxcomp`): `GetContext` now supports `depth` parameter (1-3) for multi-level dependency expansion. Level 1 = direct deps (default), level 2 = deps of deps, level 3 = three levels deep. Tracks visited objects to avoid cycles, shares maxDeps budget across levels.
+- **Oracle Differential Testing Framework** (`pkg/abaplint/testdata/oracle.js`): Node.js script runs the real TypeScript abaplint on ABAP files, generates JSON fixtures. Go tests compare token-by-token: string, type, row, col. Reports per-file and aggregate KPIs (str/type/pos match rates).
+
+## [2.30.0] - 2026-03-20
+### Features
+
+- **WASM-to-ABAP AOT Compiler** (`pkg/wasmcomp`): Compiles WebAssembly binaries to native ABAP source code. Parses .wasm binaries, converts stack machine to SSA form, emits ABAP classes or function groups. 100% opcode coverage for QuickJS (453K instructions). Three backends: FUGR, Class, Hybrid.
+- **Self-Hosting WASM Compiler on SAP** (`embedded/abap/wasm_compiler`): 785 lines of ABAP that parse any .wasm binary and compile it to executable ABAP — entirely within SAP. Uses `GENERATE SUBROUTINE POOL` for runtime compilation. Verified: `add(2,3)=5`, `factorial(10)=3,628,800` on SAP A4H.
+- **TypeScript-to-ABAP Transpiler** (`pkg/ts2abap`): Direct TS→ABAP transpilation without WASM intermediate. Produces clean OO ABAP with proper class definitions, method signatures, and ABAP naming conventions. 800x smaller output than the WASM path.
+- **abaplint Lexer on SAP**: Lars Hvam's abaplint ABAP lexer transpiled from TypeScript to native ABAP (51 classes, 495 lines). Deployed to SAP A4H, tokenizes ABAP source code at native speed.
+- **QuickJS compiled to ABAP**: Full QuickJS JavaScript engine (1,410 WASM functions) compiled to 101K lines of ABAP. 5.5x line compression via aggressive statement packing.
+- **abaplint parser compiled to ABAP**: Full @abaplint/core (26.5MB WASM) compiled to 396K lines of ABAP via the WASM compiler.
+- **Line Packing**: Pack multiple ABAP statements per line (up to 240 chars). Control flow, DATA declarations, assignments all pack together. 557K→101K lines (5.5x reduction).
+- **Function Deduplication**: SHA256 hash of function type+locals+bytecode identifies identical functions. Duplicates redirect to canonical implementation.
+- **WASI Shim**: All 9 QuickJS WASI imports implemented (fd_write with iov parsing, clock_time_get, environ stubs).
+- **Batch Deploy via CLI**: `vsp deploy *.clas.abap '$PKG'` — deploy multiple ABAP files in a shell loop. 40 token classes deployed with zero failures.
+
+## [2.29.0] - 2026-03-19
+### Features
+
+- **Hyperfocused Mode** (`--mode hyperfocused`): Single `SAP(action, target, params)` tool replaces 122 individual tools. Reduces MCP schema overhead from ~40K to ~200 tokens (99.5% reduction). All safety controls work identically.
+- **Method-Level Surgery**: Read/write individual class methods without pulling entire class source. 95% token reduction. Context compression scopes to the method's own dependencies.
+- **Unified SAP_MODE**: Merged `SAP_TOOL_MODE` into `SAP_MODE` with three values: focused (81 tools), expert (122 tools), hyperfocused (1 tool). Removed `--tool-mode` flag.
+
 ## [2.28.0] - 2026-03-18
 ### Features
 

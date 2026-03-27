@@ -204,6 +204,14 @@ Code intelligence:
   SAP(action="analyze", params={"type": "inactive_objects"})
   SAP(action="analyze", params={"type": "context", "object_type": "CLAS", "name": "ZCL_TEST"})
 
+Parse ABAP (tokenize + classify statements):
+  SAP(action="analyze", params={"type": "parse_abap", "source": "DATA lv_x TYPE i. lv_x = 42."})
+  SAP(action="analyze", params={"type": "parse_abap", "object_type": "CLAS", "name": "ZCL_TEST"})
+
+Analyze dependencies (unified 5-layer: regex + parser + SCAN + CROSS + ADT):
+  SAP(action="analyze", params={"type": "analyze_deps", "source": "..."})
+  SAP(action="analyze", params={"type": "analyze_deps", "object_type": "CLAS", "name": "ZCL_TEST"})
+
 Execute ABAP:
   SAP(action="analyze", params={"type": "execute_abap", "code": "WRITE 'Hello'."})
 
