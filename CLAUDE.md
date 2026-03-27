@@ -46,6 +46,11 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 | `SAP_INSECURE` / `--insecure` | Skip TLS verification (default: false) |
 | `SAP_COOKIE_FILE` / `--cookie-file` | Path to Netscape-format cookie file |
 | `SAP_COOKIE_STRING` / `--cookie-string` | Cookie string (key1=val1; key2=val2) |
+| `SAP_BROWSER_AUTH` / `--browser-auth` | Open browser for SSO login (Kerberos, SAML, Keycloak) |
+| `SAP_BROWSER_AUTH_TIMEOUT` / `--browser-auth-timeout` | SSO login timeout (default: 120s) |
+| `SAP_BROWSER_EXEC` / `--browser-exec` | Path to Chromium browser (default: auto-detect) |
+| `SAP_COOKIE_SAVE` / `--cookie-save` | Save browser cookies to file for reuse |
+| `SAP_KEEPALIVE` / `--keepalive` | Session keep-alive interval (default: 5m, 0=disabled) |
 | `SAP_MODE` / `--mode` | Tool mode: `focused` (81 tools, default) or `expert` (122 tools) |
 | `SAP_DISABLED_GROUPS` / `--disabled-groups` | Disable tool groups: `5`/`U`=UI5, `T`=Tests, `H`=HANA, `D`=Debug |
 | `SAP_VERBOSE` / `--verbose` | Enable verbose logging to stderr |

@@ -295,7 +295,13 @@ SAP_PASSWORD=secret
 | `--client` | `SAP_CLIENT` | Client (default: 001) |
 | `--mode` | `SAP_MODE` | `focused` (default) or `expert` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
+| `--cookie-string` | `SAP_COOKIE_STRING` | Cookie string (key1=val1; key2=val2) |
+| `--browser-auth` | `SAP_BROWSER_AUTH` | Open browser for SSO login (Kerberos, SAML, Keycloak) |
+| `--browser-auth-timeout` | `SAP_BROWSER_AUTH_TIMEOUT` | SSO login timeout (default: 120s) |
+| `--browser-exec` | `SAP_BROWSER_EXEC` | Path to Chromium browser (default: auto-detect) |
+| `--cookie-save` | `SAP_COOKIE_SAVE` | Save browser cookies to file for reuse |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification |
+| `--keepalive` | `SAP_KEEPALIVE` | Session keep-alive interval (default: 5m, 0=disabled) |
 | `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |
 | `--allow-transportable-edits` | `SAP_ALLOW_TRANSPORTABLE_EDITS` | Enable editing transportable objects |
 | `--allowed-transports` | `SAP_ALLOWED_TRANSPORTS` | Whitelist transports (wildcards: `A4HK*`) |
