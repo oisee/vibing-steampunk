@@ -53,6 +53,40 @@ func (c *Client) Safety() *SafetyConfig {
 	return &c.config.Safety
 }
 
+// AllowPackageTemporarily adds a package to the allowed list for the duration of
+// an install/bootstrap operation. Returns a cleanup function that removes it.
+// This is used by install tools (InstallZADTVSP, InstallAbapGit) which are
+// self-contained bootstrap operations that should not be blocked by
+// SAP_ALLOWED_PACKAGES restrictions.
+func (c *Client) AllowPackageTemporarily(pkg string) func() {
+	// If no package restrictions are configured, nothing to do
+	if len(c.config.Safety.AllowedPackages) == 0 {
+		return func() {}
+	}
+
+	// If already allowed, nothing to do
+	if c.config.Safety.IsPackageAllowed(pkg) {
+		return func() {}
+	}
+
+	// Add to allowed packages
+	c.config.Safety.AllowedPackages = append(c.config.Safety.AllowedPackages, pkg)
+
+	// Return cleanup function
+	return func() {
+		// Remove the temporarily added package
+		for i, p := range c.config.Safety.AllowedPackages {
+			if strings.EqualFold(p, pkg) {
+				c.config.Safety.AllowedPackages = append(
+					c.config.Safety.AllowedPackages[:i],
+					c.config.Safety.AllowedPackages[i+1:]...,
+				)
+				return
+			}
+		}
+	}
+}
+
 // --- Search Operations ---
 
 // SearchObject searches for ABAP objects by name pattern.

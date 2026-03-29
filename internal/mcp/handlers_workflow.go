@@ -10,6 +10,28 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// routeWorkflowAction routes workflow operations for high-level create/edit.
+func (s *Server) routeWorkflowAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "edit" {
+		editType := getStringParam(params, "type")
+		switch editType {
+		case "write_program":
+			return s.callHandler(ctx, s.handleWriteProgram, params)
+		case "write_class":
+			return s.callHandler(ctx, s.handleWriteClass, params)
+		}
+	}
+	if action == "create" {
+		switch objectType {
+		case "PROGRAM":
+			return s.callHandler(ctx, s.handleCreateAndActivateProgram, params)
+		case "CLASS_WITH_TESTS":
+			return s.callHandler(ctx, s.handleCreateClassWithTests, params)
+		}
+	}
+	return nil, false, nil
+}
+
 // --- Workflow Handlers ---
 
 func (s *Server) handleWriteProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

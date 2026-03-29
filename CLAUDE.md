@@ -157,10 +157,20 @@ pkg/
 │   ├── bindings.go                  # ADT tool bindings for Lua
 │   └── helpers.go                   # Lua<->Go value conversion
 │
+├── abaplint/                        # Native Go port of abaplint lexer
+│   ├── lexer.go                     # Lexer (mechanical port from TS), 48 token types
+│   ├── lexer_test.go                # Unit tests + oracle differential (29 files, 22K tokens)
+│   └── testdata/
+│       ├── oracle.js                # Node.js oracle using @abaplint/core
+│       └── oracle_fixtures.json     # Oracle reference data
+│
 └── cache/                           # Caching infrastructure
     ├── cache.go                     # Core interfaces and types
     ├── memory.go                    # In-memory cache (default)
-    └── sqlite.go                    # SQLite cache (optional)
+    ├── sqlite.go                    # SQLite cache (optional)
+    ├── cache_test.go                # Unit tests (16 tests)
+    ├── example_test.go              # Usage examples
+    └── README.md                    # Documentation
 
 embedded/
 ├── abap/                            # ABAP source files (13 files)
@@ -219,6 +229,7 @@ README_TOOLS.md                      # Tool reference (all 122 tools)
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
 | Add system config | `pkg/config/systems.go` |
+| Add ABAP lint rule | `pkg/abaplint/lexer.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
 
 ## Adding a New Tool
@@ -441,7 +452,7 @@ When creating a new report:
 | **Platforms** | 9 |
 | **Phase** | 5 (TAS-Style Debugging) - Complete |
 | **Reports** | 123 dated + 11 reference docs |
-| **Lua Scripting** | ✅ Complete (v2.14 - REPL, 40+ bindings, example scripts) |
+| **Lua Scripting** | ✅ Complete (v2.32 - REPL, 50+ bindings, 8 example scripts) |
 | **Cache Package** | ✅ Complete (in-memory + SQLite) |
 | **Safety System** | ✅ Complete (operation filtering, package restrictions) |
 | **Feature Detection** | ✅ Complete (GetFeatures tool, auto/on/off for abapGit, RAP, AMDP, UI5, Transport) |
@@ -477,6 +488,13 @@ When creating a new report:
 | **HTTP Proxy** | ✅ Complete (v2.22.0 - HTTP_PROXY/HTTPS_PROXY support) |
 | **DeployZip** | ✅ Complete (3-phase bulk deploy from abapGit ZIP: create → upload → activate) |
 | **Iterative Activation** | ✅ Complete (ActivatePackageIterative with package filtering) |
+| **Native ABAP Lexer** | ✅ Complete (v2.31 - abaplint lexer ported to Go, 100% oracle match, 22K tokens verified) |
+| **ABAP Statement Parser** | ✅ Complete (v2.31 - 91 statement types, 100% oracle match, 3,254 statements) |
+| **ABAP Linter** | ✅ Complete (v2.32 - 8 rules, 100% oracle match, 795μs/file) |
+| **Context Depth** | ✅ Complete (v2.31 - multi-level dep expansion, depth 1-3, cycle detection) |
+| **CLI Toolchain** | ✅ Complete (v2.32 - 28 commands: query, grep, graph, deps, lint, parse, compile, execute) |
+| **WASM Self-Host** | ✅ Verified (v2.32 - 3-way proof: Native 51/51, Go OK, ABAP 11/11 on SAP) |
+| **TS→Go Transpiler** | ✅ Complete (v2.32 - produces valid Go from abaplint TS, 3 files compile) |
 
 ### DSL & Workflow Usage
 
@@ -567,3 +585,9 @@ When resolving fork-vs-upstream conflicts:
 - **`docs/` markdown**: fix `oisee` → `vinchacho` in all repo URLs
 - **`articles/`**: do NOT change `oisee` references — these are published upstream author content referencing their own repos (`oisee/zork-abap`, `oisee/vivid-vibes`)
 
+### Upstream Roadmap (from last session 2026-03-20)
+
+- [ ] **Phase 2: Statement parser** — port abaplint 2_statements to Go (318 types, 227 expressions)
+- [ ] **Phase 3: Lint rules** — cherry-pick naming, obsolete, line_length rules
+- [ ] **Wire `pkg/abaplint` lexer** into MCP parse_abap handler (replace self-written tokenizer)
+- [ ] **Re-add ALV capture for RunReport**

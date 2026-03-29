@@ -16,6 +16,21 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeGitAction routes "system" with git-related types.
+func (s *Server) routeGitAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+	gitType := getStringParam(params, "type")
+	switch gitType {
+	case "git_types":
+		return s.callHandler(ctx, s.handleGitTypes, params)
+	case "git_export":
+		return s.callHandler(ctx, s.handleGitExport, params)
+	}
+	return nil, false, nil
+}
+
 // --- Git/abapGit Handlers ---
 
 func (s *Server) handleGitTypes(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

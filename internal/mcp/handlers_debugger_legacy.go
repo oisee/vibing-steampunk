@@ -12,6 +12,28 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeDebuggerLegacyAction routes "debug" sub-actions for the legacy REST-based debugger.
+func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "debug" {
+		return nil, false, nil
+	}
+	switch objectType {
+	case "LISTEN":
+		return s.callHandler(ctx, s.handleDebuggerListen, params)
+	case "ATTACH":
+		return s.callHandler(ctx, s.handleDebuggerAttach, params)
+	case "DETACH":
+		return s.callHandler(ctx, s.handleDebuggerDetach, params)
+	case "STEP":
+		return s.callHandler(ctx, s.handleDebuggerStep, params)
+	case "GET_STACK":
+		return s.callHandler(ctx, s.handleDebuggerGetStack, params)
+	case "GET_VARIABLES":
+		return s.callHandler(ctx, s.handleDebuggerGetVariables, params)
+	}
+	return nil, false, nil
+}
+
 // --- Legacy REST-based Debugger Handlers (fallback) ---
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

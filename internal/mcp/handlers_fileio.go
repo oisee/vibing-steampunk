@@ -12,6 +12,22 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeFileIOAction routes file I/O operations.
+func (s *Server) routeFileIOAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "system" || action == "edit" {
+		fileType := getStringParam(params, "type")
+		switch fileType {
+		case "deploy_from_file":
+			return s.callHandler(ctx, s.handleDeployFromFile, params)
+		case "save_to_file":
+			return s.callHandler(ctx, s.handleSaveToFile, params)
+		case "rename":
+			return s.callHandler(ctx, s.handleRenameObject, params)
+		}
+	}
+	return nil, false, nil
+}
+
 // --- File-Based Deployment Handlers ---
 
 // Note: CreateFromFile and UpdateFromFile handlers removed - use DeployFromFile instead
@@ -72,6 +88,16 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		includeStr = strings.ToLower(inc)
 	}
 
+	// Check for parent/function_group parameter (required for FUNC type)
+	parentName := ""
+	if p, ok := request.Params.Arguments["parent"].(string); ok {
+		parentName = p
+	} else if p, ok := request.Params.Arguments["function_group"].(string); ok {
+		parentName = p
+	} else if p, ok := request.Params.Arguments["parentName"].(string); ok {
+		parentName = p
+	}
+
 	// Parse object type - support both short (PROG) and full (PROG/P) format
 	var objType adt.CreatableObjectType
 	switch strings.ToUpper(objTypeStr) {
@@ -122,7 +148,7 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultText(string(output)), nil
 	}
 
-	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, outputPath)
+	result, err := s.adtClient.SaveToFile(ctx, objType, objectName, parentName, outputPath)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("SaveToFile failed: %v", err)), nil
 	}
@@ -205,6 +231,11 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 		method = m
 	}
 
+	ignoreWarnings := false
+	if iw, ok := request.Params.Arguments["ignore_warnings"].(bool); ok {
+		ignoreWarnings = iw
+	}
+
 	transport := ""
 	if t, ok := request.Params.Arguments["transport"].(string); ok {
 		transport = t
@@ -213,6 +244,7 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 	opts := &adt.EditSourceOptions{
 		ReplaceAll:      replaceAll,
 		SyntaxCheck:     syntaxCheck,
+		IgnoreWarnings:  ignoreWarnings,
 		CaseInsensitive: caseInsensitive,
 		Method:          method,
 		Transport:       transport,

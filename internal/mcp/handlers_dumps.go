@@ -11,6 +11,21 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeDumpsAction routes "analyze" with dump-related types.
+func (s *Server) routeDumpsAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+	analysisType := getStringParam(params, "type")
+	switch analysisType {
+	case "list_dumps":
+		return s.callHandler(ctx, s.handleListDumps, params)
+	case "get_dump":
+		return s.callHandler(ctx, s.handleGetDump, params)
+	}
+	return nil, false, nil
+}
+
 // --- Runtime Errors / Short Dumps Handlers ---
 
 func (s *Server) handleListDumps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

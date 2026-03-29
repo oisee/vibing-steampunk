@@ -10,6 +10,51 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// routeUI5Action routes UI5/Fiori BSP operations.
+func (s *Server) routeUI5Action(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	ui5Type := getStringParam(params, "type")
+
+	// Check for explicit ui5 type in params
+	if ui5Type != "" {
+		switch ui5Type {
+		case "ui5_list_apps":
+			return s.callHandler(ctx, s.handleUI5ListApps, params)
+		case "ui5_get_app":
+			return s.callHandler(ctx, s.handleUI5GetApp, params)
+		case "ui5_get_file":
+			return s.callHandler(ctx, s.handleUI5GetFileContent, params)
+		case "ui5_upload_file":
+			return s.callHandler(ctx, s.handleUI5UploadFile, params)
+		case "ui5_delete_file":
+			return s.callHandler(ctx, s.handleUI5DeleteFile, params)
+		case "ui5_create_app":
+			return s.callHandler(ctx, s.handleUI5CreateApp, params)
+		case "ui5_delete_app":
+			return s.callHandler(ctx, s.handleUI5DeleteApp, params)
+		}
+	}
+
+	// Route by target type
+	switch {
+	case action == "read" && objectType == "UI5_LIST":
+		return s.callHandler(ctx, s.handleUI5ListApps, params)
+	case action == "read" && objectType == "UI5_APP":
+		return s.callHandler(ctx, s.handleUI5GetApp, map[string]any{"app_name": objectName})
+	case action == "read" && objectType == "UI5_FILE":
+		return s.callHandler(ctx, s.handleUI5GetFileContent, params)
+	case action == "edit" && objectType == "UI5_UPLOAD":
+		return s.callHandler(ctx, s.handleUI5UploadFile, params)
+	case action == "delete" && objectType == "UI5_FILE":
+		return s.callHandler(ctx, s.handleUI5DeleteFile, params)
+	case action == "create" && objectType == "UI5_APP":
+		return s.callHandler(ctx, s.handleUI5CreateApp, params)
+	case action == "delete" && objectType == "UI5_APP":
+		return s.callHandler(ctx, s.handleUI5DeleteApp, params)
+	}
+
+	return nil, false, nil
+}
+
 // --- UI5/Fiori BSP Management Handlers ---
 
 func (s *Server) handleUI5ListApps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

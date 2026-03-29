@@ -40,7 +40,7 @@ CURRENT_ARCH=$(shell go env GOARCH)
 
 .PHONY: all build clean test lint fmt deps tidy help install run
 .PHONY: build-all build-all-all build-linux build-darwin build-windows
-.PHONY: deploy-windows sync-embedded
+.PHONY: deploy-windows sync-embedded release refresh-deps
 
 all: deps lint test build
 
@@ -126,6 +126,29 @@ sync-embedded: build ## Export $ZADT_VSP from SAP to embedded/abap/ (requires SA
 	VSP_OUTPUT_DIR=embedded/abap $(BUILD_DIR)/$(BINARY_NAME) lua scripts/sync-embedded.lua
 	@echo "Files in embedded/abap/"
 	@ls -lh embedded/abap/*.abap 2>/dev/null || echo "No files exported"
+
+# SAP system for dependency refresh (override with: make release SAP_SYSTEM=prod)
+SAP_SYSTEM ?= a4h
+
+refresh-deps: ## Refresh embedded ZIPs from SAP (keeps old if SAP unavailable)
+	@echo "Refreshing embedded dependencies from SAP system '$(SAP_SYSTEM)'..."
+	@if ./build/vsp -s $(SAP_SYSTEM) export '$$ZGIT' -o embedded/deps/abapgit-full.zip.tmp 2>/dev/null; then \
+		mv embedded/deps/abapgit-full.zip.tmp embedded/deps/abapgit-full.zip; \
+		echo "  abapgit-full.zip: updated"; \
+	else \
+		rm -f embedded/deps/abapgit-full.zip.tmp; \
+		echo "  abapgit-full.zip: kept existing (SAP export failed)"; \
+	fi
+	@if ./build/vsp -s $(SAP_SYSTEM) export 'ZABAPGIT' -o embedded/deps/abapgit-standalone.zip.tmp 2>/dev/null; then \
+		mv embedded/deps/abapgit-standalone.zip.tmp embedded/deps/abapgit-standalone.zip; \
+		echo "  abapgit-standalone.zip: updated"; \
+	else \
+		rm -f embedded/deps/abapgit-standalone.zip.tmp; \
+		echo "  abapgit-standalone.zip: kept existing (SAP export failed)"; \
+	fi
+
+release: build refresh-deps build-all ## Full release: build vsp, refresh deps from SAP, rebuild all platforms
+	@echo "Release build complete."
 
 install: ## Install the binary
 	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) $(CMD_DIR)

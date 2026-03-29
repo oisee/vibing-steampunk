@@ -12,6 +12,26 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeDebuggerAction routes "debug" sub-actions for the WebSocket-based debugger.
+func (s *Server) routeDebuggerAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "debug" {
+		return nil, false, nil
+	}
+	switch objectType {
+	case "SET_BREAKPOINT":
+		return s.callHandler(ctx, s.handleSetBreakpoint, params)
+	case "GET_BREAKPOINTS":
+		return s.callHandler(ctx, s.handleGetBreakpoints, params)
+	case "DELETE_BREAKPOINT":
+		return s.callHandler(ctx, s.handleDeleteBreakpoint, params)
+	case "CALL_RFC":
+		return s.callHandler(ctx, s.handleCallRFC, params)
+	case "MOVE":
+		return s.callHandler(ctx, s.handleMoveObject, params)
+	}
+	return nil, false, nil
+}
+
 // --- Debugger Session Handlers (WebSocket-based via ZADT_VSP) ---
 // All breakpoint operations use WebSocket for reliable CSRF-free communication.
 

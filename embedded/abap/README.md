@@ -39,7 +39,7 @@ The WebSocket handler enables **stateful operations** not available through stan
 | `zcl_vsp_debug_service.clas.abap` | Class | Debug domain - TPDAPI integration |
 | `zcl_vsp_amdp_service.clas.abap` | Class | AMDP domain - HANA/SQLScript debugging |
 | `zcl_vsp_git_service.clas.abap` | Class | Git domain - abapGit integration (158 object types) |
-| `zadt_cl_tadir_move.clas.abap` | Class | TADIR package reassignment helper |
+| `zcl_vsp_tadir_move.clas.abap` | Class | TADIR package reassignment helper |
 | `zcl_adt_00_amdp_test.clas.abap` | Class | AMDP test class for debugging demos |
 
 **Note:** The Git service requires abapGit to be installed (optional dependency, handled gracefully).

@@ -11,6 +11,21 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeTracesAction routes "analyze" with trace-related types.
+func (s *Server) routeTracesAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+	analysisType := getStringParam(params, "type")
+	switch analysisType {
+	case "list_traces":
+		return s.callHandler(ctx, s.handleListTraces, params)
+	case "get_trace":
+		return s.callHandler(ctx, s.handleGetTrace, params)
+	}
+	return nil, false, nil
+}
+
 // --- ABAP Profiler / Traces Handlers ---
 
 func (s *Server) handleListTraces(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

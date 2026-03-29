@@ -12,6 +12,24 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeSystemAction routes "system" info/components/connection/features.
+func (s *Server) routeSystemAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+	switch objectType {
+	case "INFO":
+		return s.callHandler(ctx, s.handleGetSystemInfo, params)
+	case "COMPONENTS":
+		return s.callHandler(ctx, s.handleGetInstalledComponents, params)
+	case "CONNECTION":
+		return s.callHandler(ctx, s.handleGetConnectionInfo, params)
+	case "FEATURES":
+		return s.callHandler(ctx, s.handleGetFeatures, params)
+	}
+	return nil, false, nil
+}
+
 // --- System Information Handlers ---
 
 func (s *Server) handleGetSystemInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

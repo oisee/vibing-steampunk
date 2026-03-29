@@ -11,6 +11,21 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeATCAction routes "test" with type=atc.
+func (s *Server) routeATCAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "test" {
+		return nil, false, nil
+	}
+	analysisType := getStringParam(params, "type")
+	switch analysisType {
+	case "atc":
+		return s.callHandler(ctx, s.handleRunATCCheck, params)
+	case "atc_customizing":
+		return s.callHandler(ctx, s.handleGetATCCustomizing, params)
+	}
+	return nil, false, nil
+}
+
 // --- ATC Handlers ---
 
 func (s *Server) handleRunATCCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

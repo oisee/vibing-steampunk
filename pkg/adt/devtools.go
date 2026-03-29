@@ -30,10 +30,16 @@ type SyntaxCheckResult struct {
 // content is the source code to check
 func (c *Client) SyntaxCheck(ctx context.Context, objectURL string, content string) ([]SyntaxCheckResult, error) {
 	// Build the request body
-	// For class includes, the URL is used as-is (no /source/main suffix)
-	sourceURL := objectURL
+	// The checkObject URI identifies the object being checked (no /source/main needed).
+	// The artifact URI identifies the source location:
+	//   - For class includes, use the include URL directly
+	//   - For other objects, append /source/main to point to the source
+	// Using objectURL (without /source/main) for checkObject avoids exceeding
+	// SAP's URI length limit for long namespaced classes.
+	checkObjectURI := objectURL
+	artifactURI := objectURL
 	if !strings.Contains(objectURL, "/includes/") {
-		sourceURL = objectURL + "/source/main"
+		artifactURI = objectURL + "/source/main"
 	}
 	encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
 
@@ -46,7 +52,7 @@ func (c *Client) SyntaxCheck(ctx context.Context, objectURL string, content stri
       </chkrun:artifact>
     </chkrun:artifacts>
   </chkrun:checkObject>
-</chkrun:checkObjectList>`, sourceURL, sourceURL, encodedContent)
+</chkrun:checkObjectList>`, checkObjectURI, artifactURI, encodedContent)
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/checkruns?reporters=abapCheckRun", &RequestOptions{
 		Method:      http.MethodPost,

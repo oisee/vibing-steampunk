@@ -53,7 +53,7 @@
   - Legacy quirks, tribal knowledge
 - **Quality gates**: SAP ATC code-smell checks
 - **GitHub integration**: ABAPGit sync, pull requests, GitHub Actions
-- **SAP Cloud ALM**: Build/deployment pipeline, automated test evidence
+- **Deployment Pipeline**: CBA currently uses Active Control; migrating to SAP Cloud ALM for build/deployment pipeline, automated test evidence
 - **Auto-documentation**: Generated/updated as part of workflow
 
 **Subtle shift**: Reviews focus on intent/outcomes vs line-by-line mechanics
@@ -423,9 +423,13 @@ print(results.summary)
 5. **Regulatory compliance automation**: Auto-mapping code changes to regulatory requirements
 6. **Performance prediction**: Estimating runtime impact before deployment
 
-### SAP Cloud ALM Integration Architecture
+### Deployment Pipeline Integration Architecture
 
-**Strategic Positioning**: vsp = **Execution layer** | SAP Cloud ALM = **Orchestration layer**
+**Strategic Positioning**: vsp = **Execution layer** | Deployment Pipeline = **Orchestration layer**
+
+**CBA Context**: CBA currently uses Active Control for deployment pipeline management. They are actively migrating to SAP Cloud ALM as their strategic ALM platform. This roadmap supports both:
+- **Current state**: Integration with Active Control (CBA's existing infrastructure)
+- **Target state**: Full SAP Cloud ALM integration (CBA's migration destination)
 
 **SAP Cloud ALM Capabilities** (from 78-page feature set):
 - **Features workflow**: Not Planned → In Specification → In Implementation → In Testing → Successfully Tested → Ready for Production → Deployed
@@ -582,11 +586,11 @@ graph TB
 
 **Critical Enhancements Added**:
 1. ✅ **vsp execution layer** - Fills the missing gap between AI agents and SAP system (the "???" in Phase 2)
-2. ✅ **SAP Cloud ALM** - Replaces Active Control with industry-standard ALM platform (78-page feature set)
+2. ✅ **Deployment Pipeline** - Supports CBA's migration from Active Control to SAP Cloud ALM (78-page feature set)
 3. ✅ **CBA SKILLS pattern** - Just-in-time retrieval (99.2% token reduction) instead of direct MCP context overload
 4. ✅ **Multi-agent specialization** - Coding, Testing, Security, Performance agents with cross-validation
-5. ✅ **Hybrid testing strategy** - vsp unit tests (fast) + Tricentis E2E tests (comprehensive) → SAP Cloud ALM evidence
-6. ✅ **cloudalmlink collaboration** - Seamless code → Cloud ALM feature traceability via comment IDs
+5. ✅ **Hybrid testing strategy** - vsp unit tests (fast) + Tricentis E2E tests (comprehensive) → deployment pipeline evidence
+6. ✅ **cloudalmlink collaboration** - Seamless code → deployment pipeline feature traceability via comment IDs (Cloud ALM)
 7. ✅ **Atlassian MCP integration** - Event-driven Jira/Confluence workflows for requirements and documentation
 8. ✅ **SAP Joule integration** - Intent layer → vsp execution layer (complementary, not competitive)
 
@@ -621,8 +625,8 @@ graph TB
 
 ### Phase 2: Enterprise Integration (3-6 months)
 
-1. **SAP Cloud ALM Integration**:
-   - vsp batch export → SAP Cloud ALM ingestion
+1. **Deployment Pipeline Integration**:
+   - vsp batch export → deployment pipeline ingestion (Active Control now, Cloud ALM target)
    - Test evidence publication API
    - Change record auto-generation
 

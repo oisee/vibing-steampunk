@@ -1,0 +1,4 @@
+CLASS zcl_tok_wbracket_rightw DEFINITION PUBLIC FINAL CREATE PUBLIC INHERITING FROM zcl_abstract_token.
+ENDCLASS.
+CLASS zcl_tok_wbracket_rightw IMPLEMENTATION.
+ENDCLASS.

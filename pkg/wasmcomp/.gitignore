@@ -1,0 +1,6 @@
+# Large compiled outputs (abaplint 27MB)
+testdata/abaplint.wasm
+testdata/*.abap
+testdata/fugr/
+testdata/multi/
+testdata/abaplint_fugr/

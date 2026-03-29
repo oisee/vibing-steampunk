@@ -11,6 +11,49 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeDevToolsAction routes "test" (unit tests), "analyze" (syntax check), "edit" (activate), and "analyze" (execute_abap).
+func (s *Server) routeDevToolsAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "test" {
+		analysisType := getStringParam(params, "type")
+		if analysisType == "" || analysisType == "unit" {
+			// Unit tests
+			objectURL := getStringParam(params, "object_url")
+			if objectURL == "" {
+				return nil, false, nil
+			}
+			args := map[string]any{"object_url": objectURL}
+			if v, ok := getBoolParam(params, "include_dangerous"); ok {
+				args["include_dangerous"] = v
+			}
+			if v, ok := getBoolParam(params, "include_long"); ok {
+				args["include_long"] = v
+			}
+			return s.callHandler(ctx, s.handleRunUnitTests, args)
+		}
+	}
+
+	if action == "analyze" {
+		analysisType := getStringParam(params, "type")
+		switch analysisType {
+		case "syntax_check":
+			return s.callHandler(ctx, s.handleSyntaxCheck, params)
+		case "execute_abap":
+			return s.callHandler(ctx, s.handleExecuteABAP, params)
+		}
+	}
+
+	if action == "edit" {
+		switch objectType {
+		case "ACTIVATE":
+			return s.callHandler(ctx, s.handleActivate, params)
+		case "ACTIVATE_PACKAGE":
+			return s.callHandler(ctx, s.handleActivatePackage, params)
+		}
+	}
+
+	return nil, false, nil
+}
+
 // --- Development Tool Handlers ---
 
 func (s *Server) handleSyntaxCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

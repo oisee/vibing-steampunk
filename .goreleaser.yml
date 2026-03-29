@@ -1,0 +1,69 @@
+# GoReleaser configuration
+# https://goreleaser.com/customization/
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: vsp
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: vsp
+    main: ./cmd/vsp
+    binary: vsp
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.Commit}}
+      - -X main.BuildDate={{.Date}}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      # macOS only supports amd64 and arm64
+      - goos: darwin
+        goarch: "386"
+      - goos: darwin
+        goarch: arm
+      # Windows arm (32-bit) is not a standard target
+      - goos: windows
+        goarch: arm
+
+# Plain binaries — no zip/tar.gz, matches existing release convention
+archives:
+  - id: default
+    formats: [binary]
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Use git-cliff for release notes (reads cliff.toml from repo root)
+changelog:
+  use: git-cliff
+  sort: asc
+  abbrev: 7
+
+release:
+  github:
+    owner: oisee
+    name: vibing-steampunk
+  draft: false
+  # Automatically mark as pre-release if version contains -rc, -beta, -alpha
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  footer: |
+    **Full Changelog**: https://github.com/oisee/vibing-steampunk/blob/main/CHANGELOG.md

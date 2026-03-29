@@ -271,36 +271,26 @@ func (c *Client) CreateTransport(ctx context.Context, objectURL string, descript
 		return "", err
 	}
 
-	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
-<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
-  <asx:values>
-    <DATA>
-      <DEVCLASS>%s</DEVCLASS>
-      <REQUEST_TEXT>%s</REQUEST_TEXT>
-      <REF>%s</REF>
-      <OPERATION>I</OPERATION>
-    </DATA>
-  </asx:values>
-</asx:abap>`, devClass, description, objectURL)
+	owner := strings.ToUpper(c.config.Username)
 
-	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transports", &RequestOptions{
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:useraction="newrequest">
+  <tm:request tm:type="K" tm:desc="%s" tm:target="" tm:cts_project="">
+    <tm:task tm:owner="%s"/>
+  </tm:request>
+</tm:root>`, escapeXMLAttr(description), owner)
+
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
 		Method:      http.MethodPost,
 		Body:        []byte(body),
-		ContentType: "application/vnd.sap.as+xml; charset=UTF-8; dataname=com.sap.adt.CreateCorrectionRequest",
-		Accept:      "text/plain",
+		ContentType: acceptTransportOrganizerV1,
+		Accept:      acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create transport failed: %w", err)
 	}
 
-	// Response is a URL, extract transport number from the end
-	transportURL := string(resp.Body)
-	parts := strings.Split(transportURL, "/")
-	if len(parts) > 0 {
-		return parts[len(parts)-1], nil
-	}
-
-	return "", fmt.Errorf("unexpected response format: %s", transportURL)
+	return parseCreateTransportResponse(resp.Body)
 }
 
 // ReleaseTransport releases a transport request.
@@ -752,35 +742,76 @@ func (c *Client) CreateTransportV2(ctx context.Context, opts CreateTransportOpti
 		reqType = "W"
 	}
 
+	owner := strings.ToUpper(c.config.Username)
+
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm">
-  <tm:request tm:desc="%s" tm:type="%s" tm:target="" tm:cts_project="">
-    <tm:abap_object tm:pgmid="R3TR" tm:type="DEVC" tm:name="%s"/>
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:useraction="newrequest">
+  <tm:request tm:type="%s" tm:desc="%s" tm:target="" tm:cts_project="">
+    <tm:task tm:owner="%s"/>
   </tm:request>
 </tm:root>`,
-		escapeXMLAttr(opts.Description),
 		reqType,
-		strings.ToUpper(opts.Package))
+		escapeXMLAttr(opts.Description),
+		owner)
 
 	query := make(map[string][]string)
 	if opts.TransportLayer != "" {
 		query["transportLayer"] = []string{opts.TransportLayer}
 	}
 
-	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transports", &RequestOptions{
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/cts/transportrequests", &RequestOptions{
 		Method:      http.MethodPost,
 		Query:       query,
 		Body:        []byte(body),
-		ContentType: "application/vnd.sap.as+xml",
-		Accept:      "text/plain",
+		ContentType: acceptTransportOrganizerV1,
+		Accept:      acceptTransportOrganizerV1,
 	})
 	if err != nil {
 		return "", fmt.Errorf("creating transport: %w", err)
 	}
 
-	// Response is plain text with transport number
-	transportNumber := strings.TrimSpace(string(resp.Body))
-	return transportNumber, nil
+	return parseCreateTransportResponse(resp.Body)
+}
+
+// parseCreateTransportResponse extracts the transport number from the XML response.
+// The response format is:
+//
+//	<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm">
+//	  <tm:request tm:number="DEVK900123" .../>
+//	</tm:root>
+//
+// Falls back to plain-text parsing for older systems.
+func parseCreateTransportResponse(data []byte) (string, error) {
+	// Strip namespace prefixes for easier parsing
+	xmlStr := string(data)
+	xmlStr = strings.ReplaceAll(xmlStr, "tm:", "")
+
+	type request struct {
+		Number string `xml:"number,attr"`
+	}
+	type root struct {
+		Request *request `xml:"request"`
+	}
+
+	var resp root
+	if err := xml.Unmarshal([]byte(xmlStr), &resp); err == nil && resp.Request != nil && resp.Request.Number != "" {
+		return strings.TrimSpace(resp.Request.Number), nil
+	}
+
+	// Fallback: plain text or URL response (older systems)
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "", fmt.Errorf("empty response from create transport")
+	}
+
+	// If response is a URL, extract transport number from the end
+	parts := strings.Split(text, "/")
+	candidate := strings.TrimSpace(parts[len(parts)-1])
+	if len(candidate) >= 10 {
+		return candidate, nil
+	}
+
+	return text, nil
 }
 
 // ReleaseTransportV2 releases a transport request with options

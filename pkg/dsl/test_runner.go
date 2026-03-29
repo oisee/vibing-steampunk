@@ -227,7 +227,7 @@ func (t *TestRunner) runSingleTest(ctx context.Context, obj ObjectRef) TestResul
 	if objectURL == "" {
 		result.Error = "unable to determine object URL"
 		if t.onError != nil {
-			t.onError(obj, fmt.Errorf(result.Error))
+			t.onError(obj, fmt.Errorf("%s", result.Error))
 		}
 		return result
 	}

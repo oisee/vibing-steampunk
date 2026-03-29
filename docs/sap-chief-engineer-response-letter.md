@@ -125,14 +125,18 @@ This shifts engineering toward what you describe for Phase 2: "system design, ar
   - `GrepObjects`, `GetSource`, `GetObjectStructure`, `ListDependencies`, `GetCallGraph`
 - **100% context relevance**, unlimited scalability
 
-### 2. SAP Cloud ALM Integration (Orchestration Layer)
+### 2. Deployment Pipeline Integration (Orchestration Layer)
 
-**Strategic Positioning**: vsp = Execution layer | SAP Cloud ALM = Orchestration layer
+**Strategic Positioning**: vsp = Execution layer | Deployment Pipeline = Orchestration layer
+
+**CBA Context**: CBA currently uses Active Control for deployment pipeline. As you migrate to SAP Cloud ALM, vsp will support both:
+- **Today**: Integration with Active Control (your current infrastructure)
+- **Future**: Full SAP Cloud ALM integration (your migration destination)
 
 **Key Integration Points**:
-- vsp batch export → SAP Cloud ALM ingestion
-- Test evidence publication to Cloud ALM evidence store
-- Cloud ALM features workflow (Not Planned → Deployed)
+- vsp batch export → deployment pipeline ingestion
+- Test evidence publication to evidence store
+- Features workflow (Not Planned → Deployed)
 - Transport management (CTS, CTS+, ATO, Cloud TMS)
 - Quality approval workflows
 - Deployment scheduling
@@ -162,7 +166,7 @@ I'd welcome the opportunity to:
 1. **Pilot Program**: Demonstrate vsp as the execution layer for your vision
 2. **CBA MCP Server Development**: Collaborate on enterprise-specific knowledge servers
 3. **Technical Deep Dive**: Walk through autonomous workflows achievable today
-4. **Integration Planning**: Map vsp → SAP Cloud ALM → Fast Track Release
+4. **Integration Planning**: Map vsp → deployment pipeline (Active Control/Cloud ALM) → Fast Track Release
 
 Your vision document articulates where SAP development needs to go. vsp provides the execution foundation to get there - not in 6 months when the vision might be "rendered irrelevant," but **operational today**.
 

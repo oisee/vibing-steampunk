@@ -241,7 +241,7 @@ func TestNamespace_ExportToFile(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result, err := client.SaveToFile(ctx, tc.objType, tc.name, tmpDir)
+			result, err := client.SaveToFile(ctx, tc.objType, tc.name, "", tmpDir)
 			if err != nil {
 				t.Fatalf("SaveToFile(%s, %s) failed: %v", tc.objType, tc.name, err)
 			}
@@ -378,7 +378,7 @@ func TestNamespace_RoundTrip(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 1. Export
-			exportResult, err := client.SaveToFile(ctx, tc.objType, tc.name, tmpDir)
+			exportResult, err := client.SaveToFile(ctx, tc.objType, tc.name, "", tmpDir)
 			if err != nil || !exportResult.Success {
 				t.Fatalf("Export failed: %v - %s", err, exportResult.Message)
 			}

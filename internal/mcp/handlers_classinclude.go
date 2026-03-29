@@ -10,6 +10,22 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeClassIncludeAction routes class include operations.
+func (s *Server) routeClassIncludeAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	switch {
+	case action == "read" && objectType == "CLAS_INCLUDE":
+		return s.callHandler(ctx, s.handleGetClassInclude, map[string]any{
+			"class_name":   objectName,
+			"include_type": getStringParam(params, "include_type"),
+		})
+	case action == "create" && objectType == "CLAS_TEST_INCLUDE":
+		return s.callHandler(ctx, s.handleCreateTestInclude, params)
+	case action == "edit" && objectType == "CLAS_INCLUDE":
+		return s.callHandler(ctx, s.handleUpdateClassInclude, params)
+	}
+	return nil, false, nil
+}
+
 // --- Class Include Handlers ---
 
 func (s *Server) handleGetClassInclude(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

@@ -24,7 +24,7 @@ Establish vsp as a viable execution layer with enterprise-specific context and s
 
 ### Deliverables
 
-#### 1.1 CBA MCP Integration (SKILLS Pattern)
+#### 1.2 CBA MCP Integration (SKILLS Pattern)
 **Priority**: HIGH
 **Effort**: 2-3 weeks
 
@@ -54,7 +54,7 @@ Establish vsp as a viable execution layer with enterprise-specific context and s
 - 100% context relevance
 - All SKILLS pass integration tests
 
-#### 1.2 Integration POC
+#### 1.3 Integration POC
 **Priority**: HIGH
 **Effort**: 2-3 weeks
 
@@ -81,7 +81,7 @@ Establish vsp as a viable execution layer with enterprise-specific context and s
 - <5 minute setup time for developers
 - Evidence bundle meets audit requirements
 
-#### 1.3 Safety Validation
+#### 1.4 Safety Validation
 **Priority**: CRITICAL
 **Effort**: 2-3 weeks
 
@@ -108,9 +108,9 @@ Establish vsp as a viable execution layer with enterprise-specific context and s
 - Security audit passes
 - Performance impact <5%
 
-#### 1.4 CBA /CBA/ Namespace Architecture
-**Priority**: HIGH
-**Effort**: 2-3 weeks
+#### 1.1 CBA /CBA/ Namespace Architecture ⚠️ CRITICAL BLOCKER
+**Priority**: CRITICAL (moved from 1.4 - blocks CBA adoption)
+**Effort**: 1-2 weeks
 
 - [ ] **/CBA/ Package Namespace Enforcement**
   - Extend vsp package restrictions to enforce `/CBA/` namespace
@@ -154,18 +154,22 @@ Connect vsp to enterprise tooling ecosystem for end-to-end automation.
 
 ### Deliverables
 
-#### 2.1 SAP Cloud ALM Integration
+#### 2.1 Deployment Pipeline Integration (Active Control → Cloud ALM)
 **Priority**: HIGH
 **Effort**: 4-6 weeks
 
-- [ ] **Batch Export → SAP Cloud ALM Ingestion**
-  - API integration with SAP Cloud ALM
+**CBA Context**: CBA currently uses Active Control for deployment pipeline. This phase supports both:
+- **Current integration**: Active Control API for immediate value
+- **Future integration**: SAP Cloud ALM as CBA migrates
+
+- [ ] **Batch Export → Deployment Pipeline Ingestion**
+  - API integration with Active Control (now) and SAP Cloud ALM (future)
   - Batch format compatibility
   - Metadata mapping
   - Transport request linking
 
 - [ ] **Test Evidence Publication API**
-  - Test result → SAP Cloud ALM evidence store
+  - Test result → deployment pipeline evidence store
   - Screenshot/log attachment
   - Traceability matrix generation
   - Automated evidence approval workflow
@@ -439,21 +443,21 @@ Enable fully autonomous AI agents with multi-agent collaboration and governance.
 ## Success Metrics
 
 ### Phase 1 KPIs
+- [ ] **`/CBA/` namespace enforcement operational** (1.1 - CRITICAL BLOCKER)
+- [ ] HTTP mode working (WebSocket features gracefully disabled)
 - [ ] 1 CBA MCP server operational (ABAP Documentation)
 - [ ] 3 CBA SKILLS accessible (QueryCBAGuidelines, ValidateAgainstCBAStandards, LearnFromCBAIncidents)
 - [ ] <5 minute POC setup time
 - [ ] Zero production security incidents
 - [ ] 100% safety validation passed
-- [ ] `/CBA/` namespace enforcement operational
-- [ ] HTTP mode working (WebSocket features gracefully disabled)
 
 ### Phase 2 KPIs
 - [ ] <10 minute Jira → PR time
 - [ ] 100% evidence bundle completeness
-- [ ] <5% SAP Cloud ALM integration errors
+- [ ] <5% deployment pipeline integration errors (Active Control/Cloud ALM)
 - [ ] 90% ATC compliance on first run
-- [ ] SAP Cloud ALM features workflow operational (Not Planned → Deployed)
-- [ ] cloudalmlink collaboration enabled (Feature IDs → Cloud ALM)
+- [ ] Deployment pipeline features workflow operational (Not Planned → Deployed)
+- [ ] cloudalmlink collaboration enabled (Feature IDs → deployment pipeline)
 
 ### Phase 3 KPIs
 - [ ] 5 specialized agents deployed (Coding, Testing, Security, Performance, Deployment)

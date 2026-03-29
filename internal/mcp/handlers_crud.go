@@ -12,6 +12,53 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeCRUDAction routes "edit" for LOCK/UNLOCK/UPDATE_SOURCE, "create" for OBJECT/DEVC/TABL/CLONE, "delete" for OBJECT.
+func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "edit" {
+		switch objectType {
+		case "LOCK":
+			return s.callHandler(ctx, s.handleLockObject, params)
+		case "UNLOCK":
+			return s.callHandler(ctx, s.handleUnlockObject, params)
+		case "UPDATE_SOURCE":
+			return s.callHandler(ctx, s.handleUpdateSource, params)
+		case "MOVE":
+			return s.callHandler(ctx, s.handleMoveObject, params)
+		case "COMPARE_SOURCE":
+			return s.callHandler(ctx, s.handleCompareSource, params)
+		}
+	}
+
+	if action == "create" {
+		switch objectType {
+		case "OBJECT":
+			return s.callHandler(ctx, s.handleCreateObject, params)
+		case "DEVC":
+			return s.callHandler(ctx, s.handleCreatePackage, params)
+		case "TABL":
+			return s.callHandler(ctx, s.handleCreateTable, params)
+		case "CLONE":
+			return s.callHandler(ctx, s.handleCloneObject, params)
+		}
+	}
+
+	if action == "delete" {
+		switch objectType {
+		case "OBJECT", "":
+			if getStringParam(params, "object_url") != "" {
+				return s.callHandler(ctx, s.handleDeleteObject, params)
+			}
+		}
+	}
+
+	// read CLASS_INFO
+	if action == "read" && objectType == "CLASS_INFO" {
+		return s.callHandler(ctx, s.handleGetClassInfo, map[string]any{"class_name": objectName})
+	}
+
+	return nil, false, nil
+}
+
 // --- CRUD Handlers ---
 
 func (s *Server) handleLockObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

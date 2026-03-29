@@ -1,6 +1,6 @@
 module github.com/vinchacho/vibing-steampunk
 
-go 1.23.0
+go 1.24.0
 
 toolchain go1.24.10
 
@@ -11,6 +11,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/viper v1.21.0
+	github.com/tetratelabs/wazero v1.11.0
 	github.com/yuin/gopher-lua v1.1.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -29,6 +30,6 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 )

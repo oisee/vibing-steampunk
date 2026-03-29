@@ -256,7 +256,7 @@ func (b *ImportBuilder) Execute(ctx context.Context) (*BatchImportResult, error)
 		} else {
 			result.FailureCount++
 			if b.onError != nil {
-				b.onError(file, fmt.Errorf(importResult.Message))
+				b.onError(file, fmt.Errorf("%s", importResult.Message))
 			}
 			if b.stopOnError {
 				return result, fmt.Errorf("import failed for %s: %s", file.Path, importResult.Message)
@@ -472,7 +472,7 @@ func (b *ExportBuilder) Execute(ctx context.Context) (*BatchExportResult, error)
 		} else {
 			result.FailureCount++
 			if b.onError != nil {
-				b.onError(obj, fmt.Errorf(exportResult.Message))
+				b.onError(obj, fmt.Errorf("%s", exportResult.Message))
 			}
 		}
 
@@ -499,7 +499,7 @@ func (b *ExportBuilder) exportObject(ctx context.Context, obj ExportObject) Expo
 	if obj.Type == adt.ObjectTypeClass && obj.IncludeType != "" && obj.IncludeType != adt.ClassIncludeMain {
 		saveResult, err = b.client.SaveClassIncludeToFile(ctx, obj.Name, obj.IncludeType, b.outputDir)
 	} else {
-		saveResult, err = b.client.SaveToFile(ctx, obj.Type, obj.Name, b.outputDir)
+		saveResult, err = b.client.SaveToFile(ctx, obj.Type, obj.Name, "", b.outputDir)
 	}
 
 	if err != nil {

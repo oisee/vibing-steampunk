@@ -12,6 +12,33 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeTransportAction routes "system" with transport-related types.
+func (s *Server) routeTransportAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+	transportType := getStringParam(params, "type")
+	switch transportType {
+	case "list_transports":
+		return s.callHandler(ctx, s.handleListTransports, params)
+	case "get_transport":
+		return s.callHandler(ctx, s.handleGetTransport, params)
+	case "create_transport":
+		return s.callHandler(ctx, s.handleCreateTransport, params)
+	case "release_transport":
+		return s.callHandler(ctx, s.handleReleaseTransport, params)
+	case "delete_transport":
+		return s.callHandler(ctx, s.handleDeleteTransport, params)
+	case "get_user_transports":
+		return s.callHandler(ctx, s.handleGetUserTransports, params)
+	case "get_transport_info":
+		return s.callHandler(ctx, s.handleGetTransportInfo, params)
+	case "execute_abap":
+		return s.callHandler(ctx, s.handleExecuteABAP, params)
+	}
+	return nil, false, nil
+}
+
 // --- Transport Management Handlers ---
 
 func (s *Server) handleGetUserTransports(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

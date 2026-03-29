@@ -13,6 +13,27 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeInstallAction routes "system" with install-related types.
+func (s *Server) routeInstallAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "system" {
+		return nil, false, nil
+	}
+	installType := getStringParam(params, "type")
+	switch installType {
+	case "install_zadt_vsp":
+		return s.callHandler(ctx, s.handleInstallZADTVSP, params)
+	case "install_abapgit":
+		return s.callHandler(ctx, s.handleInstallAbapGit, params)
+	case "install_dummy_test":
+		return s.callHandler(ctx, s.handleInstallDummyTest, params)
+	case "list_dependencies":
+		return s.callHandler(ctx, s.handleListDependencies, params)
+	case "deploy_zip":
+		return s.callHandler(ctx, s.handleDeployZip, params)
+	}
+	return nil, false, nil
+}
+
 // --- Install Handlers ---
 
 func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -57,6 +78,10 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 	info := func(msg string) {
 		fmt.Fprintf(&sb, "  → %s\n", msg)
 	}
+
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	cleanupPkgSafety := s.adtClient.AllowPackageTemporarily(testPackage)
+	defer cleanupPkgSafety()
 
 	// Step 1: Check/Create package (upsert strategy)
 	step("Package Check/Create")
@@ -356,6 +381,11 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultText(sb.String()), nil
 	}
 
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	// Install operations are self-contained bootstrap operations that should not be blocked.
+	cleanupPkgSafety := s.adtClient.AllowPackageTemporarily(packageName)
+	defer cleanupPkgSafety()
+
 	// Phase 2: Create package if needed
 	if !packageExists {
 		fmt.Fprintf(&sb, "Creating package %s...\n", packageName)
@@ -538,6 +568,10 @@ func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolR
 		sb.WriteString("  https://github.com/abapGit/abapGit\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	}
+
+	// Temporarily allow the install target package to bypass SAP_ALLOWED_PACKAGES restrictions.
+	cleanupPkg := s.adtClient.AllowPackageTemporarily(packageName)
+	defer cleanupPkg()
 
 	// TODO: Implement actual deployment when ZIPs are embedded
 	// This is the workflow:

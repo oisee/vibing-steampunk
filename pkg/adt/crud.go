@@ -310,7 +310,12 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	opts.PackageName = strings.ToUpper(opts.PackageName)
 
 	// Check package restrictions
-	if err := c.checkPackageSafety(opts.PackageName); err != nil {
+	// For package creation, check the package being created (opts.Name), not the parent (opts.PackageName)
+	packageToCheck := opts.PackageName
+	if opts.ObjectType == ObjectTypePackage {
+		packageToCheck = opts.Name
+	}
+	if err := c.checkPackageSafety(packageToCheck); err != nil {
 		return err
 	}
 

@@ -63,6 +63,11 @@ abap-adt-api/
 
 # Session logs
 sessions/
+node_modules/
+
+# Transient files
+*.jsonl
+2026-*-last-login-*
 
 # Claude local context (session-specific, auto-discovered)
 .claude.local.md

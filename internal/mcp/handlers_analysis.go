@@ -11,6 +11,31 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeAnalysisAction routes "analyze" with call graph and structure types.
+func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "analyze" {
+		return nil, false, nil
+	}
+	analysisType := getStringParam(params, "type")
+	switch analysisType {
+	case "call_graph":
+		return s.callHandler(ctx, s.handleGetCallGraph, params)
+	case "object_structure":
+		return s.callHandler(ctx, s.handleGetObjectStructure, params)
+	case "callers":
+		return s.callHandler(ctx, s.handleGetCallersOf, params)
+	case "callees":
+		return s.callHandler(ctx, s.handleGetCalleesOf, params)
+	case "analyze_call_graph":
+		return s.callHandler(ctx, s.handleAnalyzeCallGraph, params)
+	case "compare_call_graphs":
+		return s.callHandler(ctx, s.handleCompareCallGraphs, params)
+	case "trace_execution":
+		return s.callHandler(ctx, s.handleTraceExecution, params)
+	}
+	return nil, false, nil
+}
+
 // --- Code Analysis Infrastructure Handlers ---
 
 func (s *Server) handleGetCallGraph(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

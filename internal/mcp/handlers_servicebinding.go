@@ -10,6 +10,27 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// routeServiceBindingAction routes "edit" with type=publish_service|unpublish_service.
+func (s *Server) routeServiceBindingAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "edit" {
+		switch objectType {
+		case "PUBLISH_SERVICE":
+			return s.callHandler(ctx, s.handlePublishServiceBinding, params)
+		case "UNPUBLISH_SERVICE":
+			return s.callHandler(ctx, s.handleUnpublishServiceBinding, params)
+		}
+		// Also check params.type
+		editType := getStringParam(params, "type")
+		switch editType {
+		case "publish_service":
+			return s.callHandler(ctx, s.handlePublishServiceBinding, params)
+		case "unpublish_service":
+			return s.callHandler(ctx, s.handleUnpublishServiceBinding, params)
+		}
+	}
+	return nil, false, nil
+}
+
 // --- Service Binding Publish/Unpublish Handlers ---
 
 func (s *Server) handlePublishServiceBinding(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

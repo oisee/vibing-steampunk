@@ -147,10 +147,10 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
     TRANSLATE lv_obj_name TO UPPER CASE.
     TRANSLATE lv_new_pkg TO UPPER CASE.
 
-    " Call ZADT_CL_TADIR_MOVE to perform the move
+    " Call ZCL_VSP_TADIR_MOVE to perform the move
     DATA lv_result TYPE string.
     TRY.
-        lv_result = zadt_cl_tadir_move=>move_object_and_commit(
+        lv_result = zcl_vsp_tadir_move=>move_object_and_commit(
           iv_pgmid    = CONV #( lv_pgmid )
           iv_object   = CONV #( lv_object )
           iv_obj_name = CONV #( lv_obj_name )

@@ -527,12 +527,12 @@ Use 'vsp config tools list' to see current visibility.`,
 }
 
 var configToolsInitCmd = &cobra.Command{
-	Use:   "init [--mode focused|expert]",
+	Use:   "init [--mode focused|expert|hyperfocused]",
 	Short: "Initialize tools configuration with defaults",
 	Long: `Create or update the "tools" section in .vsp.json.
 
 Lists ALL available tools with their visibility status based on:
-- Current mode (focused/expert)
+- Current mode (focused/expert/hyperfocused)
 - Disabled groups
 - Known non-working tools (debuggers, etc.)
 
@@ -561,7 +561,7 @@ var configToolsDisableCmd = &cobra.Command{
 }
 
 func init() {
-	configToolsInitCmd.Flags().String("mode", "focused", "Mode to use for defaults (focused/expert)")
+	configToolsInitCmd.Flags().String("mode", "focused", "Mode to use for defaults (focused/expert/hyperfocused)")
 }
 
 func runConfigToolsInit(cmd *cobra.Command, args []string) error {

@@ -11,6 +11,86 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeReadAction routes "read" and "query" actions for object metadata and table contents.
+func (s *Server) routeReadAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action == "read" {
+		switch objectType {
+		case "PROG":
+			return s.callHandler(ctx, s.handleGetProgram, map[string]any{"program_name": objectName})
+		case "CLAS":
+			return s.callHandler(ctx, s.handleGetClass, map[string]any{"class_name": objectName})
+		case "INTF":
+			return s.callHandler(ctx, s.handleGetInterface, map[string]any{"interface_name": objectName})
+		case "FUNC":
+			return s.callHandler(ctx, s.handleGetFunction, map[string]any{
+				"function_name":  objectName,
+				"function_group": getStringParam(params, "parent"),
+			})
+		case "FUGR":
+			return s.callHandler(ctx, s.handleGetFunctionGroup, map[string]any{"function_group": objectName})
+		case "INCL":
+			return s.callHandler(ctx, s.handleGetInclude, map[string]any{"include_name": objectName})
+		case "TABL":
+			return s.callHandler(ctx, s.handleGetTable, map[string]any{"table_name": objectName})
+		case "DEVC":
+			return s.callHandler(ctx, s.handleGetPackage, map[string]any{"package_name": objectName})
+		case "MSAG":
+			return s.callHandler(ctx, s.handleGetMessages, map[string]any{"message_class": objectName})
+		case "TRAN":
+			return s.callHandler(ctx, s.handleGetTransaction, map[string]any{"transaction_name": objectName})
+		case "TYPE_INFO":
+			return s.callHandler(ctx, s.handleGetTypeInfo, map[string]any{"type_name": objectName})
+		case "STRUCT":
+			return s.callHandler(ctx, s.handleGetStructure, map[string]any{"structure_name": objectName})
+		case "CDS_DEPS":
+			args := map[string]any{"ddls_name": objectName}
+			if v := getStringParam(params, "dependency_level"); v != "" {
+				args["dependency_level"] = v
+			}
+			if v, ok := getBoolParam(params, "with_associations"); ok {
+				args["with_associations"] = v
+			}
+			if v := getStringParam(params, "context_package"); v != "" {
+				args["context_package"] = v
+			}
+			return s.callHandler(ctx, s.handleGetCDSDependencies, args)
+		case "TABL_CONTENTS":
+			args := map[string]any{"table_name": objectName}
+			if v, ok := getFloatParam(params, "max_rows"); ok {
+				args["max_rows"] = v
+			}
+			if v := getStringParam(params, "sql_query"); v != "" {
+				args["sql_query"] = v
+			}
+			return s.callHandler(ctx, s.handleGetTableContents, args)
+		}
+	}
+
+	if action == "query" {
+		switch objectType {
+		case "TABL_CONTENTS":
+			args := map[string]any{"table_name": objectName}
+			if v, ok := getFloatParam(params, "max_rows"); ok {
+				args["max_rows"] = v
+			}
+			if v := getStringParam(params, "sql_query"); v != "" {
+				args["sql_query"] = v
+			}
+			return s.callHandler(ctx, s.handleGetTableContents, args)
+		case "SQL", "":
+			if sqlQuery := getStringParam(params, "sql_query"); sqlQuery != "" {
+				args := map[string]any{"sql_query": sqlQuery}
+				if v, ok := getFloatParam(params, "max_rows"); ok {
+					args["max_rows"] = v
+				}
+				return s.callHandler(ctx, s.handleRunQuery, args)
+			}
+		}
+	}
+
+	return nil, false, nil
+}
+
 // --- Read Handlers ---
 
 func (s *Server) handleGetProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

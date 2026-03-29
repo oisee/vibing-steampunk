@@ -1,0 +1,60 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+6 0 obj
+<< /Length 2484 >>
+stream
+BT /F2 18 Tf 1 0 0 1 48 744.00 Tm (Vibing Steampunk \(vsp\) - App Summary) Tj ET
+BT /F2 12 Tf 1 0 0 1 48 712.00 Tm (What It Is) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 696.00 Tm (Vibing Steampunk \(vsp\) is a Go-based MCP server that bridges AI assistants to SAP ADT) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 684.00 Tm (APIs, enabling AI-agentic ABAP development across ECC and S/4HANA systems.) Tj ET
+BT /F2 12 Tf 1 0 0 1 48 664.00 Tm (Who It's For) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 648.00 Tm (ABAP developers and teams using AI assistants \(for example, Claude\) to work with SAP) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 636.00 Tm (systems through ADT.) Tj ET
+BT /F2 12 Tf 1 0 0 1 48 616.00 Tm (What It Does) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 600.00 Tm (- Exposes focused and expert MCP tool sets for ABAP read/write/search/test operations.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 588.00 Tm (- Provides AI debugger workflows: breakpoints, attach/listen, step, and variable) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 576.00 Tm (  inspection.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 564.00 Tm (- Supports RAP OData end-to-end: CDS, service definitions/bindings, and publish.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 552.00 Tm (- Offers CLI mode for direct operations like search, source, and export.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 540.00 Tm (- Includes DSL and YAML workflows for automation and CI/CD pipelines.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 528.00 Tm (- Exports/imports in abapGit-compatible formats and deploys files directly.) Tj ET
+BT /F2 12 Tf 1 0 0 1 48 508.00 Tm (How It Works) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 492.00 Tm (AI/MCP clients communicate with vsp over JSON-RPC via stdio. vsp registers tools and) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 480.00 Tm (runs in focused or expert mode, then calls the pkg/adt client library) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 468.00 Tm (\(read/write/devtools/intel/workflows\). The ADT client uses an HTTP layer \(CSRF,) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 456.00 Tm (sessions, auth\) to call SAP ADT REST APIs, and responses flow back to the client.) Tj ET
+BT /F2 12 Tf 1 0 0 1 48 436.00 Tm (How To Run) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 420.00 Tm (- Download the latest release binary and chmod +x it \(or build via make build\).) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 408.00 Tm (- Set SAP connection variables \(SAP_URL, SAP_USER, SAP_PASSWORD, optional SAP_CLIENT\) or) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 396.00 Tm (  create .vsp.json.) Tj ET
+BT /F1 10 Tf 1 0 0 1 48 384.00 Tm (- Run ./vsp \(MCP server\) or use CLI commands like vsp search ...) Tj ET
+endstream
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000000321 00000 n 
+0000000396 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+2931
+%%EOF

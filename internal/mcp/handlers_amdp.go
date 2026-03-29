@@ -11,6 +11,30 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
+// routeAMDPAction routes "debug" AMDP sub-actions.
+func (s *Server) routeAMDPAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "debug" {
+		return nil, false, nil
+	}
+	switch objectType {
+	case "AMDP_START":
+		return s.callHandler(ctx, s.handleAMDPDebuggerStart, params)
+	case "AMDP_RESUME":
+		return s.callHandler(ctx, s.handleAMDPDebuggerResume, params)
+	case "AMDP_STOP":
+		return s.callHandler(ctx, s.handleAMDPDebuggerStop, params)
+	case "AMDP_STEP":
+		return s.callHandler(ctx, s.handleAMDPDebuggerStep, params)
+	case "AMDP_GET_VARIABLES":
+		return s.callHandler(ctx, s.handleAMDPGetVariables, params)
+	case "AMDP_SET_BREAKPOINT":
+		return s.callHandler(ctx, s.handleAMDPSetBreakpoint, params)
+	case "AMDP_GET_BREAKPOINTS":
+		return s.callHandler(ctx, s.handleAMDPGetBreakpoints, params)
+	}
+	return nil, false, nil
+}
+
 // --- AMDP (HANA) Debugger Handlers ---
 
 func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

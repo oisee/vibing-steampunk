@@ -13,16 +13,15 @@ import (
 	"strings"
 )
 
-// Embedded dependency ZIPs (placeholders - replace with actual ZIPs)
-// To generate: vsp git-export --packages 'ZABAPGIT' --output abapgit-standalone.zip
-// Or download from GitHub: https://github.com/abapGit/abapGit
+// Embedded dependency ZIPs
+// Generated via: vsp -s a4h-105-adt export '$ZGIT' -o abapgit-full.zip
+// Standalone extracted from full export
 
-// Placeholder: will be replaced with actual ZIP when available
-// //go:embed abapgit-standalone.zip
-// var AbapGitStandalone []byte
+//go:embed abapgit-standalone.zip
+var AbapGitStandalone []byte
 
-// //go:embed abapgit-dev.zip
-// var AbapGitDev []byte
+//go:embed abapgit-full.zip
+var AbapGitFull []byte
 
 // DependencyInfo describes an available dependency package.
 type DependencyInfo struct {
@@ -41,24 +40,28 @@ func GetAvailableDependencies() []DependencyInfo {
 			Name:        "abapgit-standalone",
 			Description: "abapGit standalone program (single file ZABAPGIT)",
 			Package:     "$ABAPGIT",
-			Available:   false, // TODO: Set to true when ZIP is embedded
+			Available:   len(AbapGitStandalone) > 0,
 		},
 		{
-			Name:        "abapgit-dev",
-			Description: "abapGit developer edition (full $ZGIT_DEV* packages)",
-			Package:     "$ZGIT_DEV",
-			Available:   false, // TODO: Set to true when ZIP is embedded
+			Name:        "abapgit-full",
+			Description: "abapGit full edition ($ZGIT + $ZGIT_DEV packages, 576 objects)",
+			Package:     "$ZGIT",
+			Available:   len(AbapGitFull) > 0,
 		},
 	}
 }
 
-// GetDependencyZIP returns the embedded ZIP data for a named dependency.
-// Returns nil if the dependency is not available (not yet embedded).
+// GetDependencyZIP returns embedded ZIP bytes for a named dependency.
+// Returns nil when the dependency is unknown or not embedded in this build.
 func GetDependencyZIP(name string) []byte {
-	// TODO: Return actual embedded ZIP data when available.
-	// For now, no ZIPs are embedded — all dependencies return nil.
-	_ = name
-	return nil
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "abapgit-standalone":
+		return AbapGitStandalone
+	case "abapgit-full", "abapgit-dev":
+		return AbapGitFull
+	default:
+		return nil
+	}
 }
 
 // ABAPFile represents a parsed ABAP source file from abapGit ZIP.
@@ -272,6 +275,11 @@ func UnzipInMemory(zipData []byte) ([]ABAPFile, error) {
 
 // isAbapGitFile checks if filename is an abapGit source or metadata file.
 func isAbapGitFile(filename string) bool {
+	// Skip root-level .abapgit.xml
+	if filename == ".abapgit.xml" {
+		return false
+	}
+
 	extensions := []string{
 		".abap",
 		".asddls",

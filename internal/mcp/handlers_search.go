@@ -10,6 +10,32 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// routeSearchAction routes "search" action.
+func (s *Server) routeSearchAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
+	if action != "search" {
+		return nil, false, nil
+	}
+	// Target is the query string; could be "TYPE NAME" or just a query
+	query := objectType
+	if objectName != "" {
+		query = objectType + " " + objectName
+	}
+	if query == "" {
+		query = getStringParam(params, "query")
+	}
+	if query == "" {
+		return nil, false, nil
+	}
+	args := map[string]any{"query": query}
+	if v, ok := getFloatParam(params, "maxResults"); ok {
+		args["maxResults"] = v
+	}
+	if v, ok := getFloatParam(params, "max_results"); ok {
+		args["maxResults"] = v
+	}
+	return s.callHandler(ctx, s.handleSearchObject, args)
+}
+
 // --- Search Handlers ---
 
 func (s *Server) handleSearchObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
