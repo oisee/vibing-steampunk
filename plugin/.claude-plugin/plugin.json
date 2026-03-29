@@ -1,0 +1,12 @@
+{
+  "name": "vsp-abap-developer",
+  "version": "1.0.0",
+  "description": "SAP ABAP development workflows and domain knowledge for the VSP MCP server",
+  "author": {
+    "name": "Vincent Segami"
+  },
+  "homepage": "https://github.com/vinchacho/vibing-steampunk",
+  "repository": "https://github.com/vinchacho/vibing-steampunk",
+  "license": "MIT",
+  "keywords": ["sap", "abap", "adt", "vsp", "mcp", "development", "debugging"]
+}

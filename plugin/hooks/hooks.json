@@ -1,0 +1,7 @@
+[
+  {
+    "hook": "SessionStart",
+    "command": "hooks-handlers/session-start.sh",
+    "timeout": 3000
+  }
+]
