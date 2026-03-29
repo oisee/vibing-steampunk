@@ -254,8 +254,20 @@ func (m *Module) parseFunction(lines []string, start int) (*Function, int) {
 			return fn, i
 		}
 
-		if line == "" || strings.HasPrefix(line, ";") {
+		if line == "" || strings.HasPrefix(line, ";") || line == "]" {
 			continue
+		}
+
+		// Join multi-line instructions (switch with [ ... ])
+		if strings.Contains(line, "[") && !strings.Contains(line, "]") {
+			for i+1 < len(lines) {
+				i++
+				next := strings.TrimSpace(lines[i])
+				line += " " + next
+				if strings.Contains(next, "]") {
+					break
+				}
+			}
 		}
 
 		// Basic block label: "3:" or "entry:" or "3:    ; preds = ..."
@@ -382,6 +394,26 @@ func parseInstruction(line string) *Instruction {
 		return inst
 	}
 
+	// switch instruction (no result)
+	if strings.HasPrefix(line, "switch ") {
+		inst.Op = "switch"
+		// switch i32 %val, label %default [ i32 0, label %bb0  i32 1, label %bb1 ... ]
+		re := regexp.MustCompile(`switch\s+\w+\s+(%?\w+)\s*,\s*label\s+%(\w+)`)
+		m := re.FindStringSubmatch(line)
+		if m != nil {
+			inst.Cond = m[1]
+			inst.FalseLabel = m[2] // default label
+		}
+		// Parse cases: i32 N, label %bbX
+		caseRe := regexp.MustCompile(`i\d+\s+(-?\d+)\s*,\s*label\s+%(\w+)`)
+		cases := caseRe.FindAllStringSubmatch(line, -1)
+		for _, c := range cases {
+			inst.Args = append(inst.Args, c[1])       // value
+			inst.PhiPairs = append(inst.PhiPairs, PhiPair{Value: c[1], Label: c[2]}) // reuse PhiPair for case→label
+		}
+		return inst
+	}
+
 	// store instruction (no result)
 	if strings.HasPrefix(line, "store ") {
 		inst.Op = "store"
@@ -445,8 +477,9 @@ func parseInstruction(line string) *Instruction {
 		// select instruction
 		if strings.HasPrefix(rest, "select ") {
 			inst.Op = "select"
-			// select i1 %cond, i32 %true, i32 %false
-			re := regexp.MustCompile(`select\s+i1\s+(%\w+)\s*,\s*(\w+)\s+(%\w+)\s*,\s*(\w+)\s+(%?\w+)`)
+			// select i1 %cond, TYPE %true_val, TYPE %false_val
+			// Also handles: select i1 %cond, i1 true, i1 %val
+			re := regexp.MustCompile(`select\s+i1\s+(%\w+)\s*,\s*(\w+)\s+(%?\w+)\s*,\s*(\w+)\s+(%?\w+)`)
 			m := re.FindStringSubmatch(rest)
 			if m != nil {
 				inst.SelectCond = m[1]
@@ -521,6 +554,24 @@ func parseInstruction(line string) *Instruction {
 						}
 					}
 				}
+			}
+			return inst
+		}
+
+		// alloca instruction — result is a pointer (TYPE i)
+		if strings.HasPrefix(rest, "alloca ") {
+			inst.Op = "alloca"
+			inst.Type = Type{Kind: PtrType} // alloca returns ptr
+			return inst
+		}
+
+		// freeze instruction (LLVM poison/undef → just pass through)
+		if strings.HasPrefix(rest, "freeze ") {
+			inst.Op = "freeze"
+			parts := strings.Fields(rest)
+			if len(parts) >= 3 {
+				inst.Type = parseType(parts[1])
+				inst.Args = []string{parts[2]}
 			}
 			return inst
 		}
@@ -717,7 +768,11 @@ func (c *abapCompiler) collectVars(fn *Function) []varDecl {
 				name := c.ssaName(inst.Result)
 				if !seen[name] && !c.isParam(inst.Result) {
 					seen[name] = true
-					result = append(result, varDecl{name: name, typ: inst.Type.ABAPType()})
+					typ := inst.Type.ABAPType()
+					if typ == "" {
+						typ = "i" // default for unrecognized types
+					}
+					result = append(result, varDecl{name: name, typ: typ})
 				}
 			}
 		}
@@ -1009,6 +1064,29 @@ func (c *abapCompiler) emitInst(inst *Instruction, fn *Function) {
 		if len(inst.Args) > 0 {
 			c.line("%s = %s. \" %s", dst, c.val(inst.Args[0]), inst.Op)
 		}
+
+	// Alloca — local stack allocation → DATA variable (already declared)
+	case "alloca":
+		c.line("\" alloca: %s (stack var, already in DATA)", dst)
+
+	// Freeze — LLVM poison/undef passthrough
+	case "freeze":
+		if len(inst.Args) > 0 {
+			c.line("%s = %s. \" freeze", dst, c.val(inst.Args[0]))
+		}
+
+	// Switch — multi-way branch
+	case "switch":
+		c.line("CASE %s.", c.val(inst.Cond))
+		c.indent++
+		for _, pair := range inst.PhiPairs {
+			c.emitPhiAssigns(pair.Label)
+			c.line("WHEN %s. lv_block = '%s'.", pair.Value, pair.Label)
+		}
+		c.emitPhiAssigns(inst.FalseLabel)
+		c.line("WHEN OTHERS. lv_block = '%s'.", inst.FalseLabel)
+		c.indent--
+		c.line("ENDCASE.")
 
 	default:
 		if inst.Op != "" {
