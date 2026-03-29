@@ -117,6 +117,7 @@ func init() {
 	compileLLVMCmd.Flags().String("package", "$TMP", "SAP package (for --zip)")
 	compileLLVMCmd.Flags().String("desc", "Compiled via vsp compile llvm", "Description")
 	compileLLVMCmd.Flags().String("opt", "O1", "Clang optimization level (O0/O1/O2)")
+	compileLLVMCmd.Flags().String("cflags", "", "Extra clang flags (e.g. \"-DCONFIG_VERSION=\\\"v1\\\" -D_GNU_SOURCE\")")
 
 	// Parse flags
 	parseCmd.Flags().String("file", "", "Parse local file")
@@ -378,7 +379,12 @@ func runCompileLLVM(cmd *cobra.Command, args []string) error {
 	switch ext {
 	case ".c", ".h":
 		tmpLL := inputFile + ".ll"
-		clangCmd := exec.Command("clang", "-S", "-emit-llvm", "-"+optLevel, inputFile, "-o", tmpLL)
+		clangArgs := []string{"-S", "-emit-llvm", "-" + optLevel, inputFile, "-o", tmpLL}
+		cflags, _ := cmd.Flags().GetString("cflags")
+		if cflags != "" {
+			clangArgs = append(strings.Fields(cflags), clangArgs...)
+		}
+		clangCmd := exec.Command("clang", clangArgs...)
 		clangCmd.Stderr = os.Stderr
 		if err := clangCmd.Run(); err != nil {
 			return fmt.Errorf("clang failed: %w (is clang installed?)", err)
