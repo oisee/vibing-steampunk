@@ -1005,14 +1005,17 @@ func (c *abapCompiler) emitInst(inst *Instruction, fn *Function) {
 
 	// Bitwise
 	case "and":
-		c.line("DATA(lx_a_%s) = CONV x4( %s ). DATA(lx_b_%s) = CONV x4( %s ). %s = lx_a_%s BIT-AND lx_b_%s.",
-			dst, c.val(inst.Args[0]), dst, c.val(inst.Args[1]), dst, dst, dst)
+		a, b := c.val(inst.Args[0]), c.val(inst.Args[1])
+		c.line("DATA lx_a_%s TYPE x4. DATA lx_b_%s TYPE x4. lx_a_%s = %s. lx_b_%s = %s. lx_a_%s = lx_a_%s BIT-AND lx_b_%s. %s = lx_a_%s.",
+			dst, dst, dst, a, dst, b, dst, dst, dst, dst, dst)
 	case "or":
-		c.line("DATA(lx_a_%s) = CONV x4( %s ). DATA(lx_b_%s) = CONV x4( %s ). %s = lx_a_%s BIT-OR lx_b_%s.",
-			dst, c.val(inst.Args[0]), dst, c.val(inst.Args[1]), dst, dst, dst)
+		a, b := c.val(inst.Args[0]), c.val(inst.Args[1])
+		c.line("DATA lx_a_%s TYPE x4. DATA lx_b_%s TYPE x4. lx_a_%s = %s. lx_b_%s = %s. lx_a_%s = lx_a_%s BIT-OR lx_b_%s. %s = lx_a_%s.",
+			dst, dst, dst, a, dst, b, dst, dst, dst, dst, dst)
 	case "xor":
-		c.line("DATA(lx_a_%s) = CONV x4( %s ). DATA(lx_b_%s) = CONV x4( %s ). %s = lx_a_%s BIT-XOR lx_b_%s.",
-			dst, c.val(inst.Args[0]), dst, c.val(inst.Args[1]), dst, dst, dst)
+		a, b := c.val(inst.Args[0]), c.val(inst.Args[1])
+		c.line("DATA lx_a_%s TYPE x4. DATA lx_b_%s TYPE x4. lx_a_%s = %s. lx_b_%s = %s. lx_a_%s = lx_a_%s BIT-XOR lx_b_%s. %s = lx_a_%s.",
+			dst, dst, dst, a, dst, b, dst, dst, dst, dst, dst)
 	case "shl":
 		c.line("TRY. %s = %s * ipow( base = 2 exp = %s ). CATCH cx_root. %s = 0. ENDTRY.",
 			dst, c.val(inst.Args[0]), c.val(inst.Args[1]), dst)
@@ -1317,8 +1320,25 @@ func (c *abapCompiler) val(v string) string {
 		return "0"
 	}
 	// Null pointer
-	if v == "null" {
+	if v == "null" || v == "zeroinitializer" || v == "undef" || v == "poison" {
 		return "0"
+	}
+	// LLVM global reference (@name) → 0 (stub)
+	if strings.HasPrefix(v, "@") {
+		return "0"
+	}
+	// Strip LLVM attributes from values
+	for _, attr := range []string{"dereferenceable", "nonnull", "noundef", "signext", "zeroext"} {
+		if strings.Contains(v, attr) {
+			// Extract the actual value: "dereferenceable(1) %x" → "%x"
+			parts := strings.Fields(v)
+			for _, p := range parts {
+				if strings.HasPrefix(p, "%") {
+					return c.ssaName(p)
+				}
+			}
+			return "0"
+		}
 	}
 	// SSA register
 	if strings.HasPrefix(v, "%") {
