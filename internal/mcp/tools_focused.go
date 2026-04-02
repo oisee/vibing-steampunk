@@ -108,6 +108,10 @@ func focusedToolSet() map[string]bool {
 		"AMDPSetBreakpoint":  true,
 		"AMDPGetBreakpoints": true,
 
+		// CDS Extensions (2)
+		"GetCDSImpactAnalysis": true, // CDS reverse where-used (downstream consumers)
+		"GetCDSElementInfo":    true, // CDS view element/field metadata
+
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects

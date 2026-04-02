@@ -87,6 +87,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	s.registerGitTools(shouldRegister)
 	s.registerReportTools(shouldRegister)
 	s.registerInstallTools(shouldRegister)
+	s.registerCDSExtTools(shouldRegister)
 
 	// Register tool aliases for common operations
 	s.registerToolAliases(shouldRegister)
@@ -1946,5 +1947,28 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 				mcp.Description("Deploy only objects matching this name pattern (e.g., 'ZCL_ABAPGIT_*')"),
 			),
 		), s.handleDeployZip)
+	}
+}
+
+// registerCDSExtTools registers CDS impact analysis and element info tools.
+func (s *Server) registerCDSExtTools(shouldRegister func(string) bool) {
+	if shouldRegister("GetCDSImpactAnalysis") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSImpactAnalysis",
+			mcp.WithDescription("Get REVERSE dependencies (where-used) for a CDS view. Returns all downstream consumers: other CDS views, programs, classes that reference this view. Complement to GetCDSDependencies which returns FORWARD dependencies."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (DDLS name, e.g., ZTRAVEL)"),
+			),
+		), s.handleGetCDSImpactAnalysis)
+	}
+
+	if shouldRegister("GetCDSElementInfo") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSElementInfo",
+			mcp.WithDescription("Get metadata for all elements (fields) of a CDS view: field names, types, descriptions, annotations, and semantics. Useful for understanding CDS view structure without reading source."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (DDLS name, e.g., ZTRAVEL)"),
+			),
+		), s.handleGetCDSElementInfo)
 	}
 }
