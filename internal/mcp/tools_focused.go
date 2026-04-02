@@ -108,6 +108,11 @@ func focusedToolSet() map[string]bool {
 		"AMDPSetBreakpoint":  true,
 		"AMDPGetBreakpoints": true,
 
+		// Testing & Quality (3)
+		"GetCodeCoverage":    true, // Run tests with line-level coverage
+		"GetSQLExplainPlan":  true, // SQL execution plan (HANA only)
+		"GetCheckRunResults": true, // Detailed check run findings
+
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects
