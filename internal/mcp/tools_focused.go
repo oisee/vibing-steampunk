@@ -108,6 +108,13 @@ func focusedToolSet() map[string]bool {
 		"AMDPSetBreakpoint":  true,
 		"AMDPGetBreakpoints": true,
 
+		// ADT Refactoring & Quick Fix (5)
+		"RenameRefactoring":    true, // ADT-native rename (evaluate/preview/execute)
+		"ExtractMethod":        true, // Extract code block into new method
+		"GetQuickFixProposals": true, // Get auto-fix proposals for errors/warnings
+		"ApplyQuickFix":        true, // Apply a quick fix proposal
+		"ApplyATCQuickFix":     true, // Get details or apply ATC finding quick fix
+
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects
