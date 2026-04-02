@@ -108,6 +108,12 @@ func focusedToolSet() map[string]bool {
 		"AMDPSetBreakpoint":  true,
 		"AMDPGetBreakpoints": true,
 
+		// Intelligence Layer (4)
+		"AnalyzeSQLPerformance": true, // SQL performance analysis (text + HANA plan)
+		"GetImpactAnalysis":     true, // Multi-layer blast radius analysis
+		"AnalyzeABAPCode":       true, // 21-rule ABAP source analysis
+		"CheckRegression":       true, // Diff-based breaking change detection
+
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects

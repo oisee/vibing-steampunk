@@ -29,6 +29,7 @@ type Link struct {
 	Rel     string   `xml:"rel,attr"`
 	Type    string   `xml:"type,attr,omitempty"`
 	Title   string   `xml:"title,attr,omitempty"`
+	Name    string   `xml:"http://www.sap.com/adt/core name,attr,omitempty"` // adtcore:name attribute
 }
 
 // AtomEntry represents an Atom feed entry.
@@ -324,4 +325,65 @@ func ExtractSourceLink(links []Link) string {
 		}
 	}
 	return ""
+}
+
+// --- Revision (Version History) Types ---
+
+// Revision represents a single version of an ABAP object in the revision history.
+type Revision struct {
+	URI          string `json:"uri"`
+	Version      string `json:"version"`
+	VersionTitle string `json:"versionTitle"`
+	Date         string `json:"date"`
+	Author       string `json:"author"`
+	Transport    string `json:"transport,omitempty"`
+}
+
+type revisionFeedEntry struct {
+	XMLName xml.Name `xml:"entry"`
+	ID      string   `xml:"id"`
+	Title   string   `xml:"title"`
+	Updated string   `xml:"updated"`
+	Author  struct {
+		Name string `xml:"name"`
+	} `xml:"author"`
+	Content struct {
+		Src  string `xml:"src,attr"`
+		Type string `xml:"type,attr"`
+	} `xml:"content"`
+	Links []Link `xml:"link"`
+}
+
+type revisionFeed struct {
+	XMLName xml.Name            `xml:"feed"`
+	Title   string              `xml:"title"`
+	Entries []revisionFeedEntry `xml:"entry"`
+}
+
+// ParseRevisionFeed parses an ADT versions Atom feed into Revision entries.
+func ParseRevisionFeed(data []byte) ([]Revision, error) {
+	var feed revisionFeed
+	if err := xml.Unmarshal(data, &feed); err != nil {
+		return nil, fmt.Errorf("parsing revision feed: %w", err)
+	}
+	revisions := make([]Revision, 0, len(feed.Entries))
+	for _, entry := range feed.Entries {
+		rev := Revision{
+			URI:          entry.Content.Src,
+			VersionTitle: entry.Title,
+			Date:         entry.Updated,
+			Version:      entry.ID,
+			Author:       entry.Author.Name,
+		}
+		for _, link := range entry.Links {
+			if strings.Contains(link.Type, "transportrequests") {
+				if link.Name != "" {
+					rev.Transport = link.Name
+				}
+				break
+			}
+		}
+		revisions = append(revisions, rev)
+	}
+	return revisions, nil
 }

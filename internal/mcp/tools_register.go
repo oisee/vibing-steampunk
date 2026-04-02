@@ -87,6 +87,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	s.registerGitTools(shouldRegister)
 	s.registerReportTools(shouldRegister)
 	s.registerInstallTools(shouldRegister)
+	s.registerIntelligenceTools(shouldRegister)
 
 	// Register tool aliases for common operations
 	s.registerToolAliases(shouldRegister)
@@ -1946,5 +1947,75 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 				mcp.Description("Deploy only objects matching this name pattern (e.g., 'ZCL_ABAPGIT_*')"),
 			),
 		), s.handleDeployZip)
+	}
+}
+
+// registerIntelligenceTools registers AI code analysis and intelligence tools.
+func (s *Server) registerIntelligenceTools(shouldRegister func(string) bool) {
+	if shouldRegister("AnalyzeSQLPerformance") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeSQLPerformance",
+			mcp.WithDescription("Analyze SQL query performance. Runs text-based analysis (detects SELECT *, missing WHERE, CLIENT SPECIFIED, etc.) on both ABAP SQL and native SQL. On HANA systems, also runs execution plan analysis (full table scans, missing indexes, nested loops). Returns findings with severity and fix suggestions."),
+			mcp.WithString("sql_query",
+				mcp.Required(),
+				mcp.Description("SQL query to analyze (ABAP SQL or native SQL)"),
+			),
+		), s.handleAnalyzeSQLPerformance)
+	}
+
+	if shouldRegister("GetImpactAnalysis") {
+		s.mcpServer.AddTool(mcp.NewTool("GetImpactAnalysis",
+			mcp.WithDescription("Analyze blast radius of changing an ABAP object. Layer 1 (always): static cross-references via FindReferences. Layer 2 (opt-in): transitive callers via call graph. Layer 3 (opt-in): dynamic call risk — searches for object name as string literal in scope packages. Layer 4 (opt-in): config-driven calls — detects BAdI, enhancement points, user exits in source + queries customizing tables. Returns affected objects, risk level, and warnings."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT URI of the object (e.g., /sap/bc/adt/oo/classes/zcl_test)"),
+			),
+			mcp.WithString("object_name",
+				mcp.Description("Object name (e.g., ZCL_TEST) — needed for Layer 3-4 pattern searches"),
+			),
+			mcp.WithBoolean("transitive",
+				mcp.Description("Enable Layer 2: transitive callers via call graph (default: false)"),
+			),
+			mcp.WithNumber("max_depth",
+				mcp.Description("Max depth for transitive callers (default: 3)"),
+			),
+			mcp.WithBoolean("dynamic_patterns",
+				mcp.Description("Enable Layer 3: search for dynamic call patterns in scope packages (default: false)"),
+			),
+			mcp.WithBoolean("extension_points",
+				mcp.Description("Enable Layer 4: detect BAdI, enhancement points, user exits (default: false)"),
+			),
+			mcp.WithNumber("max_results",
+				mcp.Description("Max consumers to return (default: 200)"),
+			),
+			mcp.WithArray("scope_packages",
+				mcp.Description("Package scope for Layer 3-4 searches (e.g., [\"ZFI\", \"$TMP\"])"),
+				mcp.Items(map[string]interface{}{"type": "string"}),
+			),
+		), s.handleGetImpactAnalysis)
+	}
+
+	if shouldRegister("AnalyzeABAPCode") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeABAPCode",
+			mcp.WithDescription("Analyze ABAP source code for anti-patterns, performance issues, and security risks. 21 rules across 4 categories (performance, security, robustness, quality). Uses two-pass statement assembler (handles multi-line statements). Provide either object_uri (fetches source) or source text directly."),
+			mcp.WithString("object_uri",
+				mcp.Description("ADT URI of the object — source will be fetched automatically"),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source text to analyze (alternative to object_uri)"),
+			),
+		), s.handleAnalyzeABAPCode)
+	}
+
+	if shouldRegister("CheckRegression") {
+		s.mcpServer.AddTool(mcp.NewTool("CheckRegression",
+			mcp.WithDescription("Detect breaking changes by comparing current source against a previous version. Finds: changed method signatures, removed public methods, interface changes, RAISING clause changes. Auto-detects base version from revision history if not specified."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT URI of the object to check (e.g., /sap/bc/adt/oo/classes/zcl_test)"),
+			),
+			mcp.WithString("base_version",
+				mcp.Description("Revision URI to compare against (from GetRevisions); default = auto-detect previous version"),
+			),
+		), s.handleCheckRegression)
 	}
 }
