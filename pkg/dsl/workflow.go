@@ -545,7 +545,7 @@ func handleFailIf(ctx *ExecutionContext, params map[string]interface{}) (interfa
 					if message == "" {
 						message = fmt.Sprintf("%d tests failed", summary.FailedTests)
 					}
-					return nil, fmt.Errorf(message)
+					return nil, fmt.Errorf("%s", message)
 				}
 			}
 		}
@@ -561,7 +561,7 @@ func handleFailIf(ctx *ExecutionContext, params map[string]interface{}) (interfa
 						if message == "" {
 							message = fmt.Sprintf("syntax errors found in %v", r["object"])
 						}
-						return nil, fmt.Errorf(message)
+						return nil, fmt.Errorf("%s", message)
 					}
 				}
 			}

@@ -167,7 +167,7 @@ for (let i = 0; i < result.length; i = i + 1) {
   out = out + t.type + ":" + t.str;
 }
 console.log(out);
-`, strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\n", "\\n"))
+`, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"))
 
 			goOut, err := Eval(jsCode)
 			if err != nil {
@@ -186,7 +186,7 @@ for (let i = 0; i < result.length; i++) {
   out += t.type + ":" + t.str;
 }
 console.log(out);
-`, strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\n", "\\n"))
+`, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"))
 
 			tmpFile := fmt.Sprintf("/tmp/oracle_test_%s.js", s.name)
 			os.WriteFile(tmpFile, []byte(nodeCode), 0644)

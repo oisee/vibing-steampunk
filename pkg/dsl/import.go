@@ -256,7 +256,7 @@ func (b *ImportBuilder) Execute(ctx context.Context) (*BatchImportResult, error)
 		} else {
 			result.FailureCount++
 			if b.onError != nil {
-				b.onError(file, fmt.Errorf(importResult.Message))
+				b.onError(file, fmt.Errorf("%s", importResult.Message))
 			}
 			if b.stopOnError {
 				return result, fmt.Errorf("import failed for %s: %s", file.Path, importResult.Message)
@@ -472,7 +472,7 @@ func (b *ExportBuilder) Execute(ctx context.Context) (*BatchExportResult, error)
 		} else {
 			result.FailureCount++
 			if b.onError != nil {
-				b.onError(obj, fmt.Errorf(exportResult.Message))
+				b.onError(obj, fmt.Errorf("%s", exportResult.Message))
 			}
 		}
 

@@ -245,7 +245,7 @@ func (b *BatchBuilder) saveSource(ctx context.Context, obj ObjectRef, source str
 			return err
 		}
 		if !result.Success {
-			return fmt.Errorf(result.Message)
+			return fmt.Errorf("%s", result.Message)
 		}
 		return nil
 	case TypeProgram, "PROG/P":
@@ -254,7 +254,7 @@ func (b *BatchBuilder) saveSource(ctx context.Context, obj ObjectRef, source str
 			return err
 		}
 		if !result.Success {
-			return fmt.Errorf(result.Message)
+			return fmt.Errorf("%s", result.Message)
 		}
 		return nil
 	default:
