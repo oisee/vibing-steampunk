@@ -5,6 +5,25 @@ description: "Orchestrate multi-agent workflows: feature, bugfix, deploy, audit,
 
 # Orchestrate Workflow
 
+**SESSION SCOPING (MANDATORY at entry):** Independently resolve session context — skill invocations do NOT share variable scope with the caller.
+
+**SHORTCUT — when called from another skill (run/finish/check/phase):** if ARGUMENTS begins with `__RESOLVED__`, parse PLAN_FILE, TASKS_FILE, REVIEW_FILE, PROJECT_SUFFIX from the marker (format: `__RESOLVED__ PLAN_FILE=<path> TASKS_FILE=<path> REVIEW_FILE=<path> PROJECT_SUFFIX=<value>`). Derive SESSION_LABEL: if PLAN_FILE matches `docs/PLAN-{label}.md`, SESSION_LABEL=`{label}`; else SESSION_LABEL=(none). Print: `[pre-resolved: {PLAN_FILE}]`. **Skip steps 1-4 below.**
+
+**STANDALONE — when invoked directly** (ARGUMENTS does NOT begin with `__RESOLVED__`):
+1. Print: `▶ /orchestrate {first word of ARGUMENTS}` — then proceed.
+2. **Detect session (silently — NO visible bash calls):**
+   **Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip to step 5.
+   **Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
+     - `[SESSION] label=X ...` → SESSION_LABEL=`X`. Skip to step 4a.
+     - `[SESSION] default escape=true` → no session. Skip to step 4b.
+     - `[SESSION] default branch=...` → no session. Check args (step 3b), then step 4b.
+   **Priority 3 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
+3b. If SESSION_LABEL still not set: extract SECOND_ARG = second whitespace-delimited word of ARGUMENTS (first word is workflow type). If SECOND_ARG matches `^[A-Za-z][A-Za-z0-9_-]{1,62}$`: glob `docs/PLAN-*.md` — if match → SESSION_LABEL=SECOND_ARG (from args). Skip to step 4a.
+4a. SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`, PROJECT_SUFFIX=`__{SESSION_LABEL}`.
+4b. SESSION_LABEL not set: PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`, PROJECT_SUFFIX=(none).
+5. Use PLAN_FILE/TASKS_FILE/REVIEW_FILE throughout. For `start_pipeline`: `project=<basename_of_cwd><PROJECT_SUFFIX>`. For `list_active_pipelines`: pass `project=<basename_of_cwd><PROJECT_SUFFIX>` if session set.
+**Output:** Print session result ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+
 You are the Workflow Orchestrator. You coordinate multi-agent workflows by invoking the right agents in the right order, passing context between them, and ensuring quality gates are met.
 
 ## Usage
@@ -45,12 +64,12 @@ Supported workflows:
    → test-engineer — Write tests in parallel with implementation
 4. code-reviewer — Review all changes (Claude + OpenAI via PAL)
    → [CV-GATE:codereview] OpenAI independent code review
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 5. qa-lead — Run full test suite, validate coverage
    → GATE: All tests pass, coverage adequate
 6. security-lead — Security audit (if auth/input/data involved)
    → [CV-GATE:thinkdeep] Deep security cross-validation
-   → GATE: No CRITICAL or HIGH security findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM security findings
 7. doc-writer — Update documentation
 8. pm-analyst (optional) — Update sprint board: close tasks, record velocity, update work items
 9. Human approval → Merge
@@ -64,7 +83,7 @@ Supported workflows:
 3. test-engineer — Add regression test (must FAIL without fix, PASS with fix)
 4. code-reviewer — Review fix + test
    → [CV-GATE:codereview] Cross-validate fix correctness
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 5. rspdn-writer (optional) — Generate RSPDN pre-correction note from transport changes
    → Save to R:\RSPDN\<PRODUCT>\ and attach link to TFS bug
    → Skipped if not an SAP bug fix
@@ -81,7 +100,7 @@ Supported workflows:
    → GATE: All tests pass
 3. security-lead — Security scan
    → [CV-GATE:codereview] Security cross-validation
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 4. devops-engineer — Build artifacts, prepare manifests
 5. Human approval → Deploy to staging
 6. integration-tester — Smoke tests on staging
@@ -93,10 +112,7 @@ Supported workflows:
 
 **Exit criteria:** zero CRITICAL, HIGH, and MEDIUM findings. Audit loops recursively until this state is reached.
 
-**Two-tier severity model (by design):**
-- **Audit pipelines** (`/orchestrate audit`, `/orchestrate deep-validate`): zero MEDIUM+ required — recursive until clean.
-- **Dev pipelines** (feature, bugfix, deploy, QA, refactor, etc.): zero CRITICAL/HIGH at code-review gates. MEDIUM findings are tracked but do not block these pipelines (the final audit pipeline is responsible for zero MEDIUM+).
-This differentiation is intentional: dev pipeline gates are lightweight checkpoints; audit pipelines are the quality gate for plan/change approval.
+**Exit standard:** zero MEDIUM+ at all gates — no CRITICAL, HIGH, or MEDIUM findings allowed at any pipeline quality gate.
 
 ```
 1. lead-auditor — Review scope, determine expertise, assign domains
@@ -148,19 +164,24 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
 2. integration-tester — Run integration tests
    → GATE: All integration tests pass
 3. visual-qa — Browser testing (desktop + mobile)
-   → GATE: No CRITICAL or HIGH visual bugs
+   → GATE: No CRITICAL, HIGH, or MEDIUM visual bugs
 4. code-reviewer — Claude + OpenAI code review
    → [CV-GATE:codereview] Mandatory cross-validation
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 5. security-lead — Security audit (if applicable)
    → [CV-GATE:thinkdeep] Security cross-validation
-   → GATE: No CRITICAL or HIGH security findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM security findings
 6. Report summary of all levels
 ```
 
 ### Review Pipeline (`/orchestrate review "..."`)
 
+**Review mode:** When invoked inside a pipeline (`pipeline_id` present in context), use `quality-only` mode. When invoked ad-hoc (no `pipeline_id`), use `full` mode which includes spec-compliance check.
+
 ```
+0. [full mode only] spec-compliance — Read PLAN_FILE + TASKS_FILE, compare against git diff.
+   Does implementation match the spec? Missing features? Scope creep?
+   → GATE: Spec compliance confirmed (skip in quality-only mode)
 1. code-reviewer — Full code review with cross-validation
    → [CV-GATE:codereview] Mandatory OpenAI code review
 2. security-auditor — Security-focused review (if security-sensitive)
@@ -172,7 +193,7 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
 
 ```
 1. architect — Analyze current structure, define target state
-   → Write refactoring plan to docs/PLAN.md
+   → Write refactoring plan to PLAN_FILE (from SESSION SCOPING above)
    → [CV-GATE:consensus] Validate refactoring approach
    → GATE: Plan approved
 2. backend-dev — Execute refactoring in small, atomic changes
@@ -182,7 +203,7 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
    → GATE: All tests pass, no behavior change
 4. code-reviewer — Review refactoring correctness
    → [CV-GATE:codereview] Cross-validate no behavior change
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 5. Human approval → Merge
 ```
 
@@ -198,7 +219,7 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
    → GATE: Regression test validates fix
 4. code-reviewer — Fast review of hotfix
    → [CV-GATE:codereview] Cross-validate fix correctness
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 5. doc-writer — Write postmortem to docs/postmortems/
    → Timeline, root cause, impact, action items
 6. Human approval → Merge + Deploy
@@ -208,7 +229,7 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
 
 ```
 1. architect — Migration RFC: impact analysis, consumer inventory
-   → Write migration strategy to docs/PLAN.md
+   → Write migration strategy to PLAN_FILE (from SESSION SCOPING above)
    → [CV-GATE:consensus] Validate migration approach
    → GATE: RFC approved
 2. dev-lead — Break into staged migration tasks
@@ -220,10 +241,10 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
    → GATE: All compatibility tests pass
 5. security-lead — Security review of migration
    → [CV-GATE:thinkdeep] Review new deps, auth changes, data handling
-   → GATE: No CRITICAL or HIGH security findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM security findings
 6. code-reviewer — Final review of all migration changes
    → [CV-GATE:codereview] Cross-validate staged rollout plan
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 7. Human approval → Staged rollout
 ```
 
@@ -248,7 +269,7 @@ Include: all Deferred and Open (escalated) findings (any severity), external int
    → GATE: Measurable improvement verified
 4. code-reviewer — Review optimizations for correctness
    → [CV-GATE:codereview] Cross-validate no regressions
-   → GATE: No CRITICAL findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM findings
 ```
 
 ### Onboard Pipeline (`/orchestrate onboard "..."`)
@@ -293,18 +314,18 @@ Use when: completed changes or plans need exhaustive validation to eliminate ALL
    → context7: verify ALL technical assumptions against official documentation
    → Cross-reference changes against project patterns (Grep for consistency)
    → [CV-GATE:thinkdeep] Cross-validate analysis completeness
-   → GATE: Complete gap inventory documented in docs/REVIEW.md
+   → GATE: Complete gap inventory documented in REVIEW_FILE (from SESSION SCOPING)
    → If gap inventory is empty — architect must justify with Verification Evidence
 
 2. security-lead — Security deep-dive on ALL changes
    → Input validation, auth boundaries, data exposure, injection vectors
    → PAL `thinkdeep`: security-focused analysis
    → [CV-GATE:thinkdeep] Security cross-validation
-   → GATE: No CRITICAL or HIGH security findings
+   → GATE: No CRITICAL, HIGH, or MEDIUM security findings
 
 3. backend-dev — Fix ALL identified gaps and issues
    → One atomic fix per finding — no bundling
-   → Each fix must reference the finding ID from docs/REVIEW.md
+   → Each fix must reference the finding ID from REVIEW_FILE (from SESSION SCOPING)
 
 4. test-engineer — Validate fixes + run full test suite
    → Every fix must have a corresponding test or justification why not
@@ -379,9 +400,9 @@ CV-gates are mandatory cross-provider validation points inserted between pipelin
 
 **Gate Behavior:**
 - **PAL agrees with Claude** → Continue pipeline, mark findings as `[C+O]`
-- **PAL finds CRITICAL issue Claude missed** → HALT pipeline, add finding as `[O]`, re-evaluate
+- **PAL finds CRITICAL, HIGH, or MEDIUM issue Claude missed** → HALT pipeline, add finding as `[O]`, re-evaluate
 - **PAL disagrees on severity** → Flag disagreement, continue with higher severity
-- **PAL finds additional non-critical issues** → Add to findings as `[O]`, continue
+- **PAL finds additional LOW issues only** → Add to findings as `[O]`, continue
 - **PAL unavailable** → Do NOT skip cross-validation. Launch a sub-agent via Agent tool with a different model tier (opus if current is sonnet; sonnet if current is opus) with the same prompt. Document fallback model used.
 
 **Gate Types:**
@@ -399,8 +420,8 @@ CV-gates are mandatory cross-provider validation points inserted between pipelin
   1. Orchestrator calls PAL `codereview` with the agent's output + relevant code
   2. PAL returns findings with severity ranking
   3. Orchestrator merges PAL findings into pipeline context
-  4. If new CRITICAL found → HALT and report
-  5. If no new CRITICAL → attach [O] findings and continue
+  4. If new CRITICAL, HIGH, or MEDIUM found → HALT and report
+  5. If no new MEDIUM+ → attach [O] LOW findings and continue
 ```
 
 **Using `/cross-validate` for detailed disputes:**
@@ -424,10 +445,11 @@ Use **Agent-as-Tool** for consultation (backend-dev needs security-auditor opini
 Instead of passing full conversation history, agents exchange context through files:
 
 ```
-architect → writes docs/PLAN.md → dev-lead reads docs/PLAN.md
-dev-lead → writes docs/TASKS.md → backend-dev reads docs/TASKS.md
-code-reviewer → writes docs/REVIEW.md → backend-dev reads docs/REVIEW.md
+architect → writes PLAN_FILE → dev-lead reads PLAN_FILE
+dev-lead → writes TASKS_FILE → backend-dev reads TASKS_FILE
+code-reviewer → writes REVIEW_FILE → backend-dev reads REVIEW_FILE
 ```
+(PLAN_FILE/TASKS_FILE/REVIEW_FILE resolved from CLAUDE_SESSION by SESSION SCOPING at entry)
 
 Benefits:
 - No token waste on history forwarding
@@ -435,11 +457,11 @@ Benefits:
 - Auditable — every artifact is a file in the project
 - Resumable — any agent can pick up from the last artifact
 
-Standard artifact locations:
-- `docs/PLAN.md` — architecture decisions
-- `docs/TASKS.md` — task breakdown
-- `docs/REVIEW.md` — code review findings
-- `docs/AUDIT.md` — audit results
+Standard artifact locations (session-scoped when CLAUDE_SESSION is set):
+- PLAN_FILE (`docs/PLAN.md` or `docs/PLAN-{label}.md`) — architecture decisions
+- TASKS_FILE (`docs/TASKS.md` or `docs/TASKS-{label}.md`) — task breakdown
+- REVIEW_FILE (`docs/REVIEW.md` or `docs/REVIEW-{label}.md`) — code review findings
+- `docs/AUDIT.md` — audit results (global, not session-scoped)
 
 ## MCP Routing Rules
 
@@ -488,9 +510,13 @@ Every pipeline agent MUST end its response with this block:
 - status: COMPLETE | INCOMPLETE | FAILED | SKIPPED | NEEDS_ASSISTANCE
 - artifacts: [list of files created or modified]
 - context_files: [optional list of file paths produced/consumed by this step]
+- verification_evidence: [command -> observed output, e.g. "pytest -> 518 passed, 0 failed"]
+- risks: [1-2 items or "none identified"]
 - notes: <1-3 lines summary>
 - next: {next-agent-name or PIPELINE_COMPLETE}
 ```
+
+**New fields (Phase 11):** `verification_evidence` and `risks` are optional initially — main session warns on missing but does not reject. Graduate to required after one release cycle.
 
 **Status values:**
 - `COMPLETE` — step fully done, all artifacts written, ready for main session to call complete_step
@@ -501,7 +527,7 @@ Every pipeline agent MUST end its response with this block:
 
 **`context_files` field:** Optional list of file paths produced or consumed by this step. Use this to signal which files the next agent needs to read. NEVER embed file content in STEP RESULT — list paths only.
 
-**Note on artifacts:** List file paths only, do not duplicate content. Artifacts (docs/PLAN.md, docs/REVIEW.md, etc.) are the source of truth for durable context. STEP RESULT is ephemeral routing metadata — it indexes artifacts, not replaces them.
+**Note on artifacts:** List file paths only, do not duplicate content. Artifacts (PLAN_FILE, REVIEW_FILE, etc.) are the source of truth for durable context. STEP RESULT is ephemeral routing metadata — it indexes artifacts, not replaces them.
 
 ### Main Session Validation Rules
 

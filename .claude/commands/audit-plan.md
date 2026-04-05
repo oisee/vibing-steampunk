@@ -33,7 +33,7 @@ For each required domain, invoke the `specialist-auditor` agent with:
   - Logic gaps, race conditions, missing error handling
   - Security holes (injection, XSS, auth bypass)
   - Coupling issues, backward compatibility breaks
-  - Untested paths, wrong assumptions about APIs/libraries
+  - Untested paths, wrong assumptions about APIs/libraries — use mcp__context7__resolve-library-id + mcp__context7__query-docs to verify actual API behavior before flagging as a finding
   - Performance regressions, deployment blind spots
   - Blast radius — which other components are affected
 

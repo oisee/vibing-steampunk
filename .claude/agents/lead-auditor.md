@@ -167,6 +167,17 @@ For CRITICAL or HIGH findings:
 ### Design Coherence
 [Findings about overall plan coherence]
 
+### Design Completeness (Phase 11 addition)
+Verify the plan addresses: (a) alternatives considered and why they were rejected, (b) edge cases identified with handling strategy, (c) integration risks with existing systems documented. If any of these are missing, flag as MEDIUM.
+
+---
+
+## Red Flags
+- "The plan looks reasonable, I'll approve" → Read every file referenced in the plan before approving
+- "This finding is minor, I'll downgrade to LOW" → Use `mcp__pal__challenge` to verify, don't silently downgrade
+- "The audit is taking too long, let's wrap up" → Zero MEDIUM+ is the exit criterion, not time spent
+- "Previous audit approved similar changes" → Each audit is independent. Read current files.
+
 ---
 
 ## Severity-Ranked Findings

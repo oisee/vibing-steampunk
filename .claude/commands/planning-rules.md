@@ -81,17 +81,18 @@ After audit approval (all levels APPROVE): structure the plan as a detailed exec
 - Mark completed steps with `[x]`; pending steps remain `[ ]`.
 - Record commit hashes, test counts, and deviations inline after each phase.
 - Save to `docs/ROADMAP.md` or a plan file -- never only in conversation memory.
+- Each phase that modifies code, data, or infrastructure must include a **Rollback** subsection: ordered steps to undo the phase changes if they cause breakage. For genuinely irreversible phases: write `Rollback: N/A — [mitigation plan: backup / forward-fix / feature-flag]` instead.
 
 ### Per-Phase PAL Verification Gate (MANDATORY)
 
 Before starting the next phase of any phased implementation plan: complete the verification gate for the current phase.
 
-1. Run automated checks (`npm test`, `pytest`, etc.) -- must pass with zero failures.
-2. Call `mcp__pal__codereview` on all files changed in this phase. On any CRITICAL finding: HALT, fix, re-review.
-3. Call `mcp__pal__thinkdeep` for deep analysis of the phase's changes. On any CRITICAL: HALT.
+1. Run automated checks (`npm test`, `pytest`, etc.) -- must pass with zero failures. For new code paths introduced in this phase: verify by reviewing the diff and new test files that corresponding tests exist -- not just that existing tests pass.
+2. Call `mcp__pal__codereview` on all files changed in this phase. On any CRITICAL, HIGH, or MEDIUM finding: HALT, fix, re-review.
+3. Call `mcp__pal__thinkdeep` for deep analysis of the phase's changes. On any CRITICAL, HIGH, or MEDIUM: HALT.
 4. If PAL MCP is unavailable: perform steps 2-3 using internal cross-model review (Agent tool, different model tier — opus if current is sonnet; sonnet if current is opus). Document which fallback was used.
-5. Only after all automated checks pass AND both PAL tools (or fallback) return no CRITICAL findings: mark phase complete and proceed.
-   Note: this mid-phase gate intentionally checks CRITICAL-only (lightweight checkpoint). The final end-of-plan audit enforces the full zero-MEDIUM+ standard.
+5. Only after all automated checks pass AND both PAL tools (or fallback) return zero MEDIUM+ findings: mark phase complete and proceed.
+   If a finding is believed to be a false positive: use `mcp__pal__challenge` to contest it, or escalate to the user. Never silently skip or downgrade findings.
 
 ### End-of-Plan Double Audit (MANDATORY)
 
@@ -101,13 +102,15 @@ After all phases are complete and before committing:
 2. Call `mcp__pal__consensus` (multi-model, >=2 models) -- holistic architecture review.
 3. When any finding >= MEDIUM: create a fix task, re-run the relevant phase gate, then re-run the double audit. Repeat until zero MEDIUM+ findings remain.
 
+> **Note:** Invoking the `/finish` skill satisfies all requirements of this section. When `/finish` is run (manually or automatically via Per-Phase Gate step 6 / `/run` LOOP CONTROL), the End-of-Plan Double Audit is fulfilled — do not run it again separately.
+
 ### Audit Scope Checklist
 
 When auditing, check each of these:
 - Logic gaps, race conditions, missing error handling
 - Security holes (injection, XSS, auth bypass)
-- Coupling issues, backward compatibility breaks
-- Untested paths, wrong assumptions about APIs/libraries
+- Coupling issues, backward compatibility breaks — before modifying any exported function or shared module: Grep for all call sites first
+- Untested paths, wrong assumptions about APIs/libraries — use mcp__context7__resolve-library-id + mcp__context7__query-docs (or WebSearch when context7 lacks the library) to verify actual API behavior before flagging as a finding
 - Performance regressions, deployment blind spots
 - Blast radius -- which other components are affected
 
@@ -194,6 +197,12 @@ When creating or modifying CLAUDE.md instructions: delegate to the Rules Archite
 
 ---
 
+## Task Granularity (Advisory)
+
+Each task in a plan should be: **(a)** scoped to one logical concern, **(b)** independently verifiable with a specific test or command, **(c)** worthy of its own commit. Red flags for oversized tasks: description longer than 2 lines, task touching more than 5 files without justification, description containing "and" joining unrelated changes. When in doubt, split.
+
+---
+
 ## Plan Persistence After Thinking (MANDATORY)
 
 Before starting implementation: verify that the plan is persisted to a file. Plans existing only in conversation context are invalid.
@@ -202,20 +211,21 @@ Before starting implementation: verify that the plan is persisted to a file. Pla
 
 | Trigger | Save to | Format |
 |---------|---------|--------|
-| After producing a plan in plan mode | `docs/PLAN.md` | Problem statement, options, decision + rationale, numbered steps; **must include `## Next Plans` section** listing the next 1–4 phases from `docs/ROADMAP.md` with status and one-line goals |
-| After PAL tools produce strategic findings | `docs/PLAN.md`, `docs/REVIEW.md`, or `docs/AUDIT.md` | Key conclusions summary |
-| After making an architecture decision | `docs/adr/NNNN-<title>.md` | Context, Decision, Consequences, Status |
+| After producing a plan in plan mode | PLAN_FILE (`docs/PLAN.md` by default, or `docs/PLAN-{label}.md` if CLAUDE_SESSION is set) | Problem statement, options, decision + rationale, numbered steps; **must include `## Next Plans` section** listing the next 1–4 phases from `docs/ROADMAP.md` with status and one-line goals |
+| After PAL tools produce strategic findings | PLAN_FILE, REVIEW_FILE, or `docs/AUDIT.md` | Key conclusions summary |
+| After making an architecture decision (e.g., introduces a new library/framework, changes a public API contract, or removes a previously available option) | `docs/adr/NNNN-<title>.md` | Context, Decision, Consequences, Status |
 | After completing a spike/research | `docs/spikes/YYYY-MM-DD-<topic>.md` | Question, options, recommendation, evidence |
 | After a postmortem | `docs/postmortems/YYYY-MM-DD-<title>.md` | Timeline, root cause, impact, action items |
 
 ### Clean Context Gate
 
-Before starting implementation, verify all five:
+Before starting implementation, verify all six:
 - [ ] Plan saved to `docs/` with clear execution steps.
 - [ ] Each step has a checkpoint (what to verify).
 - [ ] Steps are numbered and atomic (resumable from any point).
 - [ ] No plan details exist ONLY in conversation -- all persisted to files.
-- [ ] `## Next Plans` section present in `docs/PLAN.md` — lists next 1–4 phases with status and goals.
+- [ ] `## Next Plans` section present in PLAN_FILE — lists next 1–4 phases with status and goals.
+- [ ] Every phase in this plan includes a **Rollback** subsection.
 
 ### Artifact Index
 

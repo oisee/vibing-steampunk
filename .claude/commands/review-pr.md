@@ -47,6 +47,7 @@ git diff main...HEAD --stat
 
 Analyze the diff for:
 - **Correctness** — Does the code do what it claims?
+  - For external API/library usage: verify correct behavior via mcp__context7__resolve-library-id + mcp__context7__query-docs, or WebSearch, before judging correctness
 - **Security** — Any injection, XSS, auth issues?
 - **Performance** — Unnecessary loops, N+1 queries, missing indexes?
 - **Patterns** — Does it follow project conventions?

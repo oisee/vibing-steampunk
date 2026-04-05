@@ -1,385 +1,279 @@
-# Plan: Intelligence Layer — 4 Tools for AI Code Review
+# Plan: Upstream Merge & Fork Modernization (Migration RFC)
 
-**Created:** 2026-02-22
-**Status:** ✅ COMPLETE — All 4 phases implemented + audit fixes + PAL review (46 tests, 7 new files)
+**Created:** 2026-04-05
+**Status:** PROPOSED
+**Pipeline:** migration-3032514f
+**Cross-validation:** [C+O] Consensus -- Porfiry [Opus 4.6] + GPT-5.2-Pro (for+against), 8/10 confidence
 
 ---
 
 ## Context
 
-After completing all 4 phases of ADT Gap Analysis (138 tools, 297 tests), we're adding the **Intelligence Layer** — tools that compose existing ADT capabilities into higher-level analysis.
+We maintain a fork (blicksten/vibing-steampunk) of upstream (oisee/vibing-steampunk). Upstream has 23 new commits we need to merge. Three of our five PRs were accepted (fully or partially), two were rejected. Upstream deleted all our Intelligence Layer and Refactoring code.
 
-**Goal:** Enable AI code review by answering four questions:
-1. "If I change this object, what breaks?" → **GetImpactAnalysis**
-2. "Is this SQL efficient?" → **AnalyzeSQLPerformance**
-3. "What anti-patterns are in this ABAP code?" → **AnalyzeABAPCode**
-4. "Did this change break existing behavior?" → **CheckRegression**
+### Upstream inventory (to gain)
 
-User requirements:
-1. Account for **dynamic calls** (CALL METHOD (var), CALL FUNCTION var, PERFORM (var))
-2. Account for **configuration-driven calls** (BAdI, enhancements, user exits, NACE, workflow, substitutions, determinations)
-3. **Regression detection is the highest priority** — old code breaking matters more than new code quality
+| Feature | Files | Impact |
+|---------|-------|--------|
+| mcp-go v0.17 to v0.47 | go.mod, go.sum, server.go | Streamable HTTP + SSE transport |
+| Browser SSO (chromedp) | pkg/adt/browser_auth.go + test | New dependency: chromedp |
+| 10 gCTS tools | pkg/adt/gcts.go + test | Git-enabled CTS |
+| 7 i18n tools | pkg/adt/i18n.go + test | Translation management |
+| GetAPIReleaseState | client.go or devtools.go | Clean Core checks |
+| GetTableContents offset/columns_only | client.go | Enhanced query |
+| GetCodeCoverage + GetCheckRunResults | (from PR #84) | Testing quality |
+| CDS impact analysis + element info | (from PR #85) | CDS tools |
+| Various fixes | websocket_base.go, config.go, http.go | Verbose, WebSocket auth, stateless default |
 
-ADT REST API cannot directly enumerate most config-driven registrations. Strategy: combine static cross-references + source pattern analysis + optional customizing table queries via RunQuery.
+### Fork code deleted by upstream
 
-## Audit Results (incorporated)
+| File | Why deleted | Our decision |
+|------|-------------|-------------|
+| pkg/adt/codeanalysis.go + test | PR #86 -- regex-based, owner wants abaplint | **ABANDON v1, rewrite as v2 on abaplint** |
+| pkg/adt/refactoring.go + test | PR #82 -- wrong ADT API URLs | **ABANDON, rewrite with correct APIs** |
+| pkg/adt/quickfix.go + test | PR #82 -- wrong ADT API URLs | **ABANDON, rewrite with correct APIs** |
+| pkg/adt/impact.go + test | Deleted along with Intelligence Layer | **RE-ADD** (pure Go, uses ADT cross-refs correctly) |
+| pkg/adt/regression.go + test | Deleted along with Intelligence Layer | **RE-ADD** (pure Go source comparison) |
+| pkg/adt/sqlperf.go + test | Deleted along with Intelligence Layer | **RE-ADD** (pure Go SQL plan analysis) |
+| pkg/adt/integration_test.go | Upstream has own version | **ACCEPT upstream version** + merge our extra tests |
+| pkg/adt/ddic_test.go | Deleted | **RE-ADD** (fork-only test) |
+| internal/mcp/handlers_intelligence.go | Handler for deleted tools | **RE-ADD** (for impact/regression/sqlperf) |
+| internal/mcp/handlers_codeanalysis.go | Handler for deleted tools | **REWRITE** (for v2 abaplint-based AnalyzeABAPCode) |
+| internal/mcp/handlers_refactoring.go | Handler for deleted tools | **REWRITE** (for v2 correct-API refactoring) |
+| .claude/ directory | Our team config | **RE-ADD** (fork-only, gitignored by upstream) |
 
-Two independent reviews (architect + lead-auditor) produced 1 CRITICAL, 6 HIGH, 7 MEDIUM findings. All addressed below:
+### Branches to clean up
 
-| Finding | Severity | Resolution |
-|---------|----------|------------|
-| Line-by-line scanner doesn't work for ABAP | CRITICAL | **Two-pass: statement assembler + rule engine** |
-| AnalyzeABAPCode scope creep (4 concerns in 1 tool) | HIGH | **Split into AnalyzeABAPCode + CheckRegression. Drop ATC integration** |
-| Layer 3 dynamic call search is noise | HIGH | **Search for target object NAME as string literal, not generic patterns** |
-| Missing checkSafety OpType specification | HIGH | **Explicit OpRead for all tools, Layer 4b relies on RunQuery's OpFreeSQL** |
-| Regression doesn't work for FM signatures | HIGH | **Document as limitation — FM params are in metadata, not source** |
-| False positive rates (select_star, missing_authority_check) | HIGH | **Demote to info, tighten hardcoded_credentials regex** |
-| Missing rules (commit_in_loop, catch_cx_root) | MEDIUM | **Added to rule catalog** |
-| "Latest 2 revisions" semantically wrong | MEDIUM | **Added base_version parameter, smarter default** |
-| No handling for 0/1 revisions | MEDIUM | **Graceful degradation with warnings** |
-| No HANA check for AnalyzeSQLPerformance | MEDIUM | **Feature detection + SQL text fallback** |
-| No timeout for GetImpactAnalysis | MEDIUM | **context.WithTimeout default 30s** |
-| Handler naming convention | MEDIUM | **Split into domain-specific handler files** |
-| Missing tests for Layer 4b + regression edges | MEDIUM | **Added 6 additional tests** |
-
----
-
-## Phase 0: Save Documentation ✅
-
-- [x] Save plan to `docs/PLAN.md`
-- [x] Save audit findings to `docs/AUDIT.md`
-- [x] Update `docs/FUTURE-PLAN.md`
-- [x] Update `MEMORY.md`
-
----
-
-## Phase 1: AnalyzeSQLPerformance (simpler, pure Go analysis) ✅
-
-**New files:**
-- `pkg/adt/sqlperf.go` — types + analysis engine
-- `pkg/adt/sqlperf_test.go` — 7 tests
-
-**Modified files:**
-- `internal/mcp/handlers_intelligence.go` (NEW — handlers for both tools)
-- `internal/mcp/server.go` — register tool
-
-### Step 1.1: Create `pkg/adt/sqlperf.go`
-
-Types: `SQLPerformanceAnalysis`, `SQLPerformanceFinding`, `SQLPerfSummary`
-
-**IMPORTANT: ABAP SQL vs Native SQL distinction**
-
-ABAP SQL (Open SQL) is NOT standard SQL. Key differences:
-- Host variables: `@lv_var`, `@lt_tab`
-- `INTO TABLE @lt_tab`, `APPENDING TABLE`, `CORRESPONDING FIELDS OF`
-- `FOR ALL ENTRIES IN @lt_tab WHERE field = @lt_tab-field`
-- `UP TO n ROWS` instead of LIMIT
-- `SELECT SINGLE` instead of TOP 1
-- `CLIENT SPECIFIED` — cross-client access
-- `WHERE field IN @lt_range` — range table conditions
-- No semicolons, ends with `.` (ABAP statement terminator)
-
-**Two input modes:**
-1. **ABAP SQL** (from source code) — `AnalyzeSQLText` strips ABAP-specific syntax, then analyzes
-2. **Native SQL** (for HANA explain plan) — passed directly to `GetSQLExplainPlan`
-
-Functions:
-- `AnalyzePlanNodes(nodes []SQLPlanNode) []SQLPerformanceFinding` — pure Go tree walk, exported for testing
-- `AnalyzeSQLText(sqlQuery string) []SQLPerformanceFinding` — pure Go text analysis, handles **both ABAP SQL and native SQL**
-- `stripABAPSQLSyntax(abapSQL string) string` — removes INTO/APPENDING clause, @host variables, FOR ALL ENTRIES clause, UP TO n ROWS; returns cleaned SQL for pattern analysis
-- `calculateSQLScore(findings) string` — "good" / "warning" / "critical"
-- `(c *Client) AnalyzeSQLPerformance(ctx, sqlQuery string, hanaAvailable bool) (*SQLPerformanceAnalysis, error)` — if `hanaAvailable`: attempts `GetSQLExplainPlan` with native SQL + `AnalyzePlanNodes`; always runs `AnalyzeSQLText` on the input; merges both results
-
-**Safety:** `checkSafety(OpRead, "AnalyzeSQLPerformance")` at entry.
-
-**HANA detection:** `FeatureProber` lives on `Server` struct (`internal/mcp/server.go`), NOT on `adt.Client`. The handler in `handlers_intelligence.go` calls `s.featureProber.IsAvailable(ctx, adt.FeatureHANA)` and passes the result as `hanaAvailable bool` to the Client method. This follows existing patterns (handlers bridge Server-level state to Client methods).
-
-**Note on division of labor:**
-- `AnalyzeSQLPerformance` — analyzes a **single SQL query** (execution plan + text patterns)
-- `AnalyzeABAPCode` (Phase 3) — analyzes **full ABAP source** and catches SQL-in-context patterns (SELECT in LOOP, FAE without empty check, SELECT...ENDSELECT, etc.)
-- The AI composes both: extract SQL from source, run AnalyzeSQLPerformance on interesting queries; run AnalyzeABAPCode on the full source for context-dependent patterns
-
-**AnalyzeSQLText rules** (handles both ABAP SQL and native SQL):
-
-| Type | Severity | Rule |
-|------|----------|------|
-| `select_star` | info | `SELECT *` or `SELECT SINGLE *` — prefer explicit field list |
-| `missing_where` | high | SELECT without WHERE clause (after stripping INTO/FAE) |
-| `client_specified` | medium | `CLIENT SPECIFIED` — cross-client data access |
-| `nested_subquery` | medium | SELECT inside SELECT (subquery) |
-| `no_up_to_rows` | info | Large table SELECT without `UP TO n ROWS` (ABAP SQL specific) |
-| `distinct_usage` | info | `DISTINCT` — often indicates missing WHERE or design issue |
-
-Finding rules (walk SQLPlanNode tree — HANA only):
-
-| Type | Severity | Rule |
-|------|----------|------|
-| `full_table_scan` | critical | operator contains "TABLE SCAN", no index, rows > 1000 |
-| `full_scan_small` | info | same but rows <= 1000 |
-| `missing_index` | high | cost > 100, no index, has table |
-| `nested_loop_large` | high | "NESTED LOOP" with child rows > 10000 |
-| `high_cost_node` | medium | cost > 1000 |
-| `cartesian_product` | critical | "CROSS JOIN" or nested loop without filter child |
-
-### Step 1.2: Create `pkg/adt/sqlperf_test.go`
-
-10 tests:
-
-**Plan node analysis (pure Go):**
-- [x] TestAnalyzePlanNodes_FullTableScan
-- [x] TestAnalyzePlanNodes_SmallTableScan
-- [x] TestAnalyzePlanNodes_NestedLoopLarge
-- [x] TestAnalyzePlanNodes_GoodPlan
-- [x] TestAnalyzePlanNodes_Empty
-
-**ABAP SQL text analysis (pure Go):**
-- [x] TestAnalyzeSQLText_ABAPSelectStar — `SELECT * FROM mara WHERE ...` → select_star finding
-- [x] TestAnalyzeSQLText_ABAPMissingWhere — `SELECT matnr FROM mara INTO TABLE @lt_result.` → missing_where
-- [x] TestStripABAPSQLSyntax — strips `@`, `INTO TABLE`, `UP TO n ROWS`, `APPENDING TABLE`, host expressions (6 sub-tests)
-
-**Scoring + end-to-end:**
-- [x] TestCalculateSQLScore (4 sub-tests)
-- [x] TestClient_AnalyzeSQLPerformance (non-HANA + HANA paths, mock transport with pre-set CSRF token)
-
-### Step 1.3: Create handler + register ✅
-
-Handler in `internal/mcp/handlers_intelligence.go`, registered in `server.go` after GetCheckRunResults.
-Added to `focusedTools` map in "Testing & Quality" section.
-
-### Step 1.4: Run tests ✅
-- All 10 Phase 1 tests pass
-- `go test ./...` — no regressions (only pre-existing `pkg/cache` CGO issue)
-- `go build ./cmd/vsp` — compiles successfully
-- **Gotcha:** POST-based tests need `transport.csrfToken = "test-token"` pre-set because `newTestResponse` literal headers bypass canonicalization
+| Branch | Status | Action |
+|--------|--------|--------|
+| feat/http-sse-transport | Upstream has mcp-go v0.47 SSE | **DELETE** |
+| feat/atc-transport-timeout | Upstream has RunATCCheckTransport | **DELETE** |
+| feat/intelligence-layer | Merged to main already | **DELETE** |
+| feat/adt-refactoring | Uses wrong API URLs | **DELETE** |
+| feat/cds-tools | Upstream accepted PR #85 | **DELETE** |
+| feat/testing-quality | Upstream accepted PR #84 | **DELETE** |
+| feat/version-history | Upstream accepted PR #83 | **DELETE** |
+| local-changes-backup-2026-02-18 | Old backup | **DELETE** |
 
 ---
 
-## Phase 2: GetImpactAnalysis (multi-layer composition) ✅
+## ADR-001: Merge Strategy -- Accept Deletions, Re-add as New Commits
 
-**New files:**
-- `pkg/adt/impact.go` — types + orchestration
-- `pkg/adt/impact_test.go` — 8+ tests
+**Status:** Proposed
 
-**Modified files:**
-- `internal/mcp/handlers_intelligence.go` — add handler
-- `internal/mcp/server.go` — register tool
+**Decision:** Use `git merge upstream/main` and intentionally accept upstream deletion of all rejected files. Re-add valuable fork-only code as NEW commits after merge.
 
-### Architecture: 4 Layers
+**Rationale:**
+- If we keep deleted files during merge, upstream will re-delete them in every future merge (delete/modify conflict loop)
+- Accepting deletions then re-adding creates a clean merge base -- future upstream merges will not touch our re-added files
+- Re-adding as separate commits creates clear git history showing deliberate intent
+- Cross-validated [C+O] at 8/10 confidence
 
-```
-Layer 1: Static References (FindReferences)     ← always on, fast
-Layer 2: Transitive Callers (GetCallersOf)       ← opt-in, can be slow
-Layer 3: Dynamic Call Patterns (source search)   ← opt-in, needs scope
-Layer 4: Config-Driven Calls (source + tables)   ← opt-in, needs scope/SQL
+**Alternatives rejected:**
+- **Cherry-pick upstream commits** -- More labor, higher risk of missing coupling changes across transport refactor
+- **Rebase onto upstream** -- Force-push risk, painful with large deltas + published fork
+- **Keep files during merge** -- Perpetual delete/modify conflicts, accumulating merge debt
+
+## ADR-002: Extension Hook Pattern for Tool Registration
+
+**Status:** Proposed
+
+**Decision:** Create `internal/mcp/tools_register_fork.go` with a single `registerForkTools(shouldRegister)` function. Add ONE call to this from `tools_register.go`. All fork-only tool registrations live in the fork file, never in upstream registration functions.
+
+**Rationale:**
+- Tool registration requires at least one integration point in upstream code
+- Minimizing upstream-touching changes to ONE added line reduces future merge conflicts
+- Fork-specific handler files (handlers_*.go) already exist as separate files -- this extends the pattern to registration
+- Cross-validated [C+O]: both models agreed this is the correct integration pattern
+
+**The one seam (added to tools_register.go):**
+
+```go
+// After upstream last registerXxxTools call:
+s.registerForkTools(shouldRegister)  // fork-only tools (intelligence, refactoring v2)
 ```
 
-### Layer details
+**Contents of tools_register_fork.go:**
 
-**Layer 1:** `FindReferences()` from `codeintel.go:110` returns `[]UsageReference`. Convert to `[]ImpactedObject` via field mapping: `URI→URI`, `Name→Name`, `Type→Type`, `PackageName→Package`. Define `ImpactedObject` as a wrapper type in `impact.go`.
+```go
+func (s *Server) registerForkTools(shouldRegister func(string) bool) {
+    s.registerIntelligenceTools(shouldRegister)  // impact, regression, sqlperf, AnalyzeABAPCode v2
+    s.registerRefactoringToolsV2(shouldRegister) // rename, quickfix (correct ADT APIs)
+    s.registerRunATCCheckTransport(shouldRegister)
+    s.registerCDSExtTools(shouldRegister)
+}
+```
 
-**Layer 2:** `GetCallersOf()` from `client.go:1186` + `FlattenCallGraph()` → deduplicate against Layer 1 URIs via visited set (prevents cycles), tag depth. Stable sort by URI.
+## ADR-003: AnalyzeABAPCode v2 -- Build on pkg/abaplint
 
-**Layer 3:** Search for target object NAME as string literal in scope packages via `GrepPackages()`. Higher signal than generic dynamic call syntax patterns.
+**Status:** Proposed
 
-**Layer 4a:** Source analysis of target object for ENHANCEMENT-SECTION, GET BADI, EXIT_, IF_EX_*/IF_BADI_*, PERFORM...IN PROGRAM
+**Decision:** Rewrite AnalyzeABAPCode to use the native Go abaplint lexer + statement parser instead of the current regex-based line scanner.
 
-**Layer 4b:** RunQuery on SXS_INTER, MODSAP, TNAPR — graceful degradation if SAP_BLOCK_FREE_SQL
+**Current state (v1):**
+- `pkg/adt/codeanalysis.go` uses `AssembleStatements()` -- hand-written period-terminated line joiner
+- 14 regex patterns for rule matching
+- No statement type awareness (cannot distinguish IF from SELECT context)
 
-**Safety:** `checkSafety(OpRead)` at entry. Layer 4b uses RunQuery's `checkSafety(OpFreeSQL)`. Timeout: 30s default.
+**Target state (v2):**
+- Use `abaplint.NewABAPFile(filename, source)` which runs lexer -> statement parser -> classifier
+- 91 classified statement types already available (Data, If, Select, MethodImplementation, etc.)
+- 8 lint rules already exist (line_length, empty_statement, obsolete_statement, max_one_statement, preferred_compare_operator, colon_missing_space, double_space, local_variable_names)
+- Add ABAP-specific security/performance rules as new Rule implementations
 
-### Tests (8+)
-- [ ] TestGetImpactAnalysis_StaticOnly
-- [ ] TestGetImpactAnalysis_WithTransitive
-- [ ] TestGetImpactAnalysis_EmptyResult
-- [ ] TestGetImpactAnalysis_MaxResults
-- [ ] TestDetectDynamicPatterns
-- [ ] TestDetectConfigPatterns_Source
-- [ ] TestDetectConfigPatterns_BAdIInterface
-- [ ] TestImpactSummary_RiskLevel
+**Architecture:**
 
----
+```
+pkg/abaplint/                        <- lexer, parser, rules (pure Go, no ADT deps)
+pkg/adt/codeanalysis.go              <- Client method (fetches source, calls abaplint)
+internal/mcp/handlers_codeanalysis.go <- MCP handler
+```
 
-## Phase 3: AnalyzeABAPCode (source-level pattern detection) ✅
+**Known issue to fix:** `ColonMissingSpaceRule` in `rules.go` sets `Row: 0` instead of the actual line number. Must fix before using for MCP output.
 
-**Architecture:** Two-pass statement-based (NOT line-by-line):
-1. Statement Assembler — join lines between periods, respect comments & strings & string templates
-2. Context-tracking rule engine — LOOP/DO/WHILE nesting, method scope, prev-statement context
+**Aligns with upstream owner request:** "consider building on top of the existing pkg/abaplint lexer + statement parser"
 
-**Statement assembler details (verified via SAP ABAP Keyword Documentation context7):**
-- Classic strings `'...'` and backtick strings `` `...` `` — single-line only, no embedded period issue
-- String templates `|...|` — **single-line only** (per SAP docs: "must be closed with `|` within the same line"), BUT may contain periods inside (e.g. `|Value is { lv_val }. Done|`). The assembler must track `insideStringTemplate` state within each line and skip periods inside `|...|`
-- Escaped pipe inside templates: `\|` — does NOT close the template
-- Comment lines: `*` in column 1 — skip entire line
-- Inline comments: `"` outside strings — strip everything after `"`
-- Statement terminator: `.` at end of accumulated text, outside any string literal or template
-- **Input size limit:** max 500KB source text (larger files return error, not OOM)
+## ADR-004: Refactoring & QuickFix v2 -- Correct ADT API URLs
 
-**New files:**
-- `pkg/adt/codeanalysis.go` — statement assembler + 21-rule engine
-- `pkg/adt/codeanalysis_test.go` — 15 tests
+**Status:** Proposed (deferred to post-merge phase)
 
-**Modified files:**
-- `internal/mcp/handlers_codeanalysis.go` (NEW)
-- `internal/mcp/server.go`
+**Decision:** Rewrite refactoring and quickfix tools from scratch using the correct ADT REST API patterns from the `abap-adt-api` reference implementation.
 
-### Rule catalog (21 rules)
+**Current (WRONG) API patterns:**
 
-| # | Rule ID | Category | Severity |
-|---|---------|----------|----------|
-| 1 | `select_in_loop` | performance | critical |
-| 2 | `select_star` | performance | info |
-| 3 | `fae_no_empty_check` | performance | critical |
-| 4 | `nested_loop` | performance | high |
-| 5 | `select_endselect` | performance | medium |
-| 6 | `modify_dbtab_all` | performance | high |
-| 7 | `commit_in_loop` | performance | critical |
-| 8 | `read_table_no_binary` | performance | medium |
-| 9 | `missing_authority_check` | security | info |
-| 10 | `hardcoded_credentials` | security | critical |
-| 11 | `dynamic_sql_unvalidated` | security | high |
-| 12 | `client_specified` | security | medium |
-| 13 | `missing_sysubrc_read` | robustness | medium |
-| 14 | `missing_sysubrc_call` | robustness | medium |
-| 15 | `empty_catch` | robustness | medium |
-| 16 | `catch_cx_root` | robustness | medium |
-| 17 | `obsolete_statement` | quality | info |
-| 18 | `dynamic_call_no_try` | quality | high |
-| 19 | `perform_usage` | quality | info |
-| 20 | `todo_fixme` | quality | info |
-| 21 | `commit_work_and_wait` | quality | medium |
+| Operation | Current URL | Correct URL |
+|-----------|-------------|-------------|
+| Rename | `/sap/bc/adt/refactoring/rename?method=evaluate` | `/sap/bc/adt/refactorings?rel=http://www.sap.com/refactoring/rename` with `?step=` |
+| QuickFix | `/sap/bc/adt/quickfix/proposals` | `/sap/bc/adt/quickfixes/evaluation` |
+| Body format | Plain text source | Complex XML with genericRefactoring wrapper |
+| Routing | `?method=evaluate/preview/execute` | `?step=test_before_refactoring` / `?step=apply` with `?rel=` |
 
-### Tests (16)
-- [ ] TestAssembleStatements_MultiLine
-- [ ] TestAssembleStatements_Comments
-- [ ] TestAssembleStatements_StringLiterals
-- [ ] TestAssembleStatements_StringTemplates — `|Value is { x }. Done|` period inside template not a terminator
-- [ ] TestAnalyzeABAPSource_SelectInLoop
-- [ ] TestAnalyzeABAPSource_FAENoCheck
-- [ ] TestAnalyzeABAPSource_FAEWithCheck
-- [ ] TestAnalyzeABAPSource_NestedLoop
-- [ ] TestAnalyzeABAPSource_CommitInLoop
-- [ ] TestAnalyzeABAPSource_MissingSysubrc
-- [ ] TestAnalyzeABAPSource_HardcodedCredentials
-- [ ] TestAnalyzeABAPSource_DynamicCallNoTry
-- [ ] TestAnalyzeABAPSource_CleanCode
-- [ ] TestCodeAnalysisSummary_Score
-- [ ] TestClient_AnalyzeABAPCode_URI
-- [ ] TestClient_AnalyzeABAPCode_Source
+**Implementation notes:**
+- Reference: `abap-adt-api/src/api/refactor.ts` (Marcel Goldammer / marcellourbani)
+- Requires trace-based validation against real SAP systems (API varies by release)
+- Must include feature detection -- not all systems support refactoring APIs
+- Plan for graceful degradation with informative error messages
 
 ---
 
-## Phase 4: CheckRegression (diff-based breaking change detection) ✅
+## Implementation Phases
 
-**MOST CRITICAL tool.** "Did the change break existing behavior?"
+### Phase 1.1: Upstream Merge (merge + accept deletions + build fix)
 
-**New files:**
-- `pkg/adt/regression.go` — types + diff analysis
-- `pkg/adt/regression_test.go` — 8 tests
+- [ ] T1.1: Fetch upstream: `git fetch upstream`
+- [ ] T1.2: Create migration branch: `git checkout -b migration/upstream-merge-v0.47`
+- [ ] T1.3: Run `git merge upstream/main` -- resolve conflicts:
+  - `tools_register.go`: accept upstream version (loses our 5 extra registration calls -- intentional)
+  - `go.mod` / `go.sum`: accept upstream (mcp-go v0.47, chromedp deps)
+  - `.claude/`: keep ours (re-add after merge if deleted)
+  - All rejected files: accept upstream deletion
+  - `integration_test.go`: accept upstream version
+- [ ] T1.4: Run `go build ./...` -- fix any compilation errors from merge
+- [ ] T1.5: Run `go test ./...` -- fix any test failures from merge
+- [ ] T1.6: Commit merge
+- [ ] GATE: `go build` + `go test ./...` pass with zero errors
 
-**Modified files:**
-- `internal/mcp/handlers_codeanalysis.go` — add handler
-- `internal/mcp/server.go`
+### Phase 1.2: Re-add Valuable Fork Code
 
-### Regression rules (4)
+- [ ] T2.1: Re-add `pkg/adt/impact.go` + `pkg/adt/impact_test.go` -- restore from pre-merge commit, fix Client API changes
+- [ ] T2.2: Re-add `pkg/adt/regression.go` + `pkg/adt/regression_test.go`
+- [ ] T2.3: Re-add `pkg/adt/sqlperf.go` + `pkg/adt/sqlperf_test.go`
+- [ ] T2.4: Re-add `pkg/adt/ddic_test.go`
+- [ ] T2.5: Re-add `internal/mcp/handlers_intelligence.go` -- handler for impact/regression/sqlperf
+- [ ] T2.6: Create `internal/mcp/tools_register_fork.go` with `registerForkTools()` -- extension hook
+- [ ] T2.7: Add ONE line to `tools_register.go`: `s.registerForkTools(shouldRegister)`
+- [ ] T2.8: Re-add `internal/mcp/handlers_codeanalysis.go` with stub AnalyzeABAPCode + working CheckRegression
+- [ ] T2.9: Re-add `.claude/` directory from our main branch
+- [ ] T2.10: Run `go build ./...` + `go test ./...`
+- [ ] GATE: Build + tests pass, all re-added tools register correctly
 
-| # | Rule ID | Severity | Limitation |
-|---|---------|----------|------------|
-| 1 | `changed_signature` | critical | CLAS/INTF only, NOT FUNC |
-| 2 | `removed_public_method` | critical | CLAS/INTF only |
-| 3 | `changed_interface_method` | critical | INTF only |
-| 4 | `changed_exception_handling` | high | CLAS/INTF only |
+### Phase 1.3: Branch Cleanup
 
-**Known limitation:** FM signatures in XML metadata, not source.
+- [ ] T3.1: Delete local branches: feat/http-sse-transport, feat/atc-transport-timeout, feat/intelligence-layer, feat/adt-refactoring, feat/cds-tools, feat/testing-quality, feat/version-history, local-changes-backup-2026-02-18
+- [ ] T3.2: Delete remote branches on myfork (GitHub)
+- [ ] T3.3: Merge migration branch to main
+- [ ] GATE: `git branch -a` shows clean state
 
-**Diff size limit:** Before calling `generateUnifiedDiff`, check total lines < 2000 per source. If larger, return truncated warning instead of OOM risk. The existing `generateUnifiedDiff` uses O(m*n) LCS which can spike memory on large files.
+### Phase 1.4: AnalyzeABAPCode v2 (abaplint-based)
 
-**Version flow:** GetRevisions → pick base version → GetRevisionSource → compare (with size limit) → detect regressions
+- [ ] T4.1: Fix `ColonMissingSpaceRule` Row:0 bug in `pkg/abaplint/rules.go`
+- [ ] T4.2: Add new abaplint rules for security patterns:
+  - hardcoded_credentials -- detect password/secret assignments in string literals
+  - select_star -- detect SELECT * FROM (using statement type awareness)
+  - catch_cx_root -- detect overly broad exception handling
+  - commit_in_loop -- detect COMMIT WORK inside LOOP/DO/WHILE
+  - dynamic_call -- detect CALL METHOD (var) / CALL FUNCTION var
+- [ ] T4.3: Rewrite `pkg/adt/codeanalysis.go` to use `abaplint.NewABAPFile()` + `abaplint.Linter`
+- [ ] T4.4: Update `internal/mcp/handlers_codeanalysis.go` to use new AnalyzeABAPCode
+- [ ] T4.5: Write unit tests for new rules (oracle-verified where possible)
+- [ ] T4.6: Run `go test ./pkg/abaplint/...` + `go test ./pkg/adt/...`
+- [ ] GATE: All tests pass, abaplint rules produce correct findings on test corpus
 
-### Tests (8)
-- [ ] TestDetectSignatureChanges_ParamAdded
-- [ ] TestDetectSignatureChanges_ParamTypeChanged
-- [ ] TestDetectRemovedPublicMethods_Removed
-- [ ] TestDetectRemovedPublicMethods_Renamed
-- [ ] TestDetectInterfaceChanges_MethodAdded
-- [ ] TestDetectExceptionChanges_RaisingChanged
-- [ ] TestDetectRegressions_NoChanges
-- [ ] TestClient_CheckRegression
+### Phase 1.5: Refactoring & QuickFix v2 (correct ADT APIs)
 
----
+- [ ] T5.1: Research correct API URLs from `abap-adt-api/src/api/refactor.ts` -- document in report
+- [ ] T5.2: Implement `pkg/adt/refactoring_v2.go` with correct endpoints
+- [ ] T5.3: Implement `pkg/adt/quickfix_v2.go` with correct endpoints
+- [ ] T5.4: Add feature detection for refactoring API availability
+- [ ] T5.5: Update `internal/mcp/handlers_refactoring.go`
+- [ ] T5.6: Write unit tests with mock HTTP responses
+- [ ] T5.7: Integration test against real SAP system (manual, requires connection)
+- [ ] GATE: Unit tests pass, API URLs verified against abap-adt-api reference
 
-## Phase 5: Documentation + Commit ✅
+### Phase 1.6: Documentation & Final Verification
 
-- Add all 4 tools to `focusedTools` map in `server.go` (without this, tools only appear in expert mode)
-- Update `CLAUDE.md`: tool count (142), test count (~337), project status
-- Update `docs/FUTURE-PLAN.md`: mark Intelligence Layer done
-- Update `docs/PLAN.md`: mark all phases complete
-- Commit + push
-
----
-
-## Key Reused Infrastructure
-
-| Existing Function | File | Used By |
-|-------------------|------|---------|
-| `FindReferences()` | `codeintel.go:110` | GetImpactAnalysis Layer 1 |
-| `GetCallersOf()` | `client.go:1186` | GetImpactAnalysis Layer 2 |
-| `FlattenCallGraph()` | `client.go:1220` | GetImpactAnalysis Layer 2 |
-| `GrepPackages()` | `workflows.go:1820` | GetImpactAnalysis Layer 3 |
-| `GetSource()` | `workflows.go` | GetImpactAnalysis L4a, AnalyzeABAPCode, CheckRegression |
-| `RunQuery()` | `client.go` | GetImpactAnalysis Layer 4b |
-| `GetSQLExplainPlan()` | `testing.go:201` | AnalyzeSQLPerformance |
-| `FeatureProber.IsAvailable()` | `features.go` (Server layer) | AnalyzeSQLPerformance (HANA detection, passed as `hanaAvailable bool`) |
-| `GetRevisions()` | `revisions.go` | CheckRegression |
-| `GetRevisionSource()` | `revisions.go` | CheckRegression |
-| `generateUnifiedDiff()` | `workflows.go:3266` | CheckRegression |
-| `checkSafety()` | `safety.go` | All 4 tools |
-
-## New Files Summary
-
-| File | Phase | Content |
-|------|-------|---------|
-| `pkg/adt/sqlperf.go` | 1 | SQL perf analysis + HANA fallback |
-| `pkg/adt/sqlperf_test.go` | 1 | 7 tests |
-| `pkg/adt/impact.go` | 2 | Impact analysis 4-layer orchestration |
-| `pkg/adt/impact_test.go` | 2 | 10 tests |
-| `pkg/adt/codeanalysis.go` | 3 | Statement assembler + 21-rule engine |
-| `pkg/adt/codeanalysis_test.go` | 3 | 15 tests |
-| `pkg/adt/regression.go` | 4 | Diff-based regression detection |
-| `pkg/adt/regression_test.go` | 4 | 8 tests |
-| `internal/mcp/handlers_intelligence.go` | 1-2 | SQL perf + Impact handlers |
-| `internal/mcp/handlers_codeanalysis.go` | 3-4 | ABAP analysis + Regression handlers |
-
-## Verification
-
-1. `go test ./pkg/adt/ -run TestAnalyzePlan` — Phase 1
-2. `go test ./pkg/adt/ -run TestGetImpact` — Phase 2
-3. `go test ./pkg/adt/ -run "TestAnalyzeABAP|TestAssemble"` — Phase 3
-4. `go test ./pkg/adt/ -run TestDetect` — Phase 4
-5. `go test ./...` — no regressions (~335+ tests)
-6. `go build ./cmd/vsp` — compiles
+- [ ] T6.1: Update `README.md` tool tables with new upstream tools + our re-added tools
+- [ ] T6.2: Update `CLAUDE.md` tool counts and project status
+- [ ] T6.3: Write migration report: `reports/2026-04-05-001-upstream-merge-migration.md`
+- [ ] T6.4: Run full test suite: `go test ./...`
+- [ ] T6.5: Build all platforms: `go build -o vsp ./cmd/vsp`
+- [ ] GATE: Build + all tests pass, documentation accurate
 
 ---
 
-## Phase 5: Documentation Beautification — 🚧 PENDING
+## Risk Register
 
-> **⚠️ Warning:**
-> Prerequisite: `bierner.markdown-mermaid` VSCode extension must be installed for Mermaid preview.
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| mcp-go v0.47 API breaking changes | HIGH | Build + test after merge before re-adding code |
+| chromedp dependency breaks CI/containers | MEDIUM | Browser auth is opt-in; build tag if needed |
+| Re-added impact/regression/sqlperf have Client API drift | MEDIUM | Fix Client method signatures after transport upgrade |
+| Refactoring v2 API varies by SAP release | MEDIUM | Feature detection + graceful degradation |
+| abaplint parser coverage gaps (modern ABAP) | LOW | Unknown statements degrade to Unknown type, not crash |
+| Future upstream filename collisions on re-added files | LOW | Our files have unique names; upstream explicitly deleted them |
 
-**Goal:** Bring all project documentation up to the visual quality standard defined in `base/CLAUDE.md` → Documentation Quality (MANDATORY).
+## Compatibility Strategy
 
-**Scope:**
+**Principle:** Minimize divergence surface area.
 
-| File | Current State | Target |
-|------|--------------|--------|
-| `docs/PLAN.md` | Plain markdown, 360 lines, no TOC | TOC + Mermaid timeline + collapsible phases + emoji markers |
-| `README.md` | Basic | Mermaid architecture diagram (Go CLI + ADT + MCP) |
+1. **Fork-only code in separate files** -- never modify upstream-origin files beyond the ONE registration hook
+2. **Extension hook pattern** -- `tools_register_fork.go` holds all fork tool registrations
+3. **Separate handler files** -- `handlers_intelligence.go`, `handlers_codeanalysis.go`, `handlers_refactoring.go`
+4. **pkg/abaplint stays independent** -- pure Go, no ADT client dependencies, upstream-portable
+5. **Integration tests behind build tags** -- fork-only integration tests use `//go:build integration`
 
-**Steps:**
+**Future merge workflow:**
 
-- [ ] Step 5.1: Add TOC with anchor links to `PLAN.md`
-- [ ] Step 5.2: Add `timeline` Mermaid diagram showing Phases 1–4
-- [ ] Step 5.3: Wrap completed phase details in `<details><summary>` collapsible sections
-- [ ] Step 5.4: Add ✅/🚧/❌ status markers to all phases
-- [ ] Step 5.5: Add `> **📝 Note:**` / `> **⚠️ Warning:**` callouts for key decisions
-- [ ] Step 5.6: Add Mermaid `flowchart` diagram to README.md (ADT API → Go pkg → MCP handlers)
-- [ ] Step 5.7: Verify all formatting renders in VSCode + GitLab
+```bash
+git fetch upstream
+git merge upstream/main
+# Conflicts will be limited to:
+#   - tools_register.go (our ONE added line)
+#   - go.mod (dependency drift -- normal)
+# Our files in pkg/adt/ and internal/mcp/handlers_*.go will NOT conflict
+```
+
+## Cross-validation Summary
+
+| Aspect | Porfiry [Opus 4.6] | GPT-5.2-Pro (for) | GPT-5.2-Pro (against) | Tag |
+|--------|--------------------|--------------------|----------------------|-----|
+| Accept deletions strategy | Agree | Agree (8/10) | Agree (8/10) | [C+O] |
+| Extension hook pattern | Agree | Agree | Agree -- critical | [C+O] |
+| Abandon codeanalysis v1 | Agree | Agree | Agree | [C+O] |
+| Abandon refactoring/quickfix v1 | Agree | Agree | Agree | [C+O] |
+| Re-add impact/regression/sqlperf | Agree | Agree (low risk) | Caution (client deps) | [C+O] |
+| abaplint-based v2 | Agree | Agree (long-term bet) | Agree (fix Row:0 first) | [C+O] |
+| Never modify upstream files | Aspirational | Aspirational | Unrealistic (need 1 seam) | [C+O] refined |
+
+No CRITICAL disagreements. All findings incorporated into the plan above.
+
