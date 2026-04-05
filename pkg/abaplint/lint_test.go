@@ -299,6 +299,214 @@ func TestLinter_OracleDifferential(t *testing.T) {
 	}
 }
 
+// --- Tests for new security/quality rules ---
+
+func TestColonMissingSpaceRule_RowNotZero(t *testing.T) {
+	// Bug fix: Row was always 0 before the fix.
+	l := &Linter{Rules: []Rule{&ColonMissingSpaceRule{}}}
+	source := "REPORT ztest.\nDATA:lv_x TYPE i."
+	issues := l.Run("test.abap", source)
+
+	if len(issues) == 0 {
+		t.Fatal("expected colon_missing_space issue")
+	}
+	if issues[0].Row == 0 {
+		t.Errorf("Row should not be 0 (bug fix check): got Row=%d", issues[0].Row)
+	}
+	if issues[0].Row != 2 {
+		t.Errorf("expected Row=2 (colon on line 2), got Row=%d", issues[0].Row)
+	}
+}
+
+func TestColonMissingSpaceRule_NoIssueWhenSpacePresent(t *testing.T) {
+	l := &Linter{Rules: []Rule{&ColonMissingSpaceRule{}}}
+	source := "DATA: lv_x TYPE i."
+	issues := l.Run("test.abap", source)
+	if len(issues) != 0 {
+		t.Errorf("expected no issues for proper colon spacing, got %d", len(issues))
+	}
+}
+
+func TestSelectStarRule_Detect(t *testing.T) {
+	l := &Linter{Rules: []Rule{&SelectStarRule{}}}
+
+	t.Run("select_star", func(t *testing.T) {
+		issues := l.Run("test.abap", "SELECT * FROM mara INTO TABLE @lt_mara.")
+		if len(issues) == 0 {
+			t.Fatal("expected select_star issue")
+		}
+		if issues[0].Key != "select_star" {
+			t.Errorf("expected select_star, got %s", issues[0].Key)
+		}
+		if issues[0].Row == 0 {
+			t.Errorf("Row should not be 0")
+		}
+	})
+
+	t.Run("select_single_star", func(t *testing.T) {
+		issues := l.Run("test.abap", "SELECT SINGLE * FROM mara INTO @ls_mara WHERE matnr = @lv_matnr.")
+		if len(issues) == 0 {
+			t.Fatal("expected select_star issue for SELECT SINGLE *")
+		}
+	})
+
+	t.Run("explicit_fields_no_issue", func(t *testing.T) {
+		issues := l.Run("test.abap", "SELECT matnr maktx FROM mara INTO TABLE @lt_mara.")
+		if len(issues) != 0 {
+			t.Errorf("expected no select_star for explicit fields, got %d issues", len(issues))
+		}
+	})
+}
+
+func TestHardcodedCredentialsRule_Detect(t *testing.T) {
+	l := &Linter{Rules: []Rule{&HardcodedCredentialsRule{}}}
+
+	t.Run("password_assignment", func(t *testing.T) {
+		issues := l.Run("test.abap", "lv_password = 'SuperSecret123'.")
+		if len(issues) == 0 {
+			t.Fatal("expected hardcoded_credentials issue")
+		}
+		if issues[0].Key != "hardcoded_credentials" {
+			t.Errorf("expected hardcoded_credentials, got %s", issues[0].Key)
+		}
+		if issues[0].Row == 0 {
+			t.Errorf("Row should not be 0")
+		}
+	})
+
+	t.Run("secret_assignment", func(t *testing.T) {
+		issues := l.Run("test.abap", "lv_api_secret = 'abc123xyz'.")
+		if len(issues) == 0 {
+			t.Fatal("expected hardcoded_credentials for lv_api_secret")
+		}
+	})
+
+	t.Run("non_credential_variable", func(t *testing.T) {
+		issues := l.Run("test.abap", "lv_name = 'John Doe'.")
+		if len(issues) != 0 {
+			t.Errorf("expected no hardcoded_credentials for lv_name, got %d", len(issues))
+		}
+	})
+
+	t.Run("empty_string_no_issue", func(t *testing.T) {
+		// Very short strings treated as initial value, not hardcoded credential
+		issues := l.Run("test.abap", "lv_password = ''.")
+		if len(issues) != 0 {
+			t.Errorf("expected no issue for empty password string, got %d", len(issues))
+		}
+	})
+}
+
+func TestCatchCxRootRule_Detect(t *testing.T) {
+	l := &Linter{Rules: []Rule{&CatchCxRootRule{}}}
+
+	t.Run("catch_cx_root", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_root.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected catch_cx_root issue")
+		}
+		if issues[0].Key != "catch_cx_root" {
+			t.Errorf("expected catch_cx_root, got %s", issues[0].Key)
+		}
+		if issues[0].Row == 0 {
+			t.Errorf("Row should not be 0, got Row=%d", issues[0].Row)
+		}
+	})
+
+	t.Run("catch_cx_sy_prefix", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_sy_conversion_error.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected catch_cx_root issue for cx_sy_ prefix")
+		}
+	})
+
+	t.Run("specific_exception_no_issue", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_no_check.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) != 0 {
+			t.Errorf("expected no catch_cx_root for specific cx_no_check, got %d", len(issues))
+		}
+	})
+}
+
+func TestCommitInLoopRule_Detect(t *testing.T) {
+	l := &Linter{Rules: []Rule{&CommitInLoopRule{}}}
+
+	t.Run("commit_inside_loop", func(t *testing.T) {
+		source := "LOOP AT lt_items INTO DATA(ls_item).\n  COMMIT WORK.\nENDLOOP."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected commit_in_loop issue")
+		}
+		if issues[0].Key != "commit_in_loop" {
+			t.Errorf("expected commit_in_loop, got %s", issues[0].Key)
+		}
+		if issues[0].Row == 0 {
+			t.Errorf("Row should not be 0")
+		}
+	})
+
+	t.Run("commit_inside_do_loop", func(t *testing.T) {
+		source := "DO 5 TIMES.\n  COMMIT WORK.\nENDDO."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected commit_in_loop issue inside DO")
+		}
+	})
+
+	t.Run("commit_outside_loop", func(t *testing.T) {
+		source := "LOOP AT lt_items INTO DATA(ls_item).\n  process( ls_item ).\nENDLOOP.\nCOMMIT WORK."
+		issues := l.Run("test.abap", source)
+		if len(issues) != 0 {
+			t.Errorf("expected no commit_in_loop when COMMIT is outside loop, got %d", len(issues))
+		}
+	})
+}
+
+func TestDynamicCallNoTryRule_Detect(t *testing.T) {
+	l := &Linter{Rules: []Rule{&DynamicCallNoTryRule{}}}
+
+	t.Run("dynamic_call_method_no_try", func(t *testing.T) {
+		source := "CALL METHOD (lv_class)=>(lv_method)."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected dynamic_call_no_try for CALL METHOD (var)")
+		}
+		if issues[0].Key != "dynamic_call_no_try" {
+			t.Errorf("expected dynamic_call_no_try, got %s", issues[0].Key)
+		}
+		if issues[0].Row == 0 {
+			t.Errorf("Row should not be 0")
+		}
+	})
+
+	t.Run("dynamic_call_function_no_try", func(t *testing.T) {
+		source := "CALL FUNCTION lv_func_name."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected dynamic_call_no_try for CALL FUNCTION variable")
+		}
+	})
+
+	t.Run("static_call_function_no_issue", func(t *testing.T) {
+		source := "CALL FUNCTION 'SOME_FUNCTION_MODULE'."
+		issues := l.Run("test.abap", source)
+		if len(issues) != 0 {
+			t.Errorf("expected no issue for static CALL FUNCTION, got %d", len(issues))
+		}
+	})
+
+	t.Run("dynamic_call_inside_try_no_issue", func(t *testing.T) {
+		source := "TRY.\n  CALL METHOD (lv_class)=>(lv_method).\nCATCH cx_sy_dyn_call_error.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) != 0 {
+			t.Errorf("expected no issue when dynamic call is inside TRY, got %d", len(issues))
+		}
+	})
+}
+
 func BenchmarkLinter(b *testing.B) {
 	data, err := os.ReadFile("../../embedded/abap/zcl_vsp_apc_handler.clas.abap")
 	if err != nil {
