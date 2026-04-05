@@ -12,6 +12,25 @@ import (
 func (s *Server) registerForkTools(shouldRegister func(string) bool) {
 	s.registerIntelligenceTools(shouldRegister)
 	s.registerRefactoringToolsV2(shouldRegister)
+	s.registerCodeAnalysisTools(shouldRegister)
+}
+
+// registerCodeAnalysisTools registers ABAP code analysis tools.
+func (s *Server) registerCodeAnalysisTools(shouldRegister func(string) bool) {
+	if shouldRegister("AnalyzeABAPCode") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeABAPCode",
+			mcp.WithDescription("Analyze ABAP source code quality using the native abaplint lexer+parser. Detects: SELECT *, hardcoded credentials, overly broad CATCH cx_root, COMMIT WORK in loops, dynamic calls without TRY, obsolete statements (MOVE/ADD/COMPUTE), naming conventions, and more. Returns findings with line numbers, severity, and fix suggestions."),
+			mcp.WithString("object_type",
+				mcp.Description("ABAP object type: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS (used with object_name to fetch source)"),
+			),
+			mcp.WithString("object_name",
+				mcp.Description("ABAP object name (e.g., ZCL_EXAMPLE). Used with object_type to fetch source from SAP."),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source code to analyze directly (alternative to object_type+object_name)"),
+			),
+		), s.handleAnalyzeABAPCode)
+	}
 }
 
 // registerRefactoringToolsV2 registers refactoring tools using correct ADT API patterns.

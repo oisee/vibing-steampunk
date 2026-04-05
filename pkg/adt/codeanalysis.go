@@ -32,7 +32,7 @@ func allRules() []abaplint.Rule {
 		&abaplint.LineLengthRule{MaxLength: 130},
 		&abaplint.EmptyStatementRule{},
 		&abaplint.MaxOneStatementRule{},
-		&abaplint.PreferredCompareOperatorRule{},
+		&abaplint.PreferredCompareOperatorRule{BadOperators: []string{"EQ", "NE", "GT", "LT", "GE", "LE", "><"}},
 		&abaplint.ObsoleteStatementRule{Compute: true, Add: true, Subtract: true, Multiply: true, Divide: true, Move: true},
 		&abaplint.ColonMissingSpaceRule{},
 		&abaplint.DoubleSpaceRule{},
@@ -188,29 +188,30 @@ func calculateCodeScore(findings []CodeFinding) string {
 }
 
 // AnalyzeABAPCode is the Client method that optionally fetches source before analysis.
-func (c *Client) AnalyzeABAPCode(ctx context.Context, objectURI, source string) (*CodeAnalysisResult, error) {
+// If source is provided directly, objectType/objectName are optional (used for labeling only).
+// If source is empty, objectType and objectName are used to fetch source via GetSource.
+func (c *Client) AnalyzeABAPCode(ctx context.Context, objectType, objectName, source string) (*CodeAnalysisResult, error) {
 	if err := c.checkSafety(OpRead, "AnalyzeABAPCode"); err != nil {
 		return nil, err
 	}
 
-	if source == "" && objectURI == "" {
-		return nil, fmt.Errorf("either object_uri or source is required")
+	if source == "" && objectName == "" {
+		return nil, fmt.Errorf("either source or object_name is required")
 	}
 
-	// Fetch source from SAP if not provided directly.
-	// objectURI is passed to GetSource as objectType="" (auto-detect from URI).
+	// Fetch source from SAP if not provided directly
 	if source == "" {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		fetched, err := c.GetSource(ctx, "", objectURI, nil)
+		fetched, err := c.GetSource(ctx, objectType, objectName, nil)
 		if err != nil {
-			return nil, fmt.Errorf("fetching source for %s: %w", objectURI, err)
+			return nil, fmt.Errorf("fetching source for %s/%s: %w", objectType, objectName, err)
 		}
 		source = fetched
 	}
 
 	result := AnalyzeABAPSource(source)
-	result.ObjectURI = objectURI
+	result.ObjectName = objectName
 	return result, nil
 }

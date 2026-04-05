@@ -121,8 +121,9 @@ func TestAnalyzeABAPSource_TooLarge(t *testing.T) {
 
 func TestAnalyzeABAPSource_RulesApplied(t *testing.T) {
 	result := AnalyzeABAPSource("REPORT ztest.\n")
-	if result.RulesApplied != 13 {
-		t.Errorf("RulesApplied = %d, want 13", result.RulesApplied)
+	want := len(allRules())
+	if result.RulesApplied != want {
+		t.Errorf("RulesApplied = %d, want %d", result.RulesApplied, want)
 	}
 }
 

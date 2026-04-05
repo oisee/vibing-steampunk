@@ -384,22 +384,24 @@ func (r *SelectStarRule) Run(file *ABAPFile) []Issue {
 		if strings.ToUpper(stmt.Tokens[0].Str) != "SELECT" {
 			continue
 		}
-		// Look for * token immediately after SELECT or after SINGLE
-		for i := 1; i < len(stmt.Tokens); i++ {
-			upper := strings.ToUpper(stmt.Tokens[i].Str)
-			if upper == "*" {
-				tok := stmt.Tokens[i]
-				issues = append(issues, Issue{
-					Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
-					Message:  "SELECT * fetches all columns — use an explicit field list",
-					Severity: "Warning",
-				})
-				break
+		// Skip optional SINGLE/DISTINCT after SELECT
+		i := 1
+		for i < len(stmt.Tokens) {
+			u := strings.ToUpper(stmt.Tokens[i].Str)
+			if u == "SINGLE" || u == "DISTINCT" {
+				i++
+				continue
 			}
-			// Only look in the select-list area (before FROM)
-			if upper == "FROM" {
-				break
-			}
+			break
+		}
+		// Only flag if * is the first field (not COUNT(*) or similar)
+		if i < len(stmt.Tokens) && stmt.Tokens[i].Str == "*" {
+			tok := stmt.Tokens[i]
+			issues = append(issues, Issue{
+				Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
+				Message:  "SELECT * fetches all columns — use an explicit field list",
+				Severity: "Warning",
+			})
 		}
 	}
 	return issues
