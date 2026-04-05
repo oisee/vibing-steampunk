@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Features
+
+- **Graph Knowledge MVP** (`pkg/graph`) — canonical graph model now includes transport and config nodes/edges, plus query-time co-change, impact, and config-usage queries.
+- **Transport Graph Builder** — `E070`/`E071` request+task acquisition collapses tasks into parent requests for co-change analysis.
+- **SQL and Config Builders** — added conservative `CROSS`/`WBCROSSGT` graph ingestion and heuristic `TVARVC`/`READS_CONFIG` ingestion.
+- **CLI Co-Change Analysis** — `vsp graph co-change <type> <name>` runs transport-based co-change analysis from SAP transport history.
+- **MCP Graph Analysis** — `SAP(action="analyze", params={"type":"co_change", ...})` and `SAP(action="analyze", params={"type":"impact", ...})` now expose the first graph-MVP query slices through the universal analyze route.
+
+### Docs
+
+- Refreshed CLI coding agent tables in `README.md` and `docs/cli-agents/README.md` to remove stale hard-coded pricing/model claims and use more stable availability wording.
+
 ## [2.33.0] - 2026-03-29
 ### Features
 
@@ -380,7 +393,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 - **adt:** Implement workflows for writing and creating ABAP programs and classes ([`cdf3f98`](https://github.com/oisee/vibing-steampunk/commit/cdf3f98d401f2d571b93742c9e3755cd6027d9a7))
-
 
 
 

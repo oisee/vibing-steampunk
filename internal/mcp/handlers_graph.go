@@ -284,6 +284,378 @@ func (s *Server) handleGraphStats(ctx context.Context, request mcp.CallToolReque
 	return mcp.NewToolResultText(string(result)), nil
 }
 
+// handleCoChange performs transport-based co-change analysis.
+// MCP: SAP(action="analyze", params={"type": "co_change", "object_type": "CLAS", "object_name": "ZCL_FOO", "top_n": 20})
+func (s *Server) handleCoChange(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	objType := strings.ToUpper(getStringParam(args, "object_type"))
+	objName := strings.ToUpper(getStringParam(args, "object_name"))
+	topN := 20
+	if t, ok := getFloatParam(args, "top_n"); ok && t > 0 {
+		topN = int(t)
+	}
+
+	if objType == "" || objName == "" {
+		return newToolResultError("object_type and object_name are required. Example: SAP(action=\"analyze\", params={\"type\": \"co_change\", \"object_type\": \"CLAS\", \"object_name\": \"ZCL_FOO\"})"), nil
+	}
+	if s.adtClient == nil {
+		return newToolResultError("SAP connection required for co-change analysis"), nil
+	}
+
+	headers, objects, err := s.fetchTransportData(ctx, objType, objName)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("co_change failed: %v", err)), nil
+	}
+	if len(headers) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No transports found for %s %s.", objType, objName)), nil
+	}
+
+	g := graph.BuildTransportGraph(headers, objects)
+	targetNodeID := graph.NodeID(objType, objName)
+	result := graph.WhatChangesWith(g, targetNodeID, topN)
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("JSON marshal error: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
+}
+
+// fetchTransportData performs bounded E070/E071 acquisition for a single object.
+// Returns headers and objects suitable for graph.BuildTransportGraph.
+// Acquisition steps:
+//  1. E071: find transports containing the target object
+//  2. E070: resolve task→request hierarchy for those transports
+//  3. E070: fetch parent request headers if only tasks were found
+//  4. E070: fetch ALL child tasks of resolved parent requests
+//  5. E071: fetch all objects across parent requests + all child tasks
+func (s *Server) fetchTransportData(ctx context.Context, objType, objName string) ([]graph.TransportHeader, []graph.TransportObject, error) {
+	// Step 1: Find transports containing this object
+	e071Query := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND OBJECT = '%s' AND OBJ_NAME = '%s'",
+		objType, objName)
+	e071Result, err := s.adtClient.RunQuery(ctx, e071Query, 200)
+	if err != nil {
+		return nil, nil, fmt.Errorf("E071 query: %w", err)
+	}
+	if e071Result == nil || len(e071Result.Rows) == 0 {
+		return nil, nil, nil
+	}
+
+	// Collect transport numbers
+	trNums := make(map[string]bool)
+	for _, row := range e071Result.Rows {
+		tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+		if tr != "" {
+			trNums[tr] = true
+		}
+	}
+
+	// Step 2: Resolve E070 headers
+	trList := quoteKeys(trNums)
+	e070Query := fmt.Sprintf(
+		"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)",
+		strings.Join(trList, ","))
+	e070Result, err := s.adtClient.RunQuery(ctx, e070Query, 500)
+	if err != nil {
+		return nil, nil, fmt.Errorf("E070 query: %w", err)
+	}
+
+	var headers []graph.TransportHeader
+	requestNums := make(map[string]bool)
+	headerSeen := make(map[string]bool)
+
+	for _, row := range e070Result.Rows {
+		h := parseTransportHeader(row)
+		headers = append(headers, h)
+		headerSeen[h.TRKORR] = true
+		if h.IsRequest() {
+			requestNums[h.TRKORR] = true
+		} else if h.STRKORR != "" {
+			requestNums[h.STRKORR] = true
+		}
+	}
+
+	// Step 3: Fetch missing parent request headers
+	var missingParents []string
+	for rn := range requestNums {
+		if !headerSeen[rn] {
+			missingParents = append(missingParents, "'"+rn+"'")
+		}
+	}
+	if len(missingParents) > 0 {
+		parentQuery := fmt.Sprintf(
+			"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)",
+			strings.Join(missingParents, ","))
+		parentResult, err := s.adtClient.RunQuery(ctx, parentQuery, 100)
+		if err == nil && parentResult != nil {
+			for _, row := range parentResult.Rows {
+				h := parseTransportHeader(row)
+				if !headerSeen[h.TRKORR] {
+					headers = append(headers, h)
+					headerSeen[h.TRKORR] = true
+					requestNums[h.TRKORR] = true
+				}
+			}
+		}
+	}
+
+	// Step 4: Fetch ALL child tasks of resolved parent requests
+	if len(requestNums) > 0 {
+		parentList := quoteKeys(requestNums)
+		childQuery := fmt.Sprintf(
+			"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE STRKORR IN (%s)",
+			strings.Join(parentList, ","))
+		childResult, err := s.adtClient.RunQuery(ctx, childQuery, 500)
+		if err == nil && childResult != nil {
+			for _, row := range childResult.Rows {
+				h := parseTransportHeader(row)
+				if !headerSeen[h.TRKORR] {
+					headers = append(headers, h)
+					headerSeen[h.TRKORR] = true
+				}
+			}
+		}
+	}
+
+	// Step 5: Fetch all E071 objects for all known transports
+	allTRNums := make(map[string]bool)
+	for _, h := range headers {
+		allTRNums[h.TRKORR] = true
+	}
+	for rn := range requestNums {
+		allTRNums[rn] = true
+	}
+
+	allTRList := quoteKeys(allTRNums)
+	siblingQuery := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE TRKORR IN (%s) AND PGMID = 'R3TR'",
+		strings.Join(allTRList, ","))
+	siblingResult, err := s.adtClient.RunQuery(ctx, siblingQuery, 2000)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sibling E071 query: %w", err)
+	}
+
+	var objects []graph.TransportObject
+	if siblingResult != nil {
+		for _, row := range siblingResult.Rows {
+			objects = append(objects, graph.TransportObject{
+				TRKORR:  strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+				PGMID:   strings.TrimSpace(fmt.Sprintf("%v", row["PGMID"])),
+				Object:  strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])),
+				ObjName: strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])),
+			})
+		}
+	}
+
+	return headers, objects, nil
+}
+
+// parseTransportHeader extracts a TransportHeader from a RunQuery row.
+func parseTransportHeader(row map[string]any) graph.TransportHeader {
+	return graph.TransportHeader{
+		TRKORR:     strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+		STRKORR:    strings.TrimSpace(fmt.Sprintf("%v", row["STRKORR"])),
+		TRFUNCTION: strings.TrimSpace(fmt.Sprintf("%v", row["TRFUNCTION"])),
+		TRSTATUS:   strings.TrimSpace(fmt.Sprintf("%v", row["TRSTATUS"])),
+		AS4USER:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4USER"])),
+		AS4DATE:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4DATE"])),
+	}
+}
+
+// quoteKeys converts a set of keys to SQL-quoted strings for IN clauses.
+func quoteKeys(m map[string]bool) []string {
+	result := make([]string, 0, len(m))
+	for k := range m {
+		result = append(result, "'"+k+"'")
+	}
+	return result
+}
+
+// handleImpact performs reverse-dependency impact analysis using WBCROSSGT/CROSS.
+// MCP: SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "max_depth": 3})
+// Optional: "edge_kinds": "CALLS,REFERENCES" (comma-separated filter)
+//
+// Data source: WBCROSSGT + CROSS tables (reverse cross-references).
+// Each hop queries "who references these objects?" up to max_depth.
+// This gives real code-level reverse dependencies, not transport co-change.
+func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	objType := strings.ToUpper(getStringParam(args, "object_type"))
+	objName := strings.ToUpper(getStringParam(args, "object_name"))
+	maxDepth := 3
+	if d, ok := getFloatParam(args, "max_depth"); ok && d > 0 {
+		maxDepth = int(d)
+	}
+	if maxDepth > 5 {
+		maxDepth = 5 // safety bound
+	}
+
+	if objType == "" || objName == "" {
+		return newToolResultError("object_type and object_name are required. Example: SAP(action=\"analyze\", params={\"type\": \"impact\", \"object_type\": \"CLAS\", \"object_name\": \"ZCL_FOO\"})"), nil
+	}
+	if s.adtClient == nil {
+		return newToolResultError("SAP connection required for impact analysis"), nil
+	}
+
+	// Parse optional edge kind filter
+	var edgeKinds []graph.EdgeKind
+	if kindsStr := getStringParam(args, "edge_kinds"); kindsStr != "" {
+		for _, k := range strings.Split(kindsStr, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				edgeKinds = append(edgeKinds, graph.EdgeKind(k))
+			}
+		}
+	}
+
+	// Build reverse-dependency graph via multi-hop WBCROSSGT/CROSS acquisition
+	g, err := s.fetchReverseDeps(ctx, objType, objName, maxDepth)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("impact query failed: %v", err)), nil
+	}
+
+	targetNodeID := graph.NodeID(objType, objName)
+	opts := &graph.ImpactOptions{
+		MaxDepth:  maxDepth,
+		EdgeKinds: edgeKinds,
+	}
+	result := graph.Impact(g, targetNodeID, opts)
+
+	// Enrich with package info
+	s.resolvePackages(ctx, g)
+	// Re-read package info into results after resolution
+	for i, entry := range result.Entries {
+		if n := g.GetNode(entry.NodeID); n != nil && n.Package != "" {
+			result.Entries[i].Package = n.Package
+		}
+	}
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("JSON marshal error: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
+}
+
+// fetchReverseDeps builds a graph of reverse dependencies via WBCROSSGT/CROSS.
+// Multi-hop: at each depth level, queries "who references these objects?" and
+// adds the results to the graph. Bounded by maxDepth and per-query row limits.
+func (s *Server) fetchReverseDeps(ctx context.Context, objType, objName string, maxDepth int) (*graph.Graph, error) {
+	g := graph.New()
+
+	// Seed the root node
+	rootID := graph.NodeID(objType, objName)
+	g.AddNode(&graph.Node{
+		ID:   rootID,
+		Name: objName,
+		Type: objType,
+	})
+
+	// BFS: each level queries for callers of the current frontier
+	frontier := []struct {
+		name    string
+		objType string
+	}{{objName, objType}}
+
+	visited := map[string]bool{objName: true}
+
+	for depth := 0; depth < maxDepth && len(frontier) > 0; depth++ {
+		var nextFrontier []struct {
+			name    string
+			objType string
+		}
+
+		for _, obj := range frontier {
+			// Query WBCROSSGT: who references this object? (reverse direction)
+			wbQuery := fmt.Sprintf(
+				"SELECT INCLUDE, OTYPE, NAME FROM WBCROSSGT WHERE NAME LIKE '%s%%'", obj.name)
+			wbResult, err := s.adtClient.RunQuery(ctx, wbQuery, 300)
+			if err == nil && wbResult != nil {
+				for _, row := range wbResult.Rows {
+					include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+					if include == "" || strings.Contains(include, "\\") {
+						continue
+					}
+
+					// Normalize include to object-level
+					fromID, fromType, fromName := graph.NormalizeInclude(include)
+					if strings.EqualFold(fromName, obj.name) {
+						continue // skip self-ref
+					}
+
+					g.AddNode(&graph.Node{ID: fromID, Name: fromName, Type: fromType})
+					targetID := graph.NodeID(obj.objType, obj.name)
+					g.AddEdge(&graph.Edge{
+						From:       fromID,
+						To:         targetID,
+						Kind:       graph.EdgeReferences,
+						Source:     graph.SourceWBCROSSGT,
+						RawInclude: include,
+					})
+
+					if !visited[fromName] {
+						visited[fromName] = true
+						nextFrontier = append(nextFrontier, struct {
+							name    string
+							objType string
+						}{fromName, fromType})
+					}
+				}
+			}
+
+			// Query CROSS: who calls this? (reverse direction)
+			crossQuery := fmt.Sprintf(
+				"SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME LIKE '%s%%'", obj.name)
+			crossResult, err := s.adtClient.RunQuery(ctx, crossQuery, 300)
+			if err == nil && crossResult != nil {
+				for _, row := range crossResult.Rows {
+					include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+					refType := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["TYPE"])))
+					if include == "" {
+						continue
+					}
+
+					fromID, fromType, fromName := graph.NormalizeInclude(include)
+					if strings.EqualFold(fromName, obj.name) {
+						continue
+					}
+
+					g.AddNode(&graph.Node{ID: fromID, Name: fromName, Type: fromType})
+					targetID := graph.NodeID(obj.objType, obj.name)
+
+					// FU/PR → CALLS, others → REFERENCES
+					edgeKind := graph.EdgeReferences
+					if refType == "FU" || refType == "PR" {
+						edgeKind = graph.EdgeCalls
+					}
+
+					g.AddEdge(&graph.Edge{
+						From:       fromID,
+						To:         targetID,
+						Kind:       edgeKind,
+						Source:     graph.SourceCROSS,
+						RawInclude: include,
+						RefDetail:  "TYPE:" + refType,
+					})
+
+					if !visited[fromName] {
+						visited[fromName] = true
+						nextFrontier = append(nextFrontier, struct {
+							name    string
+							objType string
+						}{fromName, fromType})
+					}
+				}
+			}
+		}
+
+		frontier = nextFrontier
+	}
+
+	return g, nil
+}
+
 func formatBoundaryResult(report *graph.BoundaryReport, format string) (*mcp.CallToolResult, error) {
 	switch format {
 	case "json":

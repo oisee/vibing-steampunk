@@ -11,6 +11,13 @@
 
 ![Vibing ABAP Developer](./media/vibing-steampunk.png)
 
+## Hot Right Now
+
+- `vsp graph co-change CLAS ZCL_FOO` for transport-based co-change analysis
+- `SAP(action="analyze", params={"type":"co_change", ...})` for MCP co-change
+- `SAP(action="analyze", params={"type":"impact", ...})` for reverse dependency impact
+- **[Graph Guide](docs/graph-guide.md)** for examples, data sources, and current limits
+
 ## 100 Stars!
 
 Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Community, and What's Cooking](articles/2026-02-18-100-stars-celebration.md)**
@@ -20,6 +27,19 @@ Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Commu
 > **Sprint goal:** make every token count. Built-in ABAP understanding, compressed dependency context, and a single-tool mode that opens the door for local/small models.
 
 The full version history is in [CHANGELOG.md](CHANGELOG.md).
+
+### Graph MVP — New Dependency Analysis Surfaces
+
+VSP now has a first graph-MVP layer for questions that are bigger than grep and different from a plain call graph:
+
+- `vsp graph co-change CLAS ZCL_FOO`
+  Transport-based co-change: what usually moves together with this object?
+- `SAP(action="analyze", params={"type":"co_change","object_type":"CLAS","object_name":"ZCL_FOO"})`
+  The same co-change analysis over MCP.
+- `SAP(action="analyze", params={"type":"impact","object_type":"CLAS","object_name":"ZCL_FOO","max_depth":3})`
+  Reverse dependency impact: who statically depends on this object?
+
+This is the start of a graph-oriented analysis layer, not just another call-tree view. See **[Graph Guide](docs/graph-guide.md)** for examples, data sources, and current limitations.
 
 ### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
 
@@ -167,6 +187,7 @@ Compile WebAssembly binaries to native ABAP — advanced prototype, verified on 
 vsp query T000 --top 5                           # query tables
 vsp grep "SELECT.*mara" --package '$TMP'          # search source code
 vsp graph CLAS ZCL_FOO --direction callers        # who uses this class?
+vsp graph co-change CLAS ZCL_FOO                  # what changes together with this object?
 vsp deps '$ZFINANCE' --format summary             # transport readiness check
 vsp lint --file myclass.clas.abap                 # offline ABAP linter
 vsp compile wasm program.wasm --class ZCL_DEMO    # WASM→ABAP compiler
@@ -175,7 +196,7 @@ vsp context CLAS ZCL_FOO --depth 2                # compressed deps (2 levels)
 vsp system info                                   # system version + ZADT_VSP check
 ```
 
-`graph` and `deps` use WBCROSSGT/CROSS tables as fallback when ADT call graph API is unavailable — works on any SAP system with ADT.
+`graph` now covers both classic call-graph inspection and the first graph-MVP query slices. Call-graph paths use ADT first with WBCROSSGT/CROSS fallback; graph-MVP analysis currently adds transport-based co-change and MCP impact analysis on top of the new `pkg/graph` layer.
 
 See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature requirements matrix.
 
@@ -279,18 +300,22 @@ You will get prompted with a list of found objects if the connection could be es
 
 VSP works with **8 CLI coding agents** — not just Claude! Full setup guides with config templates:
 
-| Agent | LLM | Free? | Config |
-|-------|-----|-------|--------|
-| **Gemini CLI** | Gemini 2.5 Pro/Flash | Yes (1000 req/day) | `.gemini/settings.json` |
-| **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mo) | `.mcp.json` |
-| **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mo) | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | `codex.toml` |
-| **Qwen Code** | Qwen3-Coder | Yes (1000 req/day) | `.qwen/settings.json` |
-| **OpenCode** | 75+ models (BYOK) | Yes (own key) | `opencode.json` |
-| **Goose** | 75+ providers (BYOK) | Yes (own key) | `~/.config/goose/config.yaml` |
-| **Mistral Vibe** | Devstral 2, local models | Yes (Ollama) | `.vibe/config.toml` |
+| Agent | Model Access | Availability | Config |
+|-------|--------------|--------------|--------|
+| **Gemini CLI** | Gemini models | Free tier available; paid/API-backed usage also available | `.gemini/settings.json` |
+| **Claude Code** | Claude models | Paid usage or subscription-backed access | `.mcp.json` |
+| **GitHub Copilot** | Multi-model (plan-dependent) | Free tier available; paid plans unlock more limits/models | `.copilot/mcp-config.json` |
+| **OpenAI Codex** | OpenAI coding models / ChatGPT-linked access | Limited or plan-dependent access; API usage also available | `codex.toml` |
+| **Qwen Code** | Qwen models | Free tier available; BYOK/API-backed usage also available | `.qwen/settings.json` |
+| **OpenCode** | Multi-provider BYOK | Depends on your provider/account | `opencode.json` |
+| **Goose** | Multi-provider BYOK | Depends on your provider/account | `~/.config/goose/config.yaml` |
+| **Mistral Vibe** | Mistral API or local models | Local/Ollama path can be free; API usage is provider-billed | `.vibe/config.toml` |
+
+Availability, pricing, and model lineups change quickly. Check the linked agent guides and official product docs before copying limits or plan claims into downstream docs.
 
 **[Full setup guide with config examples](docs/cli-agents/README.md)** | [Русский](docs/cli-agents/README_RU.md) | [Українська](docs/cli-agents/README_UA.md) | [Español](docs/cli-agents/README_ES.md)
+
+For the new graph analysis capabilities, see **[Graph Guide](docs/graph-guide.md)**.
 
 ## CLI Mode
 
@@ -312,6 +337,11 @@ vsp -s a4h context CLAS ZCL_FOO                   # shortcut for above
 # Search
 vsp -s a4h search "ZCL_*"
 vsp -s dev search "Z*ORDER*" --type CLAS --max 50
+
+# Graph analysis
+vsp -s a4h graph CLAS ZCL_FOO                      # call graph
+vsp -s a4h graph co-change CLAS ZCL_FOO           # transport-based co-change
+vsp -s a4h graph co-change PROG ZREPORT --format json
 
 # Testing & code quality
 vsp -s a4h test CLAS ZCL_MY_CLASS                 # run unit tests
@@ -339,6 +369,12 @@ vsp config init                                   # create example configs
 # Start ABAP LSP server (for Claude Code / editors)
 vsp lsp --stdio
 ```
+
+Graph-MVP highlights:
+
+- `vsp graph co-change <type> <name>` for transport-based co-change analysis
+- `SAP(action="analyze", params={"type":"co_change", ...})` for MCP co-change
+- `SAP(action="analyze", params={"type":"impact", ...})` for reverse dependency impact
 
 ### System Profiles (`.vsp.json`)
 

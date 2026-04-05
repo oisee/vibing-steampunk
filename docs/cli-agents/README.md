@@ -10,24 +10,26 @@ Guide for setting up CLI coding assistants to work with SAP via [VSP (vibing-ste
 
 ## Summary Table
 
-| Tool | LLM | Free? | MCP | Install | VSP Config |
+| Tool | Model Access | Availability | MCP | Install | VSP Config |
 |---|---|---|---|---|---|
-| **Gemini CLI** | Gemini 2.5 Pro/Flash, 3 Pro | **Yes** (1000 req/day) | Yes | `npm i -g @google/gemini-cli` | `.gemini/settings.json` |
-| **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mo) | Yes | `curl -fsSL https://claude.ai/install.sh \| bash` | `.mcp.json` |
-| **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mo) | Yes | `npm i -g @github/copilot` | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | Yes | `npm i -g @openai/codex` | `codex.toml` |
-| **Qwen Code** | Qwen3-Coder | **Yes** (1000 req/day) | Yes | `npm i -g @qwen-code/qwen-code` | `.qwen/settings.json` |
-| **OpenCode** | 75+ models (BYOK) | **Yes** (own key) | Yes | `brew install anomalyco/tap/opencode` | `opencode.json` |
-| **Goose** | 75+ providers (BYOK) | **Yes** (own key) | Yes | `brew install block-goose-cli` | `~/.config/goose/config.yaml` |
-| **Mistral Vibe** | Devstral 2, local models | No (API) / **Yes** (Ollama) | Yes | `pip install mistral-vibe` | `.vibe/config.toml` |
+| **Gemini CLI** | Gemini models | Free tier available; paid/API-backed usage also available | Yes | `npm i -g @google/gemini-cli` | `.gemini/settings.json` |
+| **Claude Code** | Claude models | Paid usage or subscription-backed access | Yes | `curl -fsSL https://claude.ai/install.sh \| bash` | `.mcp.json` |
+| **GitHub Copilot** | Multi-model (plan-dependent) | Free tier available; paid plans unlock more limits/models | Yes | `npm i -g @github/copilot` | `.copilot/mcp-config.json` |
+| **OpenAI Codex** | OpenAI coding models / ChatGPT-linked access | Limited or plan-dependent access; API usage also available | Yes | `npm i -g @openai/codex` | `codex.toml` |
+| **Qwen Code** | Qwen models | Free tier available; BYOK/API-backed usage also available | Yes | `npm i -g @qwen-code/qwen-code` | `.qwen/settings.json` |
+| **OpenCode** | Multi-provider BYOK | Depends on your provider/account | Yes | `brew install anomalyco/tap/opencode` | `opencode.json` |
+| **Goose** | Multi-provider BYOK | Depends on your provider/account | Yes | `brew install block-goose-cli` | `~/.config/goose/config.yaml` |
+| **Mistral Vibe** | Mistral API or local models | Local/Ollama path can be free; API usage is provider-billed | Yes | `pip install mistral-vibe` | `.vibe/config.toml` |
 
 > **BYOK** = Bring Your Own Key
+>
+> Availability, pricing, request limits, and model lineups change often. Treat this table as orientation, not a permanent price sheet.
 
 ---
 
 ## 1. Gemini CLI (Google)
 
-**Best free option.** 1000 requests/day free with a Google account.
+**One strong free-tier option.** Exact limits and model access depend on Google's current Gemini CLI and account policy.
 
 ### Install
 
@@ -480,16 +482,16 @@ SAP_PASSWORD=<password>
 
 ### Free Options for Working with VSP
 
-1. **Gemini CLI** — best free option. 1000 requests/day, Gemini 2.5 Pro with 1M token context
-2. **Qwen Code** — 1000 requests/day free via Qwen OAuth
-3. **Mistral Vibe + Ollama** — completely free with local models (needs powerful GPU/Mac)
-4. **OpenCode / Goose** — free CLIs, but need an API key from some provider
+1. **Gemini CLI** — strong free-tier option if its current quota and auth model work for you
+2. **Qwen Code** — another free-tier option, but check current OAuth and quota terms
+3. **Mistral Vibe + Ollama** — effectively free if you already have local hardware for models
+4. **OpenCode / Goose** — the CLI itself is easy to use, but cost depends on the provider you connect
 
 ### Best Quality
 
-1. **Claude Code** (Opus 4.6) — MCP creator, best integration
-2. **GitHub Copilot** (multi-model) — switch between Claude/GPT/Gemini
-3. **Gemini CLI** (Gemini 2.5 Pro) — strong model + free
+1. **Claude Code** — usually the most native MCP experience
+2. **GitHub Copilot** — good if you want plan-dependent multi-model switching
+3. **Gemini CLI** — strong option when the current free tier is enough
 
 ---
 

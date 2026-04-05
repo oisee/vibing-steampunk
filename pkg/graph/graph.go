@@ -13,11 +13,20 @@ import (
 type EdgeKind string
 
 const (
+	// Code dependency edges
 	EdgeCalls           EdgeKind = "CALLS"             // FM call, method call, SUBMIT, PERFORM
 	EdgeReferences      EdgeKind = "REFERENCES"        // TYPE REF TO, DATA TYPE, INTERFACES
 	EdgeLoads           EdgeKind = "LOADS"              // D010INC compile-time include load
 	EdgeContainsInclude EdgeKind = "CONTAINS_INCLUDE"   // Program structure (INCLUDE statement)
 	EdgeDependsOnCDS    EdgeKind = "DEPENDS_ON_CDS"     // CDS view dependency
+
+	// Transport edges (MVP)
+	EdgeInTransport EdgeKind = "IN_TRANSPORT" // object → transport request (E071)
+
+	// Config edges (MVP)
+	EdgeReadsConfig EdgeKind = "READS_CONFIG" // program → TVARVC variable (heuristic)
+	// Direction: PROG:ZREPORT --READS_CONFIG--> TVARVC:ZKEKEKE
+	// Impact query traverses this backward via InEdges.
 )
 
 // EdgeSource identifies where edge evidence came from.
@@ -32,26 +41,104 @@ const (
 	SourceD010INC      EdgeSource = "D010INC"
 	SourceParser       EdgeSource = "PARSER"
 	SourceTrace        EdgeSource = "TRACE"
+
+	// Transport sources (MVP)
+	SourceE070 EdgeSource = "E070" // Transport request headers
+	SourceE071 EdgeSource = "E071" // Transport object list
+
+	// Config sources (MVP)
+	SourceTVARVC_CROSS EdgeSource = "TVARVC_CROSS" // Heuristic: CROSS table + source grep
+	// Evidence chain: CROSS(name=TVARVC) → candidate programs → grep for variable name.
+	// Two-step heuristic, NOT exact repository metadata.
+)
+
+// Canonical node type constants.
+// Node.Type is a free string, but these are the well-known values.
+const (
+	// Code objects
+	NodeCLAS = "CLAS" // ABAP class
+	NodePROG = "PROG" // ABAP program / report
+	NodeFUGR = "FUGR" // Function group
+	NodeINTF = "INTF" // Interface
+	NodeTABL = "TABL" // Database table / structure
+	NodeDDLS = "DDLS" // CDS view
+	NodeDEVC = "DEVC" // Package
+	NodeTYPE = "TYPE" // Data type / type pool
+
+	// Transport layer (MVP)
+	NodeTR = "TR" // Transport request (E070, request level only; tasks collapsed as metadata)
+
+	// Config layer (MVP)
+	NodeTVARVC = "TVARVC" // Variant variable entry — one node per variable name
+	// Display name uses STVARV convention (e.g. "ZKEKEKE"), internal ID is TVARVC:ZKEKEKE.
 )
 
 // Node represents an ABAP object in the dependency graph.
 // Stored at object level (ZCL_FOO), with raw includes preserved for detail.
 type Node struct {
-	ID       string   `json:"id"`       // Object-level: "CLAS:ZCL_FOO"
-	Name     string   `json:"name"`     // ZCL_FOO
-	Type     string   `json:"type"`     // CLAS, PROG, FUGR, TABL, DDLS, INTF, ...
-	Package  string   `json:"package"`  // $ZDEV (resolved from TADIR)
-	Includes []string `json:"-"`        // Raw includes: ZCL_FOO========CP, etc.
+	ID       string         `json:"id"`             // Object-level: "CLAS:ZCL_FOO"
+	Name     string         `json:"name"`           // ZCL_FOO
+	Type     string         `json:"type"`           // CLAS, PROG, FUGR, TABL, DDLS, INTF, TR, TVARVC, ...
+	Package  string         `json:"package"`        // $ZDEV (resolved from TADIR)
+	Includes []string       `json:"-"`              // Raw includes: ZCL_FOO========CP, etc.
+	Meta     map[string]any `json:"meta,omitempty"` // Enrichment signals (usage, confidence, etc.)
 }
 
 // Edge represents a dependency relationship between two nodes.
+// All edges point FROM the dependent TO the dependency:
+//   PROG:ZREPORT --CALLS--> FUGR:BAPI_USER (ZREPORT calls BAPI_USER)
+//   CLAS:ZCL_FOO --IN_TRANSPORT--> TR:A4HK900123 (ZCL_FOO is in transport)
+//   PROG:ZREPORT --READS_CONFIG--> TVARVC:ZKEKEKE (ZREPORT reads ZKEKEKE)
 type Edge struct {
-	From       string     `json:"from"`        // Source node ID
-	To         string     `json:"to"`          // Target node ID
-	Kind       EdgeKind   `json:"kind"`        // CALLS, REFERENCES, LOADS, ...
-	Source     EdgeSource `json:"source"`       // Where this evidence came from
-	RawInclude string     `json:"raw_include,omitempty"` // Original include where ref occurs
-	RefDetail  string     `json:"ref_detail,omitempty"`  // e.g. "METHOD:GET_DATA" or "FM:BAPI_USER_GET_DETAIL"
+	From       string         `json:"from"`                  // Source node ID
+	To         string         `json:"to"`                    // Target node ID
+	Kind       EdgeKind       `json:"kind"`                  // CALLS, REFERENCES, IN_TRANSPORT, READS_CONFIG, ...
+	Source     EdgeSource     `json:"source"`                // Where this evidence came from
+	RawInclude string         `json:"raw_include,omitempty"` // Original include where ref occurs
+	RefDetail  string         `json:"ref_detail,omitempty"`  // e.g. "METHOD:GET_DATA" or "FM:BAPI_USER_GET_DETAIL"
+	Meta       map[string]any `json:"meta,omitempty"`        // Enrichment signals (confidence, last_seen, etc.)
+}
+
+// Well-known Meta key constants for enrichment signals.
+// Builders set topology; annotators set these. Queries may use them for ranking.
+const (
+	MetaConfidence    = "confidence"     // string: "HIGH", "MEDIUM", "LOW"
+	MetaIsStandard    = "is_standard"    // bool
+	MetaLastTransport = "last_transport" // string: YYYYMMDD
+)
+
+// SetMeta sets a metadata value on a node, initializing the map if needed.
+func (n *Node) SetMeta(key string, value any) {
+	if n.Meta == nil {
+		n.Meta = make(map[string]any)
+	}
+	n.Meta[key] = value
+}
+
+// GetMeta retrieves a metadata value from a node.
+func (n *Node) GetMeta(key string) (any, bool) {
+	if n.Meta == nil {
+		return nil, false
+	}
+	v, ok := n.Meta[key]
+	return v, ok
+}
+
+// SetMeta sets a metadata value on an edge, initializing the map if needed.
+func (e *Edge) SetMeta(key string, value any) {
+	if e.Meta == nil {
+		e.Meta = make(map[string]any)
+	}
+	e.Meta[key] = value
+}
+
+// GetMeta retrieves a metadata value from an edge.
+func (e *Edge) GetMeta(key string) (any, bool) {
+	if e.Meta == nil {
+		return nil, false
+	}
+	v, ok := e.Meta[key]
+	return v, ok
 }
 
 // Graph is an in-memory dependency graph with adjacency indexes.
@@ -94,6 +181,10 @@ func (g *Graph) AddNode(n *Node) {
 				existing.Includes = append(existing.Includes, inc)
 				seen[inc] = true
 			}
+		}
+		// Merge meta (new keys win, existing preserved)
+		for k, v := range n.Meta {
+			existing.SetMeta(k, v)
 		}
 		return
 	}
