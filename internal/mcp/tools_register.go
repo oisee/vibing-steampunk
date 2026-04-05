@@ -89,6 +89,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	s.registerInstallTools(shouldRegister)
 	s.registerVersionHistoryTools(shouldRegister)
 	s.registerTestingQualityTools(shouldRegister)
+	s.registerCodeAnalysisTools(shouldRegister)
 	s.registerI18NTools(shouldRegister)
 
 	// Register tool aliases for common operations
@@ -2237,6 +2238,24 @@ func (s *Server) registerTestingQualityTools(shouldRegister func(string) bool) {
 				mcp.Description("Check run ID (from SyntaxCheck or other check operation)"),
 			),
 		), s.handleGetCheckRunResults)
+	}
+}
+
+// registerCodeAnalysisTools registers ABAP code analysis tools.
+func (s *Server) registerCodeAnalysisTools(shouldRegister func(string) bool) {
+	if shouldRegister("AnalyzeABAPCode") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeABAPCode",
+			mcp.WithDescription("Analyze ABAP source code quality using the native abaplint lexer+parser. Detects: SELECT *, hardcoded credentials, overly broad CATCH cx_root, COMMIT WORK in loops, dynamic calls without TRY, obsolete statements (MOVE/ADD/COMPUTE), naming conventions, and more. Returns findings with line numbers, severity, and fix suggestions. Provide source directly or specify object_type+object_name to fetch from SAP."),
+			mcp.WithString("object_type",
+				mcp.Description("ABAP object type: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS (used with object_name to fetch source)"),
+			),
+			mcp.WithString("object_name",
+				mcp.Description("ABAP object name (e.g., ZCL_EXAMPLE, ZTEST_REPORT). Used with object_type to fetch source from SAP."),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source code to analyze directly (alternative to object_type+object_name)"),
+			),
+		), s.handleAnalyzeABAPCode)
 	}
 }
 
