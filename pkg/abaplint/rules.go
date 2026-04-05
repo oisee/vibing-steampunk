@@ -202,7 +202,8 @@ func (r *ColonMissingSpaceRule) GetKey() string { return "colon_missing_space" }
 
 func (r *ColonMissingSpaceRule) Run(file *ABAPFile) []Issue {
 	var issues []Issue
-	for _, row := range file.GetRawRows() {
+	for rowIdx, row := range file.GetRawRows() {
+		lineNum := rowIdx + 1 // convert to 1-based
 		// Find : not followed by space (but not inside strings)
 		for i := 0; i < len(row)-1; i++ {
 			if row[i] == ':' && row[i+1] != ' ' && row[i+1] != '\n' {
@@ -211,7 +212,7 @@ func (r *ColonMissingSpaceRule) Run(file *ABAPFile) []Issue {
 					continue
 				}
 				issues = append(issues, Issue{
-					Key: r.GetKey(), Row: 0, Col: i + 1,
+					Key: r.GetKey(), Row: lineNum, Col: i + 1,
 					Message:  "Missing space after colon",
 					Severity: "Warning",
 				})
@@ -364,4 +365,240 @@ func isInStringLiteral(line string, pos int) bool {
 		}
 	}
 	return inSingle || inBacktick
+}
+
+// --- select_star ---
+
+// SelectStarRule detects SELECT * and SELECT SINGLE * statements.
+// Fetching all columns is wasteful; explicit field lists improve performance.
+type SelectStarRule struct{}
+
+func (r *SelectStarRule) GetKey() string { return "select_star" }
+
+func (r *SelectStarRule) Run(file *ABAPFile) []Issue {
+	var issues []Issue
+	for _, stmt := range file.GetStatements() {
+		if stmt.Type == "Comment" || stmt.Type == "Empty" || len(stmt.Tokens) == 0 {
+			continue
+		}
+		if strings.ToUpper(stmt.Tokens[0].Str) != "SELECT" {
+			continue
+		}
+		// Look for * token immediately after SELECT or after SINGLE
+		for i := 1; i < len(stmt.Tokens); i++ {
+			upper := strings.ToUpper(stmt.Tokens[i].Str)
+			if upper == "*" {
+				tok := stmt.Tokens[i]
+				issues = append(issues, Issue{
+					Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
+					Message:  "SELECT * fetches all columns — use an explicit field list",
+					Severity: "Warning",
+				})
+				break
+			}
+			// Only look in the select-list area (before FROM)
+			if upper == "FROM" {
+				break
+			}
+		}
+	}
+	return issues
+}
+
+// --- hardcoded_credentials ---
+
+// HardcodedCredentialsRule detects assignments of string literals to variables
+// whose names suggest credentials (password, secret, key, token).
+type HardcodedCredentialsRule struct{}
+
+func (r *HardcodedCredentialsRule) GetKey() string { return "hardcoded_credentials" }
+
+// credentialNames contains lowercase substrings that indicate credential variables.
+var credentialNames = []string{"password", "passwd", "secret", "api_key", "apikey", "token"}
+
+func (r *HardcodedCredentialsRule) Run(file *ABAPFile) []Issue {
+	var issues []Issue
+	for _, stmt := range file.GetStatements() {
+		if stmt.Type == "Comment" || stmt.Type == "Empty" || len(stmt.Tokens) < 3 {
+			continue
+		}
+		// Pattern: <varname> = '<literal>' or <varname> = `<literal>`
+		// Token layout: [varname] [=] [string-literal] [.]
+		assignIdx := -1
+		for i := 1; i < len(stmt.Tokens); i++ {
+			if stmt.Tokens[i].Str == "=" {
+				assignIdx = i
+				break
+			}
+		}
+		if assignIdx < 1 || assignIdx >= len(stmt.Tokens)-1 {
+			continue
+		}
+		varName := strings.ToLower(stmt.Tokens[assignIdx-1].Str)
+		isCred := false
+		for _, cred := range credentialNames {
+			if strings.Contains(varName, cred) {
+				isCred = true
+				break
+			}
+		}
+		if !isCred {
+			continue
+		}
+		rhsTok := stmt.Tokens[assignIdx+1]
+		if rhsTok.Type != TokenString && rhsTok.Type != TokenStringTemplate &&
+			rhsTok.Type != TokenStringTemplateBegin {
+			continue
+		}
+		// Ignore empty or very short literals (e.g. '' or '' used as initial value)
+		if len(rhsTok.Str) <= 3 {
+			continue
+		}
+		issues = append(issues, Issue{
+			Key: r.GetKey(), Row: rhsTok.Row, Col: rhsTok.Col,
+			Message:  fmt.Sprintf("Hardcoded credential in assignment to %q", stmt.Tokens[assignIdx-1].Str),
+			Severity: "Error",
+		})
+	}
+	return issues
+}
+
+// --- catch_cx_root ---
+
+// CatchCxRootRule detects CATCH CX_ROOT or CATCH CX_SY_* (overly broad exception handling).
+type CatchCxRootRule struct{}
+
+func (r *CatchCxRootRule) GetKey() string { return "catch_cx_root" }
+
+func (r *CatchCxRootRule) Run(file *ABAPFile) []Issue {
+	var issues []Issue
+	for _, stmt := range file.GetStatements() {
+		if stmt.Type == "Comment" || stmt.Type == "Empty" || len(stmt.Tokens) == 0 {
+			continue
+		}
+		if strings.ToUpper(stmt.Tokens[0].Str) != "CATCH" {
+			continue
+		}
+		// Check each exception class token after CATCH
+		for i := 1; i < len(stmt.Tokens); i++ {
+			tok := stmt.Tokens[i]
+			if tok.Type == TokenPunctuation {
+				break
+			}
+			upper := strings.ToUpper(tok.Str)
+			if upper == "CX_ROOT" || strings.HasPrefix(upper, "CX_SY_") {
+				issues = append(issues, Issue{
+					Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
+					Message:  fmt.Sprintf("CATCH %s catches too broadly — use specific exception classes", tok.Str),
+					Severity: "Warning",
+				})
+				break
+			}
+		}
+	}
+	return issues
+}
+
+// --- commit_in_loop ---
+
+// CommitInLoopRule detects COMMIT WORK inside LOOP/DO/WHILE blocks.
+// It tracks nesting depth to determine whether COMMIT occurs inside a loop body.
+type CommitInLoopRule struct{}
+
+func (r *CommitInLoopRule) GetKey() string { return "commit_in_loop" }
+
+func (r *CommitInLoopRule) Run(file *ABAPFile) []Issue {
+	var issues []Issue
+	loopDepth := 0
+
+	for _, stmt := range file.GetStatements() {
+		if stmt.Type == "Comment" || stmt.Type == "Empty" || len(stmt.Tokens) == 0 {
+			continue
+		}
+		first := strings.ToUpper(stmt.Tokens[0].Str)
+
+		// Track loop entry
+		switch first {
+		case "LOOP", "DO", "WHILE":
+			loopDepth++
+		case "ENDLOOP", "ENDDO", "ENDWHILE":
+			if loopDepth > 0 {
+				loopDepth--
+			}
+		}
+
+		if loopDepth == 0 || first != "COMMIT" {
+			continue
+		}
+		// Confirm "COMMIT WORK" by checking second token
+		if len(stmt.Tokens) >= 2 && strings.ToUpper(stmt.Tokens[1].Str) == "WORK" {
+			tok := stmt.Tokens[0]
+			issues = append(issues, Issue{
+				Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
+				Message:  "COMMIT WORK inside loop — destroys transactional integrity",
+				Severity: "Error",
+			})
+		}
+	}
+	return issues
+}
+
+// --- dynamic_call_no_try ---
+
+// DynamicCallNoTryRule detects dynamic CALL METHOD (var) or CALL FUNCTION var
+// without a surrounding TRY/ENDTRY block.
+type DynamicCallNoTryRule struct{}
+
+func (r *DynamicCallNoTryRule) GetKey() string { return "dynamic_call_no_try" }
+
+func (r *DynamicCallNoTryRule) Run(file *ABAPFile) []Issue {
+	var issues []Issue
+	tryDepth := 0
+
+	for _, stmt := range file.GetStatements() {
+		if stmt.Type == "Comment" || stmt.Type == "Empty" || len(stmt.Tokens) == 0 {
+			continue
+		}
+		first := strings.ToUpper(stmt.Tokens[0].Str)
+
+		// Track TRY/ENDTRY nesting
+		if first == "TRY" {
+			tryDepth++
+		} else if first == "ENDTRY" {
+			if tryDepth > 0 {
+				tryDepth--
+			}
+		}
+
+		if first != "CALL" || len(stmt.Tokens) < 2 {
+			continue
+		}
+		second := strings.ToUpper(stmt.Tokens[1].Str)
+
+		isDynamic := false
+		switch second {
+		case "METHOD":
+			// Dynamic: CALL METHOD (var)=>method_name
+			// The third token is "(" when the class is dynamic
+			if len(stmt.Tokens) >= 3 && stmt.Tokens[2].Str == "(" {
+				isDynamic = true
+			}
+		case "FUNCTION":
+			// Dynamic: CALL FUNCTION lv_name (variable, not a string literal)
+			if len(stmt.Tokens) >= 3 && stmt.Tokens[2].Type != TokenString {
+				isDynamic = true
+			}
+		}
+
+		if !isDynamic || tryDepth > 0 {
+			continue
+		}
+		tok := stmt.Tokens[0]
+		issues = append(issues, Issue{
+			Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
+			Message:  fmt.Sprintf("Dynamic CALL %s without surrounding TRY — runtime crash if target not found", second),
+			Severity: "Warning",
+		})
+	}
+	return issues
 }
