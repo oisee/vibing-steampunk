@@ -154,37 +154,15 @@ Format: `reports/YYYY-MM-DD-NNN-title.md` — sequential per day.
 
 ---
 
-## Feature Status
+## Areas Requiring Care
 
-### Core Platform
-| Feature | Status |
-|---------|--------|
-| MCP Tools | 100 focused / 147 expert |
-| Tests | 816+ unit, 34 integration |
-| Safety System | ✅ Operation filtering, package restrictions |
-| Feature Detection | ✅ Auto-probe for abapGit, RAP, AMDP, UI5, Transport |
-| Code Analysis | ✅ Call graph, structure, refs, context depth |
-| Diagnostics | ✅ Dumps (RABAX), profiler (ATRA), SQL trace (ST05) |
-| RAP OData E2E | ✅ DDLS, SRVD, SRVB create + publish |
-| abapGit | ✅ WebSocket export, 158 object types |
-| Install Tools | ✅ ZADT_VSP, abapGit bootstrap |
-| DSL & Workflows | ✅ Fluent API, YAML, batch import/export, pipelines |
-| CLI Toolchain | ✅ 28 commands (some compile paths experimental) |
-| Native ABAP Parser | ✅ Lexer + 91 statements + 8 lint rules |
-| Cache | ✅ In-memory + SQLite |
+These areas are incomplete or unreliable — be cautious when modifying:
 
-### In Progress
-| Feature | Status |
-|---------|--------|
-| Graph Engine | ⚠️ Initial (boundary analysis, dynamic call detection) |
-| External Debugger | ⚠️ WebSocket only (HTTP unreliable) |
-| AMDP Debugger | ⚠️ Experimental |
-| UI5/BSP | ⚠️ Read-only |
-
-### Research & Experiments
-| Feature | Status |
-|---------|--------|
-| LLVM IR→ABAP | ⚠️ Advanced prototype (34+28 functions, SAP verified) |
-| WASM→ABAP | ⚠️ Proven (12K methods, QuickJS compiles on SAP) |
-| TS→ABAP Pipeline | ⚠️ Demonstrated (Porffor chain) |
-| TS→Go Transpiler | ⚠️ Experimental (3 files compile) |
+| Area | Risk | Notes |
+|------|------|-------|
+| `pkg/graph/` | New, incomplete | Only parser adapter done; SQL/ADT adapters pending |
+| `internal/mcp/handlers_debugger.go` | WebSocket-only | REST breakpoints return 403 on newer SAP; always use ZADT_VSP |
+| `internal/mcp/handlers_amdp.go` | Experimental | Session works, breakpoint triggering unreliable |
+| `pkg/adt/ui5.go` | Read-only | Write/create needs alternate API (`/UI5/CL_REPOSITORY_LOAD`) |
+| `pkg/llvm2abap/`, `pkg/wasmcomp/` | Research | Compilers — not production tools, don't treat as stable |
+| `pkg/adt/debugger.go` (REST) | Deprecated | Legacy REST fallback; prefer `websocket_debug.go` |
