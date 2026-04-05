@@ -198,7 +198,7 @@ See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature r
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
 | **ExecuteABAP** | Run arbitrary ABAP code via unit test wrapper |
 | **Code Analysis** | Call graphs, object structure, find definition/references |
-| **Graph Engine** | Package boundary analysis, dynamic call detection, offline dep extraction |
+| **Dependency Analysis** | Call graphs, package boundary checks, dynamic call detection (in progress) |
 | **System Introspection** | System info, installed components, CDS dependencies |
 | **Diagnostics** | Short dumps (RABAX), ABAP profiler (ATRA), SQL traces (ST05) |
 | **File Deployment** | Bypass token limits - deploy large files directly from filesystem |
@@ -981,7 +981,7 @@ vibing-steampunk/
 
 ### Future Considerations
 - [ ] AMDP Session Persistence (enable full HANA debugging)
-- [x] **Graph Engine & Boundary Analysis** - `CheckBoundaries`, `GraphStats`, dynamic call detection (v2.37.0)
+- [ ] **Graph Engine & Boundary Analysis** - initial `CheckBoundaries`, `GraphStats` (v2.37.0, SQL/ADT adapters pending)
 - [ ] Test Intelligence (smart test execution based on changes)
 - [ ] Standard API Surface Scraper
 

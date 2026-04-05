@@ -15,7 +15,7 @@
 | **Gemini CLI** | Gemini 2.5 Pro/Flash, 3 Pro | **Да** (1000 req/day) | Да | `npm i -g @google/gemini-cli` | `.gemini/settings.json` |
 | **Claude Code** | Claude Opus/Sonnet 4.6 | Нет ($20+/мес) | Да | `curl -fsSL https://claude.ai/install.sh \| bash` | `.mcp.json` |
 | **GitHub Copilot** | Claude, GPT-5, Gemini | Нет ($10+/мес) | Да | `npm i -g @github/copilot` | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | Нет ($20+/мес) | Да | `npm i -g @openai/codex` | `.mcp.json` |
+| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | Нет ($20+/мес) | Да | `npm i -g @openai/codex` | `codex.toml` |
 | **Qwen Code** | Qwen3-Coder | **Да** (1000 req/day) | Да | `npm i -g @qwen-code/qwen-code` | `.qwen/settings.json` |
 | **OpenCode** | 75+ моделей (BYOK) | **Да** (свой ключ) | Да | `brew install anomalyco/tap/opencode` | `opencode.json` |
 | **Goose** | 75+ провайдеров (BYOK) | **Да** (свой ключ) | Да | `brew install block-goose-cli` | `~/.config/goose/config.yaml` |
@@ -198,22 +198,23 @@ codex
 
 ### Настройка VSP
 
-Создать файл `.mcp.json` в корне проекта (формат как у Claude Code):
+Создать файл `codex.toml` в корне проекта (формат TOML, не JSON):
 
-```json
-{
-  "mcpServers": {
-    "sap-adt": {
-      "command": "/path/to/vsp-darwin-arm64",
-      "env": {
-        "SAP_URL": "https://your-sap-host:44300",
-        "SAP_USER": "YOUR_USER",
-        "SAP_PASSWORD": "<пароль>"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.sap-adt]
+command = "/path/to/vsp"
+enabled = true
+
+[mcp_servers.sap-adt.env]
+SAP_URL = "https://your-sap-host:44300"
+SAP_USER = "YOUR_USER"
+SAP_PASSWORD = "<пароль>"
+SAP_CLIENT = "001"
+SAP_READ_ONLY = "true"
+SAP_MODE = "focused"
 ```
+
+> **Примечание:** `codex.toml` содержит учётные данные — добавьте в `.gitignore`. Поддержка project-local vs `~/.codex/config.toml` зависит от версии Codex.
 
 ### Ссылки
 - GitHub: https://github.com/openai/codex
@@ -462,7 +463,7 @@ SAP_PASSWORD=<пароль>
 | Claude Code | JSON | `.mcp.json` | `mcpServers` | `env` |
 | Gemini CLI | JSON | `.gemini/settings.json` | `mcpServers` | `env` |
 | Copilot | JSON | `.copilot/mcp-config.json` | `mcpServers` | `env` |
-| Codex | JSON | `.mcp.json` | `mcpServers` | `env` |
+| Codex | TOML | `codex.toml` | `mcp_servers.*` | `[env]` section |
 | Qwen Code | JSON | `.qwen/settings.json` | `mcpServers` | `env` |
 | OpenCode | JSON | `opencode.json` | `mcp` | `environment` |
 | Goose | YAML | `~/.config/goose/config.yaml` | `extensions` | `envs` |

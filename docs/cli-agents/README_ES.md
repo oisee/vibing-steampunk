@@ -15,7 +15,7 @@ Guia para configurar asistentes CLI de programacion para trabajar con SAP a trav
 | **Gemini CLI** | Gemini 2.5 Pro/Flash, 3 Pro | **Si** (1000 req/dia) | Si | `npm i -g @google/gemini-cli` | `.gemini/settings.json` |
 | **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mes) | Si | `curl -fsSL https://claude.ai/install.sh \| bash` | `.mcp.json` |
 | **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mes) | Si | `npm i -g @github/copilot` | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mes) | Si | `npm i -g @openai/codex` | `.mcp.json` |
+| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mes) | Si | `npm i -g @openai/codex` | `codex.toml` |
 | **Qwen Code** | Qwen3-Coder | **Si** (1000 req/dia) | Si | `npm i -g @qwen-code/qwen-code` | `.qwen/settings.json` |
 | **OpenCode** | 75+ modelos (BYOK) | **Si** (tu clave) | Si | `brew install anomalyco/tap/opencode` | `opencode.json` |
 | **Goose** | 75+ proveedores (BYOK) | **Si** (tu clave) | Si | `brew install block-goose-cli` | `~/.config/goose/config.yaml` |
@@ -198,22 +198,23 @@ codex
 
 ### Configuracion de VSP
 
-Crear archivo `.mcp.json` en la raiz del proyecto (mismo formato que Claude Code):
+Crear archivo `codex.toml` en la raiz del proyecto (formato TOML, no JSON):
 
-```json
-{
-  "mcpServers": {
-    "sap-adt": {
-      "command": "/path/to/vsp-darwin-arm64",
-      "env": {
-        "SAP_URL": "https://your-sap-host:44300",
-        "SAP_USER": "YOUR_USER",
-        "SAP_PASSWORD": "<contrasena>"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.sap-adt]
+command = "/path/to/vsp"
+enabled = true
+
+[mcp_servers.sap-adt.env]
+SAP_URL = "https://your-sap-host:44300"
+SAP_USER = "YOUR_USER"
+SAP_PASSWORD = "<contrasena>"
+SAP_CLIENT = "001"
+SAP_READ_ONLY = "true"
+SAP_MODE = "focused"
 ```
+
+> **Nota:** `codex.toml` contiene credenciales — añadelo a `.gitignore`. El soporte project-local vs `~/.codex/config.toml` depende de tu version de Codex.
 
 ### Enlaces
 - GitHub: https://github.com/openai/codex
@@ -462,7 +463,7 @@ SAP_PASSWORD=<contrasena>
 | Claude Code | JSON | `.mcp.json` | `mcpServers` | `env` |
 | Gemini CLI | JSON | `.gemini/settings.json` | `mcpServers` | `env` |
 | Copilot | JSON | `.copilot/mcp-config.json` | `mcpServers` | `env` |
-| Codex | JSON | `.mcp.json` | `mcpServers` | `env` |
+| Codex | TOML | `codex.toml` | `mcp_servers.*` | `[env]` section |
 | Qwen Code | JSON | `.qwen/settings.json` | `mcpServers` | `env` |
 | OpenCode | JSON | `opencode.json` | `mcp` | `environment` |
 | Goose | YAML | `~/.config/goose/config.yaml` | `extensions` | `envs` |

@@ -407,10 +407,10 @@ When creating a new report:
 | **CLI Toolchain** | ✅ Complete (v2.32 - 28 commands: query, grep, graph, deps, lint, parse, compile, execute) |
 | **WASM Self-Host** | ✅ Verified (v2.32 - 3-way proof: Native 51/51, Go OK, ABAP 11/11 on SAP) |
 | **TS→Go Transpiler** | ✅ Complete (v2.32 - produces valid Go from abaplint TS, 3 files compile) |
-| **LLVM IR→ABAP** | ✅ Complete (v2.33 - typed CLASS-METHODS, 34+28 functions, FatFS, SAP verified 5/5) |
-| **WASM Block-as-METHOD** | ✅ Complete (v2.33 - CLASS g, 12K methods, QuickJS GENERATE rc=0 on SAP) |
-| **TS→ABAP Pipeline** | ✅ Proven (v2.33 - Porffor→WASM→ABAP chain verified) |
-| **Graph Engine** | ✅ Slice 1+2 (v2.37 - boundary analysis, dynamic call detection, offline parser, 11 tests) |
+| **LLVM IR→ABAP** | ⚠️ Advanced prototype (v2.33 - typed CLASS-METHODS, 34+28 functions, SAP verified 5/5, not product-complete) |
+| **WASM Block-as-METHOD** | ⚠️ Proven on large outputs (v2.33 - CLASS g, 12K methods, QuickJS GENERATE rc=0 on SAP) |
+| **TS→ABAP Pipeline** | ⚠️ Experimental (v2.33 - Porffor→WASM→ABAP chain demonstrated, not general-purpose) |
+| **Graph Engine** | ⚠️ In progress (v2.37 - pkg/graph initial impl: boundary analysis, dynamic call detection, 11 tests) |
 
 ### Offline ABAP Testing (without SAP)
 
@@ -485,7 +485,7 @@ pipeline := dsl.RAPPipeline(client, "./src/", "$ZRAY", "ZTRAVEL_SB")
 ```
 
 ### Roadmap
-- **Phase 5:** Graph Traversal & Analysis — ✅ Slice 1+2 done (pkg/graph, boundary analysis, dynamic call detection)
+- **Phase 5:** Graph Traversal & Analysis — ⚠️ In progress (pkg/graph initial impl, boundary analysis works, SQL/ADT adapters pending)
 - **Phase 6:** Standard API Surface Scraper (Design: Report 006)
 - **Phase 7:** Test Intelligence (Design: Report 008)
 - Transport Management

@@ -15,7 +15,7 @@ Guide for setting up CLI coding assistants to work with SAP via [VSP (vibing-ste
 | **Gemini CLI** | Gemini 2.5 Pro/Flash, 3 Pro | **Yes** (1000 req/day) | Yes | `npm i -g @google/gemini-cli` | `.gemini/settings.json` |
 | **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mo) | Yes | `curl -fsSL https://claude.ai/install.sh \| bash` | `.mcp.json` |
 | **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mo) | Yes | `npm i -g @github/copilot` | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | Yes | `npm i -g @openai/codex` | `.mcp.json` |
+| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | Yes | `npm i -g @openai/codex` | `codex.toml` |
 | **Qwen Code** | Qwen3-Coder | **Yes** (1000 req/day) | Yes | `npm i -g @qwen-code/qwen-code` | `.qwen/settings.json` |
 | **OpenCode** | 75+ models (BYOK) | **Yes** (own key) | Yes | `brew install anomalyco/tap/opencode` | `opencode.json` |
 | **Goose** | 75+ providers (BYOK) | **Yes** (own key) | Yes | `brew install block-goose-cli` | `~/.config/goose/config.yaml` |
@@ -200,23 +200,23 @@ codex
 
 ### VSP Setup
 
-Create `.mcp.json` in the project root (same format as Claude Code):
+Create `codex.toml` in the project root (TOML format, not JSON):
 
-```json
-{
-  "mcpServers": {
-    "sap-adt": {
-      "command": "/path/to/vsp-darwin-arm64",
-      "env": {
-        "SAP_URL": "https://your-sap-host:44300",
-        "SAP_USER": "YOUR_USER",
-        "SAP_PASSWORD": "<password>",
-        "SAP_READ_ONLY": "true"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.sap-adt]
+command = "/path/to/vsp"
+enabled = true
+
+[mcp_servers.sap-adt.env]
+SAP_URL = "https://your-sap-host:44300"
+SAP_USER = "YOUR_USER"
+SAP_PASSWORD = "<password>"
+SAP_CLIENT = "001"
+SAP_READ_ONLY = "true"
+SAP_MODE = "focused"
 ```
+
+> **Note:** `codex.toml` contains credentials — add it to `.gitignore`. Project-local vs `~/.codex/config.toml` scope depends on your Codex version.
 
 > **Safety tip:** Use `SAP_READ_ONLY=true` for Q/A testing, or `SAP_ALLOWED_OPS=RSQ` to allow read + search + query only. See [codex.md](codex.md) for full safety options.
 
@@ -468,7 +468,7 @@ SAP_PASSWORD=<password>
 | Claude Code | JSON | `.mcp.json` | `mcpServers` | `env` |
 | Gemini CLI | JSON | `.gemini/settings.json` | `mcpServers` | `env` |
 | Copilot | JSON | `.copilot/mcp-config.json` | `mcpServers` | `env` |
-| Codex | JSON | `.mcp.json` | `mcpServers` | `env` |
+| Codex | TOML | `codex.toml` | `mcp_servers.*` | `[env]` section |
 | Qwen Code | JSON | `.qwen/settings.json` | `mcpServers` | `env` |
 | OpenCode | JSON | `opencode.json` | `mcp` | `environment` |
 | Goose | YAML | `~/.config/goose/config.yaml` | `extensions` | `envs` |
