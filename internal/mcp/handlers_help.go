@@ -218,6 +218,10 @@ Graph queries:
   SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "include_source_analysis": true})
   SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE"})
   SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE", "grep": false})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "FUNC", "object_name": "Z_MY_FM"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "CLAS", "object_name": "ZCL_API", "method": "GET_DATA"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZLEGACY", "form": "BUILD_OUTPUT"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZBATCH_RUN", "submit": true})
 
 Execute ABAP:
   SAP(action="analyze", params={"type": "execute_abap", "code": "WRITE 'Hello'."})

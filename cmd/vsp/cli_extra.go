@@ -156,7 +156,39 @@ Examples:
 	RunE: runGraphWhereUsedConfig,
 }
 
+var examplesCmd = &cobra.Command{
+	Use:   "examples <type> <name>",
+	Short: "Find real usage examples of an ABAP object (FM, method, SUBMIT, FORM)",
+	Long: `Find concrete usage examples by scanning caller source code.
+Shows ranked snippets of how the target is actually called in the codebase.
+
+Supported targets:
+  FUNC <fm_name>                         — CALL FUNCTION examples
+  CLAS <class> --method <method>         — class method call examples
+  INTF <intf> --method <method>          — interface method call examples
+  PROG <program> --submit               — SUBMIT program examples
+  PROG <program> --form <form_name>     — PERFORM form IN PROGRAM examples
+
+Examples:
+  vsp examples FUNC Z_CALCULATE_TAX
+  vsp examples CLAS ZCL_TRAVEL --method GET_DATA
+  vsp examples INTF ZIF_API --method EXECUTE
+  vsp examples PROG ZREPORT --submit
+  vsp examples PROG ZPRICING --form CALC_TAX
+  vsp examples CLAS ZCL_FOO --method BAR --top 5 --format json`,
+	Args: cobra.ExactArgs(2),
+	RunE: runExamples,
+}
+
 func init() {
+	// Examples command (top-level)
+	examplesCmd.Flags().String("method", "", "Method name (for CLAS/INTF targets)")
+	examplesCmd.Flags().String("form", "", "FORM name (for PROG targets)")
+	examplesCmd.Flags().Bool("submit", false, "Find SUBMIT examples (for PROG targets)")
+	examplesCmd.Flags().Int("top", 10, "Maximum examples to show")
+	examplesCmd.Flags().String("format", "text", "Output format: text or json")
+	rootCmd.AddCommand(examplesCmd)
+
 	// Graph flags
 	graphCmd.Flags().String("direction", "callees", "Direction: callees, callers, or both")
 	graphCmd.Flags().Int("depth", 1, "Maximum traversal depth")
@@ -983,6 +1015,217 @@ func runGraphCoChange(cmd *cobra.Command, args []string) error {
 		tableRows,
 	))
 	fmt.Fprintf(os.Stderr, "\n%d co-changing objects\n", len(result.CoChanges))
+	return nil
+}
+
+// --- examples handler ---
+
+func runExamples(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	objType := strings.ToUpper(args[0])
+	objName := strings.ToUpper(args[1])
+	method, _ := cmd.Flags().GetString("method")
+	form, _ := cmd.Flags().GetString("form")
+	isSubmit, _ := cmd.Flags().GetBool("submit")
+	topN, _ := cmd.Flags().GetInt("top")
+	format, _ := cmd.Flags().GetString("format")
+	ctx := context.Background()
+
+	method = strings.ToUpper(strings.TrimSpace(method))
+	form = strings.ToUpper(strings.TrimSpace(form))
+
+	// Build target
+	target := graph.UsageTarget{
+		ObjectType: objType,
+		ObjectName: objName,
+		Method:     method,
+		Form:       form,
+	}
+
+	// Validate target type
+	switch objType {
+	case "FUNC":
+		// OK as-is
+	case "CLAS", "INTF":
+		if method == "" {
+			return fmt.Errorf("--method is required for %s targets. Example: vsp examples %s %s --method METHOD_NAME", objType, objType, objName)
+		}
+	case "PROG":
+		if !isSubmit && form == "" {
+			return fmt.Errorf("--submit or --form required for PROG targets. Example: vsp examples PROG %s --submit", objName)
+		}
+		if isSubmit {
+			target.ObjectType = "SUBMIT"
+		}
+	default:
+		return fmt.Errorf("unsupported type %q. Supported: FUNC, CLAS, INTF, PROG", objType)
+	}
+
+	// Step 1: Find reverse callers
+	fmt.Fprintf(os.Stderr, "Finding callers of %s %s", objType, objName)
+	if method != "" {
+		fmt.Fprintf(os.Stderr, " method %s", method)
+	}
+	if form != "" {
+		fmt.Fprintf(os.Stderr, " form %s", form)
+	}
+	fmt.Fprintln(os.Stderr, "...")
+
+	// Query WBCROSSGT + CROSS for who references this object
+	var callerNames []struct {
+		name    string
+		objType string
+	}
+	seen := make(map[string]bool)
+
+	var wbQuery string
+	var crossQuery string
+	switch target.ObjectType {
+	case "FUNC":
+		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'FU'", objName)
+	case "SUBMIT":
+		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", objName)
+	case "PROG":
+		if form != "" {
+			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'SU'", form)
+		} else {
+			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", objName)
+		}
+	case "CLAS", "INTF":
+		wbQuery = fmt.Sprintf("SELECT INCLUDE, OTYPE, NAME FROM WBCROSSGT WHERE NAME LIKE '%s%%'", objName)
+		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME LIKE '%s%%'", objName)
+	}
+
+	if wbQuery != "" {
+		wbResult, err := client.RunQuery(ctx, wbQuery, 200)
+		if err == nil && wbResult != nil {
+			for _, row := range wbResult.Rows {
+				include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+				if include == "" || strings.Contains(include, "\\") {
+					continue
+				}
+				_, cType, cName := graph.NormalizeInclude(include)
+				if strings.EqualFold(cName, objName) {
+					continue
+				}
+				key := cType + ":" + cName
+				if !seen[key] {
+					seen[key] = true
+					callerNames = append(callerNames, struct {
+						name    string
+						objType string
+					}{cName, cType})
+				}
+			}
+		}
+	}
+
+	if crossQuery != "" {
+		crossResult, err := client.RunQuery(ctx, crossQuery, 200)
+		if err == nil && crossResult != nil {
+			for _, row := range crossResult.Rows {
+				include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+				if include == "" {
+					continue
+				}
+				_, cType, cName := graph.NormalizeInclude(include)
+				if cType == "FUGR" || strings.EqualFold(cName, objName) {
+					continue
+				}
+				key := cType + ":" + cName
+				if !seen[key] {
+					seen[key] = true
+					callerNames = append(callerNames, struct {
+						name    string
+						objType string
+					}{cName, cType})
+				}
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Found %d callers.\n", len(callerNames))
+
+	if len(callerNames) == 0 {
+		fmt.Println("No callers found.")
+		return nil
+	}
+
+	// Cap callers for source fetch
+	maxFetch := topN + 5 // fetch a few extra in case some don't match
+	if maxFetch > 30 {
+		maxFetch = 30
+	}
+	if len(callerNames) > maxFetch {
+		callerNames = callerNames[:maxFetch]
+	}
+
+	// Step 2: Fetch source for each caller
+	fmt.Fprintf(os.Stderr, "Fetching source for %d callers...\n", len(callerNames))
+	var callers []graph.CallerSource
+	for _, c := range callerNames {
+		source, err := client.GetSource(ctx, c.objType, c.name, nil)
+		if err != nil || source == "" {
+			continue
+		}
+		isTest := graph.IsTestCaller(c.name, "")
+		callers = append(callers, graph.CallerSource{
+			NodeID:  graph.NodeID(c.objType, c.name),
+			Name:    c.name,
+			Type:    c.objType,
+			Package: "", // resolved later if needed
+			IsTest:  isTest,
+			Source:  source,
+		})
+	}
+
+	// Step 3: Extract examples
+	result := graph.FindUsageExamples(target, callers, topN)
+
+	// Output
+	if format == "json" {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Text output
+	targetDesc := objType + " " + objName
+	if method != "" {
+		targetDesc += "=>" + method
+	}
+	if form != "" {
+		targetDesc += " FORM " + form
+	}
+	fmt.Printf("Usage examples: %s (%d of %d callers)\n\n", targetDesc, len(result.Examples), result.TotalCallers)
+
+	if len(result.Examples) == 0 {
+		fmt.Println("No usage examples found.")
+		return nil
+	}
+
+	for i, ex := range result.Examples {
+		testLabel := ""
+		if ex.IsTest {
+			testLabel = " (test)"
+		}
+		fmt.Printf("%d. %s %s%s — %s [%s]\n", i+1, ex.CallerType, ex.CallerName, testLabel, ex.Confidence, ex.MatchType)
+		fmt.Print(ex.Snippet)
+		fmt.Println()
+	}
+
+	fmt.Fprintf(os.Stderr, "%d examples shown\n", len(result.Examples))
 	return nil
 }
 

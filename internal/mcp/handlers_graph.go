@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/graph"
 )
 
@@ -799,6 +800,42 @@ func (s *Server) handleWhereUsedConfig(ctx context.Context, request mcp.CallTool
 	return mcp.NewToolResultText(string(data)), nil
 }
 
+// handleUsageExamples returns concrete caller snippets for a target object.
+// MCP examples:
+//   SAP(action="analyze", params={"type":"usage_examples","object_type":"FUNC","object_name":"Z_MY_FM"})
+//   SAP(action="analyze", params={"type":"usage_examples","object_type":"CLAS","object_name":"ZCL_API","method":"GET_DATA"})
+//   SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZLEGACY","form":"BUILD_OUTPUT"})
+//   SAP(action="analyze", params={"type":"usage_examples","object_type":"PROG","object_name":"ZBATCH_RUN","submit":true})
+func (s *Server) handleUsageExamples(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	target, err := usageTargetFromArgs(args)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+	if s.adtClient == nil {
+		return newToolResultError("SAP connection required for usage_examples"), nil
+	}
+
+	topN := 5
+	if t, ok := getFloatParam(args, "top_n"); ok && t > 0 {
+		topN = int(t)
+	}
+
+	callers, err := s.fetchUsageCallerSources(ctx, target, topN)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("usage_examples failed: %v", err)), nil
+	}
+
+	result := graph.FindUsageExamples(target, callers, topN)
+	s.backfillUsagePackages(ctx, callers, result)
+
+	data, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("JSON marshal error: %v", err)), nil
+	}
+	return mcp.NewToolResultText(string(data)), nil
+}
+
 // fetchConfigRefs finds programs referencing a TVARVC variable via CROSS + optional grep.
 // Steps:
 //  1. CROSS WHERE NAME = 'TVARVC' AND TYPE = 'DA' → programs that read TVARVC table
@@ -862,6 +899,310 @@ func (s *Server) fetchConfigRefs(ctx context.Context, variable string, doGrep bo
 	}
 
 	return refs, nil
+}
+
+type usageCallerCandidate struct {
+	NodeID  string
+	Name    string
+	Type    string
+	Package string
+	IsTest  bool
+	Parent  string
+}
+
+func usageTargetFromArgs(args map[string]any) (graph.UsageTarget, error) {
+	target := graph.UsageTarget{
+		ObjectType: strings.ToUpper(strings.TrimSpace(getStringParam(args, "object_type"))),
+		ObjectName: strings.ToUpper(strings.TrimSpace(getStringParam(args, "object_name"))),
+		Method:     strings.ToUpper(strings.TrimSpace(getStringParam(args, "method"))),
+		Form:       strings.ToUpper(strings.TrimSpace(getStringParam(args, "form"))),
+	}
+	submit, _ := getBoolParam(args, "submit")
+
+	if target.ObjectType == "" || target.ObjectName == "" {
+		return target, fmt.Errorf("object_type and object_name are required. Example: SAP(action=\"analyze\", params={\"type\": \"usage_examples\", \"object_type\": \"FUNC\", \"object_name\": \"Z_MY_FM\"})")
+	}
+	if target.ObjectType == "PROG" && target.Form == "" && !submit {
+		return target, fmt.Errorf("for PROG targets, provide either form=\"FORM_NAME\" or submit=true")
+	}
+	if submit {
+		target.ObjectType = "SUBMIT"
+	}
+	return target, nil
+}
+
+func (s *Server) fetchUsageCallerSources(ctx context.Context, target graph.UsageTarget, topN int) ([]graph.CallerSource, error) {
+	maxCandidates := topN * 4
+	if maxCandidates < 12 {
+		maxCandidates = 12
+	}
+
+	cands, err := s.fetchUsageCandidatesViaADT(ctx, target, maxCandidates)
+	if err != nil || len(cands) == 0 {
+		fallback, ferr := s.fetchUsageCandidatesFallback(ctx, target, maxCandidates)
+		if ferr != nil && len(cands) == 0 {
+			return nil, ferr
+		}
+		if len(cands) == 0 {
+			cands = fallback
+		}
+	}
+
+	var callers []graph.CallerSource
+	for _, c := range cands {
+		source, err := s.fetchUsageCandidateSource(ctx, c)
+		if err != nil || strings.TrimSpace(source) == "" {
+			continue
+		}
+		callers = append(callers, graph.CallerSource{
+			NodeID:  c.NodeID,
+			Name:    c.Name,
+			Type:    c.Type,
+			Package: c.Package,
+			IsTest:  c.IsTest,
+			Source:  source,
+		})
+		if len(callers) >= maxCandidates {
+			break
+		}
+	}
+
+	return callers, nil
+}
+
+func (s *Server) fetchUsageCandidatesViaADT(ctx context.Context, target graph.UsageTarget, maxCandidates int) ([]usageCallerCandidate, error) {
+	targetURI, err := s.resolveUsageTargetURI(ctx, target)
+	if err != nil || targetURI == "" {
+		return nil, err
+	}
+
+	root, err := s.adtClient.GetCallersOf(ctx, targetURI, 1)
+	if err != nil || root == nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool)
+	var out []usageCallerCandidate
+	for _, child := range root.Children {
+		cand, ok := usageCandidateFromCallGraphNode(child)
+		if !ok || seen[cand.NodeID] {
+			continue
+		}
+		seen[cand.NodeID] = true
+		out = append(out, cand)
+		if len(out) >= maxCandidates {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) resolveUsageTargetURI(ctx context.Context, target graph.UsageTarget) (string, error) {
+	switch target.ObjectType {
+	case "FUNC":
+		results, err := s.adtClient.SearchObject(ctx, target.ObjectName, 10)
+		if err != nil {
+			return "", err
+		}
+		for _, r := range results {
+			if strings.EqualFold(r.Name, target.ObjectName) && strings.Contains(r.URI, "/fmodules/") {
+				return r.URI, nil
+			}
+		}
+		return "", fmt.Errorf("function module %s not found via SearchObject", target.ObjectName)
+	case "CLAS":
+		classURL := buildADTObjectURL("CLAS", target.ObjectName)
+		if target.Method == "" {
+			return classURL, nil
+		}
+		comps, err := s.adtClient.GetClassComponents(ctx, classURL)
+		if err == nil {
+			if href := findClassComponentHref(comps, target.Method); href != "" {
+				return href, nil
+			}
+		}
+		return classURL, nil
+	case "INTF":
+		intfURL := buildADTObjectURL("INTF", target.ObjectName)
+		if target.Method == "" {
+			return intfURL, nil
+		}
+		structure, err := s.adtClient.GetObjectStructureCAI(ctx, target.ObjectName, 200)
+		if err == nil {
+			if href := findObjectExplorerHref(structure, target.Method); href != "" {
+				return href, nil
+			}
+		}
+		return intfURL, nil
+	case "PROG", "SUBMIT":
+		return buildADTObjectURL("PROG", target.ObjectName), nil
+	default:
+		return "", fmt.Errorf("unsupported usage_examples object_type %s", target.ObjectType)
+	}
+}
+
+func findClassComponentHref(comp *adt.ClassComponent, method string) string {
+	if comp == nil {
+		return ""
+	}
+	if strings.EqualFold(comp.Name, method) && strings.Contains(strings.ToUpper(comp.Type), "METH") && comp.Href != "" {
+		return comp.Href
+	}
+	for i := range comp.Components {
+		if href := findClassComponentHref(&comp.Components[i], method); href != "" {
+			return href
+		}
+	}
+	return ""
+}
+
+func findObjectExplorerHref(node *adt.ObjectExplorerNode, name string) string {
+	if node == nil {
+		return ""
+	}
+	if strings.EqualFold(node.Name, name) && node.URI != "" {
+		return node.URI
+	}
+	for i := range node.Children {
+		if href := findObjectExplorerHref(&node.Children[i], name); href != "" {
+			return href
+		}
+	}
+	return ""
+}
+
+func usageCandidateFromCallGraphNode(node adt.CallGraphNode) (usageCallerCandidate, bool) {
+	objType, name, parent := usageTypeNameFromURI(node.URI, node.Name)
+	if objType == "" || name == "" {
+		return usageCallerCandidate{}, false
+	}
+	return usageCallerCandidate{
+		NodeID: graph.NodeID(objType, name),
+		Name:   strings.ToUpper(name),
+		Type:   objType,
+		Parent: strings.ToUpper(parent),
+		IsTest: graph.IsTestCaller(name, ""),
+	}, true
+}
+
+func usageTypeNameFromURI(uri, fallbackName string) (objType, name, parent string) {
+	lowerURI := strings.ToLower(uri)
+	switch {
+	case strings.Contains(lowerURI, "/oo/classes/"):
+		objType = "CLAS"
+	case strings.Contains(lowerURI, "/oo/interfaces/"):
+		objType = "INTF"
+	case strings.Contains(lowerURI, "/programs/programs/"):
+		objType = "PROG"
+	case strings.Contains(lowerURI, "/functions/groups/") && strings.Contains(lowerURI, "/fmodules/"):
+		objType = "FUNC"
+	default:
+		return "", "", ""
+	}
+
+	if fallbackName != "" {
+		name = strings.ToUpper(fallbackName)
+	}
+	if objType == "FUNC" {
+		parts := strings.Split(lowerURI, "/")
+		for i := range parts {
+			if parts[i] == "groups" && i+1 < len(parts) {
+				parent = strings.ToUpper(parts[i+1])
+			}
+			if parts[i] == "fmodules" && i+1 < len(parts) {
+				name = strings.ToUpper(parts[i+1])
+			}
+		}
+	}
+	return objType, name, parent
+}
+
+func (s *Server) fetchUsageCandidatesFallback(ctx context.Context, target graph.UsageTarget, maxCandidates int) ([]usageCallerCandidate, error) {
+	var queries []string
+
+	switch target.ObjectType {
+	case "FUNC":
+		queries = append(queries, fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'FU'", target.ObjectName))
+	case "SUBMIT":
+		queries = append(queries, fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", target.ObjectName))
+	case "PROG":
+		if target.Form != "" {
+			queries = append(queries, fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'SU'", target.Form))
+		} else {
+			queries = append(queries, fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", target.ObjectName))
+		}
+	case "CLAS", "INTF":
+		queries = append(queries, fmt.Sprintf("SELECT INCLUDE, OTYPE, NAME FROM WBCROSSGT WHERE NAME LIKE '%s%%'", target.ObjectName))
+		queries = append(queries, fmt.Sprintf("SELECT INCLUDE, TYPE AS OTYPE, NAME FROM CROSS WHERE NAME LIKE '%s%%'", target.ObjectName))
+	}
+
+	seen := make(map[string]bool)
+	var out []usageCallerCandidate
+	for _, query := range queries {
+		result, err := s.adtClient.RunQuery(ctx, query, maxCandidates*2)
+		if err != nil || result == nil {
+			continue
+		}
+		for _, row := range result.Rows {
+			include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+			if include == "" {
+				continue
+			}
+			_, objType, objName := graph.NormalizeInclude(include)
+			if objType == "FUGR" {
+				continue // no source snippets from FUGR metadata in v1
+			}
+			nodeID := graph.NodeID(objType, objName)
+			if seen[nodeID] {
+				continue
+			}
+			seen[nodeID] = true
+			out = append(out, usageCallerCandidate{
+				NodeID: nodeID,
+				Name:   objName,
+				Type:   objType,
+				IsTest: graph.IsTestCaller(objName, ""),
+			})
+			if len(out) >= maxCandidates {
+				return out, nil
+			}
+		}
+	}
+
+	return out, nil
+}
+
+func (s *Server) fetchUsageCandidateSource(ctx context.Context, cand usageCallerCandidate) (string, error) {
+	switch cand.Type {
+	case "CLAS", "PROG", "INTF":
+		return s.adtClient.GetSource(ctx, cand.Type, cand.Name, nil)
+	case "FUNC":
+		if cand.Parent == "" {
+			return "", fmt.Errorf("missing function group parent for %s", cand.Name)
+		}
+		return s.adtClient.GetSource(ctx, "FUNC", cand.Name, &adt.GetSourceOptions{Parent: cand.Parent})
+	default:
+		return "", fmt.Errorf("unsupported caller source type %s", cand.Type)
+	}
+}
+
+func (s *Server) backfillUsagePackages(ctx context.Context, callers []graph.CallerSource, result *graph.UsageExamplesResult) {
+	if result == nil || len(result.Examples) == 0 {
+		return
+	}
+	g := graph.New()
+	for _, c := range callers {
+		g.AddNode(&graph.Node{ID: c.NodeID, Name: c.Name, Type: c.Type, Package: c.Package})
+	}
+	s.resolvePackages(ctx, g)
+	for i, ex := range result.Examples {
+		if ex.Package != "" {
+			continue
+		}
+		if n := g.GetNode(ex.CallerID); n != nil && n.Package != "" {
+			result.Examples[i].Package = n.Package
+		}
+	}
 }
 
 // buildADTObjectURL constructs an ADT URL for an object by type and name.
