@@ -8,8 +8,11 @@ import (
 	"strconv"
 	"strings"
 
+	"encoding/json"
+
 	"github.com/oisee/vibing-steampunk/pkg/abaplint"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -108,11 +111,14 @@ a clear message explaining what's needed.`,
 
 var graphCmd = &cobra.Command{
 	Use:   "graph <type> <name>",
-	Short: "Show call graph (callers/callees)",
-	Long: `Show the call graph for an ABAP object.
+	Short: "Call graph & dependency analysis",
+	Long: `Show call graph or run dependency analysis for ABAP objects.
 Works with standard ADT — no ZADT_VSP required.
 
-Examples:
+Subcommands:
+  vsp graph co-change CLAS ZCL_FOO         — what changes together (transport-based)
+
+Direct usage (call graph):
   vsp graph CLAS ZCL_MY_CLASS
   vsp graph CLAS ZCL_MY_CLASS --direction callers
   vsp graph CLAS ZCL_MY_CLASS --direction callees --depth 2`,
@@ -120,11 +126,51 @@ Examples:
 	RunE: runGraph,
 }
 
+var graphCoChangeCmd = &cobra.Command{
+	Use:   "co-change <type> <name>",
+	Short: "Find objects that change together (transport-based co-change analysis)",
+	Long: `Analyze transport history to find objects that frequently change alongside
+the given object. Uses E070/E071 tables via ADT SQL.
+
+Examples:
+  vsp graph co-change CLAS ZCL_PRICING
+  vsp graph co-change CLAS ZCL_PRICING --top 10
+  vsp graph co-change PROG ZREPORT --format json`,
+	Args: cobra.ExactArgs(2),
+	RunE: runGraphCoChange,
+}
+
+var graphWhereUsedConfigCmd = &cobra.Command{
+	Use:   "where-used-config <variable>",
+	Short: "Find programs that read a TVARVC/STVARV variable (heuristic)",
+	Long: `Find ABAP programs/classes that read a specific TVARVC variable.
+Uses CROSS table to find candidates, then greps source to confirm.
+
+Results show confidence: HIGH = grep-confirmed, MEDIUM = CROSS-only candidate.
+
+Examples:
+  vsp graph where-used-config ZKEKEKE
+  vsp graph where-used-config ZKEKEKE --no-grep
+  vsp graph where-used-config ZKEKEKE --format json`,
+	Args: cobra.ExactArgs(1),
+	RunE: runGraphWhereUsedConfig,
+}
+
 func init() {
 	// Graph flags
 	graphCmd.Flags().String("direction", "callees", "Direction: callees, callers, or both")
 	graphCmd.Flags().Int("depth", 1, "Maximum traversal depth")
 	rootCmd.AddCommand(graphCmd)
+
+	// Graph co-change subcommand
+	graphCoChangeCmd.Flags().Int("top", 20, "Maximum results (0=all)")
+	graphCoChangeCmd.Flags().String("format", "text", "Output format: text or json")
+	graphCmd.AddCommand(graphCoChangeCmd)
+
+	// Graph where-used-config subcommand
+	graphWhereUsedConfigCmd.Flags().String("format", "text", "Output format: text or json")
+	graphWhereUsedConfigCmd.Flags().Bool("no-grep", false, "Skip source grep (faster, MEDIUM confidence only)")
+	graphCmd.AddCommand(graphWhereUsedConfigCmd)
 
 	// Query flags
 	queryCmd.Flags().Int("top", 0, "Maximum number of rows (0=all)")
@@ -707,6 +753,386 @@ func printGraphNode(node *adt.CallGraphNode, indent int) {
 
 func readStdin() ([]byte, error) {
 	return os.ReadFile("/dev/stdin")
+}
+
+// --- graph co-change handler ---
+
+func runGraphCoChange(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	objType := strings.ToUpper(args[0])
+	objName := strings.ToUpper(args[1])
+	topN, _ := cmd.Flags().GetInt("top")
+	format, _ := cmd.Flags().GetString("format")
+	ctx := context.Background()
+
+	targetNodeID := graph.NodeID(objType, objName)
+
+	// Step 1: Find transports containing this object (E071)
+	fmt.Fprintf(os.Stderr, "Querying E071 for %s %s...\n", objType, objName)
+	e071Query := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND OBJECT = '%s' AND OBJ_NAME = '%s'",
+		objType, objName)
+	e071Result, err := client.RunQuery(ctx, e071Query, 200)
+	if err != nil {
+		return fmt.Errorf("E071 query failed: %w", err)
+	}
+	if e071Result == nil || len(e071Result.Rows) == 0 {
+		fmt.Println("No transports found for this object.")
+		return nil
+	}
+
+	// Collect transport numbers (may be tasks or requests)
+	trNums := make(map[string]bool)
+	for _, row := range e071Result.Rows {
+		tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+		if tr != "" {
+			trNums[tr] = true
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Found %d transport entries.\n", len(trNums))
+
+	// Step 2: Resolve E070 headers to get request/task hierarchy
+	trList := make([]string, 0, len(trNums))
+	for tr := range trNums {
+		trList = append(trList, "'"+tr+"'")
+	}
+	e070Query := fmt.Sprintf(
+		"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)",
+		strings.Join(trList, ","))
+	e070Result, err := client.RunQuery(ctx, e070Query, 500)
+	if err != nil {
+		return fmt.Errorf("E070 query failed: %w", err)
+	}
+
+	// Parse headers, collect parent request numbers
+	var headers []graph.TransportHeader
+	requestNums := make(map[string]bool)
+	for _, row := range e070Result.Rows {
+		h := graph.TransportHeader{
+			TRKORR:     strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+			STRKORR:    strings.TrimSpace(fmt.Sprintf("%v", row["STRKORR"])),
+			TRFUNCTION: strings.TrimSpace(fmt.Sprintf("%v", row["TRFUNCTION"])),
+			TRSTATUS:   strings.TrimSpace(fmt.Sprintf("%v", row["TRSTATUS"])),
+			AS4USER:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4USER"])),
+			AS4DATE:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4DATE"])),
+		}
+		headers = append(headers, h)
+		if h.IsRequest() {
+			requestNums[h.TRKORR] = true
+		} else if h.STRKORR != "" {
+			requestNums[h.STRKORR] = true
+		}
+	}
+
+	// Fetch parent request headers if we only had tasks
+	var missingRequests []string
+	for rn := range requestNums {
+		if !trNums[rn] {
+			missingRequests = append(missingRequests, "'"+rn+"'")
+		}
+	}
+	if len(missingRequests) > 0 {
+		parentQuery := fmt.Sprintf(
+			"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)",
+			strings.Join(missingRequests, ","))
+		parentResult, err := client.RunQuery(ctx, parentQuery, 100)
+		if err == nil && parentResult != nil {
+			for _, row := range parentResult.Rows {
+				h := graph.TransportHeader{
+					TRKORR:     strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+					STRKORR:    strings.TrimSpace(fmt.Sprintf("%v", row["STRKORR"])),
+					TRFUNCTION: strings.TrimSpace(fmt.Sprintf("%v", row["TRFUNCTION"])),
+					TRSTATUS:   strings.TrimSpace(fmt.Sprintf("%v", row["TRSTATUS"])),
+					AS4USER:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4USER"])),
+					AS4DATE:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4DATE"])),
+				}
+				headers = append(headers, h)
+				requestNums[h.TRKORR] = true
+			}
+		}
+	}
+
+	// Step 2b: Fetch ALL child tasks of resolved parent requests.
+	// Without this, sibling objects in other tasks of the same request are missed.
+	if len(requestNums) > 0 {
+		parentList := make([]string, 0, len(requestNums))
+		for rn := range requestNums {
+			parentList = append(parentList, "'"+rn+"'")
+		}
+		childTaskQuery := fmt.Sprintf(
+			"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE STRKORR IN (%s)",
+			strings.Join(parentList, ","))
+		childResult, err := client.RunQuery(ctx, childTaskQuery, 500)
+		if err == nil && childResult != nil {
+			for _, row := range childResult.Rows {
+				h := graph.TransportHeader{
+					TRKORR:     strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+					STRKORR:    strings.TrimSpace(fmt.Sprintf("%v", row["STRKORR"])),
+					TRFUNCTION: strings.TrimSpace(fmt.Sprintf("%v", row["TRFUNCTION"])),
+					TRSTATUS:   strings.TrimSpace(fmt.Sprintf("%v", row["TRSTATUS"])),
+					AS4USER:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4USER"])),
+					AS4DATE:    strings.TrimSpace(fmt.Sprintf("%v", row["AS4DATE"])),
+				}
+				// Only add if not already known
+				found := false
+				for _, existing := range headers {
+					if existing.TRKORR == h.TRKORR {
+						found = true
+						break
+					}
+				}
+				if !found {
+					headers = append(headers, h)
+				}
+			}
+		}
+	}
+
+	// Collect all request + task numbers for sibling E071 fetch
+	allTRNums := make(map[string]bool)
+	for _, h := range headers {
+		allTRNums[h.TRKORR] = true
+	}
+	for rn := range requestNums {
+		allTRNums[rn] = true
+	}
+
+	// Step 3: Fetch all E071 objects for these transports (sibling objects)
+	allTRList := make([]string, 0, len(allTRNums))
+	for tr := range allTRNums {
+		allTRList = append(allTRList, "'"+tr+"'")
+	}
+	fmt.Fprintf(os.Stderr, "Fetching sibling objects from %d transports...\n", len(allTRList))
+	siblingQuery := fmt.Sprintf(
+		"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE TRKORR IN (%s) AND PGMID = 'R3TR'",
+		strings.Join(allTRList, ","))
+	siblingResult, err := client.RunQuery(ctx, siblingQuery, 2000)
+	if err != nil {
+		return fmt.Errorf("sibling E071 query failed: %w", err)
+	}
+
+	// Parse objects
+	var objects []graph.TransportObject
+	if siblingResult != nil {
+		for _, row := range siblingResult.Rows {
+			objects = append(objects, graph.TransportObject{
+				TRKORR:  strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"])),
+				PGMID:   strings.TrimSpace(fmt.Sprintf("%v", row["PGMID"])),
+				Object:  strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])),
+				ObjName: strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])),
+			})
+		}
+	}
+
+	// Step 4: Build graph and run query
+	g := graph.BuildTransportGraph(headers, objects)
+	result := graph.WhatChangesWith(g, targetNodeID, topN)
+
+	// Output
+	if format == "json" {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Text output
+	fmt.Printf("Co-change analysis: %s\n", targetNodeID)
+	fmt.Printf("Transports: %d\n\n", result.TotalTransports)
+
+	if len(result.CoChanges) == 0 {
+		fmt.Println("No co-changing objects found.")
+		return nil
+	}
+
+	tableRows := make([][]string, 0, len(result.CoChanges))
+	for _, e := range result.CoChanges {
+		trIDs := strings.Join(e.Transports, ", ")
+		if len(trIDs) > 60 {
+			trIDs = trIDs[:57] + "..."
+		}
+		tableRows = append(tableRows, []string{
+			fmt.Sprintf("%d", e.Count),
+			e.Type,
+			e.Name,
+			trIDs,
+		})
+	}
+
+	fmt.Print(formatTable(
+		[]string{"Count", "Type", "Name", "Shared Transports"},
+		tableRows,
+	))
+	fmt.Fprintf(os.Stderr, "\n%d co-changing objects\n", len(result.CoChanges))
+	return nil
+}
+
+// --- graph where-used-config handler ---
+
+func runGraphWhereUsedConfig(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	variable := strings.ToUpper(strings.TrimSpace(args[0]))
+	format, _ := cmd.Flags().GetString("format")
+	noGrep, _ := cmd.Flags().GetBool("no-grep")
+	doGrep := !noGrep
+	ctx := context.Background()
+
+	// Step 1: Find programs that reference TVARVC table
+	fmt.Fprintf(os.Stderr, "Querying CROSS for TVARVC references...\n")
+	crossQuery := "SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = 'TVARVC' AND TYPE = 'DA'"
+	crossResult, err := client.RunQuery(ctx, crossQuery, 500)
+	if err != nil {
+		return fmt.Errorf("CROSS query failed: %w", err)
+	}
+	if crossResult == nil || len(crossResult.Rows) == 0 {
+		fmt.Println("No programs reference the TVARVC table.")
+		return nil
+	}
+
+	// Step 2: Normalize includes → deduplicate to object level
+	type candidate struct {
+		objType string
+		objName string
+	}
+	seen := make(map[string]bool)
+	var candidates []candidate
+
+	for _, row := range crossResult.Rows {
+		include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
+		if include == "" {
+			continue
+		}
+		_, objType, objName := graph.NormalizeInclude(include)
+		key := objType + ":" + objName
+		if !seen[key] {
+			seen[key] = true
+			candidates = append(candidates, candidate{objType, objName})
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Found %d candidate programs. ", len(candidates))
+
+	// Step 3: Grep each candidate for the variable name
+	var refs []graph.TVARVCReference
+	grepCount := 0
+	for _, c := range candidates {
+		confirmed := false
+		if doGrep {
+			objURL := cliADTObjectURL(c.objType, c.objName)
+			if objURL != "" {
+				grepResult, err := client.GrepObject(ctx, objURL, variable, true, 0)
+				if err == nil && grepResult != nil && len(grepResult.Matches) > 0 {
+					confirmed = true
+					grepCount++
+				}
+			}
+		}
+		refs = append(refs, graph.TVARVCReference{
+			VariableName: variable,
+			ObjectType:   c.objType,
+			ObjectName:   c.objName,
+			Confirmed:    confirmed,
+		})
+	}
+	if doGrep {
+		fmt.Fprintf(os.Stderr, "Grep confirmed %d.\n", grepCount)
+	} else {
+		fmt.Fprintf(os.Stderr, "Grep skipped.\n")
+	}
+
+	// Step 4: Build graph and run query
+	g := graph.BuildConfigGraph(
+		[]graph.TVARVCVariable{{Name: variable}},
+		refs,
+	)
+	result := graph.WhereUsedConfig(g, variable)
+
+	// Output
+	if format == "json" {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Text output
+	fmt.Printf("Where-used config: %s\n", variable)
+	fmt.Printf("Found: %v\n\n", result.Found)
+
+	if len(result.Readers) == 0 {
+		fmt.Println("No programs found reading this variable.")
+		return nil
+	}
+
+	tableRows := make([][]string, 0, len(result.Readers))
+	for _, r := range result.Readers {
+		pkg := r.Package
+		if pkg == "" {
+			pkg = "-"
+		}
+		tableRows = append(tableRows, []string{
+			r.Confidence,
+			r.Type,
+			r.Name,
+			pkg,
+		})
+	}
+
+	fmt.Print(formatTable(
+		[]string{"Confidence", "Type", "Name", "Package"},
+		tableRows,
+	))
+	fmt.Fprintf(os.Stderr, "\n%d readers (%d HIGH, %d MEDIUM)\n",
+		len(result.Readers),
+		countConfidence(result.Readers, "HIGH"),
+		countConfidence(result.Readers, "MEDIUM"),
+	)
+	return nil
+}
+
+func cliADTObjectURL(objType, objName string) string {
+	name := strings.ToLower(objName)
+	switch objType {
+	case "CLAS":
+		return "/sap/bc/adt/oo/classes/" + name
+	case "PROG":
+		return "/sap/bc/adt/programs/programs/" + name
+	case "INTF":
+		return "/sap/bc/adt/oo/interfaces/" + name
+	case "FUGR":
+		return "/sap/bc/adt/functions/groups/" + name
+	default:
+		return ""
+	}
+}
+
+func countConfidence(readers []graph.ConfigReaderEntry, confidence string) int {
+	n := 0
+	for _, r := range readers {
+		if r.Confidence == confidence {
+			n++
+		}
+	}
+	return n
 }
 
 // formatTable formats results as a simple table.

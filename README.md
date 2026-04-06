@@ -11,6 +11,13 @@
 
 ![Vibing ABAP Developer](./media/vibing-steampunk.png)
 
+## Hot Right Now
+
+- `vsp graph co-change CLAS ZCL_FOO` for transport-based co-change analysis
+- `SAP(action="analyze", params={"type":"co_change", ...})` for MCP co-change
+- `SAP(action="analyze", params={"type":"impact", ...})` for reverse dependency impact
+- **[Graph Guide](docs/graph-guide.md)** for examples, data sources, and current limits
+
 ## 100 Stars!
 
 Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Community, and What's Cooking](articles/2026-02-18-100-stars-celebration.md)**
@@ -21,9 +28,22 @@ Read the milestone article: **[Agentic ABAP at 100 Stars: The Numbers, The Commu
 
 The full version history is in [CHANGELOG.md](CHANGELOG.md).
 
-### Hyperfocused Mode — 1 Tool to Rule Them All
+### Graph MVP — New Dependency Analysis Surfaces
 
-Single `SAP(action, target, params)` tool replaces up to 129 individual tool definitions.
+VSP now has a first graph-MVP layer for questions that are bigger than grep and different from a plain call graph:
+
+- `vsp graph co-change CLAS ZCL_FOO`
+  Transport-based co-change: what usually moves together with this object?
+- `SAP(action="analyze", params={"type":"co_change","object_type":"CLAS","object_name":"ZCL_FOO"})`
+  The same co-change analysis over MCP.
+- `SAP(action="analyze", params={"type":"impact","object_type":"CLAS","object_name":"ZCL_FOO","max_depth":3})`
+  Reverse dependency impact: who statically depends on this object?
+
+This is the start of a graph-oriented analysis layer, not just another call-tree view. See **[Graph Guide](docs/graph-guide.md)** for examples, data sources, and current limitations.
+
+### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
+
+**Recommended for most setups.** Single `SAP(action, target, params)` tool replaces up to 147 individual tool definitions. Minimal token overhead, maximum capability.
 
 ```
 SAP(action="read",   target="CLAS ZCL_TRAVEL")
@@ -137,9 +157,9 @@ Zero dependencies, zero FFI. Pure Go, ~3.5M tokens/sec, ready for lint rules in 
 
 See [LSP setup](#abap-lsp-for-claude-code) for configuration.
 
-### WASM-to-ABAP Compiler — Run Any Language on SAP
+### WASM-to-ABAP Compiler (Research)
 
-Compile WebAssembly binaries to native ABAP. Three paths, one goal:
+Compile WebAssembly binaries to native ABAP — advanced prototype, verified on selected corpora. Three paths:
 
 ```
 .wasm binary → pkg/wasmcomp (Go)  → ABAP source files     ← AOT compiler
@@ -147,7 +167,7 @@ Compile WebAssembly binaries to native ABAP. Three paths, one goal:
 .wasm binary → zcl_wasm_compiler  → ABAP (on SAP itself!)  ← self-hosting, 785 lines
 ```
 
-**Proven on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP.
+**Demonstrated on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP. This is research/prototype work, not a production-ready toolchain.
 
 | What | Size | Status |
 |------|:----:|:------:|
@@ -167,6 +187,7 @@ Compile WebAssembly binaries to native ABAP. Three paths, one goal:
 vsp query T000 --top 5                           # query tables
 vsp grep "SELECT.*mara" --package '$TMP'          # search source code
 vsp graph CLAS ZCL_FOO --direction callers        # who uses this class?
+vsp graph co-change CLAS ZCL_FOO                  # what changes together with this object?
 vsp deps '$ZFINANCE' --format summary             # transport readiness check
 vsp lint --file myclass.clas.abap                 # offline ABAP linter
 vsp compile wasm program.wasm --class ZCL_DEMO    # WASM→ABAP compiler
@@ -175,7 +196,7 @@ vsp context CLAS ZCL_FOO --depth 2                # compressed deps (2 levels)
 vsp system info                                   # system version + ZADT_VSP check
 ```
 
-`graph` and `deps` use WBCROSSGT/CROSS tables as fallback when ADT call graph API is unavailable — works on any SAP system with ADT.
+`graph` now covers both classic call-graph inspection and the first graph-MVP query slices. Call-graph paths use ADT first with WBCROSSGT/CROSS fallback; graph-MVP analysis currently adds transport-based co-change and MCP impact analysis on top of the new `pkg/graph` layer.
 
 See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature requirements matrix.
 
@@ -188,12 +209,12 @@ See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature r
 
 | Feature | Description |
 |---------|-------------|
-| **Hyperfocused Mode** | `--mode hyperfocused`: 1 universal SAP tool, **~200 tokens** vs ~40K for 122 |
+| **Hyperfocused Mode** | `--mode hyperfocused` (recommended): 1 universal SAP tool, **~200 tokens** vs ~40K for 147 |
 | **Context Compression** | Auto-compressed dependency contracts — 7–30x compression, built-in ABAP parser |
 | **ABAP LSP** | Built-in Language Server — real-time diagnostics, go-to-definition, context push |
 | **AI Debugger** | Breakpoints, listener, attach, step, inspect stack & variables |
 | **RAP OData E2E** | Create CDS views, Service Definitions, Bindings → Publish OData services |
-| **Focused Mode** | 88 curated tools optimized for AI assistants |
+| **Focused Mode** | 100 curated tools optimized for AI assistants |
 | **AI-Powered RCA** | Root cause analysis with dumps, traces, profiler + code intelligence |
 | **DSL & Workflows** | Fluent Go API + YAML automation for CI/CD pipelines |
 | **ExecuteABAP** | Run arbitrary ABAP code via unit test wrapper |
@@ -279,18 +300,22 @@ You will get prompted with a list of found objects if the connection could be es
 
 VSP works with **8 CLI coding agents** — not just Claude! Full setup guides with config templates:
 
-| Agent | LLM | Free? | Config |
-|-------|-----|-------|--------|
-| **Gemini CLI** | Gemini 2.5 Pro/Flash | Yes (1000 req/day) | `.gemini/settings.json` |
-| **Claude Code** | Claude Opus/Sonnet 4.6 | No ($20+/mo) | `.mcp.json` |
-| **GitHub Copilot** | Claude, GPT-5, Gemini | No ($10+/mo) | `.copilot/mcp-config.json` |
-| **OpenAI Codex** | GPT-5-Codex, GPT-4.1 | No ($20+/mo) | `codex.toml` |
-| **Qwen Code** | Qwen3-Coder | Yes (1000 req/day) | `.qwen/settings.json` |
-| **OpenCode** | 75+ models (BYOK) | Yes (own key) | `opencode.json` |
-| **Goose** | 75+ providers (BYOK) | Yes (own key) | `~/.config/goose/config.yaml` |
-| **Mistral Vibe** | Devstral 2, local models | Yes (Ollama) | `.vibe/config.toml` |
+| Agent | Model Access | Availability | Config |
+|-------|--------------|--------------|--------|
+| **Gemini CLI** | Gemini models | Free tier available; paid/API-backed usage also available | `.gemini/settings.json` |
+| **Claude Code** | Claude models | Paid usage or subscription-backed access | `.mcp.json` |
+| **GitHub Copilot** | Multi-model (plan-dependent) | Free tier available; paid plans unlock more limits/models | `.copilot/mcp-config.json` |
+| **OpenAI Codex** | OpenAI coding models / ChatGPT-linked access | Limited or plan-dependent access; API usage also available | `codex.toml` |
+| **Qwen Code** | Qwen models | Free tier available; BYOK/API-backed usage also available | `.qwen/settings.json` |
+| **OpenCode** | Multi-provider BYOK | Depends on your provider/account | `opencode.json` |
+| **Goose** | Multi-provider BYOK | Depends on your provider/account | `~/.config/goose/config.yaml` |
+| **Mistral Vibe** | Mistral API or local models | Local/Ollama path can be free; API usage is provider-billed | `.vibe/config.toml` |
+
+Availability, pricing, and model lineups change quickly. Check the linked agent guides and official product docs before copying limits or plan claims into downstream docs.
 
 **[Full setup guide with config examples](docs/cli-agents/README.md)** | [Русский](docs/cli-agents/README_RU.md) | [Українська](docs/cli-agents/README_UA.md) | [Español](docs/cli-agents/README_ES.md)
+
+For the new graph analysis capabilities, see **[Graph Guide](docs/graph-guide.md)**.
 
 ## CLI Mode
 
@@ -312,6 +337,11 @@ vsp -s a4h context CLAS ZCL_FOO                   # shortcut for above
 # Search
 vsp -s a4h search "ZCL_*"
 vsp -s dev search "Z*ORDER*" --type CLAS --max 50
+
+# Graph analysis
+vsp -s a4h graph CLAS ZCL_FOO                      # call graph
+vsp -s a4h graph co-change CLAS ZCL_FOO           # transport-based co-change
+vsp -s a4h graph co-change PROG ZREPORT --format json
 
 # Testing & code quality
 vsp -s a4h test CLAS ZCL_MY_CLASS                 # run unit tests
@@ -339,6 +369,12 @@ vsp config init                                   # create example configs
 # Start ABAP LSP server (for Claude Code / editors)
 vsp lsp --stdio
 ```
+
+Graph-MVP highlights:
+
+- `vsp graph co-change <type> <name>` for transport-based co-change analysis
+- `SAP(action="analyze", params={"type":"co_change", ...})` for MCP co-change
+- `SAP(action="analyze", params={"type":"impact", ...})` for reverse dependency impact
 
 ### System Profiles (`.vsp.json`)
 
@@ -413,7 +449,7 @@ SAP_PASSWORD=secret
 | `--user` | `SAP_USER` | Username |
 | `--password` | `SAP_PASSWORD` | Password |
 | `--client` | `SAP_CLIENT` | Client (default: 001) |
-| `--mode` | `SAP_MODE` | `focused` (default) or `expert` |
+| `--mode` | `SAP_MODE` | `hyperfocused` (recommended), `focused`, or `expert` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification |
 | `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |
@@ -557,26 +593,26 @@ One axis, three values — `--mode` or `SAP_MODE`:
 
 ```mermaid
 graph LR
-    F["focused<br/>100 tools<br/>~14K tokens<br/><i>default</i>"] --> E["expert<br/>147 tools<br/>~40K tokens"]
-    E --> H["hyperfocused<br/>1 tool<br/>~200 tokens"]
-    style H fill:#2d6a4f,color:#fff
+    F["focused<br/>100 tools<br/>~14K tokens"] --> E["expert<br/>147 tools<br/>~40K tokens"]
+    E --> H["hyperfocused<br/>1 tool<br/>~200 tokens<br/><i>recommended</i>"]
+    style H fill:#2d6a4f,color:#fff,stroke:#4ade80,stroke-width:2px
     style F fill:#264653,color:#fff
     style E fill:#264653,color:#fff
 ```
 
-| Aspect | Focused (default) | Expert | Hyperfocused |
+| Aspect | Focused | Expert | Hyperfocused (recommended) |
 |--------|:-:|:-:|:-:|
-| **Tools** | 81 essential | 122 complete | 1 universal `SAP()` |
-| **Schema tokens** | ~14K | ~40K | ~200 |
+| **Tools** | 100 essential | 147 complete | 1 universal `SAP()` |
+| **Schema tokens** | ~14K | ~40K | **~200** |
 | **How AI calls it** | `GetSource(type, name)` | Same, + granular tools | `SAP(action, target, params)` |
 | **Documentation** | In tool schemas | In tool schemas | `SAP(action="help")` |
-| **Best for** | Large-context agents | Edge cases, debugging | Local models, fast iteration |
+| **Best for** | Legacy setups | Edge cases, debugging | **Most setups — any model, minimal overhead** |
 | **Safety controls** | All apply | All apply | All apply (same code path) |
 
 ```bash
-vsp --mode focused       # default — 88 curated tools
+vsp --mode hyperfocused  # recommended — single SAP(action, target, params) tool
+vsp --mode focused       # 100 curated tools (individual tool names)
 vsp --mode expert        # all 147 tools individually
-vsp --mode hyperfocused  # single SAP(action, target, params) tool
 ```
 
 ## DSL & Automation
@@ -792,7 +828,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**52 Focused Mode Tools:**
+**Focused Mode Tools (100):**
 - **Search:** SearchObject, GrepObjects, GrepPackages
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables
@@ -844,7 +880,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation (147 tool
 
 **vsp** is a Go rewrite with:
 - Single binary, zero dependencies
-- 62 tools (vs 13 original)
+- 147 tools (vs 13 original)
 - ~50x faster startup
 
 ## Optional: WebSocket Handler (ZADT_VSP)
@@ -911,8 +947,8 @@ make build          # Current platform
 make build-all      # All 9 platforms
 
 # Test
-go test ./...                              # Unit tests (249)
-go test -tags=integration -v ./pkg/adt/    # Integration tests (21+)
+go test ./...                              # Unit tests (821)
+go test -tags=integration -v ./pkg/adt/    # Integration tests (34+)
 ```
 
 <details>
@@ -928,7 +964,7 @@ vibing-steampunk/
 │   ├── codeintel.go          # Definition, refs, completion
 │   ├── workflows.go          # High-level workflows
 │   └── http.go               # HTTP transport (CSRF, auth)
-├── internal/mcp/server.go    # MCP tool handlers (62 tools)
+├── internal/mcp/server.go    # MCP tool handlers (147 tools)
 ├── internal/lsp/             # ABAP LSP server (diagnostics, go-to-def)
 └── pkg/dsl/                  # DSL & workflow engine
 ```
@@ -939,8 +975,8 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 122 (81 focused, 122 expert) |
-| **Unit Tests** | 270+ |
+| **Tools** | 147 (100 focused, 147 expert) |
+| **Unit Tests** | 821 |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
 <details>
@@ -974,14 +1010,21 @@ vibing-steampunk/
 - [x] **abapGit Export** - WebSocket integration complete (v2.16.0) - GitTypes, GitExport tools ([Report](reports/2025-12-23-002-abapgit-websocket-integration-complete.md))
 - [ ] **abapGit Import** - Requires `ZCL_ABAPGIT_OBJECTS=>deserialize` with virtual repository
 
+### Completed (v2.36.0)
+- [x] API Release State (ARS) - `GetAPIReleaseState` tool for Clean Core compliance checks
+- [x] gCTS Integration - 10 tools for gCTS repository management
+- [x] i18n Tools - 7 tools for translation management with per-request language override
+- [x] Browser SSO - `--browser-auth` for Kerberos/SAML/Keycloak authentication
+- [x] HTTP Streamable Transport - `--transport http` for non-stdio deployments
+- [x] mcp-go v0.47.0 - Latest MCP SDK
+
 ### Planned
-- [ ] API Release State (ARS) - Contract stability checks
 - [ ] Message Server Logs
 - [ ] Background Job Management
 
 ### Future Considerations
 - [ ] AMDP Session Persistence (enable full HANA debugging)
-- [ ] **Graph Engine & Boundary Analysis** - initial `CheckBoundaries`, `GraphStats` (v2.37.0, SQL/ADT adapters pending)
+- [ ] **Graph Engine & Boundary Analysis** - initial implementation in `pkg/graph/` (boundary analysis, dynamic call detection, 11 tests); SQL/ADT adapters pending
 - [ ] Test Intelligence (smart test execution based on changes)
 - [ ] Standard API Surface Scraper
 

@@ -121,6 +121,121 @@ func TestGraphStats(t *testing.T) {
 	}
 }
 
+func TestNodeMeta(t *testing.T) {
+	n := &Node{ID: "CLAS:ZCL_FOO", Name: "ZCL_FOO", Type: NodeCLAS}
+
+	// Meta starts nil
+	if _, ok := n.GetMeta(MetaConfidence); ok {
+		t.Error("Expected no meta initially")
+	}
+
+	// SetMeta initializes map
+	n.SetMeta(MetaConfidence, "HIGH")
+	v, ok := n.GetMeta(MetaConfidence)
+	if !ok || v != "HIGH" {
+		t.Errorf("GetMeta(confidence): got %v/%v, want HIGH/true", v, ok)
+	}
+
+	// Additional meta
+	n.SetMeta(MetaIsStandard, false)
+	v2, ok := n.GetMeta(MetaIsStandard)
+	if !ok || v2 != false {
+		t.Errorf("GetMeta(is_standard): got %v/%v, want false/true", v2, ok)
+	}
+}
+
+func TestEdgeMeta(t *testing.T) {
+	e := &Edge{From: "PROG:ZTEST", To: "TVARVC:ZKEKEKE", Kind: EdgeReadsConfig, Source: SourceTVARVC_CROSS}
+
+	e.SetMeta(MetaConfidence, "MEDIUM")
+	v, ok := e.GetMeta(MetaConfidence)
+	if !ok || v != "MEDIUM" {
+		t.Errorf("Edge.GetMeta(confidence): got %v/%v, want MEDIUM/true", v, ok)
+	}
+}
+
+func TestNodeMetaMerge(t *testing.T) {
+	g := New()
+
+	// First add with meta
+	g.AddNode(&Node{
+		ID: "CLAS:ZCL_A", Name: "ZCL_A", Type: NodeCLAS,
+		Meta: map[string]any{MetaConfidence: "LOW", MetaIsStandard: false},
+	})
+
+	// Second add merges meta (new keys win)
+	g.AddNode(&Node{
+		ID: "CLAS:ZCL_A", Name: "ZCL_A", Type: NodeCLAS,
+		Meta: map[string]any{MetaConfidence: "HIGH", MetaLastTransport: "20260405"},
+	})
+
+	n := g.GetNode("CLAS:ZCL_A")
+	if v, _ := n.GetMeta(MetaConfidence); v != "HIGH" {
+		t.Errorf("Meta merge should overwrite: got %v, want HIGH", v)
+	}
+	if v, _ := n.GetMeta(MetaIsStandard); v != false {
+		t.Errorf("Meta merge should preserve existing: got %v, want false", v)
+	}
+	if v, _ := n.GetMeta(MetaLastTransport); v != "20260405" {
+		t.Errorf("Meta merge should add new: got %v, want 20260405", v)
+	}
+}
+
+func TestNewEdgeKindsAndSources(t *testing.T) {
+	g := New()
+
+	// Transport nodes and edges
+	g.AddNode(&Node{ID: "CLAS:ZCL_FOO", Name: "ZCL_FOO", Type: NodeCLAS, Package: "$ZDEV"})
+	g.AddNode(&Node{ID: "TR:A4HK900123", Name: "A4HK900123", Type: NodeTR})
+	g.AddEdge(&Edge{From: "CLAS:ZCL_FOO", To: "TR:A4HK900123", Kind: EdgeInTransport, Source: SourceE071})
+
+	// Config nodes and edges
+	g.AddNode(&Node{ID: "TVARVC:ZKEKEKE", Name: "ZKEKEKE", Type: NodeTVARVC})
+	g.AddNode(&Node{ID: "PROG:ZREPORT", Name: "ZREPORT", Type: NodePROG, Package: "$ZDEV"})
+	g.AddEdge(&Edge{From: "PROG:ZREPORT", To: "TVARVC:ZKEKEKE", Kind: EdgeReadsConfig, Source: SourceTVARVC_CROSS})
+
+	// Verify graph structure
+	if g.NodeCount() != 4 {
+		t.Errorf("NodeCount: got %d, want 4", g.NodeCount())
+	}
+	if g.EdgeCount() != 2 {
+		t.Errorf("EdgeCount: got %d, want 2", g.EdgeCount())
+	}
+
+	// Transport: object → TR via OutEdges
+	out := g.OutEdges("CLAS:ZCL_FOO")
+	if len(out) != 1 || out[0].Kind != EdgeInTransport {
+		t.Errorf("Expected IN_TRANSPORT edge from ZCL_FOO")
+	}
+
+	// Config: TVARVC ← PROG via InEdges (impact traversal direction)
+	in := g.InEdges("TVARVC:ZKEKEKE")
+	if len(in) != 1 || in[0].Kind != EdgeReadsConfig {
+		t.Errorf("Expected READS_CONFIG edge to ZKEKEKE")
+	}
+	if in[0].Source != SourceTVARVC_CROSS {
+		t.Errorf("Expected TVARVC_CROSS source, got %s", in[0].Source)
+	}
+
+	// Stats should reflect new types
+	s := g.Stats()
+	if s.ByNodeType[NodeTR] != 1 {
+		t.Errorf("Stats.ByNodeType[TR]: got %d, want 1", s.ByNodeType[NodeTR])
+	}
+	if s.ByNodeType[NodeTVARVC] != 1 {
+		t.Errorf("Stats.ByNodeType[TVARVC]: got %d, want 1", s.ByNodeType[NodeTVARVC])
+	}
+	if s.ByEdgeKind[EdgeInTransport] != 1 {
+		t.Errorf("Stats.ByEdgeKind[IN_TRANSPORT]: got %d, want 1", s.ByEdgeKind[EdgeInTransport])
+	}
+	if s.ByEdgeKind[EdgeReadsConfig] != 1 {
+		t.Errorf("Stats.ByEdgeKind[READS_CONFIG]: got %d, want 1", s.ByEdgeKind[EdgeReadsConfig])
+	}
+	if s.BySource[SourceE071] != 1 {
+		t.Errorf("Stats.BySource[E071]: got %d, want 1", s.BySource[SourceE071])
+	}
+}
+
 func TestExtractDepsFromSource(t *testing.T) {
 	source := `REPORT ztest.
 DATA lo TYPE REF TO zcl_helper.

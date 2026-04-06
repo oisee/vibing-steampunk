@@ -36,6 +36,12 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, ob
 		return s.callHandler(ctx, s.handleCheckBoundaries, params)
 	case "graph_stats":
 		return s.callHandler(ctx, s.handleGraphStats, params)
+	case "co_change":
+		return s.callHandler(ctx, s.handleCoChange, params)
+	case "impact":
+		return s.callHandler(ctx, s.handleImpact, params)
+	case "where_used_config":
+		return s.callHandler(ctx, s.handleWhereUsedConfig, params)
 	}
 	return nil, false, nil
 }

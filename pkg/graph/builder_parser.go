@@ -384,6 +384,25 @@ func ExtractDynamicCalls(source string, sourceNodeID string) []*Edge {
 					RefDetail: "DYNAMIC_SUBMIT:" + varName,
 				})
 			}
+		case "Perform":
+			// PERFORM sub IN PROGRAM (variable) → dynamic
+			for i, t := range toks {
+				if strings.EqualFold(t.Str, "PROGRAM") && i+1 < len(toks) {
+					if toks[i+1].Str == "(" {
+						varName := ""
+						if i+2 < len(toks) {
+							varName = toks[i+2].Str
+						}
+						edges = append(edges, &Edge{
+							From:      sourceNodeID,
+							To:        "DYNAMIC:" + varName,
+							Kind:      EdgeDynamic,
+							Source:    SourceParser,
+							RefDetail: "DYNAMIC_PERFORM:" + varName,
+						})
+					}
+				}
+			}
 		case "CreateObject":
 			// CREATE OBJECT lo TYPE (variable)
 			for i, t := range toks {
