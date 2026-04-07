@@ -64,6 +64,12 @@ type RequestOptions struct {
 	// of the configured default. Used by i18n tools to read/write texts in
 	// specific languages without changing the global session language.
 	OverrideLanguage string
+
+	// Stateful forces this request to use stateful session mode regardless
+	// of the global default. This is required for lock→write→unlock sequences
+	// where the lock handle is bound to a specific server-side session.
+	// When set, X-sap-adt-sessiontype header is set to "stateful" for this request.
+	Stateful bool
 }
 
 // Response wraps an HTTP response with convenience methods.
@@ -382,11 +388,12 @@ func (t *Transport) setDefaultHeaders(req *http.Request, opts *RequestOptions) {
 		req.Header.Set(k, v)
 	}
 
-	// Set session header based on session type
-	switch t.config.SessionType {
-	case SessionStateful:
+	// Set session header: per-request Stateful flag overrides global default.
+	// Lock→write→unlock sequences require stateful mode to maintain session
+	// affinity for lock handles (issue #88).
+	if opts.Stateful || t.config.SessionType == SessionStateful {
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
-	default:
+	} else {
 		req.Header.Set("X-sap-adt-sessiontype", "stateless")
 	}
 }
