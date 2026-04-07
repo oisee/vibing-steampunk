@@ -709,10 +709,18 @@ func populatePackageHealthCLI(ctx context.Context, client *adt.Client, pkg strin
 		result.Signals["tests"] = cliHealthSignal{Status: "SKIPPED", Details: map[string]any{"reason": "fast mode"}}
 		result.Signals["boundaries"] = cliHealthSignal{Status: "SKIPPED", Details: map[string]any{"reason": "fast mode"}}
 	} else {
+		fmt.Fprintf(os.Stderr, "  [1/4] Running tests...\n")
 		result.Signals["tests"] = collectPackageTestsCLI(ctx, client, pkg)
+		fmt.Fprintf(os.Stderr, "  [2/4] Checking boundaries...\n")
 		result.Signals["boundaries"] = collectPackageBoundariesCLI(ctx, client, pkg)
 	}
+	step := 3
+	if fast {
+		step = 1
+	}
+	fmt.Fprintf(os.Stderr, "  [%d/%d] Running ATC...\n", step, step+1)
 	result.Signals["atc"] = collectPackageATCCLI(ctx, client, pkg)
+	fmt.Fprintf(os.Stderr, "  [%d/%d] Checking staleness...\n", step+1, step+1)
 	result.Signals["staleness"] = collectPackageStalenessCLI(ctx, client, pkg)
 }
 
