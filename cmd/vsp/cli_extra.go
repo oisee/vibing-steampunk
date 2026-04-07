@@ -211,7 +211,7 @@ This is read-only: no objects are deleted. Use the report to decide what to clea
 
 Examples:
   vsp slim '$ZDEV'
-  vsp slim '$ZDEV' --include-subpackages
+  vsp slim '$ZDEV' --exact-package
   vsp slim '$ZDEV' --format json`,
 	Args: cobra.ExactArgs(1),
 	RunE: runSlim,
@@ -263,7 +263,8 @@ func init() {
 	rootCmd.AddCommand(classSectionsCmd)
 
 	// Slim command (top-level)
-	slimCmd.Flags().Bool("include-subpackages", false, "Include subpackages")
+	slimCmd.Flags().Bool("include-subpackages", true, "Include subpackages")
+	slimCmd.Flags().Bool("exact-package", false, "Analyze only the exact package, excluding subpackages")
 	slimCmd.Flags().String("format", "text", "Output format: text or json")
 	rootCmd.AddCommand(slimCmd)
 
@@ -1317,8 +1318,12 @@ func runSlim(cmd *cobra.Command, args []string) error {
 
 	pkg := strings.ToUpper(args[0])
 	inclSub, _ := cmd.Flags().GetBool("include-subpackages")
+	exactPkg, _ := cmd.Flags().GetBool("exact-package")
 	format, _ := cmd.Flags().GetString("format")
 	ctx := context.Background()
+	if exactPkg {
+		inclSub = false
+	}
 
 	// Step 1: Get objects in package
 	fmt.Fprintf(os.Stderr, "Loading package %s...\n", pkg)
@@ -1409,7 +1414,7 @@ func runSlim(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Collected %d reverse references.\n", len(allRefs))
 
 	// Step 3: Compute slim report
-	result := graph.ComputeSlim(objects, allRefs, nil)
+	result := graph.ComputeSlim(objects, allRefs, nil, objNames)
 	result.Scope = pkg
 
 	// Output
@@ -1423,36 +1428,48 @@ func runSlim(cmd *cobra.Command, args []string) error {
 	}
 
 	// Text output
-	fmt.Printf("Slim Report: %s (%d objects: %d live, %d dead candidates)\n\n",
-		result.Scope, result.TotalObjects, result.LiveObjectCount, result.DeadObjectCount)
+	fmt.Printf("Slim Report: %s (%d objects: %d live, %d dead, %d internal-only)\n\n",
+		result.Scope, result.TotalObjects, result.LiveObjectCount, result.DeadObjectCount, result.InternalOnlyCount)
 
-	if result.DeadObjectCount == 0 && result.DeadMethodCount == 0 {
+	if result.DeadObjectCount == 0 && result.InternalOnlyCount == 0 && result.DeadMethodCount == 0 {
 		fmt.Println("No dead code found. Package is clean.")
 		return nil
 	}
 
 	if result.DeadObjectCount > 0 {
-		fmt.Printf("Dead object candidates (%d) — zero static incoming references:\n", result.DeadObjectCount)
+		fmt.Printf("Dead objects (%d) — zero references anywhere [HIGH confidence]:\n", result.DeadObjectCount)
 		for _, d := range result.DeadObjects {
 			pkg := d.Package
 			if pkg == "" {
 				pkg = "-"
 			}
-			fmt.Printf("  %s %s %s [%s] [%s]\n", "❌", d.Type, d.Name, pkg, d.Confidence)
+			fmt.Printf("  %s %s %s [%s]\n", "❌", d.Type, d.Name, pkg)
+		}
+		fmt.Println()
+	}
+
+	if result.InternalOnlyCount > 0 {
+		fmt.Printf("Internal-only objects (%d) — referenced only within scope (review needed):\n", result.InternalOnlyCount)
+		for _, d := range result.InternalOnly {
+			pkg := d.Package
+			if pkg == "" {
+				pkg = "-"
+			}
+			fmt.Printf("  %s %s %s [%s] — %d internal refs\n", "ℹ️", d.Type, d.Name, pkg, d.InternalRefs)
 		}
 		fmt.Println()
 	}
 
 	if result.DeadMethodCount > 0 {
-		fmt.Printf("Dead methods (%d) — zero external callers, not from interfaces:\n", result.DeadMethodCount)
+		fmt.Printf("Dead methods (%d) — in non-dead classes, no external callers [MEDIUM]:\n", result.DeadMethodCount)
 		for _, d := range result.DeadMethods {
-			fmt.Printf("  %s %s=>%s [%s]\n", "⚠️", d.Name, d.Method, d.Confidence)
+			fmt.Printf("  %s %s=>%s\n", "⚠️", d.Name, d.Method)
 		}
 		fmt.Println()
 	}
 
-	fmt.Fprintf(os.Stderr, "Summary: %d dead candidates, %d dead methods, %d live objects\n",
-		result.DeadObjectCount, result.DeadMethodCount, result.LiveObjectCount)
+	fmt.Fprintf(os.Stderr, "Summary: %d dead, %d internal-only, %d dead methods, %d live\n",
+		result.DeadObjectCount, result.InternalOnlyCount, result.DeadMethodCount, result.LiveObjectCount)
 	return nil
 }
 

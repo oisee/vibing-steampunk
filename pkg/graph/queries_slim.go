@@ -11,22 +11,27 @@ type SlimEntry struct {
 	Name          string `json:"name"`                      // ZCL_OLD_HELPER
 	Type          string `json:"type"`                      // CLAS, PROG, INTF, FUGR, TABL, ...
 	Package       string `json:"package,omitempty"`         // $ZDEV
-	Kind          string `json:"kind"`                      // "dead_object" or "dead_method"
+	Kind          string `json:"kind"`                      // "dead_object", "internal_only", "dead_method"
 	Method        string `json:"method,omitempty"`          // method name (for dead_method only)
 	IncomingRefs  int    `json:"incoming_refs"`             // total incoming references found
-	Confidence    string `json:"confidence"`                // HIGH = zero refs confirmed, MEDIUM = low refs but some noise possible
+	InternalRefs  int    `json:"internal_refs,omitempty"`   // refs from within scope
+	ExternalRefs  int    `json:"external_refs,omitempty"`   // refs from outside scope
+	Confidence    string `json:"confidence"`                // HIGH, MEDIUM
 	LastTransport string `json:"last_transport,omitempty"`  // YYYYMMDD from meta if available
 }
 
 // SlimResult is the result of ComputeSlim.
 type SlimResult struct {
-	Scope            string      `json:"scope"`
-	TotalObjects     int         `json:"total_objects"`
-	DeadObjects      []SlimEntry `json:"dead_objects"`
-	DeadMethods      []SlimEntry `json:"dead_methods,omitempty"`
-	DeadObjectCount  int         `json:"dead_object_count"`
-	DeadMethodCount  int         `json:"dead_method_count"`
-	LiveObjectCount  int         `json:"live_object_count"`
+	Scope             string      `json:"scope"`
+	TotalObjects      int         `json:"total_objects"`
+	DeadObjects       []SlimEntry `json:"dead_objects"`
+	InternalOnly      []SlimEntry `json:"internal_only,omitempty"`
+	DeadMethods       []SlimEntry `json:"dead_methods,omitempty"`
+	DeadObjectCount   int         `json:"dead_object_count"`
+	InternalOnlyCount int         `json:"internal_only_count"`
+	DeadMethodCount   int         `json:"dead_method_count"`
+	LiveObjectCount   int         `json:"live_object_count"`
+	ScopePackages     []string    `json:"scope_packages,omitempty"`
 }
 
 // SlimObjectInfo describes a custom object in the target package.
@@ -45,28 +50,35 @@ type SlimRefRow struct {
 	Source        string // "WBCROSSGT" or "CROSS"
 }
 
-// ComputeSlim identifies dead objects and optionally dead methods.
-// An object is "dead" if no external objects reference it (zero incoming
-// cross-refs from outside its own object scope).
-// A method is "dead" if no external objects call it AND it is not declared
-// in an implemented interface (interface methods may be called polymorphically).
+// ComputeSlim identifies dead objects, internal-only objects, and dead methods.
 //
-// This is a read-only analysis. No deletions.
-func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods map[string]bool) *SlimResult {
+// Verdicts:
+//   - DEAD: zero refs total (HIGH confidence). Definitely unused.
+//   - INTERNAL_ONLY: refs exist but all from within scope (WARNING).
+//     May be legitimate internal helper or part of dead cluster.
+//   - LIVE: has at least one external ref.
+//
+// scopeObjects: set of object names in the analysis scope (for internal/external classification).
+// If nil, falls back to V1 behavior (zero refs = dead, any refs = live).
+func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods map[string]bool, scopeObjects map[string]bool) *SlimResult {
 	result := &SlimResult{
 		TotalObjects: len(objects),
 	}
 
-	// Build object set for self-reference detection
-	objectSet := make(map[string]bool)
-	for _, obj := range objects {
-		objectSet[strings.ToUpper(obj.Name)] = true
+	// Build object set if not provided (V1 compat)
+	if scopeObjects == nil {
+		scopeObjects = make(map[string]bool)
+		for _, obj := range objects {
+			scopeObjects[strings.ToUpper(obj.Name)] = true
+		}
 	}
 
-	// Count incoming external references per target
-	// External = caller is not the same object (after NormalizeInclude)
-	incomingRefs := make(map[string]int)       // target name → count of external refs
-	methodRefs := make(map[string]int)          // "OBJNAME=>METHOD" → count of external refs
+	// Count incoming refs per target, classified as internal/external
+	type refCounts struct {
+		internal int
+		external int
+	}
+	refMap := make(map[string]*refCounts)
 
 	for _, ref := range refs {
 		targetUpper := strings.ToUpper(strings.TrimSpace(ref.TargetName))
@@ -79,29 +91,44 @@ func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods m
 			continue
 		}
 
-		// Normalize caller to object level
 		_, _, callerName := NormalizeInclude(callerInclude)
 		callerUpper := strings.ToUpper(callerName)
 
-		// Skip self-references (same object referencing itself)
-		if strings.EqualFold(callerUpper, targetUpper) {
+		// Skip self-references
+		if callerUpper == targetUpper {
 			continue
 		}
 
-		incomingRefs[targetUpper]++
+		rc, ok := refMap[targetUpper]
+		if !ok {
+			rc = &refCounts{}
+			refMap[targetUpper] = rc
+		}
 
-		// Track method-level refs: if caller include contains method call pattern
-		// This is approximate — we count any reference to the object as potential method usage
-		// More precise method-level analysis would need source parsing
+		if scopeObjects[callerUpper] {
+			rc.internal++
+		} else {
+			rc.external++
+		}
 	}
 
-	// Identify dead objects
+	// Classify objects
 	for _, obj := range objects {
 		nameUpper := strings.ToUpper(obj.Name)
-		refs := incomingRefs[nameUpper]
+		rc := refMap[nameUpper]
 
-		if refs == 0 {
-			entry := SlimEntry{
+		totalRefs := 0
+		internalRefs := 0
+		externalRefs := 0
+		if rc != nil {
+			internalRefs = rc.internal
+			externalRefs = rc.external
+			totalRefs = internalRefs + externalRefs
+		}
+
+		if totalRefs == 0 {
+			// DEAD: zero refs anywhere
+			result.DeadObjects = append(result.DeadObjects, SlimEntry{
 				NodeID:       NodeID(obj.Type, obj.Name),
 				Name:         obj.Name,
 				Type:         obj.Type,
@@ -109,25 +136,41 @@ func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods m
 				Kind:         "dead_object",
 				IncomingRefs: 0,
 				Confidence:   "HIGH",
-			}
-			result.DeadObjects = append(result.DeadObjects, entry)
+			})
+		} else if externalRefs == 0 {
+			// INTERNAL_ONLY: refs exist but all from within scope
+			result.InternalOnly = append(result.InternalOnly, SlimEntry{
+				NodeID:       NodeID(obj.Type, obj.Name),
+				Name:         obj.Name,
+				Type:         obj.Type,
+				Package:      obj.Package,
+				Kind:         "internal_only",
+				IncomingRefs: totalRefs,
+				InternalRefs: internalRefs,
+				Confidence:   "MEDIUM",
+			})
 		}
+		// else: LIVE (has external refs) — not reported
 	}
 
-	// Identify dead methods (for classes with methods listed)
+	// Dead methods: only for non-DEAD classes
 	if interfaceMethods == nil {
 		interfaceMethods = make(map[string]bool)
+	}
+
+	deadObjectSet := make(map[string]bool)
+	for _, d := range result.DeadObjects {
+		deadObjectSet[strings.ToUpper(d.Name)] = true
 	}
 
 	for _, obj := range objects {
 		if obj.Type != "CLAS" || len(obj.Methods) == 0 {
 			continue
 		}
-
 		nameUpper := strings.ToUpper(obj.Name)
 
-		// If the whole object is dead, don't also list its methods
-		if incomingRefs[nameUpper] == 0 {
+		// Skip dead objects — all their methods are dead by definition
+		if deadObjectSet[nameUpper] {
 			continue
 		}
 
@@ -135,34 +178,34 @@ func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods m
 			methodUpper := strings.ToUpper(method)
 			methodKey := nameUpper + "=>" + methodUpper
 
-			// Skip if method is from an interface (may be called polymorphically)
+			// Skip interface methods (may be called polymorphically)
 			if interfaceMethods[methodKey] {
 				continue
 			}
 
-			// Check if this specific method has external references
-			// We use the method-level ref count if available
-			methodRefCount := methodRefs[methodKey]
-
-			if methodRefCount == 0 {
-				entry := SlimEntry{
-					NodeID:       NodeID(obj.Type, obj.Name),
-					Name:         obj.Name,
-					Type:         obj.Type,
-					Package:      obj.Package,
-					Kind:         "dead_method",
-					Method:       method,
-					IncomingRefs: 0,
-					Confidence:   "MEDIUM", // method-level analysis is less precise
-				}
-				result.DeadMethods = append(result.DeadMethods, entry)
-			}
+			// Method-level ref tracking is approximate in V2
+			// (WBCROSSGT doesn't reliably track per-method refs)
+			// For now: flag all non-interface methods as candidates
+			// This is MEDIUM confidence — needs source-level validation in V2.1
+			result.DeadMethods = append(result.DeadMethods, SlimEntry{
+				NodeID:       NodeID(obj.Type, obj.Name),
+				Name:         obj.Name,
+				Type:         obj.Type,
+				Package:      obj.Package,
+				Kind:         "dead_method",
+				Method:       method,
+				IncomingRefs: 0,
+				Confidence:   "MEDIUM",
+			})
 		}
 	}
 
-	// Sort: dead objects by name, dead methods by class then method
+	// Sort
 	sort.Slice(result.DeadObjects, func(i, j int) bool {
 		return result.DeadObjects[i].NodeID < result.DeadObjects[j].NodeID
+	})
+	sort.Slice(result.InternalOnly, func(i, j int) bool {
+		return result.InternalOnly[i].NodeID < result.InternalOnly[j].NodeID
 	})
 	sort.Slice(result.DeadMethods, func(i, j int) bool {
 		if result.DeadMethods[i].NodeID != result.DeadMethods[j].NodeID {
@@ -172,8 +215,9 @@ func ComputeSlim(objects []SlimObjectInfo, refs []SlimRefRow, interfaceMethods m
 	})
 
 	result.DeadObjectCount = len(result.DeadObjects)
+	result.InternalOnlyCount = len(result.InternalOnly)
 	result.DeadMethodCount = len(result.DeadMethods)
-	result.LiveObjectCount = result.TotalObjects - result.DeadObjectCount
+	result.LiveObjectCount = result.TotalObjects - result.DeadObjectCount - result.InternalOnlyCount
 
 	return result
 }

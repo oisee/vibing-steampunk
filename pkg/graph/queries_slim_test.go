@@ -18,7 +18,7 @@ func TestComputeSlim_DeadObjects(t *testing.T) {
 		// ZPROG_DEAD: no references at all
 	}
 
-	result := ComputeSlim(objects, refs, nil)
+	result := ComputeSlim(objects, refs, nil, nil)
 
 	if result.TotalObjects != 3 {
 		t.Errorf("TotalObjects: got %d, want 3", result.TotalObjects)
@@ -63,14 +63,15 @@ func TestComputeSlim_SelfRefNotCounted(t *testing.T) {
 		{CallerInclude: "ZCL_SELF========CM001", TargetName: "ZCL_SELF", Source: "WBCROSSGT"},
 	}
 
-	result := ComputeSlim(objects, refs, nil)
+	result := ComputeSlim(objects, refs, nil, nil)
 
 	if result.DeadObjectCount != 1 {
 		t.Errorf("Self-refs only: should be dead, got %d dead", result.DeadObjectCount)
 	}
 }
 
-func TestComputeSlim_AllLive(t *testing.T) {
+func TestComputeSlim_MutualInternalRefs(t *testing.T) {
+	// Two objects that only reference each other (within scope) — INTERNAL_ONLY, not DEAD
 	objects := []SlimObjectInfo{
 		{Name: "ZCL_A", Type: "CLAS"},
 		{Name: "ZCL_B", Type: "CLAS"},
@@ -80,15 +81,42 @@ func TestComputeSlim_AllLive(t *testing.T) {
 		{CallerInclude: "ZCL_A========CP", TargetName: "ZCL_B", Source: "WBCROSSGT"},
 	}
 
-	result := ComputeSlim(objects, refs, nil)
+	result := ComputeSlim(objects, refs, nil, nil)
 
 	if result.DeadObjectCount != 0 {
-		t.Errorf("All live: got %d dead", result.DeadObjectCount)
+		t.Errorf("Mutual refs: got %d dead, want 0 (they have refs)", result.DeadObjectCount)
+	}
+	if result.InternalOnlyCount != 2 {
+		t.Errorf("Mutual refs: got %d internal_only, want 2 (all refs are internal)", result.InternalOnlyCount)
+	}
+}
+
+func TestComputeSlim_ExternalRefMakesLive(t *testing.T) {
+	// ZCL_A has external caller → LIVE. ZCL_B only called by ZCL_A (internal) → INTERNAL_ONLY
+	objects := []SlimObjectInfo{
+		{Name: "ZCL_A", Type: "CLAS"},
+		{Name: "ZCL_B", Type: "CLAS"},
+	}
+	refs := []SlimRefRow{
+		{CallerInclude: "ZCL_EXTERNAL========CP", TargetName: "ZCL_A", Source: "WBCROSSGT"},
+		{CallerInclude: "ZCL_A========CP", TargetName: "ZCL_B", Source: "WBCROSSGT"},
+	}
+
+	result := ComputeSlim(objects, refs, nil, nil)
+
+	if result.DeadObjectCount != 0 {
+		t.Errorf("Expected 0 dead, got %d", result.DeadObjectCount)
+	}
+	if result.InternalOnlyCount != 1 {
+		t.Errorf("ZCL_B should be internal_only: got %d", result.InternalOnlyCount)
+	}
+	if result.LiveObjectCount != 1 {
+		t.Errorf("ZCL_A should be live: got %d live", result.LiveObjectCount)
 	}
 }
 
 func TestComputeSlim_Empty(t *testing.T) {
-	result := ComputeSlim(nil, nil, nil)
+	result := ComputeSlim(nil, nil, nil, nil)
 
 	if result.TotalObjects != 0 || result.DeadObjectCount != 0 {
 		t.Error("Empty input should produce empty result")
@@ -111,7 +139,7 @@ func TestComputeSlim_DeadMethods(t *testing.T) {
 		"ZCL_FOO=>INTF_METHOD": true,
 	}
 
-	result := ComputeSlim(objects, refs, interfaceMethods)
+	result := ComputeSlim(objects, refs, interfaceMethods, nil)
 
 	// Object is live, so methods are checked
 	if result.DeadObjectCount != 0 {
@@ -138,7 +166,7 @@ func TestComputeSlim_DeadObjectSkipsMethodAnalysis(t *testing.T) {
 		},
 	}
 	// No refs at all — object is dead
-	result := ComputeSlim(objects, nil, nil)
+	result := ComputeSlim(objects, nil, nil, nil)
 
 	if result.DeadObjectCount != 1 {
 		t.Error("Should be dead")
@@ -156,7 +184,7 @@ func TestComputeSlim_Sorting(t *testing.T) {
 		{Name: "ZCL_B", Type: "CLAS"},
 	}
 
-	result := ComputeSlim(objects, nil, nil)
+	result := ComputeSlim(objects, nil, nil, nil)
 
 	if len(result.DeadObjects) != 3 {
 		t.Fatalf("Expected 3 dead, got %d", len(result.DeadObjects))
@@ -173,6 +201,28 @@ func TestComputeSlim_Sorting(t *testing.T) {
 	}
 }
 
+func TestComputeSlim_ExplicitScopeObjects(t *testing.T) {
+	objects := []SlimObjectInfo{
+		{Name: "ZCL_IN_SCOPE", Type: "CLAS"},
+	}
+	refs := []SlimRefRow{
+		// Caller is in scope (explicitly provided)
+		{CallerInclude: "ZCL_ALSO_SCOPE========CP", TargetName: "ZCL_IN_SCOPE", Source: "WBCROSSGT"},
+	}
+	// Explicit scope includes both objects
+	scopeObjects := map[string]bool{
+		"ZCL_IN_SCOPE":   true,
+		"ZCL_ALSO_SCOPE": true,
+	}
+
+	result := ComputeSlim(objects, refs, nil, scopeObjects)
+
+	// Ref is internal (both in scope) → INTERNAL_ONLY
+	if result.InternalOnlyCount != 1 {
+		t.Errorf("Expected 1 internal_only, got %d", result.InternalOnlyCount)
+	}
+}
+
 func TestComputeSlim_CrossSource(t *testing.T) {
 	// Refs from CROSS (not just WBCROSSGT) should count
 	objects := []SlimObjectInfo{
@@ -182,7 +232,7 @@ func TestComputeSlim_CrossSource(t *testing.T) {
 		{CallerInclude: "ZREPORT", TargetName: "Z_MY_FM", Source: "CROSS"},
 	}
 
-	result := ComputeSlim(objects, refs, nil)
+	result := ComputeSlim(objects, refs, nil, nil)
 
 	if result.DeadObjectCount != 0 {
 		t.Error("Z_MY_FM has CROSS caller, should be live")
