@@ -36,7 +36,11 @@ For every development task, follow this sequence. Do NOT skip steps.
 ### 5. TEST — Verify nothing broke
 
 - **RunUnitTests** — Run tests for the modified object AND its dependents.
-- **RunATCCheck** — Run code quality checks. Report any Priority 1 or 2 findings.
+- **AnalyzeABAPCode** — Fast offline static analysis (abaplint-based). Use during the inner loop while iterating — checks naming, obsolete statements, common smells without round-tripping to SAP. Faster than RunATCCheck.
+- **RunATCCheck** — Official code quality gate. Use as the final check before considering a task done. Report any Priority 1 or 2 findings.
+
+> Inner loop: Edit → SyntaxCheck → AnalyzeABAPCode → RunUnitTests
+> Outer (gate): + RunATCCheck before declaring complete
 
 ## Tool Reference
 
@@ -50,7 +54,8 @@ For every development task, follow this sequence. Do NOT skip steps.
 | Activate | Activate a single object | After syntax passes |
 | ActivatePackage | Batch activate package contents | After bulk changes |
 | RunUnitTests | Execute ABAP Unit tests | After every activation |
-| RunATCCheck | Code quality checks | Before considering done |
+| AnalyzeABAPCode | Fast offline static analysis (abaplint) | Inner-loop quality feedback |
+| RunATCCheck | Official ATC quality gate | Final check before done |
 | GrepObjects | Regex search in objects | Finding usage patterns |
 | GrepPackages | Regex search across packages | Impact analysis |
 | FindDefinition | Navigate to symbol definition | Understanding code |

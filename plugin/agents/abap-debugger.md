@@ -29,6 +29,20 @@ ALWAYS start by verifying the environment:
 
 After Phase 1, you should know: WHAT failed, WHERE it failed, and the call path.
 
+### Phase 1.5: WHAT CHANGED — Was this working yesterday?
+
+Before reaching for the debugger, ask: did this code recently change? Most "mysterious" failures are caused by a recent edit.
+
+| Step | Tool | Purpose |
+|------|------|---------|
+| 1.5a | **GetRevisions** | List all historical versions of the failing object (timestamps, authors, transports) |
+| 1.5b | **GetRevisionSource** | Pull the source from a specific revision — usually the last known-good version |
+| 1.5c | **CompareVersions** | Diff current vs known-good revision to surface exactly what changed |
+
+If the diff explains the failure (e.g. a line of validation code was deleted, a parameter type changed), you may already have the root cause without ever needing the live debugger. **Always check what changed before reproducing the failure** — it's the cheapest path to a fix.
+
+If nothing recent changed (or if the regression is older than your revision history), proceed to Phase 2.
+
 ### Phase 2: REPRODUCE — Trigger the failure in a controlled way
 
 | Step | Tool | Purpose |

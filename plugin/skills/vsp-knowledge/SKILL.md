@@ -15,13 +15,15 @@ For ABAP classes, ALWAYS use method-level source operations. Reading/writing an 
 
 Only read the full class when you need a structural overview. For edits, always target the specific method or include.
 
-## Focused vs Expert Mode
+## Tool Modes
 
-VSP operates in two modes:
-- **Focused mode** (default): 81 essential tools — covers 95% of development tasks
-- **Expert mode**: 122 tools — adds atomic CRUD operations, AMDP debugger, advanced features
+VSP operates in three modes (`--mode` flag or `SAP_MODE` env var):
 
-Use focused mode unless you specifically need: LockObject/UnlockObject (atomic ops), AMDP debugging, or tools in disabled groups.
+- **Focused mode** (default, `--mode focused`): ~81 essential tools — covers 95% of development tasks.
+- **Expert mode** (`--mode expert`): full ~150-tool surface — adds atomic CRUD operations, AMDP debugger, gCTS suite, refactoring tools, advanced experimental features.
+- **Hyperfocused mode** (`--mode hyperfocused`): a single universal `SAP(action, target, params)` tool that routes internally to all handlers. ~150 tokens of tool definitions instead of ~30k. Built for token-budget-constrained sessions. The LLM discovers capabilities at runtime via `SAP(action="help")` or `SAP(action="help", target="<action>")`.
+
+Choose focused unless you specifically need expert-only tools (LockObject/UnlockObject atomic ops, AMDP debugging, gCTS, RenameObject, MoveObject, …) or token budget is very tight (then hyperfocused).
 
 ## Object Lifecycle
 
@@ -53,6 +55,16 @@ VSP has enterprise safety controls. Before attempting write operations, be aware
 - **Transportable edit protection**: Objects in transportable packages require `--allow-transportable-edits`
 
 If a write operation fails with a safety error, explain the restriction to the user rather than trying to work around it.
+
+## Authentication
+
+VSP supports three auth methods (use only one):
+
+- **Basic auth** — `--user X --password Y` (or `SAP_USER`/`SAP_PASSWORD` env)
+- **Cookie auth** — `--cookie-file <netscape.txt>` or `--cookie-string "key=val; key=val"` (for systems with custom SSO)
+- **Browser-based SSO** — `--browser-auth` opens a Chromium-based browser for interactive Kerberos / SAML / Keycloak login. Use `--cookie-save <path>` to persist the session for reuse with `--cookie-file`.
+
+If a user mentions Kerberos, SAML, ADFS, Keycloak, or "single sign-on," recommend `--browser-auth`.
 
 ## ABAP SQL Differences
 

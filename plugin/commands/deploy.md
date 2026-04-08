@@ -18,6 +18,7 @@ Deploy an ABAP object through the full quality gate pipeline.
 7. If `--transport` specified or object is in a transportable package:
    - Use **ListTransports** to show available transport requests
    - Confirm with user before adding to transport
+   - **gCTS alternative:** if the system uses gCTS instead of classic CTS, the `Gcts*` tool family handles git-based change management — `GctsListRepositories`, `GctsCommit`, `GctsPull`, `GctsSwitchBranch`, etc. Check `GetFeatures` and ask the user which transport flow applies.
 8. Report final status: deployed, tested, transport status
 
 ## Safety Checks
