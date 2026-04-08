@@ -23,8 +23,9 @@
 | T2.2 | HTML form parser using `x/net/html` | TODO | backend-dev |
 | T2.3 | Add CLI flags to `main.go` | TODO | backend-dev |
 | T2.4 | Add `processSAMLAuth()` between browser and cookie auth | TODO | backend-dev |
-| T2.5 | Write comprehensive unit tests (7 cases) | TODO | test-engineer |
-| T2.6 | Manual test against K0B DEV | TODO | backend-dev |
+| T2.5 | Wire 401 re-auth into Transport (ReauthFunc + singleflight) | TODO | backend-dev |
+| T2.6 | Write comprehensive unit tests (8 cases) | TODO | test-engineer |
+| T2.7 | Manual test against K0B DEV | TODO | backend-dev |
 | GATE | Tests pass + PAL codereview + thinkdeep | TODO | orchestrator |
 
 ## Phase SAML.3: Credential Helper

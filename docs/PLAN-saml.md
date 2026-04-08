@@ -3,7 +3,9 @@
 **Session:** saml
 **Created:** 2026-04-08
 **Status:** APPROVED
-**Audit:** APPROVE [C+O] — 3 MEDIUM fixed (F1 argv exec, F2 credential zeroing, F3 test split), zero MEDIUM+ remaining
+**Audit round 1:** 3 MEDIUM fixed (argv exec, credential zeroing, test split)
+**Audit round 2:** 1 HIGH + 2 MEDIUM fixed (401 re-auth gap, shlex dep, credential lifecycle)
+**Final verdict:** APPROVE [C+O] — zero MEDIUM+ remaining
 **Spike:** [docs/spikes/2026-04-08-saml-auth-public-cloud.md](spikes/2026-04-08-saml-auth-public-cloud.md)
 **Cross-validation:** [C+O] Porfiry [Opus 4.6] + GPT-5.2-Pro + GPT-5.1-Codex — 8/10 confidence
 
@@ -74,7 +76,7 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 
 **Goal:** Add `--saml-auth` flag that performs the full SAML dance via HTTP client without browser.
 **Files new:** `pkg/adt/saml_auth.go`, `pkg/adt/saml_auth_test.go`
-**Files modified:** `cmd/vsp/main.go`, `go.mod`
+**Files modified:** `cmd/vsp/main.go`, `go.mod`, `pkg/adt/http.go`, `pkg/adt/config.go`
 **New deps:** `golang.org/x/net` (for `html` package — form parsing)
 **Estimated effort:** 2-3 days
 
@@ -83,25 +85,32 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
   - Step 2: POST SAMLRequest to IAS → parse IAS login form (j_username, j_password fields)
   - Step 3: POST credentials to IAS → extract SAMLResponse
   - Step 4: Follow SAMLResponse chain (loop up to 10 form POSTs) → extract SAP session cookies
-  - **Credential handling:** Store IAS password as `[]byte`; zero buffer (`for i := range buf { buf[i] = 0 }`) after SAMLResponse is obtained. Document that Go string-based zeroing is best-effort due to GC.
+  - **Credential lifecycle:** Use `CredentialProvider func(ctx) (user, pass []byte, err error)` callback pattern. The provider re-reads credentials from env/credential-cmd on each invocation — no long-term credential retention in memory. This resolves the zeroing vs re-auth conflict: credentials are obtained fresh for each SAML dance (initial + re-auth on 401). Zero `[]byte` buffers after each use.
   - **InsecureSkipVerify:** When `--insecure` is set, TLS verification is also skipped for the IAS endpoint. Document in `--saml-auth` help text with warning.
 - [ ] T2.2: Implement HTML form parser helper using `golang.org/x/net/html` — extract `<form action>` and `<input name value>` from HTML response body. Target SAML-standard field names (SAMLRequest, SAMLResponse, RelayState), not layout.
 - [ ] T2.3: Add CLI flags to `cmd/vsp/main.go`: `--saml-auth`, `--saml-user` / `SAP_SAML_USER`, `--saml-password` / `SAP_SAML_PASSWORD`. Add `processSAMLAuth()` function.
 - [ ] T2.4: Add `processSAMLAuth(cmd)` function called between `processBrowserAuth` and `processCookieAuth` in the PersistentPreRunE chain. `processSAMLAuth` performs the SAML dance and populates `cfg.Cookies`, identical to how `processBrowserAuth` works. The existing `authMethods` counter in `processCookieAuth` already handles mutual exclusivity.
-- [ ] T2.5: Write comprehensive unit tests with mock HTTP server:
+- [ ] T2.5: Wire 401 re-auth into Transport layer:
+  - Add `ReauthFunc func(ctx context.Context) (map[string]string, error)` field to `Config` (config.go)
+  - Modify 401 handler in `http.go` `retryRequest()`: when `HasBasicAuth()` is false and `ReauthFunc` is set, call it to get fresh cookies instead of `fetchCSRFToken()` Basic Auth path
+  - Use `sync.Once` or `singleflight` to prevent concurrent 401 stampede (multiple goroutines triggering simultaneous IAS logins)
+  - `processSAMLAuth` in main.go sets `cfg.ReauthFunc` = closure calling `SAMLLogin` with the `CredentialProvider`
+- [ ] T2.6: Write comprehensive unit tests with mock HTTP server:
   - `TestSAMLLogin_FullFlow` — 4-endpoint mock simulating SAP→IAS→SAP chain
   - `TestSAMLLogin_WrongPassword` — IAS returns error page
   - `TestSAMLLogin_IASUnavailable` — connection refused
   - `TestSAMLLogin_MalformedSAML` — missing SAMLResponse field
   - `TestSAMLLogin_RedirectLoop` — >10 hops protection
   - `TestSAMLAuth_VerboseNoSecrets` — capture stderr, verify no passwords/assertions logged
-  - `TestSAMLLogin_ReauthOn401` — verify transparent re-authentication when SAP returns 401 after session expiry
-- [ ] T2.6: Manual test against K0B DEV (`vsp --saml-auth --saml-user user@example.com --saml-password *** --url https://my413862.s4hana.cloud.sap`)
-- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 6 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
+  - `TestSAMLLogin_ReauthOn401` — verify Transport calls ReauthFunc on 401, gets fresh cookies, retries request
+  - `TestSAMLLogin_ReauthConcurrent` — verify singleflight prevents stampede on simultaneous 401s
+- [ ] T2.7: Manual test against K0B DEV (`vsp --saml-auth --saml-user user@example.com --saml-password *** --url https://my413862.s4hana.cloud.sap`)
+- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 8 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
 
 **Rollback:**
-1. `git revert <commit>` — new files only, no upstream code modified except main.go flags
+1. `git revert <commit>` — new files + minimal changes to main.go, http.go, config.go
 2. Remove `golang.org/x/net` from go.mod via `go mod tidy`
+3. `ReauthFunc` field in Config is nil by default — no impact on existing auth flows
 
 ### Phase SAML.3: Credential Helper (upstream PR #3)
 
@@ -117,7 +126,7 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
   - Context-aware timeout (default 30s)
   - Never log stdout/stderr content (contains secrets)
   - Read credential-cmd stdout into `[]byte`; zero buffer after JSON parsing
-  - CLI flag accepts space-separated command: `--credential-cmd "keepassxc-cli show -s db.kdbx 'SAP/K0B'"` — split by `shlex.Split()` equivalent (use `github.com/google/shlex` or manual split). Log warning when sourced from env var.
+  - CLI flag accepts space-separated command: `--credential-cmd "keepassxc-cli show -s db.kdbx SAP/K0B"` — split by `strings.Fields()` (no shell quoting support; document limitation). For complex quoting, use repeated `--credential-cmd-arg` flags or wrapper script. Log warning when sourced from env var.
 - [ ] T3.2: Add CLI flag `--credential-cmd` / `SAP_CREDENTIAL_CMD` to `cmd/vsp/main.go`
 - [ ] T3.3: Wire credential-cmd as credential source for `--saml-auth`: priority order is credential-cmd > env vars > TTY prompt
 - [ ] T3.4: Write unit tests:
@@ -144,7 +153,7 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 | Cookie files use 0600 permissions | Already enforced in `SaveCookiesToFile` |
 | KeePass master password: TTY-only | credential-cmd pattern — VSP never sees master password |
 | MFA: Option A does not support it | Documented in `--saml-auth` help text + error message |
-| Credential memory zeroing | Store passwords as `[]byte`, zero after use. Best-effort in Go (GC may copy) |
+| Credential lifecycle | CredentialProvider callback re-reads on each auth; `[]byte` zeroed after each use. No long-term retention. |
 | credential-cmd: no shell execution | Use `exec.Command(argv...)` not `sh -c`. Prevents shell injection from env/config |
 | InsecureSkipVerify covers IAS too | Document in `--saml-auth` help that `--insecure` disables TLS for IAS endpoint |
 
