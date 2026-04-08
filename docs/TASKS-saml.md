@@ -7,13 +7,13 @@
 
 | Task | Description | Status | Assignee |
 |------|-------------|--------|----------|
-| T1.1 | Fix `extractSAPCookies` cookie URL filtering | TODO | backend-dev |
-| T1.2 | Improve `pollForSAPCookies` SAML timing | TODO | backend-dev |
-| T1.3 | Add verbose SAML redirect logging | TODO | backend-dev |
-| T1.4 | Write unit tests for cookie filtering logic | TODO | test-engineer |
-| T1.5 | Write integration test (chromedp + httptest, build tag) | TODO | test-engineer |
-| T1.6 | Manual test against K0B DEV | TODO | backend-dev |
-| GATE | Tests pass + PAL codereview + thinkdeep | TODO | orchestrator |
+| T1.1 | Fix `extractSAPCookies` cookie URL filtering | DONE | backend-dev |
+| T1.2 | Improve `pollForSAPCookies` SAML timing | DONE | backend-dev |
+| T1.3 | Add verbose SAML redirect logging | DONE | backend-dev |
+| T1.4 | Write unit tests for cookie filtering logic | DONE | test-engineer |
+| T1.5 | Write integration test (chromedp + httptest, build tag) | DONE | test-engineer |
+| T1.6 | Manual test against K0B DEV | PENDING | backend-dev |
+| GATE | Tests pass + PAL codereview + thinkdeep | IN PROGRESS | orchestrator |
 
 ## Phase SAML.2: Programmatic SAML Flow
 

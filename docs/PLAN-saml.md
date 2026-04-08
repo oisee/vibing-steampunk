@@ -60,12 +60,12 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 **New deps:** None
 **Estimated effort:** 1-2 days
 
-- [ ] T1.1: Fix `extractSAPCookies` cookie URL filtering — pass multiple URLs to `WithURLs()` (base URL + `/sap/bc/adt/` path) to handle SAML cookie path scoping
-- [ ] T1.2: Improve `pollForSAPCookies` timing — add SAML-aware patience (wait longer for multi-hop redirect chain, log each poll cycle in verbose mode)
-- [ ] T1.3: Add verbose SAML redirect logging (URL + host tracking, cookie names only — never values or SAML assertion bodies)
-- [ ] T1.4: Write unit tests for cookie filtering logic — extract cookie name matching from `extractSAPCookies` into a testable helper that accepts `[]*network.Cookie` input. Test cases: SAML domain cookies, path-scoped cookies, weak vs strong cookie distinction, empty cookie jar
-- [ ] T1.5: Write integration test under `//go:build integration` tag — `httptest.Server` with SAML-like redirect chain + headless chromedp, verify cookie extraction after multi-hop redirect
-- [ ] T1.6: Manual test against K0B DEV (`vsp --browser-auth --url https://my413862.s4hana.cloud.sap -v`) — primary validation for cookie polling timing fix
+- [x] T1.1: Fix `extractSAPCookies` cookie URL filtering — `cookieURLsForSAP()` passes 4 URLs (base + /sap/ + /sap/bc/ + /sap/bc/adt/) to `WithURLs()`
+- [x] T1.2: Improve `pollForSAPCookies` timing — 500ms poll interval, elapsed time tracking, smart verbose logging (on cookie count change or every 10th poll)
+- [x] T1.3: Add verbose SAML redirect logging — `chromedp.ListenTarget` for `page.EventFrameNavigated` + `network.EventResponseReceived` (URL + host only, never values)
+- [x] T1.4: Write unit tests — `TestCookieURLsForSAP` (3 cases), `TestMatchesSAPAuthCookie` (10 cases), `TestMatchesSAPWeakCookie` (5 cases), `TestSAPCookieClassification`, `TestEmptyCookieJar`
+- [x] T1.5: Write integration test — `browser_auth_integration_test.go` (`//go:build integration`): `TestBrowserAuth_SAMLRedirectChain` (3-hop httptest + chromedp), `TestBrowserAuth_PollDetectsCookies` (delayed cookie appearance)
+- [ ] T1.6: Manual test against K0B DEV (`vsp --browser-auth --url https://my413862.s4hana.cloud.sap -v`) — pending access
 - [ ] GATE: `go test ./pkg/adt/...` passes (verify T1.4 unit tests + T1.5 integration test exist) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
 
 **Rollback:**
