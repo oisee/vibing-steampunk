@@ -35,18 +35,18 @@ func (s *Server) routeWorkflowAction(ctx context.Context, action, objectType, ob
 // --- Workflow Handlers ---
 
 func (s *Server) handleWriteProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	programName, ok := request.Params.Arguments["program_name"].(string)
+	programName, ok := request.GetArguments()["program_name"].(string)
 	if !ok || programName == "" {
 		return newToolResultError("program_name is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
 	transport := ""
-	if t, ok := request.Params.Arguments["transport"].(string); ok {
+	if t, ok := request.GetArguments()["transport"].(string); ok {
 		transport = t
 	}
 
@@ -60,18 +60,18 @@ func (s *Server) handleWriteProgram(ctx context.Context, request mcp.CallToolReq
 }
 
 func (s *Server) handleWriteClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	className, ok := request.Params.Arguments["class_name"].(string)
+	className, ok := request.GetArguments()["class_name"].(string)
 	if !ok || className == "" {
 		return newToolResultError("class_name is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
 	transport := ""
-	if t, ok := request.Params.Arguments["transport"].(string); ok {
+	if t, ok := request.GetArguments()["transport"].(string); ok {
 		transport = t
 	}
 
@@ -85,28 +85,28 @@ func (s *Server) handleWriteClass(ctx context.Context, request mcp.CallToolReque
 }
 
 func (s *Server) handleCreateAndActivateProgram(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	programName, ok := request.Params.Arguments["program_name"].(string)
+	programName, ok := request.GetArguments()["program_name"].(string)
 	if !ok || programName == "" {
 		return newToolResultError("program_name is required"), nil
 	}
 
-	description, ok := request.Params.Arguments["description"].(string)
+	description, ok := request.GetArguments()["description"].(string)
 	if !ok || description == "" {
 		return newToolResultError("description is required"), nil
 	}
 
-	packageName, ok := request.Params.Arguments["package_name"].(string)
+	packageName, ok := request.GetArguments()["package_name"].(string)
 	if !ok || packageName == "" {
 		return newToolResultError("package_name is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
 	transport := ""
-	if t, ok := request.Params.Arguments["transport"].(string); ok {
+	if t, ok := request.GetArguments()["transport"].(string); ok {
 		transport = t
 	}
 
@@ -120,33 +120,33 @@ func (s *Server) handleCreateAndActivateProgram(ctx context.Context, request mcp
 }
 
 func (s *Server) handleCreateClassWithTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	className, ok := request.Params.Arguments["class_name"].(string)
+	className, ok := request.GetArguments()["class_name"].(string)
 	if !ok || className == "" {
 		return newToolResultError("class_name is required"), nil
 	}
 
-	description, ok := request.Params.Arguments["description"].(string)
+	description, ok := request.GetArguments()["description"].(string)
 	if !ok || description == "" {
 		return newToolResultError("description is required"), nil
 	}
 
-	packageName, ok := request.Params.Arguments["package_name"].(string)
+	packageName, ok := request.GetArguments()["package_name"].(string)
 	if !ok || packageName == "" {
 		return newToolResultError("package_name is required"), nil
 	}
 
-	classSource, ok := request.Params.Arguments["class_source"].(string)
+	classSource, ok := request.GetArguments()["class_source"].(string)
 	if !ok || classSource == "" {
 		return newToolResultError("class_source is required"), nil
 	}
 
-	testSource, ok := request.Params.Arguments["test_source"].(string)
+	testSource, ok := request.GetArguments()["test_source"].(string)
 	if !ok || testSource == "" {
 		return newToolResultError("test_source is required"), nil
 	}
 
 	transport := ""
-	if t, ok := request.Params.Arguments["transport"].(string); ok {
+	if t, ok := request.GetArguments()["transport"].(string); ok {
 		transport = t
 	}
 

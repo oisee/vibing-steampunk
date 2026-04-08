@@ -112,13 +112,16 @@ func emitFUGR(mod *Module, fugrName string, funcsPerInclude int, redirects map[i
 	slot := 0
 	includeIdx := 0
 	var currentFuncs []int
+	var allBlockMethods []*blockMethodDef
 
 	flushInclude := func() {
 		if len(currentFuncs) == 0 {
 			return
 		}
 		fname := fmt.Sprintf("%sF%02d.abap", prefix, includeIdx)
-		result.Files[fname] = emitFUGRInclude(mod, currentFuncs, redirects, upper)
+		src, blockMethods := emitFUGRInclude(mod, currentFuncs, redirects, upper)
+		result.Files[fname] = src
+		allBlockMethods = append(allBlockMethods, blockMethods...)
 		includeIdx++
 		currentFuncs = nil
 	}
@@ -137,6 +140,9 @@ func emitFUGR(mod *Module, fugrName string, funcsPerInclude int, redirects map[i
 		}
 	}
 	flushInclude()
+
+	// Class include — CLASS g with shared data + block methods
+	result.Files[prefix+"GI.abap"] = emitClassInclude(mod, allBlockMethods)
 
 	// Init include — memory/data/element initialization
 	result.Files[prefix+"INIT.abap"] = emitFUGRInit(mod, upper)
@@ -172,6 +178,28 @@ func emitFUGRTop(mod *Module, upper string) string {
 
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// computeMaxVars finds the maximum param count, local count, and stack depth across all functions.
+func computeMaxVars(mod *Module) (maxParams, maxLocals, maxStack int) {
+	for _, f := range mod.Functions {
+		if f.Type == nil {
+			continue
+		}
+		if len(f.Type.Params) > maxParams {
+			maxParams = len(f.Type.Params)
+		}
+		// Track max local INDEX (numParams + numLocals) not just count
+		maxLocalIdx := len(f.Type.Params) + len(f.Locals)
+		if maxLocalIdx > maxLocals {
+			maxLocals = maxLocalIdx
+		}
+		ms := estimateMaxStack(f.Code)
+		if ms > maxStack {
+			maxStack = ms
+		}
+	}
+	return
 }
 
 func emitFUGRRuntime() string {
@@ -240,8 +268,8 @@ ENDFORM.
 `
 }
 
-func emitFUGRInclude(mod *Module, funcIndices []int, redirects map[int]int, upper string) string {
-	c := &compiler{mod: mod}
+func emitFUGRInclude(mod *Module, funcIndices []int, redirects map[int]int, upper string) (string, []*blockMethodDef) {
+	c := &compiler{mod: mod, useBlockMethods: true}
 
 	for _, i := range funcIndices {
 		f := &mod.Functions[i]
@@ -249,9 +277,15 @@ func emitFUGRInclude(mod *Module, funcIndices []int, redirects map[int]int, uppe
 			continue
 		}
 		emitFORM(c, f, i, mod, redirects)
+		// Generate block method bodies (stored in blockMethodDef.body)
+		for _, bm := range c.blockMethods {
+			if bm.body == "" {
+				c.generateBlockBody(bm, redirects)
+			}
+		}
 	}
 
-	return c.sb.String()
+	return c.sb.String(), c.blockMethods
 }
 
 func emitFORM(c *compiler, f *Function, funcIdx int, mod *Module, redirects map[int]int) {
@@ -283,22 +317,48 @@ func emitFORM(c *compiler, f *Function, funcIdx int, mod *Module, redirects map[
 	}
 	c.indent++
 
-	// Chained DATA declaration
-	c.line("%s", emitChainedDATA(f))
+	if c.useBlockMethods {
+		// Copy USING params to lcl_g globals
+		for i := range f.Type.Params {
+			c.line("g=>p%d = p%d.", i, i)
+		}
+		c.line("g=>br = 0.")
+	} else {
+		// Chained DATA declaration (for non-block-FORM mode)
+		c.line("%s", emitChainedDATA(f))
+	}
 
 	// Enable packing for code
 	c.packLines = true
 	c.packer = newLinePacker(&c.sb, c.indent)
 
 	// Emit instructions with FUGR-style
-	stack := &virtualStack{}
+	stackPrefix := ""
+	if c.useBlockMethods {
+		stackPrefix = "g=>"
+	}
+	stack := &virtualStack{prefix: stackPrefix}
 	c.blockStack = nil
 	c.useFUGR = true
 	c.fugrRedirects = redirects
+	c.currentFuncIndex = funcIdx
+	c.inBlockMethod = false
 	c.emitInstructions(f, f.Code, stack, 0)
 
-	if len(f.Type.Results) > 0 && stack.depth > 0 {
-		c.line("rv = %s.", stack.peek())
+	if c.useBlockMethods {
+		// Handle return propagation from block methods (e.g., OpReturn inside a block)
+		if len(f.Type.Results) > 0 {
+			c.line("IF g=>br > 0. rv = g=>rv. RETURN. ENDIF.")
+			if stack.depth > 0 {
+				c.line("rv = %s.", stack.peek())
+			}
+		} else {
+			c.line("IF g=>br > 0. RETURN. ENDIF.")
+		}
+	} else {
+		if len(f.Type.Results) > 0 && stack.depth > 0 {
+			c.line("rv = %s.", stack.peek())
+		}
 	}
 
 	c.indent--
@@ -505,6 +565,51 @@ func emitHybridClass(mod *Module, className, fugrName string) string {
 	c.line("ENDCLASS.")
 
 	return c.sb.String()
+}
+
+// emitClassInclude generates CLASS g with shared CLASS-DATA and block CLASS-METHODS.
+func emitClassInclude(mod *Module, blockMethods []*blockMethodDef) string {
+	var sb strings.Builder
+	maxParams, maxLocals, maxStack := computeMaxVars(mod)
+
+	// --- DEFINITION ---
+	sb.WriteString("\" CLASS g — shared state + block methods for WASM codegen\n")
+	sb.WriteString("CLASS g DEFINITION.\n")
+	sb.WriteString("  PUBLIC SECTION.\n")
+
+	// Params
+	for i := 0; i < maxParams; i++ {
+		sb.WriteString(fmt.Sprintf("    CLASS-DATA p%d TYPE i.\n", i))
+	}
+	// Locals — l0 to l{maxLocals-1} where maxLocals = max(numParams+numLocals) across functions
+	for i := 0; i < maxLocals; i++ {
+		sb.WriteString(fmt.Sprintf("    CLASS-DATA l%d TYPE i.\n", i))
+	}
+	// Stack vars
+	for i := 0; i < maxStack; i++ {
+		sb.WriteString(fmt.Sprintf("    CLASS-DATA s%d TYPE i.\n", i))
+	}
+	// Branch depth and return value
+	sb.WriteString("    CLASS-DATA br TYPE i.\n")
+	sb.WriteString("    CLASS-DATA rv TYPE i.\n")
+
+	// Method declarations
+	for _, bm := range blockMethods {
+		sb.WriteString(fmt.Sprintf("    CLASS-METHODS %s.\n", bm.name))
+	}
+
+	sb.WriteString("ENDCLASS.\n\n")
+
+	// --- IMPLEMENTATION ---
+	sb.WriteString("CLASS g IMPLEMENTATION.\n")
+	for _, bm := range blockMethods {
+		sb.WriteString(fmt.Sprintf("  METHOD %s.\n", bm.name))
+		sb.WriteString(bm.body)
+		sb.WriteString("  ENDMETHOD.\n")
+	}
+	sb.WriteString("ENDCLASS.\n")
+
+	return sb.String()
 }
 
 func lower(s string) string {

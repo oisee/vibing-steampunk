@@ -16,11 +16,19 @@ import (
 // registerUniversalTool registers a single SAP tool that routes to all handlers.
 func (s *Server) registerUniversalTool() {
 	s.mcpServer.AddTool(mcp.NewTool("SAP",
-		mcp.WithDescription(`Universal SAP tool. Use SAP(action="help") for full documentation.
+		mcp.WithDescription(`SAP ABAP development: read/edit/create/test/analyze/debug objects on a live SAP system.
 
-Actions: read, edit, create, delete, search, query, grep, test, analyze, debug, system, help
-Target: "TYPE NAME" (e.g. "CLAS ZCL_TEST", "PROG ZREPORT")
-Params: action-specific parameters as JSON object`),
+common target types: CLAS, PROG, INTF, FUNC, FUGR, DDLS, TABL, DEVC, BDEF, SRVD
+actions: read, edit, create, delete, search, query, grep, test, analyze, debug, system, help
+some actions (analyze, test, debug, system, help) use params only — no target needed.
+
+SAP(action="read", target="CLAS ZCL_TEST")  — source + dependency context
+SAP(action="read", target="CLAS ZCL_TEST", params={"method": "GET_DATA"})  — one method + context
+SAP(action="edit", target="CLAS ZCL_TEST", params={"source": "..."})  — auto lock/activate
+SAP(action="edit", target="CLAS ZCL_TEST", params={"method": "X", "source": "METHOD x.\nENDMETHOD."})
+SAP(action="search", target="ZCL_*")
+SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV"})
+SAP(action="help") — full docs; SAP(action="help", target="tips") — best practices`),
 		mcp.WithString("action",
 			mcp.Required(),
 			mcp.Description("Action to perform: read, edit, create, delete, search, query, grep, test, analyze, debug, system, help"),
@@ -36,16 +44,16 @@ Params: action-specific parameters as JSON object`),
 
 // handleUniversalTool dispatches universal SAP(action, target, params) calls to domain-specific route functions.
 func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	action, _ := request.Params.Arguments["action"].(string)
+	action, _ := request.GetArguments()["action"].(string)
 	if action == "" {
 		return newToolResultError("action is required. Use SAP(action=\"help\") for documentation."), nil
 	}
 	action = strings.ToLower(action)
 
-	target, _ := request.Params.Arguments["target"].(string)
+	target, _ := request.GetArguments()["target"].(string)
 
 	// Extract params as map
-	params := getObject(request.Params.Arguments, "params")
+	params := getObject(request.GetArguments(), "params")
 	if params == nil {
 		params = make(map[string]any)
 	}
@@ -161,13 +169,7 @@ func getBoolParam(args map[string]any, key string) (bool, bool) {
 // newRequest creates an mcp.CallToolRequest with the given arguments map.
 func newRequest(args map[string]any) mcp.CallToolRequest {
 	return mcp.CallToolRequest{
-		Params: struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments,omitempty"`
-			Meta      *struct {
-				ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-			} `json:"_meta,omitempty"`
-		}{
+		Params: mcp.CallToolParams{
 			Arguments: args,
 		},
 	}

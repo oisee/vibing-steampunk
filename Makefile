@@ -150,8 +150,14 @@ refresh-deps: ## Refresh embedded ZIPs from SAP (keeps old if SAP unavailable)
 release: build refresh-deps build-all ## Full release: build vsp, refresh deps from SAP, rebuild all platforms
 	@echo "Release build complete."
 
-install: ## Install the binary
+install: ## Install the binary to GOPATH/bin
 	$(GOBUILD) $(LDFLAGS) -o $(GOPATH)/bin/$(BINARY_NAME) $(CMD_DIR)
+
+install-user: build ## Install to ~/.local/bin
+	@mkdir -p ~/.local/bin
+	@cp $(BUILD_DIR)/$(BINARY_NAME) ~/.local/bin/$(BINARY_NAME)
+	@echo "Installed: ~/.local/bin/$(BINARY_NAME)"
+	@echo "Make sure ~/.local/bin is in your PATH"
 
 ## Development
 

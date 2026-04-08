@@ -41,9 +41,9 @@ func (a *adtSourceAdapter) GetSource(ctx context.Context, objectType, name strin
 // handleParseABAP tokenizes and parses ABAP source into structured statements.
 // Uses Go-side parser (equivalent to the transpiled abaplint lexer on SAP).
 func (s *Server) handleParseABAP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	source, _ := request.Params.Arguments["source"].(string)
-	objectType, _ := request.Params.Arguments["object_type"].(string)
-	name, _ := request.Params.Arguments["name"].(string)
+	source, _ := request.GetArguments()["source"].(string)
+	objectType, _ := request.GetArguments()["object_type"].(string)
+	name, _ := request.GetArguments()["name"].(string)
 
 	// Fetch source if not provided
 	if source == "" {
@@ -150,9 +150,9 @@ func (s *Server) handleParseABAP(ctx context.Context, request mcp.CallToolReques
 
 // handleAnalyzeDeps runs the unified 5-layer analyzer.
 func (s *Server) handleAnalyzeDeps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	source, _ := request.Params.Arguments["source"].(string)
-	objectType, _ := request.Params.Arguments["object_type"].(string)
-	name, _ := request.Params.Arguments["name"].(string)
+	source, _ := request.GetArguments()["source"].(string)
+	objectType, _ := request.GetArguments()["object_type"].(string)
+	name, _ := request.GetArguments()["name"].(string)
 
 	// Fetch source if not provided
 	if source == "" {
@@ -419,23 +419,23 @@ func classifyStatement(tokens []abapToken) string {
 }
 
 func (s *Server) handleGetContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectType, ok := request.Params.Arguments["object_type"].(string)
+	objectType, ok := request.GetArguments()["object_type"].(string)
 	if !ok || objectType == "" {
 		return newToolResultError("object_type is required"), nil
 	}
 
-	name, ok := request.Params.Arguments["name"].(string)
+	name, ok := request.GetArguments()["name"].(string)
 	if !ok || name == "" {
 		return newToolResultError("name is required"), nil
 	}
 
-	source, _ := request.Params.Arguments["source"].(string)
+	source, _ := request.GetArguments()["source"].(string)
 	maxDeps := 20
-	if md, ok := request.Params.Arguments["max_deps"].(float64); ok && md > 0 {
+	if md, ok := request.GetArguments()["max_deps"].(float64); ok && md > 0 {
 		maxDeps = int(md)
 	}
 	depth := 1
-	if d, ok := request.Params.Arguments["depth"].(float64); ok && d > 0 {
+	if d, ok := request.GetArguments()["depth"].(float64); ok && d > 0 {
 		depth = int(d)
 	}
 

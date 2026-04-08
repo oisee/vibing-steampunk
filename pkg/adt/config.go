@@ -3,6 +3,7 @@ package adt
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"time"
@@ -183,7 +184,7 @@ func NewConfig(baseURL, username, password string, opts ...Option) *Config {
 		Password:    password,
 		Client:      "001",
 		Language:    "EN",
-		SessionType: SessionStateful,
+		SessionType: SessionStateless,
 		Timeout:     60 * time.Second,
 		Safety:      UnrestrictedSafetyConfig(), // Default: no restrictions for backwards compatibility
 		Features:    DefaultFeatureConfig(),     // Default: auto-detect all features
@@ -224,9 +225,27 @@ func (c *Config) NewHTTPClient() *http.Client {
 		},
 	}
 
-	return &http.Client{
+	client := &http.Client{
 		Jar:       jar,
 		Transport: transport,
 		Timeout:   c.Timeout,
 	}
+
+	// Preserve Authorization header across redirects.
+	// Go's default strips it per RFC 7235 §4.2, but SAP BTP/Cloud
+	// authentication flows require it to survive redirects.
+	// Without this, BTP users get 401 even though curl works (issue #90).
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		if len(via) > 0 {
+			if auth := via[0].Header.Get("Authorization"); auth != "" {
+				req.Header.Set("Authorization", auth)
+			}
+		}
+		return nil
+	}
+
+	return client
 }

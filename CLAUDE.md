@@ -1,14 +1,30 @@
-# CLAUDE.md - AI Assistant Guidelines
+# CLAUDE.md
 
-This file provides context for AI assistants (Claude, etc.) working on this project.
+**vsp** — Go-native MCP server and CLI for SAP ABAP Development Tools (ADT).
 
-## Project Overview
+> **Doc intent:** CLAUDE.md = dev context. README.md = user onboarding. reports/ = research/history. contexts/ = session handoff.
 
-**vsp** is a Go-native MCP (Model Context Protocol) server for SAP ABAP Development Tools (ADT). It provides a single-binary distribution with 81 essential tools (focused mode, default) or 122 complete tools (expert mode) for use with Claude and other MCP-compatible LLMs.
+---
 
-## Quick Reference
+## Current Priorities
 
-### Build & Test
+### 1. Graph Engine (`pkg/graph/`) — In Progress
+Sequence: unify existing dep logic → SQL/ADT adapters → impact/path queries.
+- Done: core types, parser dep extraction, boundary analyzer (11 tests)
+- Pending: SQL adapters (CROSS/WBCROSSGT/D010INC), ADT adapters, unify `cli_deps.go` + `cli_extra.go` + `ctxcomp/analyzer.go`
+- Design: [002](reports/2026-04-05-002-graph-engine-design.md), [003](reports/2026-04-05-003-graph-engine-alignment-for-claude.md)
+
+### 2. GUI Debugger (Issue #2) — Strategic
+Plan: MCP debug sessions → DAP → Web UI. ADT REST API mapped from `CL_TPDA_ADT_RES_APP`. Design: [001](reports/2026-04-05-001-gui-debugger-design.md)
+
+### 3. Open Issues
+- **#88** Lock handle bug (EditSource/WriteSource) — real user report
+- **#55** RunReport in APC — architectural limit
+- **#46, #45** Sync script — low effort
+
+---
+
+## Build & Test
 
 ```bash
 # Build
@@ -27,11 +43,9 @@ make build-all          # 3 common platforms (linux-amd64, darwin-arm64, windows
 make build-all-all      # All 9 platforms
 ```
 
-### Configuration (Priority: CLI > Env > .env > Defaults)
+Key flags: `--mode focused|expert|hyperfocused`, `--read-only`, `--allowed-packages "Z*"`, `--disabled-groups 5THD`
 
-```bash
-# Using CLI flags
-./vsp --url http://host:50000 --user admin --password secret
+---
 
 # Using environment variables
 SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
@@ -208,8 +222,6 @@ VISION.md                            # Project vision
 README_TOOLS.md                      # Tool reference (all 122 tools)
 ```
 
-## Key Files for Common Tasks
-
 | Task | Files |
 |------|-------|
 | Register new MCP tool | `internal/mcp/server.go` (registerTools) |
@@ -229,18 +241,22 @@ README_TOOLS.md                      # Tool reference (all 122 tools)
 | Add workflow | `pkg/adt/workflows.go` |
 | Add XML types | `pkg/adt/xml.go` |
 | Add system config | `pkg/config/systems.go` |
-| Add ABAP lint rule | `pkg/abaplint/lexer.go` |
+| Add ABAP lint rule | `pkg/abaplint/lexer.go` / `pkg/abaplint/rules.go` |
+| Add graph feature | `pkg/graph/` |
+| Add MCP tool (modern) | `tools_register.go` + `handlers_*.go` + `tools_focused.go` |
 | Add integration test | `pkg/adt/integration_test.go` |
+| Fix MCP/docs/config | `README.md`, `docs/cli-agents/*`, `handlers_universal.go` |
 
-## Adding a New Tool
+---
+
+## Adding a New MCP Tool
 
 1. **Add ADT client method** in appropriate file (`client.go`, `crud.go`, etc.)
-2. **Register tool** in `internal/mcp/server.go` → `registerTools()`:
-   - Add `shouldRegister("ToolName")` call with tool definition
+2. **Register tool** in `tools_register.go` with `shouldRegister("ToolName")` (or `internal/mcp/server.go` → `registerTools()` for legacy paths):
    - Add to `focusedTools` whitelist if it should appear in focused mode
 3. **Add tool handler** in appropriate `internal/mcp/handlers_*.go` file:
    - Each domain has its own handler file (e.g., `handlers_crud.go`, `handlers_git.go`)
-   - Handler functions are called from `handleToolCall()` in `server.go`
+   - Handler functions are routed from `handleToolCall()` in `server.go`
 4. **Add integration test** in `pkg/adt/integration_test.go`
 5. **Update documentation**:
    - `README.md` tool tables
@@ -249,24 +265,18 @@ README_TOOLS.md                      # Tool reference (all 122 tools)
 
 ### ADT Client Methods
 
+1. Handler in `handlers_*.go`:
 ```go
-// Read operation pattern
-func (c *Client) GetSomething(ctx context.Context, name string) (*Result, error) {
-    url := fmt.Sprintf("/sap/bc/adt/path/%s", name)
-    resp, err := c.http.Get(ctx, url)
-    if err != nil {
-        return nil, err
-    }
-    defer resp.Body.Close()
-    // Parse response
-}
-
-// Write operation pattern (requires stateful session)
-func (c *Client) UpdateSomething(ctx context.Context, name, content string) error {
-    url := fmt.Sprintf("/sap/bc/adt/path/%s", name)
-    return c.http.Put(ctx, url, "text/plain", strings.NewReader(content))
+func (s *Server) handleX(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+    name, _ := req.GetArguments()["name"].(string)
+    result, err := s.adtClient.Method(ctx, name)
+    if err != nil { return newToolResultError(err.Error()), nil }
+    return mcp.NewToolResultText(format(result)), nil
 }
 ```
+2. Register in `tools_register.go` with `shouldRegister("X")`
+3. Route in `handlers_analysis.go` (or appropriate router)
+4. Add to `tools_focused.go` if needed in focused mode
 
 ### Tool Handler Pattern
 
@@ -333,23 +343,21 @@ The SAP ADT REST API documentation can be found at:
 - `/sap/bc/adt/discovery` - API discovery document
 - See `reports/adt-abap-internals-documentation.md` for detailed endpoint analysis
 
+---
+
 ## Common Issues
 
-1. **CSRF token errors**: The HTTP transport auto-refreshes tokens; check `http.go`
-2. **Lock conflicts**: Objects must be unlocked before other operations
-3. **Activation failures**: Check syntax errors first with `SyntaxCheck`
-4. **Session issues**: CRUD operations require stateful sessions
-5. **Auth conflicts**: Use only one auth method (basic OR cookies, not both)
-6. **Cookie auth with .env**: Pass `--cookie-file` to override .env credentials
+1. **CSRF errors** — auto-refreshed in `http.go`
+2. **Lock conflicts** — edit handler does auto lock/unlock
+3. **Session issues** — some CRUD/debugger flows are session-sensitive; verify stateful/stateless before changing transport or auth logic
+4. **Auth** — use basic OR cookies, not both
+5. **ZADT_VSP** — WebSocket debug/RFC/RunReport require it installed on SAP
 
-## SAP Object Naming Conventions
+## Security
 
-When creating ABAP objects for testing and experiments, follow these conventions:
+Never commit `.env`, `cookies.txt`, `.mcp.json`, or local agent/MCP config files (all in `.gitignore`).
 
-### Package Structure
-- **Root package**: `$ZADT` (ADT experiments and testing)
-- **Subpackages**: `$ZADT_00`, `$ZADT_01`, etc. for different purposes/features
-- Example: `$ZADT_00` for debugger experiments, `$ZADT_01` for CDS experiments
+## Conventions
 
 ### Object Naming
 | Object Type | Pattern | Example |
@@ -439,8 +447,7 @@ When creating a new report:
 
 ---
 
-## Content here...
-```
+## Areas Requiring Care
 
 ## Project Status
 

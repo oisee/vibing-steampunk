@@ -29,18 +29,18 @@ func (s *Server) routeATCAction(ctx context.Context, action, objectType, objectN
 // --- ATC Handlers ---
 
 func (s *Server) handleRunATCCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
 	variant := ""
-	if v, ok := request.Params.Arguments["variant"].(string); ok {
+	if v, ok := request.GetArguments()["variant"].(string); ok {
 		variant = v
 	}
 
 	maxResults := 100
-	if mr, ok := request.Params.Arguments["max_results"].(float64); ok && mr > 0 {
+	if mr, ok := request.GetArguments()["max_results"].(float64); ok && mr > 0 {
 		maxResults = int(mr)
 	}
 

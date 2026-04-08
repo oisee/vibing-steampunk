@@ -128,14 +128,21 @@ jobs:
           git push origin "${{ steps.version.outputs.version }}"
 
       # ------------------------------------------------------------------ #
-      # 8. GoReleaser — builds all 9 platform binaries, creates GitHub release
-      #    Reads .goreleaser.yml + cliff.toml from the repo root
+      # 8. Generate release notes for this version only (git-cliff --latest)
+      # ------------------------------------------------------------------ #
+      - name: Generate release notes
+        run: |
+          git-cliff --tag "${{ steps.version.outputs.version }}" --latest --strip header --output RELEASE_NOTES.md
+
+      # ------------------------------------------------------------------ #
+      # 9. GoReleaser — builds all 9 platform binaries, creates GitHub release
+      #    Release notes come from git-cliff (GoReleaser changelog is skipped)
       # ------------------------------------------------------------------ #
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=RELEASE_NOTES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

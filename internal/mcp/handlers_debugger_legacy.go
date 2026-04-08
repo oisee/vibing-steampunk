@@ -37,12 +37,12 @@ func (s *Server) routeDebuggerLegacyAction(ctx context.Context, action, objectTy
 // --- Legacy REST-based Debugger Handlers (fallback) ---
 
 func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	user, _ := request.Params.Arguments["user"].(string)
+	user, _ := request.GetArguments()["user"].(string)
 	if user == "" {
 		user = s.config.Username // Default to connection user
 	}
 	timeout := 60 // default
-	if t, ok := request.Params.Arguments["timeout"].(float64); ok && t > 0 {
+	if t, ok := request.GetArguments()["timeout"].(float64); ok && t > 0 {
 		timeout = int(t)
 		if timeout > 240 {
 			timeout = 240 // max 240 seconds
@@ -86,12 +86,12 @@ func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleDebuggerAttach(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	debuggeeID, ok := request.Params.Arguments["debuggee_id"].(string)
+	debuggeeID, ok := request.GetArguments()["debuggee_id"].(string)
 	if !ok || debuggeeID == "" {
 		return newToolResultError("debuggee_id is required"), nil
 	}
 
-	user, _ := request.Params.Arguments["user"].(string)
+	user, _ := request.GetArguments()["user"].(string)
 	if user == "" {
 		user = s.config.Username // Default to connection user
 	}
@@ -137,7 +137,7 @@ func (s *Server) handleDebuggerDetach(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	stepTypeStr, ok := request.Params.Arguments["step_type"].(string)
+	stepTypeStr, ok := request.GetArguments()["step_type"].(string)
 	if !ok || stepTypeStr == "" {
 		return newToolResultError("step_type is required"), nil
 	}
@@ -161,7 +161,7 @@ func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolReq
 		return newToolResultError(fmt.Sprintf("Invalid step_type: %s. Valid values: stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine", stepTypeStr)), nil
 	}
 
-	uri, _ := request.Params.Arguments["uri"].(string)
+	uri, _ := request.GetArguments()["uri"].(string)
 
 	result, err := s.adtClient.DebuggerStep(ctx, stepType, uri)
 	if err != nil {
@@ -219,7 +219,7 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 	// Parse variable_ids from request
 	var variableIDs []string
 
-	if ids, ok := request.Params.Arguments["variable_ids"].([]interface{}); ok {
+	if ids, ok := request.GetArguments()["variable_ids"].([]interface{}); ok {
 		for _, id := range ids {
 			if s, ok := id.(string); ok {
 				variableIDs = append(variableIDs, s)

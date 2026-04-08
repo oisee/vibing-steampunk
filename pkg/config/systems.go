@@ -18,6 +18,9 @@ type SystemConfig struct {
 	Language string `json:"language,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"`
 
+	// Optional CTS correlation attribute (for CR-level grouping, e.g. SAPTEST/ZCR)
+	TransportAttribute string `json:"transport_attribute,omitempty"`
+
 	// Cookie authentication (alternative to user/password)
 	CookieFile   string `json:"cookie_file,omitempty"`   // Path to Netscape-format cookie file
 	CookieString string `json:"cookie_string,omitempty"` // Inline cookie string
@@ -41,8 +44,8 @@ type SystemsConfig struct {
 // ConfigPaths returns the list of paths to search for systems config.
 func ConfigPaths() []string {
 	paths := []string{
-		".vsp.json",                   // Current directory (preferred)
-		".vsp/systems.json",           // Current directory .vsp folder
+		".vsp.json",         // Current directory (preferred)
+		".vsp/systems.json", // Current directory .vsp folder
 	}
 
 	// Add home directory paths
@@ -106,6 +109,20 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 		}
 	}
 
+	if sys.TransportAttribute == "" {
+		envKey := fmt.Sprintf("VSP_%s_TRANSPORT_ATTRIBUTE", strings.ToUpper(name))
+		if attr := strings.TrimSpace(os.Getenv(envKey)); attr != "" {
+			sys.TransportAttribute = strings.ToUpper(attr)
+		}
+	}
+	if sys.TransportAttribute == "" {
+		if attr := strings.TrimSpace(os.Getenv("VSP_TRANSPORT_ATTRIBUTE")); attr != "" {
+			sys.TransportAttribute = strings.ToUpper(attr)
+		}
+	} else {
+		sys.TransportAttribute = strings.ToUpper(strings.TrimSpace(sys.TransportAttribute))
+	}
+
 	// Apply defaults
 	if sys.Client == "" {
 		sys.Client = "001"
@@ -132,9 +149,10 @@ func ExampleConfig() string {
 		Default: "dev",
 		Systems: map[string]SystemConfig{
 			"dev": {
-				URL:    "http://dev.example.com:50000",
-				User:   "DEVELOPER",
-				Client: "001",
+				URL:                "http://dev.example.com:50000",
+				User:               "DEVELOPER",
+				Client:             "001",
+				TransportAttribute: "SAPTEST",
 			},
 			"a4h": {
 				URL:      "http://a4h.local:50000",

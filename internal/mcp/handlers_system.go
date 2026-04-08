@@ -95,7 +95,7 @@ func (s *Server) handleGetFeatures(ctx context.Context, request mcp.CallToolRequ
 }
 
 func (s *Server) handleGetAbapHelp(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	keyword, _ := request.Params.Arguments["keyword"].(string)
+	keyword, _ := request.GetArguments()["keyword"].(string)
 	if keyword == "" {
 		return newToolResultError("keyword is required"), nil
 	}

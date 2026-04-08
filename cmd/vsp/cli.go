@@ -39,6 +39,8 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+
+	TransportAttribute string
 }
 
 // resolveSystemParams resolves system parameters from --system flag or env vars.
@@ -77,14 +79,15 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		}
 
 		return &systemParams{
-			URL:          sys.URL,
-			User:         sys.User,
-			Password:     sys.Password,
-			Client:       sys.Client,
-			Language:     sys.Language,
-			Insecure:     sys.Insecure,
-			CookieFile:   sys.CookieFile,
-			CookieString: sys.CookieString,
+			URL:                sys.URL,
+			User:               sys.User,
+			Password:           sys.Password,
+			Client:             sys.Client,
+			Language:           sys.Language,
+			Insecure:           sys.Insecure,
+			CookieFile:         sys.CookieFile,
+			CookieString:       sys.CookieString,
+			TransportAttribute: sys.TransportAttribute,
 		}, nil
 	}
 
@@ -101,13 +104,21 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 	}
 
 	return &systemParams{
-		URL:      url,
-		User:     user,
-		Password: password,
-		Client:   getEnvOrDefault("SAP_CLIENT", "001"),
-		Language: getEnvOrDefault("SAP_LANGUAGE", "EN"),
-		Insecure: os.Getenv("SAP_INSECURE") == "true",
+		URL:                url,
+		User:               user,
+		Password:           password,
+		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
+		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
+		Insecure:           os.Getenv("SAP_INSECURE") == "true",
+		TransportAttribute: resolveTransportAttributeFromEnv(),
 	}, nil
+}
+
+func resolveTransportAttributeFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("VSP_TRANSPORT_ATTRIBUTE")); v != "" {
+		return strings.ToUpper(v)
+	}
+	return ""
 }
 
 // getClient creates an ADT client from system params.

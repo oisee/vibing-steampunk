@@ -33,16 +33,16 @@ func (s *Server) handleListTraces(ctx context.Context, request mcp.CallToolReque
 		MaxResults: 100,
 	}
 
-	if user, ok := request.Params.Arguments["user"].(string); ok && user != "" {
+	if user, ok := request.GetArguments()["user"].(string); ok && user != "" {
 		opts.User = user
 	}
-	if procType, ok := request.Params.Arguments["process_type"].(string); ok && procType != "" {
+	if procType, ok := request.GetArguments()["process_type"].(string); ok && procType != "" {
 		opts.ProcessType = procType
 	}
-	if objType, ok := request.Params.Arguments["object_type"].(string); ok && objType != "" {
+	if objType, ok := request.GetArguments()["object_type"].(string); ok && objType != "" {
 		opts.ObjectType = objType
 	}
-	if max, ok := request.Params.Arguments["max_results"].(float64); ok && max > 0 {
+	if max, ok := request.GetArguments()["max_results"].(float64); ok && max > 0 {
 		opts.MaxResults = int(max)
 	}
 
@@ -56,13 +56,13 @@ func (s *Server) handleListTraces(ctx context.Context, request mcp.CallToolReque
 }
 
 func (s *Server) handleGetTrace(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	traceID, ok := request.Params.Arguments["trace_id"].(string)
+	traceID, ok := request.GetArguments()["trace_id"].(string)
 	if !ok || traceID == "" {
 		return newToolResultError("trace_id is required"), nil
 	}
 
 	toolType := "hitlist"
-	if tt, ok := request.Params.Arguments["tool_type"].(string); ok && tt != "" {
+	if tt, ok := request.GetArguments()["tool_type"].(string); ok && tt != "" {
 		toolType = tt
 	}
 

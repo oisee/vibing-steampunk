@@ -41,10 +41,10 @@ func (s *Server) handleListSQLTraces(ctx context.Context, request mcp.CallToolRe
 	user := ""
 	maxResults := 100
 
-	if u, ok := request.Params.Arguments["user"].(string); ok {
+	if u, ok := request.GetArguments()["user"].(string); ok {
 		user = u
 	}
-	if max, ok := request.Params.Arguments["max_results"].(float64); ok && max > 0 {
+	if max, ok := request.GetArguments()["max_results"].(float64); ok && max > 0 {
 		maxResults = int(max)
 	}
 

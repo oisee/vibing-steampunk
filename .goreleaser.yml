@@ -51,11 +51,10 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
-# Use git-cliff for release notes (reads cliff.toml from repo root)
+# git-cliff runs separately in the workflow and commits CHANGELOG.md.
+# GoReleaser v2.15+ dropped changelog.use: git-cliff, so we disable here.
 changelog:
-  use: git-cliff
-  sort: asc
-  abbrev: 7
+  disable: true
 
 release:
   github:

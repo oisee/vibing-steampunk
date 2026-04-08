@@ -76,6 +76,85 @@ func TestClient_SearchObject(t *testing.T) {
 	}
 }
 
+func TestClient_GetAPIReleaseState(t *testing.T) {
+	xmlResponse := `<?xml version="1.0" encoding="UTF-8"?>
+<apiState xmlns="http://www.sap.com/adt/api" releaseState="RELEASED" useInCloudDevelopment="true" useInKeyUserApps="false"/>`
+
+	mock := &mockTransportClient{
+		responses: map[string]*http.Response{
+			"/sap/bc/adt/oo/classes/cl_abap_typedescr": newTestResponse(xmlResponse),
+			"discovery": newTestResponse("OK"),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	client := NewClientWithTransport(cfg, transport)
+
+	state, err := client.GetAPIReleaseState(context.Background(), "/sap/bc/adt/oo/classes/cl_abap_typedescr")
+	if err != nil {
+		t.Fatalf("GetAPIReleaseState failed: %v", err)
+	}
+
+	if state.ReleaseState != "RELEASED" {
+		t.Errorf("ReleaseState = %q, want RELEASED", state.ReleaseState)
+	}
+	if !state.UseInCloudDevelopment {
+		t.Error("UseInCloudDevelopment should be true")
+	}
+	if state.UseInKeyUserApps {
+		t.Error("UseInKeyUserApps should be false")
+	}
+	if state.Deprecated != nil {
+		t.Error("Deprecated should be nil")
+	}
+
+	// Verify the request URL was NOT escaped (the bug in PR #53)
+	if len(mock.requests) == 0 {
+		t.Fatal("No requests recorded")
+	}
+	lastReq := mock.requests[len(mock.requests)-1]
+	if lastReq.URL.Path != "/sap/bc/adt/oo/classes/cl_abap_typedescr" {
+		t.Errorf("Request path = %q, want /sap/bc/adt/oo/classes/cl_abap_typedescr (slashes must NOT be escaped)", lastReq.URL.Path)
+	}
+}
+
+func TestClient_GetAPIReleaseState_WithDeprecation(t *testing.T) {
+	xmlResponse := `<?xml version="1.0" encoding="UTF-8"?>
+<apiState xmlns="http://www.sap.com/adt/api" releaseState="DEPRECATED" useInCloudDevelopment="true" useInKeyUserApps="false">
+  <deprecation releaseState="DEPRECATED" successor="/sap/bc/adt/oo/classes/cl_abap_typedescr_v2" deprecatedSince="2024-01"/>
+</apiState>`
+
+	mock := &mockTransportClient{
+		responses: map[string]*http.Response{
+			"/sap/bc/adt/oo/classes/cl_old_api": newTestResponse(xmlResponse),
+			"discovery": newTestResponse("OK"),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	client := NewClientWithTransport(cfg, transport)
+
+	state, err := client.GetAPIReleaseState(context.Background(), "/sap/bc/adt/oo/classes/cl_old_api")
+	if err != nil {
+		t.Fatalf("GetAPIReleaseState failed: %v", err)
+	}
+
+	if state.ReleaseState != "DEPRECATED" {
+		t.Errorf("ReleaseState = %q, want DEPRECATED", state.ReleaseState)
+	}
+	if state.Deprecated == nil {
+		t.Fatal("Deprecated should not be nil")
+	}
+	if state.Deprecated.Successor != "/sap/bc/adt/oo/classes/cl_abap_typedescr_v2" {
+		t.Errorf("Successor = %q, want /sap/bc/adt/oo/classes/cl_abap_typedescr_v2", state.Deprecated.Successor)
+	}
+	if state.Deprecated.DeprecatedSince != "2024-01" {
+		t.Errorf("DeprecatedSince = %q, want 2024-01", state.Deprecated.DeprecatedSince)
+	}
+}
+
 func TestClient_GetProgram(t *testing.T) {
 	sourceCode := `REPORT ztest.
 WRITE 'Hello World'.`

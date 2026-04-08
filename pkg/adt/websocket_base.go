@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -77,21 +79,63 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 
 	wsURL := fmt.Sprintf("%s://%s/sap/bc/apc/sap/zadt_vsp?sap-client=%s", scheme, u.Host, c.client)
 
-	// Create dialer with auth and TLS config
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 30 * time.Second,
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.insecure,
-		},
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: c.insecure,
 	}
 
-	// Add basic auth header
 	header := http.Header{}
 	header.Set("Authorization", basicAuth(c.user, c.password))
 
-	conn, _, err := dialer.DialContext(ctx, wsURL, header)
+	// Try 1: Direct Basic Auth (works on most SAP systems)
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 30 * time.Second,
+		TLSClientConfig:  tlsConfig,
+	}
+
+	conn, resp, err := dialer.DialContext(ctx, wsURL, header)
+
+	// Try 2: If 401, pre-authenticate to get session cookies first.
+	// Some SAP systems reject standalone Basic Auth on WebSocket upgrade
+	// but accept it on regular HTTP to issue session cookies.
+	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized {
+		jar, _ := cookiejar.New(nil)
+		preAuthClient := &http.Client{
+			Jar:       jar,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+			Timeout:   30 * time.Second,
+		}
+
+		authURL := fmt.Sprintf("%s/sap/bc/adt/core/discovery?sap-client=%s", c.baseURL, c.client)
+		authReq, authErr := http.NewRequestWithContext(ctx, http.MethodGet, authURL, nil)
+		if authErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("WebSocket connection failed (HTTP 401), pre-auth setup error: %w", authErr)
+		}
+		authReq.SetBasicAuth(c.user, c.password)
+
+		authResp, authErr := preAuthClient.Do(authReq)
+		if authErr != nil {
+			c.mu.Unlock()
+			return fmt.Errorf("WebSocket connection failed (HTTP 401), pre-auth failed: %w", authErr)
+		}
+		io.Copy(io.Discard, authResp.Body)
+		authResp.Body.Close()
+
+		if authResp.StatusCode == http.StatusUnauthorized {
+			c.mu.Unlock()
+			return fmt.Errorf("WebSocket authentication failed: 401 Unauthorized (check credentials)")
+		}
+
+		// Retry with session cookies (no Basic Auth header — use cookies only)
+		dialer.Jar = jar
+		conn, resp, err = dialer.DialContext(ctx, wsURL, nil)
+	}
+
 	if err != nil {
 		c.mu.Unlock()
+		if resp != nil {
+			return fmt.Errorf("WebSocket connection failed (HTTP %d): %w", resp.StatusCode, err)
+		}
 		return fmt.Errorf("WebSocket connection failed: %w", err)
 	}
 

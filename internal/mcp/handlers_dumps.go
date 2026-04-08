@@ -33,25 +33,25 @@ func (s *Server) handleListDumps(ctx context.Context, request mcp.CallToolReques
 		MaxResults: 100,
 	}
 
-	if user, ok := request.Params.Arguments["user"].(string); ok && user != "" {
+	if user, ok := request.GetArguments()["user"].(string); ok && user != "" {
 		opts.User = user
 	}
-	if excType, ok := request.Params.Arguments["exception_type"].(string); ok && excType != "" {
+	if excType, ok := request.GetArguments()["exception_type"].(string); ok && excType != "" {
 		opts.ExceptionType = excType
 	}
-	if prog, ok := request.Params.Arguments["program"].(string); ok && prog != "" {
+	if prog, ok := request.GetArguments()["program"].(string); ok && prog != "" {
 		opts.Program = prog
 	}
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
+	if pkg, ok := request.GetArguments()["package"].(string); ok && pkg != "" {
 		opts.Package = pkg
 	}
-	if dateFrom, ok := request.Params.Arguments["date_from"].(string); ok && dateFrom != "" {
+	if dateFrom, ok := request.GetArguments()["date_from"].(string); ok && dateFrom != "" {
 		opts.DateFrom = dateFrom
 	}
-	if dateTo, ok := request.Params.Arguments["date_to"].(string); ok && dateTo != "" {
+	if dateTo, ok := request.GetArguments()["date_to"].(string); ok && dateTo != "" {
 		opts.DateTo = dateTo
 	}
-	if max, ok := request.Params.Arguments["max_results"].(float64); ok && max > 0 {
+	if max, ok := request.GetArguments()["max_results"].(float64); ok && max > 0 {
 		opts.MaxResults = int(max)
 	}
 
@@ -65,7 +65,7 @@ func (s *Server) handleListDumps(ctx context.Context, request mcp.CallToolReques
 }
 
 func (s *Server) handleGetDump(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	dumpID, ok := request.Params.Arguments["dump_id"].(string)
+	dumpID, ok := request.GetArguments()["dump_id"].(string)
 	if !ok || dumpID == "" {
 		return newToolResultError("dump_id is required"), nil
 	}

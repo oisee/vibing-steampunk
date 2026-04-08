@@ -44,12 +44,12 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 	)
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 
 	cleanup := false
-	if cl, ok := request.Params.Arguments["cleanup"].(bool); ok {
+	if cl, ok := request.GetArguments()["cleanup"].(bool); ok {
 		cleanup = cl
 	}
 
@@ -305,17 +305,17 @@ ENDCLASS.`
 func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Parse parameters
 	packageName := "$ZADT_VSP"
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
+	if pkg, ok := request.GetArguments()["package"].(string); ok && pkg != "" {
 		packageName = strings.ToUpper(pkg)
 	}
 
 	skipGitService := false
-	if skip, ok := request.Params.Arguments["skip_git_service"].(bool); ok {
+	if skip, ok := request.GetArguments()["skip_git_service"].(bool); ok {
 		skipGitService = skip
 	}
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 
@@ -396,9 +396,14 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 		}
 		err := s.adtClient.CreateObject(ctx, createOpts)
 		if err != nil {
-			return newToolResultError(fmt.Sprintf("Failed to create package: %v", err)), nil
+			// On older SAP releases (e.g. 7.40), /sap/bc/adt/packages may not exist.
+			// Don't abort — the package may have been pre-created via SE21/SE80,
+			// and WriteSource will fail with a clear error if it truly doesn't exist.
+			fmt.Fprintf(&sb, "  ⚠ Package creation failed: %v\n", err)
+			fmt.Fprintf(&sb, "  → Continuing anyway (package may already exist via SE21/SE80)\n\n")
+		} else {
+			fmt.Fprintf(&sb, "  ✓ Package %s created\n\n", packageName)
 		}
-		fmt.Fprintf(&sb, "  ✓ Package %s created\n\n", packageName)
 	} else {
 		fmt.Fprintf(&sb, "Using existing package %s\n\n", packageName)
 	}
@@ -500,17 +505,17 @@ func (s *Server) handleListDependencies(ctx context.Context, request mcp.CallToo
 func (s *Server) handleInstallAbapGit(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Parse parameters
 	edition := "standalone"
-	if ed, ok := request.Params.Arguments["edition"].(string); ok && ed != "" {
+	if ed, ok := request.GetArguments()["edition"].(string); ok && ed != "" {
 		edition = strings.ToLower(ed)
 	}
 
 	packageName := ""
-	if pkg, ok := request.Params.Arguments["package"].(string); ok && pkg != "" {
+	if pkg, ok := request.GetArguments()["package"].(string); ok && pkg != "" {
 		packageName = strings.ToUpper(pkg)
 	}
 
 	checkOnly := false
-	if check, ok := request.Params.Arguments["check_only"].(bool); ok {
+	if check, ok := request.GetArguments()["check_only"].(bool); ok {
 		checkOnly = check
 	}
 

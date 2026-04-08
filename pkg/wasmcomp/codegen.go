@@ -43,6 +43,23 @@ type compiler struct {
 	// Line packing: multiple statements per line
 	packLines bool
 	packer    *linePacker
+
+	// Block-as-method: extract blocks/loops to CLASS-METHODS on shared class g
+	useBlockMethods  bool
+	blockMethods     []*blockMethodDef
+	blockCounter     int
+	currentFuncIndex int
+	inBlockMethod    bool // true when emitting a block CLASS-METHOD body (no g=> prefix)
+}
+
+// blockMethodDef holds a block/loop body extracted for emission as a CLASS-METHOD.
+type blockMethodDef struct {
+	name       string
+	code       []Instruction
+	parentFunc *Function
+	startDepth int  // virtual stack depth at block entry
+	isLoop     bool
+	body       string // generated ABAP method body (filled during emission)
 }
 
 func (c *compiler) emit() string {
@@ -522,18 +539,78 @@ func (c *compiler) emitInstructions(f *Function, code []Instruction, stack *virt
 
 		// Control flow
 		case OpBlock:
-			c.line("DO 1 TIMES. \" block")
-			c.indent++
-			c.blockStack = append(c.blockStack, blockEntry{kind: blockDO, savedDepth: stack.depth})
+			if c.useBlockMethods {
+				savedDepth := stack.depth
+				endIdx := findMatchingEnd(code, i)
+				bodyCode := make([]Instruction, endIdx-i-1)
+				copy(bodyCode, code[i+1:endIdx])
+				blockName := fmt.Sprintf("f%d_b%d", c.currentFuncIndex, c.blockCounter)
+				c.blockCounter++
+				c.blockMethods = append(c.blockMethods, &blockMethodDef{
+					name: blockName, code: bodyCode, parentFunc: f,
+					startDepth: savedDepth,
+				})
+				// Call block CLASS-METHOD
+				c.line("%s%s( ). \" block", c.classPrefix(), blockName)
+				c.emitBrPropagation()
+				// Adjust stack for block result type
+				if inst.BlockType >= 0 && inst.BlockType != 0x40 {
+					stack.depth = savedDepth + 1
+				} else {
+					stack.depth = savedDepth
+				}
+				i = endIdx // skip past end
+			} else {
+				c.line("DO 1 TIMES. \" block")
+				c.indent++
+				c.blockStack = append(c.blockStack, blockEntry{kind: blockDO, savedDepth: stack.depth})
+			}
 		case OpLoop:
-			c.line("DO. \" loop")
-			c.indent++
-			c.blockStack = append(c.blockStack, blockEntry{kind: blockDO, savedDepth: stack.depth})
+			if c.useBlockMethods {
+				savedDepth := stack.depth
+				endIdx := findMatchingEnd(code, i)
+				bodyCode := make([]Instruction, endIdx-i-1)
+				copy(bodyCode, code[i+1:endIdx])
+				blockName := fmt.Sprintf("f%d_l%d", c.currentFuncIndex, c.blockCounter)
+				c.blockCounter++
+				c.blockMethods = append(c.blockMethods, &blockMethodDef{
+					name: blockName, code: bodyCode, parentFunc: f,
+					startDepth: savedDepth, isLoop: true,
+				})
+				// Emit DO + CLASS-METHOD call
+				br := c.brVar()
+				c.line("DO. \" loop")
+				c.indent++
+				c.line("%s = 0.", br)
+				c.line("%s%s( ).", c.classPrefix(), blockName)
+				c.line("IF %s = 0. EXIT. ENDIF. \" fallthrough exits loop", br)
+				c.line("%s = %s - 1.", br, br)
+				c.line("IF %s > 0. EXIT. ENDIF. \" escaping past loop", br)
+				c.indent--
+				c.line("ENDDO.")
+				c.emitBrPropagate() // don't consume — loop level consumed in DO
+				stack.depth = savedDepth
+				i = endIdx
+			} else {
+				c.line("DO. \" loop")
+				c.indent++
+				c.blockStack = append(c.blockStack, blockEntry{kind: blockDO, savedDepth: stack.depth})
+			}
 		case OpIf:
-			cond := stack.pop()
-			c.line("IF %s <> 0.", cond)
-			c.indent++
-			c.blockStack = append(c.blockStack, blockEntry{kind: blockIF, savedDepth: stack.depth})
+			if c.useBlockMethods {
+				// Wrap if in DO 1 TIMES for br support (safe: no cross-nesting since blocks are FORMs)
+				cond := stack.pop()
+				c.line("DO 1 TIMES. \" if")
+				c.indent++
+				c.line("IF %s <> 0.", cond)
+				c.indent++
+				c.blockStack = append(c.blockStack, blockEntry{kind: blockIF, savedDepth: stack.depth})
+			} else {
+				cond := stack.pop()
+				c.line("IF %s <> 0.", cond)
+				c.indent++
+				c.blockStack = append(c.blockStack, blockEntry{kind: blockIF, savedDepth: stack.depth})
+			}
 		case OpElse:
 			c.indent--
 			c.line("ELSE.")
@@ -550,6 +627,11 @@ func (c *compiler) emitInstructions(f *Function, code []Instruction, stack *virt
 				switch entry.kind {
 				case blockIF:
 					c.line("ENDIF.")
+					if c.useBlockMethods {
+						c.indent--
+						c.line("ENDDO. \" end if")
+						c.emitBrPropagation()
+					}
 				case blockDO:
 					c.line("ENDDO.")
 				case blockTRY:
@@ -557,24 +639,45 @@ func (c *compiler) emitInstructions(f *Function, code []Instruction, stack *virt
 				}
 			}
 		case OpBr:
-			if inst.LabelIndex == 0 {
-				c.line("EXIT. \" br 0")
+			if c.useBlockMethods {
+				br := c.brVar()
+				c.line("%s = %d. %s \" br %d", br, inst.LabelIndex+1, c.exitOrReturn(), inst.LabelIndex)
 			} else {
-				c.line("lv_br = %d. EXIT. \" br %d", inst.LabelIndex, inst.LabelIndex)
+				if inst.LabelIndex == 0 {
+					c.line("EXIT. \" br 0")
+				} else {
+					c.line("lv_br = %d. EXIT. \" br %d", inst.LabelIndex, inst.LabelIndex)
+				}
 			}
 		case OpBrIf:
 			cond := stack.pop()
-			if inst.LabelIndex == 0 {
-				c.line("IF %s <> 0. EXIT. ENDIF. \" br_if 0", cond)
+			if c.useBlockMethods {
+				br := c.brVar()
+				c.line("IF %s <> 0. %s = %d. %s ENDIF. \" br_if %d", cond, br, inst.LabelIndex+1, c.exitOrReturn(), inst.LabelIndex)
 			} else {
-				c.line("IF %s <> 0. lv_br = %d. EXIT. ENDIF. \" br_if %d", cond, inst.LabelIndex, inst.LabelIndex)
+				if inst.LabelIndex == 0 {
+					c.line("IF %s <> 0. EXIT. ENDIF. \" br_if 0", cond)
+				} else {
+					c.line("IF %s <> 0. lv_br = %d. EXIT. ENDIF. \" br_if %d", cond, inst.LabelIndex, inst.LabelIndex)
+				}
 			}
 		case OpReturn:
-			if len(f.Type.Results) > 0 {
-				ret := stack.pop()
-				c.line("rv = %s. RETURN.", ret)
+			if c.useBlockMethods {
+				br := c.brVar()
+				rv := c.rvVar()
+				if len(f.Type.Results) > 0 {
+					ret := stack.pop()
+					c.line("%s = %s. %s = 999. RETURN. \" return", rv, ret, br)
+				} else {
+					c.line("%s = 999. RETURN. \" return", br)
+				}
 			} else {
-				c.line("RETURN.")
+				if len(f.Type.Results) > 0 {
+					ret := stack.pop()
+					c.line("rv = %s. RETURN.", ret)
+				} else {
+					c.line("RETURN.")
+				}
 			}
 
 		// Stack
@@ -1114,22 +1217,35 @@ func (c *compiler) emitInstructions(f *Function, code []Instruction, stack *virt
 		// br_table
 		case OpBrTable:
 			idx := stack.pop()
-			c.line("CASE %s.", idx)
-			c.indent++
-			for i, label := range inst.Labels {
-				if label == 0 {
-					c.line("WHEN %d. EXIT.", i)
-				} else {
-					c.line("WHEN %d. lv_br = %d. EXIT.", i, label)
+			if c.useBlockMethods {
+				br := c.brVar()
+				escape := c.exitOrReturn()
+				c.line("CASE %s.", idx)
+				c.indent++
+				for i, label := range inst.Labels {
+					c.line("WHEN %d. %s = %d. %s", i, br, label+1, escape)
 				}
-			}
-			if inst.DefaultLabel == 0 {
-				c.line("WHEN OTHERS. EXIT.")
+				c.line("WHEN OTHERS. %s = %d. %s", br, inst.DefaultLabel+1, escape)
+				c.indent--
+				c.line("ENDCASE.")
 			} else {
-				c.line("WHEN OTHERS. lv_br = %d. EXIT.", inst.DefaultLabel)
+				c.line("CASE %s.", idx)
+				c.indent++
+				for i, label := range inst.Labels {
+					if label == 0 {
+						c.line("WHEN %d. EXIT.", i)
+					} else {
+						c.line("WHEN %d. lv_br = %d. EXIT.", i, label)
+					}
+				}
+				if inst.DefaultLabel == 0 {
+					c.line("WHEN OTHERS. EXIT.")
+				} else {
+					c.line("WHEN OTHERS. lv_br = %d. EXIT.", inst.DefaultLabel)
+				}
+				c.indent--
+				c.line("ENDCASE.")
 			}
-			c.indent--
-			c.line("ENDCASE.")
 
 		default:
 			c.line("\" TODO: opcode 0x%02X", inst.Op)
@@ -1429,37 +1545,166 @@ func (c *compiler) memPagesVar() string {
 }
 
 func (c *compiler) localName(f *Function, index int) string {
+	prefix := c.classPrefix() // "g=>" from FORMs, "" from class methods
 	if index < len(f.Type.Params) {
-		return fmt.Sprintf("p%d", index)
+		return fmt.Sprintf("%sp%d", prefix, index)
 	}
-	return fmt.Sprintf("l%d", index)
+	return fmt.Sprintf("%sl%d", prefix, index)
+}
+
+// classPrefix returns "g=>" when accessing class data from outside (function FORMs),
+// "" when inside a CLASS-METHOD (implicit self).
+func (c *compiler) classPrefix() string {
+	if c.useBlockMethods && !c.inBlockMethod {
+		return "g=>"
+	}
+	return ""
+}
+
+// --- Block-as-FORM helpers ---
+
+// findMatchingEnd returns the index of the OpEnd that closes the block/loop/if at position start.
+func findMatchingEnd(code []Instruction, start int) int {
+	depth := 1
+	for i := start + 1; i < len(code); i++ {
+		switch code[i].Op {
+		case OpBlock, OpLoop, OpIf, OpTry:
+			depth++
+		case OpEnd:
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return len(code) - 1
+}
+
+// hasEnclosingDO returns true if the blockStack contains an if entry (which uses DO 1 TIMES).
+func (c *compiler) hasEnclosingDO() bool {
+	for _, e := range c.blockStack {
+		if e.kind == blockIF {
+			return true
+		}
+	}
+	return false
+}
+
+// brVar returns the branch depth variable name.
+// Inside CLASS-METHOD: "br". From FORM: "g=>br". Otherwise: "lv_br".
+func (c *compiler) brVar() string {
+	if c.useBlockMethods {
+		return c.classPrefix() + "br"
+	}
+	return "lv_br"
+}
+
+// rvVar returns the return value variable name.
+// Inside CLASS-METHOD: "rv". From FORM: "g=>rv". Otherwise: "rv".
+func (c *compiler) rvVar() string {
+	if c.useBlockMethods {
+		return c.classPrefix() + "rv"
+	}
+	return "rv"
+}
+
+// exitOrReturn returns "EXIT." if inside a DO (from an if wrapper), "RETURN." otherwise.
+func (c *compiler) exitOrReturn() string {
+	if c.hasEnclosingDO() {
+		return "EXIT."
+	}
+	return "RETURN."
+}
+
+// emitBrPropagation emits the br check after an if's ENDDO or block PERFORM.
+// It consumes one label level and propagates (EXIT/RETURN) if more levels remain.
+func (c *compiler) emitBrPropagation() {
+	br := c.brVar()
+	if c.hasEnclosingDO() {
+		c.line("IF %s > 0. %s = %s - 1. IF %s > 0. EXIT. ENDIF. ENDIF.", br, br, br, br)
+	} else {
+		c.line("IF %s > 0. %s = %s - 1. IF %s > 0. RETURN. ENDIF. ENDIF.", br, br, br, br)
+	}
+}
+
+// emitBrPropagate emits a propagation check that does NOT consume a level (for after loop ENDDO).
+func (c *compiler) emitBrPropagate() {
+	br := c.brVar()
+	if c.hasEnclosingDO() {
+		c.line("IF %s > 0. EXIT. ENDIF.", br)
+	} else {
+		c.line("IF %s > 0. RETURN. ENDIF.", br)
+	}
+}
+
+// Block methods use CLASS-DATA on class g — no parameters needed.
+// Inside CLASS-METHODS, variables are accessed directly (s0, br, rv).
+// From function FORMs, they're accessed as g=>s0, g=>br, g=>rv.
+
+// generateBlockBody generates the ABAP body for a block CLASS-METHOD.
+// Inside a CLASS-METHOD, variables are accessed without prefix (s0, br, rv).
+func (c *compiler) generateBlockBody(bm *blockMethodDef, redirects map[int]int) {
+	// Save compiler state and use a separate builder for the body
+	savedSB := c.sb
+	savedBlockStack := c.blockStack
+	savedInBlock := c.inBlockMethod
+	savedIndent := c.indent
+	savedPackLines := c.packLines
+	savedPacker := c.packer
+
+	c.sb = strings.Builder{}
+	c.blockStack = nil
+	c.inBlockMethod = true
+	c.useFUGR = true
+	c.fugrRedirects = redirects
+	c.indent = 2 // METHOD body indent
+
+	c.packLines = true
+	c.packer = newLinePacker(&c.sb, c.indent)
+
+	// Inside CLASS-METHOD: no prefix (variables are class members)
+	stack := &virtualStack{depth: bm.startDepth, prefix: ""}
+	c.emitInstructions(bm.parentFunc, bm.code, stack, 0)
+
+	c.flushPacker()
+
+	bm.body = c.sb.String()
+
+	// Restore state
+	c.sb = savedSB
+	c.blockStack = savedBlockStack
+	c.inBlockMethod = savedInBlock
+	c.indent = savedIndent
+	c.packLines = savedPackLines
+	c.packer = savedPacker
 }
 
 // --- Virtual Stack ---
 
 type virtualStack struct {
-	depth int
+	depth  int
+	prefix string // "gv_" for block-FORM mode, "" for normal
 }
 
 func (s *virtualStack) push() string {
-	name := fmt.Sprintf("s%d", s.depth)
+	name := fmt.Sprintf("%ss%d", s.prefix, s.depth)
 	s.depth++
 	return name
 }
 
 func (s *virtualStack) pop() string {
 	if s.depth <= 0 {
-		return "s0"
+		return s.prefix + "s0"
 	}
 	s.depth--
-	return fmt.Sprintf("s%d", s.depth)
+	return fmt.Sprintf("%ss%d", s.prefix, s.depth)
 }
 
 func (s *virtualStack) peek() string {
 	if s.depth <= 0 {
-		return "s0"
+		return s.prefix + "s0"
 	}
-	return fmt.Sprintf("s%d", s.depth-1)
+	return fmt.Sprintf("%ss%d", s.prefix, s.depth-1)
 }
 
 // --- Helpers ---

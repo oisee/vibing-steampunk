@@ -29,6 +29,7 @@ type Link struct {
 	Rel     string   `xml:"rel,attr"`
 	Type    string   `xml:"type,attr,omitempty"`
 	Title   string   `xml:"title,attr,omitempty"`
+	Name    string   `xml:"http://www.sap.com/adt/core name,attr,omitempty"` // adtcore:name attribute
 }
 
 // AtomEntry represents an Atom feed entry.
@@ -324,4 +325,90 @@ func ExtractSourceLink(links []Link) string {
 		}
 	}
 	return ""
+}
+
+// --- API Release State Types (Clean Core / ABAP Cloud) ---
+
+// APIReleaseState represents the release state of an ABAP object for Clean Core compatibility.
+// This is used to check if an object is released for use in ABAP Cloud / S/4HANA Cloud.
+type APIReleaseState struct {
+	XMLName               xml.Name            `xml:"apiState" json:"-"`
+	ReleaseState          string              `xml:"releaseState,attr" json:"releaseState"`
+	UseInCloudDevelopment bool                `xml:"useInCloudDevelopment,attr" json:"useInCloudDevelopment"`
+	UseInKeyUserApps      bool                `xml:"useInKeyUserApps,attr" json:"useInKeyUserApps"`
+	Deprecated            *APIDeprecationInfo `xml:"deprecation,omitempty" json:"deprecation,omitempty"`
+}
+
+// APIDeprecationInfo contains deprecation details for a released API.
+type APIDeprecationInfo struct {
+	XMLName        xml.Name `xml:"deprecation" json:"-"`
+	ReleaseState   string   `xml:"releaseState,attr,omitempty" json:"releaseState,omitempty"`
+	Successor      string   `xml:"successor,attr,omitempty" json:"successor,omitempty"`
+	DeprecatedSince string  `xml:"deprecatedSince,attr,omitempty" json:"deprecatedSince,omitempty"`
+}
+
+// --- Revision (Version History) Types ---
+
+// Revision represents a single version of an ABAP object in the revision history.
+type Revision struct {
+	URI          string `json:"uri"`                    // Content URL for fetching this version's source
+	Version      string `json:"version"`                // Version identifier (entry ID)
+	VersionTitle string `json:"versionTitle"`           // Human-readable version title
+	Date         string `json:"date"`                   // ISO 8601 timestamp
+	Author       string `json:"author"`                 // Username who made the change
+	Transport    string `json:"transport,omitempty"`     // Transport request number
+}
+
+// revisionFeedEntry is an internal type for parsing ADT version Atom feed entries.
+type revisionFeedEntry struct {
+	XMLName xml.Name `xml:"entry"`
+	ID      string   `xml:"id"`
+	Title   string   `xml:"title"`
+	Updated string   `xml:"updated"`
+	Author  struct {
+		Name string `xml:"name"`
+	} `xml:"author"`
+	Content struct {
+		Src  string `xml:"src,attr"`
+		Type string `xml:"type,attr"`
+	} `xml:"content"`
+	Links []Link `xml:"link"`
+}
+
+// revisionFeed is an internal type for parsing ADT version Atom feeds.
+type revisionFeed struct {
+	XMLName xml.Name            `xml:"feed"`
+	Title   string              `xml:"title"`
+	Entries []revisionFeedEntry `xml:"entry"`
+}
+
+// ParseRevisionFeed parses an ADT versions Atom feed into Revision entries.
+func ParseRevisionFeed(data []byte) ([]Revision, error) {
+	var feed revisionFeed
+	if err := xml.Unmarshal(data, &feed); err != nil {
+		return nil, fmt.Errorf("parsing revision feed: %w", err)
+	}
+
+	revisions := make([]Revision, 0, len(feed.Entries))
+	for _, entry := range feed.Entries {
+		rev := Revision{
+			URI:          entry.Content.Src,
+			VersionTitle: entry.Title,
+			Date:         entry.Updated,
+			Version:      entry.ID,
+			Author:       entry.Author.Name,
+		}
+		// Extract transport request from links (adtcore:name attribute)
+		for _, link := range entry.Links {
+			if strings.Contains(link.Type, "transportrequests") {
+				if link.Name != "" {
+					rev.Transport = link.Name
+				}
+				break
+			}
+		}
+		revisions = append(revisions, rev)
+	}
+
+	return revisions, nil
 }

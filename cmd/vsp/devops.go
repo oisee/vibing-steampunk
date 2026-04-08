@@ -2,15 +2,18 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	embedded "github.com/vinchacho/vibing-steampunk/embedded/abap"
 	"github.com/vinchacho/vibing-steampunk/embedded/deps"
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 	"github.com/vinchacho/vibing-steampunk/pkg/ctxcomp"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 	"github.com/spf13/cobra"
 )
 
@@ -110,6 +113,22 @@ Examples:
   vsp atc CLAS ZCL_FOO --variant MY_VARIANT`,
 	Args: cobra.ExactArgs(2),
 	RunE: runATC,
+}
+
+// --- health command ---
+
+var healthCmd = &cobra.Command{
+	Use:   "health [type] [name]",
+	Short: "Show a compact health snapshot for a package or object",
+	Long: `Show a compact health snapshot composed from existing signals:
+unit tests, ATC findings, boundary analysis, and staleness.
+
+Examples:
+  vsp health --package '$ZDEV'
+  vsp health --package '$ZDEV' --fast
+  vsp health CLAS ZCL_ORDER_SERVICE
+  vsp health --package '$ZDEV' --format json`,
+	RunE: runHealth,
 }
 
 // --- deploy command ---
@@ -259,6 +278,11 @@ func init() {
 	// Test flags
 	testCmd.Flags().String("package", "", "Run tests for entire package")
 
+	// Health flags
+	healthCmd.Flags().String("package", "", "Analyze an entire package")
+	healthCmd.Flags().Bool("fast", false, "Faster package snapshot: skip expensive checks like tests and boundary scan")
+	healthCmd.Flags().String("format", "text", "Output format: text or json")
+
 	// ATC flags
 	atcCmd.Flags().String("variant", "", "ATC check variant (empty for system default)")
 	atcCmd.Flags().Int("max-findings", 100, "Maximum number of findings")
@@ -286,6 +310,7 @@ func init() {
 	// Register top-level commands
 	rootCmd.AddCommand(testCmd)
 	rootCmd.AddCommand(atcCmd)
+	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(deployCmd)
 	rootCmd.AddCommand(transportCmd)
 	rootCmd.AddCommand(contextCmd)
@@ -609,6 +634,460 @@ func runATC(cmd *cobra.Command, args []string) error {
 		fmt.Printf("\nTotal: %d finding(s)\n", totalFindings)
 	}
 	return nil
+}
+
+type cliHealthScope struct {
+	Kind       string `json:"kind"`
+	Package    string `json:"package,omitempty"`
+	ObjectType string `json:"object_type,omitempty"`
+	ObjectName string `json:"object_name,omitempty"`
+}
+
+type cliHealthSummary struct {
+	Status   string `json:"status"`
+	Headline string `json:"headline"`
+}
+
+type cliHealthSignal struct {
+	Status  string         `json:"status"`
+	Details map[string]any `json:"details,omitempty"`
+}
+
+type cliHealthResult struct {
+	Scope   cliHealthScope              `json:"scope"`
+	Summary cliHealthSummary            `json:"summary"`
+	Signals map[string]cliHealthSignal  `json:"signals"`
+}
+
+func runHealth(cmd *cobra.Command, args []string) error {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return err
+	}
+	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	packageName, _ := cmd.Flags().GetString("package")
+	fast, _ := cmd.Flags().GetBool("fast")
+	format, _ := cmd.Flags().GetString("format")
+	packageName = strings.ToUpper(strings.TrimSpace(packageName))
+
+	result := &cliHealthResult{Signals: make(map[string]cliHealthSignal)}
+
+	if packageName != "" {
+		result.Scope = cliHealthScope{Kind: "package", Package: packageName}
+		populatePackageHealthCLI(context.Background(), client, packageName, fast, result)
+	} else {
+		if len(args) != 2 {
+			return fmt.Errorf("usage: vsp health <type> <name> or vsp health --package <package>")
+		}
+		objType := strings.ToUpper(args[0])
+		objName := strings.ToUpper(args[1])
+		result.Scope = cliHealthScope{Kind: "object", ObjectType: objType, ObjectName: objName}
+		populateObjectHealthCLI(context.Background(), client, objType, objName, result)
+	}
+
+	result.Summary = summarizeCLIHealth(result.Signals)
+
+	if format == "json" {
+		data, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	printCLIHealth(result)
+	return nil
+}
+
+func populatePackageHealthCLI(ctx context.Context, client *adt.Client, pkg string, fast bool, result *cliHealthResult) {
+	if fast {
+		result.Signals["tests"] = cliHealthSignal{Status: "SKIPPED", Details: map[string]any{"reason": "fast mode"}}
+		result.Signals["boundaries"] = cliHealthSignal{Status: "SKIPPED", Details: map[string]any{"reason": "fast mode"}}
+	} else {
+		fmt.Fprintf(os.Stderr, "  [1/4] Running tests...\n")
+		result.Signals["tests"] = collectPackageTestsCLI(ctx, client, pkg)
+		fmt.Fprintf(os.Stderr, "  [2/4] Checking boundaries...\n")
+		result.Signals["boundaries"] = collectPackageBoundariesCLI(ctx, client, pkg)
+	}
+	step := 3
+	if fast {
+		step = 1
+	}
+	fmt.Fprintf(os.Stderr, "  [%d/%d] Running ATC...\n", step, step+1)
+	result.Signals["atc"] = collectPackageATCCLI(ctx, client, pkg)
+	fmt.Fprintf(os.Stderr, "  [%d/%d] Checking staleness...\n", step+1, step+1)
+	result.Signals["staleness"] = collectPackageStalenessCLI(ctx, client, pkg)
+}
+
+func populateObjectHealthCLI(ctx context.Context, client *adt.Client, objType, objName string, result *cliHealthResult) {
+	result.Signals["tests"] = collectObjectTestsCLI(ctx, client, objType, objName)
+	result.Signals["atc"] = collectObjectATCCLI(ctx, client, objType, objName)
+	result.Signals["boundaries"] = collectObjectBoundariesCLI(ctx, client, objType, objName)
+	result.Signals["staleness"] = collectObjectStalenessCLI(ctx, client, objType, objName)
+}
+
+func collectObjectTestsCLI(ctx context.Context, client *adt.Client, objType, objName string) cliHealthSignal {
+	objectURL := buildObjectURL(objType, objName)
+	if objectURL == "" {
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	result, err := client.RunUnitTests(ctx, objectURL, nil)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	classes, methods, alerts := summarizeUnitTestsCLI(result)
+	status := "PASS"
+	if classes == 0 {
+		status = "NONE"
+	}
+	if alerts > 0 {
+		status = "FAIL"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"classes": classes, "methods": methods, "alerts": alerts}}
+}
+
+func collectPackageTestsCLI(ctx context.Context, client *adt.Client, pkg string) cliHealthSignal {
+	content, err := client.GetPackage(ctx, pkg)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	var testClasses []adt.PackageObject
+	for _, obj := range content.Objects {
+		if strings.ToUpper(obj.Type) == "CLAS" && graph.IsTestCaller(obj.Name, "") {
+			testClasses = append(testClasses, obj)
+		}
+	}
+	if len(testClasses) == 0 {
+		return cliHealthSignal{Status: "NONE"}
+	}
+	limit := 5
+	if len(testClasses) < limit {
+		limit = len(testClasses)
+	}
+	totalClasses, totalMethods, totalAlerts := 0, 0, 0
+	for _, obj := range testClasses[:limit] {
+		objectURL := buildObjectURL("CLAS", obj.Name)
+		result, err := client.RunUnitTests(ctx, objectURL, nil)
+		if err != nil {
+			continue
+		}
+		c, m, a := summarizeUnitTestsCLI(result)
+		totalClasses += c
+		totalMethods += m
+		totalAlerts += a
+	}
+	status := "PASS"
+	if totalClasses == 0 {
+		status = "NONE"
+	}
+	if totalAlerts > 0 {
+		status = "FAIL"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{
+		"test_classes_found": len(testClasses),
+		"test_classes_run":   limit,
+		"classes":            totalClasses,
+		"methods":            totalMethods,
+		"alerts":             totalAlerts,
+	}}
+}
+
+func summarizeUnitTestsCLI(result *adt.UnitTestResult) (classCount, methodCount, alertCount int) {
+	if result == nil {
+		return 0, 0, 0
+	}
+	classCount = len(result.Classes)
+	for _, c := range result.Classes {
+		methodCount += len(c.TestMethods)
+		alertCount += len(c.Alerts)
+		for _, m := range c.TestMethods {
+			alertCount += len(m.Alerts)
+		}
+	}
+	return classCount, methodCount, alertCount
+}
+
+func collectObjectATCCLI(ctx context.Context, client *adt.Client, objType, objName string) cliHealthSignal {
+	objectURL := buildObjectURL(objType, objName)
+	if objectURL == "" {
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	result, err := client.RunATCCheck(ctx, objectURL, "", 100)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	total, errors, warnings, infos := summarizeATCCLI(result)
+	status := "CLEAN"
+	if total > 0 {
+		status = "FINDINGS"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"findings": total, "errors": errors, "warnings": warnings, "infos": infos}}
+}
+
+func collectPackageATCCLI(ctx context.Context, client *adt.Client, pkg string) cliHealthSignal {
+	objectURL := fmt.Sprintf("/sap/bc/adt/packages/%s", strings.ToUpper(pkg))
+	result, err := client.RunATCCheck(ctx, objectURL, "", 200)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	total, errors, warnings, infos := summarizeATCCLI(result)
+	status := "CLEAN"
+	if total > 0 {
+		status = "FINDINGS"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"findings": total, "errors": errors, "warnings": warnings, "infos": infos}}
+}
+
+func summarizeATCCLI(result *adt.ATCWorklist) (total, errors, warnings, infos int) {
+	if result == nil {
+		return 0, 0, 0, 0
+	}
+	for _, obj := range result.Objects {
+		total += len(obj.Findings)
+		for _, f := range obj.Findings {
+			switch f.Priority {
+			case 1:
+				errors++
+			case 2:
+				warnings++
+			default:
+				infos++
+			}
+		}
+	}
+	return total, errors, warnings, infos
+}
+
+func collectObjectBoundariesCLI(ctx context.Context, client *adt.Client, objType, objName string) cliHealthSignal {
+	if objType != "CLAS" && objType != "PROG" && objType != "INTF" {
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	source, err := client.GetSource(ctx, objType, objName, nil)
+	if err != nil || source == "" {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": "failed to read source"}}
+	}
+	g := graph.New()
+	nodeID := graph.NodeID(objType, objName)
+	g.AddNode(&graph.Node{ID: nodeID, Name: objName, Type: objType})
+	edges := graph.ExtractDepsFromSource(source, nodeID)
+	dynEdges := graph.ExtractDynamicCalls(source, nodeID)
+	for _, e := range append(edges, dynEdges...) {
+		g.AddEdge(e)
+		parts := strings.SplitN(e.To, ":", 2)
+		if len(parts) == 2 {
+			g.AddNode(&graph.Node{ID: e.To, Name: parts[1], Type: parts[0]})
+		}
+	}
+	resolvePackagesCLI(ctx, client, g)
+	n := g.GetNode(nodeID)
+	if n == nil || n.Package == "" {
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	report := g.CheckBoundaries(n.Package, &graph.BoundaryOptions{IncludeDynamic: true})
+	status := "CLEAN"
+	if report.Violations > 0 {
+		status = "VIOLATIONS"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"violations": report.Violations, "crossed_packages": report.CrossedPackages, "dynamic": report.Dynamic}}
+}
+
+func collectPackageBoundariesCLI(ctx context.Context, client *adt.Client, pkg string) cliHealthSignal {
+	content, err := client.GetPackage(ctx, pkg)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	g := graph.New()
+	count := 0
+	for _, obj := range content.Objects {
+		objType := strings.ToUpper(obj.Type)
+		if objType != "CLAS" && objType != "PROG" && objType != "INTF" {
+			continue
+		}
+		if count >= 30 {
+			break
+		}
+		source, err := client.GetSource(ctx, objType, obj.Name, nil)
+		if err != nil || source == "" {
+			continue
+		}
+		nodeID := graph.NodeID(objType, obj.Name)
+		g.AddNode(&graph.Node{ID: nodeID, Name: obj.Name, Type: objType, Package: pkg})
+		edges := graph.ExtractDepsFromSource(source, nodeID)
+		dynEdges := graph.ExtractDynamicCalls(source, nodeID)
+		for _, e := range append(edges, dynEdges...) {
+			g.AddEdge(e)
+			parts := strings.SplitN(e.To, ":", 2)
+			if len(parts) == 2 {
+				g.AddNode(&graph.Node{ID: e.To, Name: parts[1], Type: parts[0]})
+			}
+		}
+		count++
+	}
+	resolvePackagesCLI(ctx, client, g)
+	report := g.CheckBoundaries(pkg, &graph.BoundaryOptions{IncludeDynamic: true})
+	status := "CLEAN"
+	if report.Violations > 0 {
+		status = "VIOLATIONS"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"scanned_objects": count, "violations": report.Violations, "crossed_packages": report.CrossedPackages}}
+}
+
+func collectObjectStalenessCLI(ctx context.Context, client *adt.Client, objType, objName string) cliHealthSignal {
+	revs, err := client.GetRevisions(ctx, objType, objName, nil)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	return stalenessCLIFromRevisions(revs)
+}
+
+func collectPackageStalenessCLI(ctx context.Context, client *adt.Client, pkg string) cliHealthSignal {
+	content, err := client.GetPackage(ctx, pkg)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	var newest time.Time
+	checked := 0
+	for _, obj := range content.Objects {
+		objType := strings.ToUpper(obj.Type)
+		if objType != "CLAS" && objType != "PROG" && objType != "INTF" {
+			continue
+		}
+		if checked >= 10 {
+			break
+		}
+		revs, err := client.GetRevisions(ctx, objType, obj.Name, nil)
+		if err != nil || len(revs) == 0 {
+			continue
+		}
+		tm, err := time.Parse(time.RFC3339, revs[0].Date)
+		if err != nil {
+			continue
+		}
+		if tm.After(newest) {
+			newest = tm
+		}
+		checked++
+	}
+	if newest.IsZero() {
+		// Fallback: query latest transport date from E070/E071
+		transportQuery := fmt.Sprintf(
+			"SELECT MAX( AS4DATE ) AS LAST_DATE FROM E070 WHERE TRKORR IN ( SELECT TRKORR FROM E071 WHERE OBJ_NAME IN ( SELECT OBJ_NAME FROM TADIR WHERE DEVCLASS LIKE '%s%%' ) )", pkg)
+		tResult, tErr := client.RunQuery(ctx, transportQuery, 1)
+		if tErr == nil && tResult != nil && len(tResult.Rows) > 0 {
+			dateStr := strings.TrimSpace(fmt.Sprintf("%v", tResult.Rows[0]["LAST_DATE"]))
+			if dateStr != "" && dateStr != "00000000" && len(dateStr) == 8 {
+				tm, err := time.Parse("20060102", dateStr)
+				if err == nil {
+					return stalenessCLIFromTime(tm, 0)
+				}
+			}
+		}
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	return stalenessCLIFromTime(newest, checked)
+}
+
+func stalenessCLIFromRevisions(revs []adt.Revision) cliHealthSignal {
+	if len(revs) == 0 {
+		return cliHealthSignal{Status: "UNKNOWN"}
+	}
+	tm, err := time.Parse(time.RFC3339, revs[0].Date)
+	if err != nil {
+		return cliHealthSignal{Status: "ERROR", Details: map[string]any{"message": err.Error()}}
+	}
+	return stalenessCLIFromTime(tm, 1)
+}
+
+func stalenessCLIFromTime(tm time.Time, checked int) cliHealthSignal {
+	ageDays := int(time.Since(tm).Hours() / 24)
+	status := "ACTIVE"
+	switch {
+	case ageDays > 365:
+		status = "STALE"
+	case ageDays > 90:
+		status = "AGING"
+	}
+	return cliHealthSignal{Status: status, Details: map[string]any{"last_changed": tm.Format(time.RFC3339), "age_days": ageDays, "checked": checked}}
+}
+
+func summarizeCLIHealth(signals map[string]cliHealthSignal) cliHealthSummary {
+	if signals["tests"].Status == "FAIL" {
+		return cliHealthSummary{Status: "BAD", Headline: "Unit tests are failing"}
+	}
+	if signals["boundaries"].Status == "VIOLATIONS" {
+		return cliHealthSummary{Status: "WARN", Headline: "Boundary violations detected"}
+	}
+	if signals["atc"].Status == "FINDINGS" {
+		return cliHealthSummary{Status: "WARN", Headline: "ATC findings detected"}
+	}
+	if signals["staleness"].Status == "STALE" {
+		return cliHealthSummary{Status: "WARN", Headline: "Object or package appears stale"}
+	}
+	return cliHealthSummary{Status: "GOOD", Headline: "No major health issues detected"}
+}
+
+func printCLIHealth(result *cliHealthResult) {
+	switch result.Scope.Kind {
+	case "package":
+		fmt.Printf("Health: package %s\n", result.Scope.Package)
+	default:
+		fmt.Printf("Health: %s %s\n", result.Scope.ObjectType, result.Scope.ObjectName)
+	}
+	fmt.Printf("Summary: %s — %s\n\n", result.Summary.Status, result.Summary.Headline)
+	for _, key := range []string{"tests", "atc", "boundaries", "staleness"} {
+		sig, ok := result.Signals[key]
+		if !ok {
+			continue
+		}
+		fmt.Printf("%-11s %s", key+":", sig.Status)
+		if len(sig.Details) > 0 {
+			data, _ := json.Marshal(sig.Details)
+			fmt.Printf(" %s", string(data))
+		}
+		fmt.Println()
+	}
+}
+
+func resolvePackagesCLI(ctx context.Context, client *adt.Client, g *graph.Graph) {
+	var names []string
+	nodesByName := make(map[string][]*graph.Node)
+	for _, n := range g.Nodes() {
+		if n.Package == "" && !graph.IsStandardObject(n.Name) && !strings.HasPrefix(n.ID, "DYNAMIC:") {
+			names = append(names, n.Name)
+			nodesByName[strings.ToUpper(n.Name)] = append(nodesByName[strings.ToUpper(n.Name)], n)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	if len(names) > 100 {
+		names = names[:100]
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "'" + strings.ToUpper(n) + "'"
+	}
+	query := fmt.Sprintf("SELECT obj_name, devclass FROM tadir WHERE pgmid = 'R3TR' AND obj_name IN (%s)", strings.Join(quoted, ","))
+	result, err := client.RunQuery(ctx, query, 0)
+	if err != nil || result == nil {
+		return
+	}
+	for _, row := range result.Rows {
+		objName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
+		devclass := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DEVCLASS"])))
+		if nodes, ok := nodesByName[objName]; ok {
+			for _, n := range nodes {
+				if n.Package == "" {
+					n.Package = devclass
+				}
+			}
+		}
+	}
 }
 
 func runDeploy(cmd *cobra.Command, args []string) error {

@@ -42,9 +42,10 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 	params.Set("accessMode", accessMode)
 
 	resp, err := c.transport.Request(ctx, objectURL, &RequestOptions{
-		Method: http.MethodPost,
-		Query:  params,
-		Accept: "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
+		Method:   http.MethodPost,
+		Query:    params,
+		Accept:   "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
+		Stateful: true, // Lock handles are session-specific — force stateful (issue #88)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("locking object: %w", err)
@@ -94,8 +95,9 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 	params.Set("lockHandle", lockHandle)
 
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
-		Method: http.MethodPost,
-		Query:  params,
+		Method:   http.MethodPost,
+		Query:    params,
+		Stateful: true, // Must match lock session (issue #88)
 	})
 	if err != nil {
 		return fmt.Errorf("unlocking object: %w", err)
@@ -133,6 +135,7 @@ func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, sourc
 		Query:       params,
 		Body:        []byte(source),
 		ContentType: contentType,
+		Stateful:    true, // Must match lock session (issue #88)
 	})
 	if err != nil {
 		return fmt.Errorf("updating source: %w", err)

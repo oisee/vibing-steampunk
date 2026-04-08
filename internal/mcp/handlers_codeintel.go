@@ -47,41 +47,41 @@ func (s *Server) routeCodeIntelAction(ctx context.Context, action, objectType, o
 // --- Code Intelligence Handlers ---
 
 func (s *Server) handleFindDefinition(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	sourceURL, ok := request.GetArguments()["source_url"].(string)
 	if !ok || sourceURL == "" {
 		return newToolResultError("source_url is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
-	lineF, ok := request.Params.Arguments["line"].(float64)
+	lineF, ok := request.GetArguments()["line"].(float64)
 	if !ok {
 		return newToolResultError("line is required"), nil
 	}
 	line := int(lineF)
 
-	startColF, ok := request.Params.Arguments["start_column"].(float64)
+	startColF, ok := request.GetArguments()["start_column"].(float64)
 	if !ok {
 		return newToolResultError("start_column is required"), nil
 	}
 	startCol := int(startColF)
 
-	endColF, ok := request.Params.Arguments["end_column"].(float64)
+	endColF, ok := request.GetArguments()["end_column"].(float64)
 	if !ok {
 		return newToolResultError("end_column is required"), nil
 	}
 	endCol := int(endColF)
 
 	implementation := false
-	if impl, ok := request.Params.Arguments["implementation"].(bool); ok {
+	if impl, ok := request.GetArguments()["implementation"].(bool); ok {
 		implementation = impl
 	}
 
 	mainProgram := ""
-	if mp, ok := request.Params.Arguments["main_program"].(string); ok {
+	if mp, ok := request.GetArguments()["main_program"].(string); ok {
 		mainProgram = mp
 	}
 
@@ -95,17 +95,17 @@ func (s *Server) handleFindDefinition(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.Params.Arguments["object_url"].(string)
+	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
 	line := 0
 	column := 0
-	if lineF, ok := request.Params.Arguments["line"].(float64); ok {
+	if lineF, ok := request.GetArguments()["line"].(float64); ok {
 		line = int(lineF)
 	}
-	if colF, ok := request.Params.Arguments["column"].(float64); ok {
+	if colF, ok := request.GetArguments()["column"].(float64); ok {
 		column = int(colF)
 	}
 
@@ -119,23 +119,23 @@ func (s *Server) handleFindReferences(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	sourceURL, ok := request.GetArguments()["source_url"].(string)
 	if !ok || sourceURL == "" {
 		return newToolResultError("source_url is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
-	lineF, ok := request.Params.Arguments["line"].(float64)
+	lineF, ok := request.GetArguments()["line"].(float64)
 	if !ok {
 		return newToolResultError("line is required"), nil
 	}
 	line := int(lineF)
 
-	colF, ok := request.Params.Arguments["column"].(float64)
+	colF, ok := request.GetArguments()["column"].(float64)
 	if !ok {
 		return newToolResultError("column is required"), nil
 	}
@@ -151,7 +151,7 @@ func (s *Server) handleCodeCompletion(ctx context.Context, request mcp.CallToolR
 }
 
 func (s *Server) handlePrettyPrint(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
@@ -175,12 +175,12 @@ func (s *Server) handleGetPrettyPrinterSettings(ctx context.Context, request mcp
 }
 
 func (s *Server) handleSetPrettyPrinterSettings(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	indentation, ok := request.Params.Arguments["indentation"].(bool)
+	indentation, ok := request.GetArguments()["indentation"].(bool)
 	if !ok {
 		return newToolResultError("indentation is required"), nil
 	}
 
-	style, ok := request.Params.Arguments["style"].(string)
+	style, ok := request.GetArguments()["style"].(string)
 	if !ok || style == "" {
 		return newToolResultError("style is required"), nil
 	}
@@ -199,30 +199,30 @@ func (s *Server) handleSetPrettyPrinterSettings(ctx context.Context, request mcp
 }
 
 func (s *Server) handleGetTypeHierarchy(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sourceURL, ok := request.Params.Arguments["source_url"].(string)
+	sourceURL, ok := request.GetArguments()["source_url"].(string)
 	if !ok || sourceURL == "" {
 		return newToolResultError("source_url is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
-	lineF, ok := request.Params.Arguments["line"].(float64)
+	lineF, ok := request.GetArguments()["line"].(float64)
 	if !ok {
 		return newToolResultError("line is required"), nil
 	}
 	line := int(lineF)
 
-	colF, ok := request.Params.Arguments["column"].(float64)
+	colF, ok := request.GetArguments()["column"].(float64)
 	if !ok {
 		return newToolResultError("column is required"), nil
 	}
 	column := int(colF)
 
 	superTypes := false
-	if st, ok := request.Params.Arguments["super_types"].(bool); ok {
+	if st, ok := request.GetArguments()["super_types"].(bool); ok {
 		superTypes = st
 	}
 
@@ -236,7 +236,7 @@ func (s *Server) handleGetTypeHierarchy(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleGetClassComponents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	classURL, ok := request.Params.Arguments["class_url"].(string)
+	classURL, ok := request.GetArguments()["class_url"].(string)
 	if !ok || classURL == "" {
 		return newToolResultError("class_url is required"), nil
 	}

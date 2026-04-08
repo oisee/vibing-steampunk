@@ -13,6 +13,12 @@ abap-adt-api/
 .mcp*.json
 ./claude/abap-adt-api-lib/
 
+# Codex MCP config (contains credentials)
+codex.toml
+.codex.toml
+codex*.toml
+agents.toml
+
 # Binaries
 /build/
 *.exe
@@ -71,3 +77,7 @@ node_modules/
 
 # Claude local context (session-specific, auto-discovered)
 .claude.local.md
+
+# GoReleaser artifacts
+RELEASE_NOTES.md
+dist/

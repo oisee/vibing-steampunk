@@ -23,8 +23,13 @@ func focusedToolSet() map[string]bool {
 		"RunQuery":           true,
 		"GetPackage":         true, // Metadata: package contents
 		"GetFunctionGroup":   true, // Metadata: function module list
-		"GetCDSDependencies": true, // CDS dependency tree
+		"GetCDSDependencies":    true, // CDS dependency tree
+		"GetCDSImpactAnalysis": true, // CDS reverse dependencies (where-used)
+		"GetCDSElementInfo":    true, // CDS element/field metadata
 		"GetMessages":        true, // Message class texts (SE91)
+
+		// Clean Core / API Release State (1)
+		"GetAPIReleaseState": true, // S/4HANA Cloud compatibility check
 
 		// Code intelligence (3)
 		"FindDefinition": true,
@@ -65,6 +70,8 @@ func focusedToolSet() map[string]bool {
 		"AnalyzeCallGraph":   true, // Call graph statistics
 		"CompareCallGraphs":  true, // Compare static vs actual execution
 		"TraceExecution":     true, // Composite RCA tool
+		"CheckBoundaries":   true, // Package boundary violation analysis
+		"AnalyzeABAPCode":   true, // Native Go code analysis (abaplint v2)
 
 		// Runtime errors / Short dumps (2)
 		"ListDumps": true, // List runtime errors (consistent with List* pattern)
@@ -108,9 +115,24 @@ func focusedToolSet() map[string]bool {
 		"AMDPSetBreakpoint":  true,
 		"AMDPGetBreakpoints": true,
 
+		// Version History (3)
+		"GetRevisions":      true, // List object version history
+		"GetRevisionSource": true, // Get source of a specific version
+		"CompareVersions":   true, // Compare two versions with diff
+
+		// Testing & Quality (2)
+		"GetCodeCoverage":    true, // Run tests with line-level coverage
+		"GetCheckRunResults": true, // Detailed check run findings
+
 		// CTS/Transport Management (2 read-only in focused mode)
 		"ListTransports": true, // List transport requests
 		"GetTransport":   true, // Get transport details with objects
+
+		// gCTS (git-enabled Change Transport System) - read-only in focused mode
+		"GctsListRepositories": true, // List gCTS repositories
+		"GctsGetRepository":    true, // Get repository details
+		"GctsListBranches":     true, // List branches
+		"GctsGetHistory":       true, // Get commit history
 
 		// Git/abapGit Integration (via ZADT_VSP WebSocket)
 		"GitTypes":  true, // List 158 supported object types
@@ -130,5 +152,12 @@ func focusedToolSet() map[string]bool {
 		"ListDependencies": true, // List available dependencies for installation
 		"InstallDummyTest": true, // Test tool for verifying Install* workflow
 		"DeployZip":        true, // Deploy objects from abapGit-format ZIP to SAP package
+
+		// i18n/Translation tools (read-only in focused mode)
+		"GetObjectTextsInLanguage": true, // Get object source in specific language
+		"GetDataElementLabels":     true, // Get data element labels in specific language
+		"GetMessageClassTexts":     true, // Get message class texts in specific language
+		"GetTextPool":              true, // Get text pool entries in specific language
+		"CompareLanguages":         true, // Compare object texts between two languages
 	}
 }

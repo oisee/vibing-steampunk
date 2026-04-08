@@ -87,6 +87,9 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	s.registerGitTools(shouldRegister)
 	s.registerReportTools(shouldRegister)
 	s.registerInstallTools(shouldRegister)
+	s.registerVersionHistoryTools(shouldRegister)
+	s.registerTestingQualityTools(shouldRegister)
+	s.registerI18NTools(shouldRegister)
 
 	// Register tool aliases for common operations
 	s.registerToolAliases(shouldRegister)
@@ -191,6 +194,12 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 			mcp.WithString("sql_query",
 				mcp.Description("Optional ABAP SQL SELECT statement. Uses ABAP syntax: ASCENDING/DESCENDING work, ASC/DESC fail. Example: SELECT * FROM T000 WHERE MANDT = '001' ORDER BY MANDT DESCENDING"),
 			),
+			mcp.WithNumber("offset",
+				mcp.Description("Skip first N rows (client-side pagination). Use with max_rows for paging through results"),
+			),
+			mcp.WithBoolean("columns_only",
+				mcp.Description("Return only column metadata (names, types, lengths) without data rows"),
+			),
 		), s.handleGetTableContents)
 	}
 
@@ -224,6 +233,26 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 				mcp.Description("Filter dependencies to specific package context"),
 			),
 		), s.handleGetCDSDependencies)
+	}
+
+	if shouldRegister("GetCDSImpactAnalysis") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSImpactAnalysis",
+			mcp.WithDescription("Retrieve CDS view REVERSE dependencies (where-used / downstream consumers). Returns all objects that consume/reference the given CDS view. Complement of GetCDSDependencies which shows forward dependencies."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (e.g., 'ZTRAVEL'). Use SearchObject to find CDS views first."),
+			),
+		), s.handleGetCDSImpactAnalysis)
+	}
+
+	if shouldRegister("GetCDSElementInfo") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCDSElementInfo",
+			mcp.WithDescription("Retrieve metadata for all elements (fields) of a CDS view. Returns field names, types, annotations, and semantic information from the DDL source."),
+			mcp.WithString("view_name",
+				mcp.Required(),
+				mcp.Description("CDS view name (e.g., 'ZTRAVEL'). Use SearchObject to find CDS views first."),
+			),
+		), s.handleGetCDSElementInfo)
 	}
 
 	if shouldRegister("GetStructure") {
@@ -274,6 +303,16 @@ func (s *Server) registerReadTools(shouldRegister func(string) bool) {
 				mcp.Description("Name of the ABAP type"),
 			),
 		), s.handleGetTypeInfo)
+	}
+
+	if shouldRegister("GetAPIReleaseState") {
+		s.mcpServer.AddTool(mcp.NewTool("GetAPIReleaseState",
+			mcp.WithDescription("Check API release state for S/4HANA Clean Core / ABAP Cloud compatibility. Returns whether an object is released for cloud development and key user apps. Use SearchObject first to get the object URI."),
+			mcp.WithString("object_uri",
+				mcp.Required(),
+				mcp.Description("ADT URI of the object (e.g., /sap/bc/adt/oo/classes/cl_abap_typedescr). Get this from SearchObject results."),
+			),
+		), s.handleGetAPIReleaseState)
 	}
 }
 
@@ -424,6 +463,42 @@ func (s *Server) registerAnalysisTools(shouldRegister func(string) bool) {
 				mcp.Description("Filter traces by user (defaults to current user)"),
 			),
 		), s.handleTraceExecution)
+	}
+
+	// --- Graph Engine: Dependency & Boundary Analysis ---
+
+	if shouldRegister("CheckBoundaries") {
+		s.mcpServer.AddTool(mcp.NewTool("CheckBoundaries",
+			mcp.WithDescription("Analyze package boundary violations. Checks if a package/object's dependencies cross package boundaries. Detects: same-package deps, SAP standard deps, whitelisted Z-package deps, violations (cross-package Z* deps), and dynamic calls. Uses embedded ABAP parser (offline) + TADIR resolution (online)."),
+			mcp.WithString("package",
+				mcp.Description("Package to analyze (e.g., $ZDEV). All objects in package are checked."),
+			),
+			mcp.WithString("object",
+				mcp.Description("Single object to analyze (e.g., ZCL_TEST). Source is read from SAP."),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source code to analyze offline (no SAP connection needed)."),
+			),
+			mcp.WithString("whitelist",
+				mcp.Description("Comma-separated list of allowed Z-packages (supports glob: '$ZCOMMON,$ZUTIL*'). Dependencies on these packages are OK."),
+			),
+			mcp.WithNumber("depth",
+				mcp.Description("Analysis depth (default: 1). Higher values follow transitive deps."),
+			),
+			mcp.WithString("format",
+				mcp.Description("Output format: 'text' (default), 'json', 'full' (includes standard deps)"),
+			),
+		), s.handleCheckBoundaries)
+	}
+
+	if shouldRegister("GraphStats") {
+		s.mcpServer.AddTool(mcp.NewTool("GraphStats",
+			mcp.WithDescription("Extract dependency statistics from ABAP source code using embedded parser. Returns node/edge counts by type, edge kind, and source. Works offline without SAP."),
+			mcp.WithString("source",
+				mcp.Required(),
+				mcp.Description("ABAP source code to analyze"),
+			),
+		), s.handleGraphStats)
 	}
 }
 
@@ -1755,6 +1830,133 @@ func (s *Server) registerTransportTools(shouldRegister func(string) bool) {
 	}
 }
 
+// registerGCTSTools registers gCTS (git-enabled Change Transport System) tools.
+func (s *Server) registerGCTSTools(shouldRegister func(string) bool) {
+	if shouldRegister("GctsListRepositories") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsListRepositories",
+			mcp.WithDescription("List all gCTS repositories on the SAP system. Returns repository ID, name, URL, branch, status and role."),
+		), s.handleGctsListRepositories)
+	}
+
+	if shouldRegister("GctsGetRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsGetRepository",
+			mcp.WithDescription("Get details of a specific gCTS repository including configuration."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsGetRepository)
+	}
+
+	if shouldRegister("GctsCreateRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCreateRepository",
+			mcp.WithDescription("Create a new gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Repository name"),
+			),
+			mcp.WithString("url",
+				mcp.Required(),
+				mcp.Description("Git remote URL"),
+			),
+			mcp.WithString("branch",
+				mcp.Description("Default branch (default: main)"),
+			),
+			mcp.WithString("package",
+				mcp.Description("ABAP package (VSID)"),
+			),
+			mcp.WithString("role",
+				mcp.Description("Repository role (SOURCE or TARGET)"),
+			),
+		), s.handleGctsCreateRepository)
+	}
+
+	if shouldRegister("GctsDeleteRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsDeleteRepository",
+			mcp.WithDescription("Delete a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsDeleteRepository)
+	}
+
+	if shouldRegister("GctsCloneRepository") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCloneRepository",
+			mcp.WithDescription("Clone a gCTS repository on the SAP system. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsCloneRepository)
+	}
+
+	if shouldRegister("GctsPull") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsPull",
+			mcp.WithDescription("Pull changes into a gCTS repository, optionally to a specific commit. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("commit_id",
+				mcp.Description("Commit ID to pull to (optional)"),
+			),
+		), s.handleGctsPull)
+	}
+
+	if shouldRegister("GctsCommit") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsCommit",
+			mcp.WithDescription("Create a commit in a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("message",
+				mcp.Required(),
+				mcp.Description("Commit message"),
+			),
+		), s.handleGctsCommit)
+	}
+
+	if shouldRegister("GctsListBranches") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsListBranches",
+			mcp.WithDescription("List branches in a gCTS repository."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsListBranches)
+	}
+
+	if shouldRegister("GctsSwitchBranch") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsSwitchBranch",
+			mcp.WithDescription("Switch the active branch of a gCTS repository. Expert mode only."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+			mcp.WithString("branch",
+				mcp.Required(),
+				mcp.Description("Branch name to switch to"),
+			),
+		), s.handleGctsSwitchBranch)
+	}
+
+	if shouldRegister("GctsGetHistory") {
+		s.mcpServer.AddTool(mcp.NewTool("GctsGetHistory",
+			mcp.WithDescription("Get commit history of a gCTS repository."),
+			mcp.WithString("rid",
+				mcp.Required(),
+				mcp.Description("Repository ID"),
+			),
+		), s.handleGctsGetHistory)
+	}
+}
+
 // registerGitTools registers Git/abapGit integration tools.
 func (s *Server) registerGitTools(shouldRegister func(string) bool) {
 	if shouldRegister("GitTypes") {
@@ -1946,5 +2148,240 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 				mcp.Description("Deploy only objects matching this name pattern (e.g., 'ZCL_ABAPGIT_*')"),
 			),
 		), s.handleDeployZip)
+	}
+}
+
+// registerVersionHistoryTools registers version history and comparison tools.
+func (s *Server) registerVersionHistoryTools(shouldRegister func(string) bool) {
+	if shouldRegister("GetRevisions") {
+		s.mcpServer.AddTool(mcp.NewTool("GetRevisions",
+			mcp.WithDescription("List version history (revisions) of an ABAP object. Returns versions with dates, authors, and transport requests. Use version URIs with GetRevisionSource or CompareVersions."),
+			mcp.WithString("type",
+				mcp.Required(),
+				mcp.Description("Object type: PROG, CLAS, INTF, FUNC, INCL, DDLS, BDEF, SRVD"),
+			),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Object name"),
+			),
+			mcp.WithString("include",
+				mcp.Description("Class include type for CLAS: main, definitions, implementations, macros, testclasses (default: main)"),
+			),
+			mcp.WithString("parent",
+				mcp.Description("Function group name (required for FUNC type)"),
+			),
+		), s.handleGetRevisions)
+	}
+
+	if shouldRegister("GetRevisionSource") {
+		s.mcpServer.AddTool(mcp.NewTool("GetRevisionSource",
+			mcp.WithDescription("Get source code of a specific version of an ABAP object. Use version_uri from GetRevisions output."),
+			mcp.WithString("version_uri",
+				mcp.Required(),
+				mcp.Description("Version URI from GetRevisions result (the 'uri' field of a revision entry)"),
+			),
+		), s.handleGetRevisionSource)
+	}
+
+	if shouldRegister("CompareVersions") {
+		s.mcpServer.AddTool(mcp.NewTool("CompareVersions",
+			mcp.WithDescription("Compare two versions of an ABAP object with unified diff. Use version URIs from GetRevisions. Use 'current' as version2_uri to compare against the active version."),
+			mcp.WithString("type",
+				mcp.Required(),
+				mcp.Description("Object type: PROG, CLAS, INTF, FUNC, INCL, DDLS, BDEF, SRVD"),
+			),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Object name"),
+			),
+			mcp.WithString("version1_uri",
+				mcp.Required(),
+				mcp.Description("Version URI for first (older) version, from GetRevisions"),
+			),
+			mcp.WithString("version2_uri",
+				mcp.Description("Version URI for second (newer) version, from GetRevisions. Default: 'current' (compare against active version)"),
+			),
+			mcp.WithString("include",
+				mcp.Description("Class include type for CLAS: main, definitions, implementations, macros, testclasses"),
+			),
+			mcp.WithString("parent",
+				mcp.Description("Function group name (required for FUNC type)"),
+			),
+		), s.handleCompareVersions)
+	}
+}
+
+// registerTestingQualityTools registers testing and code quality tools.
+func (s *Server) registerTestingQualityTools(shouldRegister func(string) bool) {
+	if shouldRegister("GetCodeCoverage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCodeCoverage",
+			mcp.WithDescription("Run ABAP Unit tests with code coverage enabled. Returns line-level statement, branch, and procedure coverage data per source file. Uses the same test runner as RunUnitTests but with coverage capture active."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT URL of object to test (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)"),
+			),
+			mcp.WithBoolean("include_dangerous",
+				mcp.Description("Include tests with risk level 'dangerous' (default: false)"),
+			),
+			mcp.WithBoolean("include_long",
+				mcp.Description("Include tests with duration 'long' (default: false)"),
+			),
+		), s.handleGetCodeCoverage)
+	}
+
+	if shouldRegister("GetCheckRunResults") {
+		s.mcpServer.AddTool(mcp.NewTool("GetCheckRunResults",
+			mcp.WithDescription("Get detailed results for a specific check run. Returns all messages with line numbers, severity (E=Error, W=Warning, I=Info), and summary counts. Use after SyntaxCheck or other check operations to get comprehensive error details."),
+			mcp.WithString("check_run_id",
+				mcp.Required(),
+				mcp.Description("Check run ID (from SyntaxCheck or other check operation)"),
+			),
+		), s.handleGetCheckRunResults)
+	}
+
+	if shouldRegister("AnalyzeABAPCode") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeABAPCode",
+			mcp.WithDescription("Analyze ABAP source code for quality, performance, security, and robustness issues using the native Go abaplint engine. Provide source directly or specify object_type + object_name to fetch from SAP. Returns findings with severity, category, line numbers, and fix suggestions."),
+			mcp.WithString("object_type",
+				mcp.Description("ADT object type (e.g., PROG, CLAS, FUGR) — required when using object_name"),
+			),
+			mcp.WithString("object_name",
+				mcp.Description("ABAP object name (e.g., ZTEST, ZCL_MY_CLASS) — fetches source from SAP"),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source code to analyze directly (alternative to object_name)"),
+			),
+		), s.handleAnalyzeABAPCode)
+	}
+}
+
+// registerI18NTools registers i18n/translation tools.
+func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
+	if shouldRegister("GetObjectTextsInLanguage") {
+		s.mcpServer.AddTool(mcp.NewTool("GetObjectTextsInLanguage",
+			mcp.WithDescription("Get the source/content of an ABAP object in a specific language. The language parameter overrides the session language for this request only, allowing you to read texts in any installed language."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT source URL (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR, ES, JA)"),
+			),
+		), s.handleGetObjectTextsInLanguage)
+	}
+
+	if shouldRegister("GetDataElementLabels") {
+		s.mcpServer.AddTool(mcp.NewTool("GetDataElementLabels",
+			mcp.WithDescription("Get the text labels (short/medium/long/heading) of a data element in a specific language. Useful for checking translations of DDIC texts."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Data element name (e.g., MATNR, ZTEST_DTEL)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
+			),
+		), s.handleGetDataElementLabels)
+	}
+
+	if shouldRegister("GetMessageClassTexts") {
+		s.mcpServer.AddTool(mcp.NewTool("GetMessageClassTexts",
+			mcp.WithDescription("Get all messages of a message class in a specific language. Returns message number and text for each entry."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Message class name (e.g., ZTEST_MC)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
+			),
+		), s.handleGetMessageClassTexts)
+	}
+
+	if shouldRegister("WriteMessageClassTexts") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteMessageClassTexts",
+			mcp.WithDescription("Update message class texts in a specific language. Requires a lock handle from LockObject. Use for translating message class entries."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Message class name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
+			),
+			mcp.WithString("lock_handle",
+				mcp.Required(),
+				mcp.Description("Lock handle from LockObject"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional for $TMP objects)"),
+			),
+		), s.handleWriteMessageClassTexts)
+	}
+
+	if shouldRegister("WriteDataElementLabels") {
+		s.mcpServer.AddTool(mcp.NewTool("WriteDataElementLabels",
+			mcp.WithDescription("Update data element labels (short/medium/long/heading) in a specific language. Requires a lock handle from LockObject."),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Data element name"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
+			),
+			mcp.WithString("lock_handle",
+				mcp.Required(),
+				mcp.Description("Lock handle from LockObject"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request number (optional for $TMP objects)"),
+			),
+			mcp.WithString("short",
+				mcp.Description("Short description (max 10 chars)"),
+			),
+			mcp.WithString("medium",
+				mcp.Description("Medium description (max 20 chars)"),
+			),
+			mcp.WithString("long",
+				mcp.Description("Long description (max 40 chars)"),
+			),
+			mcp.WithString("heading",
+				mcp.Description("Column heading (max 55 chars)"),
+			),
+		), s.handleWriteDataElementLabels)
+	}
+
+	if shouldRegister("GetTextPool") {
+		s.mcpServer.AddTool(mcp.NewTool("GetTextPool",
+			mcp.WithDescription("Get the text pool (text elements/symbols) of a program in a specific language. Returns ID, key, and text for each entry."),
+			mcp.WithString("program_name",
+				mcp.Required(),
+				mcp.Description("Program name (e.g., ZTEST)"),
+			),
+			mcp.WithString("language",
+				mcp.Required(),
+				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
+			),
+		), s.handleGetTextPoolInLanguage)
+	}
+
+	if shouldRegister("CompareLanguages") {
+		s.mcpServer.AddTool(mcp.NewTool("CompareLanguages",
+			mcp.WithDescription("Compare the text content of an ABAP object in two languages. Shows which lines differ or are missing in the target language. Useful for identifying untranslated or outdated translations."),
+			mcp.WithString("object_url",
+				mcp.Required(),
+				mcp.Description("ADT source URL (e.g., /sap/bc/adt/programs/programs/ZTEST/source/main)"),
+			),
+			mcp.WithString("source_language",
+				mcp.Required(),
+				mcp.Description("Source language code (e.g., EN)"),
+			),
+			mcp.WithString("target_language",
+				mcp.Required(),
+				mcp.Description("Target language code (e.g., DE, FR)"),
+			),
+		), s.handleCompareObjectLanguages)
 	}
 }

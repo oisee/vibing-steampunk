@@ -34,29 +34,29 @@ var objectTypeMapping = map[string]struct {
 //	Phase 3: Mass activate all objects
 func (s *Server) handleDeployZip(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Parse parameters
-	source, _ := request.Params.Arguments["source"].(string)
+	source, _ := request.GetArguments()["source"].(string)
 	if source == "" {
 		return newToolResultError("source is required (e.g., 'abapgit-standalone', 'abapgit-full')"), nil
 	}
 
-	packageName, _ := request.Params.Arguments["package"].(string)
+	packageName, _ := request.GetArguments()["package"].(string)
 	if packageName == "" {
 		return newToolResultError("package is required (e.g., '$ZGIT')"), nil
 	}
 	packageName = strings.ToUpper(packageName)
 
 	dryRun := false
-	if dr, ok := request.Params.Arguments["dry_run"].(bool); ok {
+	if dr, ok := request.GetArguments()["dry_run"].(bool); ok {
 		dryRun = dr
 	}
 
 	typeFilter := ""
-	if tf, ok := request.Params.Arguments["type_filter"].(string); ok {
+	if tf, ok := request.GetArguments()["type_filter"].(string); ok {
 		typeFilter = strings.ToUpper(tf)
 	}
 
 	nameFilter := ""
-	if nf, ok := request.Params.Arguments["name_filter"].(string); ok {
+	if nf, ok := request.GetArguments()["name_filter"].(string); ok {
 		nameFilter = strings.ToUpper(nf)
 	}
 

@@ -154,19 +154,19 @@ func (s *Server) registerWriteSource() {
 
 // handleGetSource handles the unified GetSource tool call
 func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectType, ok := request.Params.Arguments["object_type"].(string)
+	objectType, ok := request.GetArguments()["object_type"].(string)
 	if !ok || objectType == "" {
 		return newToolResultError("object_type is required"), nil
 	}
 
-	name, ok := request.Params.Arguments["name"].(string)
+	name, ok := request.GetArguments()["name"].(string)
 	if !ok || name == "" {
 		return newToolResultError("name is required"), nil
 	}
 
-	parent, _ := request.Params.Arguments["parent"].(string)
-	include, _ := request.Params.Arguments["include"].(string)
-	method, _ := request.Params.Arguments["method"].(string)
+	parent, _ := request.GetArguments()["parent"].(string)
+	include, _ := request.GetArguments()["include"].(string)
+	method, _ := request.GetArguments()["method"].(string)
 
 	opts := &adt.GetSourceOptions{
 		Parent:  parent,
@@ -181,12 +181,12 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 
 	// Append dependency context (default: true, set include_context=false to disable)
 	includeContext := true
-	if ic, ok := request.Params.Arguments["include_context"].(bool); ok {
+	if ic, ok := request.GetArguments()["include_context"].(bool); ok {
 		includeContext = ic
 	}
 	if includeContext {
 		maxDeps := 20
-		if md, ok := request.Params.Arguments["max_deps"].(float64); ok && md > 0 {
+		if md, ok := request.GetArguments()["max_deps"].(float64); ok && md > 0 {
 			maxDeps = int(md)
 		}
 
@@ -205,27 +205,27 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 
 // handleWriteSource handles the unified WriteSource tool call
 func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectType, ok := request.Params.Arguments["object_type"].(string)
+	objectType, ok := request.GetArguments()["object_type"].(string)
 	if !ok || objectType == "" {
 		return newToolResultError("object_type is required"), nil
 	}
 
-	name, ok := request.Params.Arguments["name"].(string)
+	name, ok := request.GetArguments()["name"].(string)
 	if !ok || name == "" {
 		return newToolResultError("name is required"), nil
 	}
 
-	source, ok := request.Params.Arguments["source"].(string)
+	source, ok := request.GetArguments()["source"].(string)
 	if !ok || source == "" {
 		return newToolResultError("source is required"), nil
 	}
 
-	mode, _ := request.Params.Arguments["mode"].(string)
-	description, _ := request.Params.Arguments["description"].(string)
-	packageName, _ := request.Params.Arguments["package"].(string)
-	testSource, _ := request.Params.Arguments["test_source"].(string)
-	transport, _ := request.Params.Arguments["transport"].(string)
-	method, _ := request.Params.Arguments["method"].(string)
+	mode, _ := request.GetArguments()["mode"].(string)
+	description, _ := request.GetArguments()["description"].(string)
+	packageName, _ := request.GetArguments()["package"].(string)
+	testSource, _ := request.GetArguments()["test_source"].(string)
+	transport, _ := request.GetArguments()["transport"].(string)
+	method, _ := request.GetArguments()["method"].(string)
 
 	opts := &adt.WriteSourceOptions{
 		Description: description,
@@ -343,7 +343,7 @@ func (s *Server) registerExportToFile() {
 
 // handleGrepObjects handles the unified GrepObjects tool call
 func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURLsRaw, ok := request.Params.Arguments["object_urls"].([]interface{})
+	objectURLsRaw, ok := request.GetArguments()["object_urls"].([]interface{})
 	if !ok || len(objectURLsRaw) == 0 {
 		return newToolResultError("object_urls array is required"), nil
 	}
@@ -358,18 +358,18 @@ func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequ
 		}
 	}
 
-	pattern, ok := request.Params.Arguments["pattern"].(string)
+	pattern, ok := request.GetArguments()["pattern"].(string)
 	if !ok || pattern == "" {
 		return newToolResultError("pattern is required"), nil
 	}
 
 	caseInsensitive := false
-	if ci, ok := request.Params.Arguments["case_insensitive"].(bool); ok {
+	if ci, ok := request.GetArguments()["case_insensitive"].(bool); ok {
 		caseInsensitive = ci
 	}
 
 	contextLines := 0
-	if cl, ok := request.Params.Arguments["context_lines"].(float64); ok {
+	if cl, ok := request.GetArguments()["context_lines"].(float64); ok {
 		contextLines = int(cl)
 	}
 
@@ -384,7 +384,7 @@ func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequ
 
 // handleGrepPackages handles the unified GrepPackages tool call
 func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	packagesRaw, ok := request.Params.Arguments["packages"].([]interface{})
+	packagesRaw, ok := request.GetArguments()["packages"].([]interface{})
 	if !ok || len(packagesRaw) == 0 {
 		return newToolResultError("packages array is required"), nil
 	}
@@ -400,22 +400,22 @@ func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolReq
 	}
 
 	includeSubpackages := false
-	if is, ok := request.Params.Arguments["include_subpackages"].(bool); ok {
+	if is, ok := request.GetArguments()["include_subpackages"].(bool); ok {
 		includeSubpackages = is
 	}
 
-	pattern, ok := request.Params.Arguments["pattern"].(string)
+	pattern, ok := request.GetArguments()["pattern"].(string)
 	if !ok || pattern == "" {
 		return newToolResultError("pattern is required"), nil
 	}
 
 	caseInsensitive := false
-	if ci, ok := request.Params.Arguments["case_insensitive"].(bool); ok {
+	if ci, ok := request.GetArguments()["case_insensitive"].(bool); ok {
 		caseInsensitive = ci
 	}
 
 	var objectTypes []string
-	if ot, ok := request.Params.Arguments["object_types"].([]interface{}); ok {
+	if ot, ok := request.GetArguments()["object_types"].([]interface{}); ok {
 		objectTypes = make([]string, len(ot))
 		for i, v := range ot {
 			if s, ok := v.(string); ok {
@@ -425,7 +425,7 @@ func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolReq
 	}
 
 	maxResults := 0
-	if mr, ok := request.Params.Arguments["max_results"].(float64); ok {
+	if mr, ok := request.GetArguments()["max_results"].(float64); ok {
 		maxResults = int(mr)
 	}
 

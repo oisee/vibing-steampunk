@@ -212,6 +212,19 @@ Analyze dependencies (unified 5-layer: regex + parser + SCAN + CROSS + ADT):
   SAP(action="analyze", params={"type": "analyze_deps", "source": "..."})
   SAP(action="analyze", params={"type": "analyze_deps", "object_type": "CLAS", "name": "ZCL_TEST"})
 
+Graph queries:
+  SAP(action="analyze", params={"type": "co_change", "object_type": "CLAS", "object_name": "ZCL_FOO", "top_n": 10})
+  SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "max_depth": 3})
+  SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "include_source_analysis": true})
+  SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE"})
+  SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE", "grep": false})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "FUNC", "object_name": "Z_MY_FM"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "CLAS", "object_name": "ZCL_API", "method": "GET_DATA"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZLEGACY", "form": "BUILD_OUTPUT"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZBATCH_RUN", "submit": true})
+  SAP(action="analyze", params={"type": "health", "package": "$ZDEV"})
+  SAP(action="analyze", params={"type": "health", "object_type": "CLAS", "object_name": "ZCL_ORDER_SERVICE"})
+
 Execute ABAP:
   SAP(action="analyze", params={"type": "execute_abap", "code": "WRITE 'Hello'."})
 
@@ -228,7 +241,13 @@ SQL traces:
   SAP(action="analyze", params={"type": "list_sql_traces"})
 
 ABAP help:
-  SAP(action="analyze", params={"type": "abap_help", "keyword": "SELECT"})`)
+  SAP(action="analyze", params={"type": "abap_help", "keyword": "SELECT"})
+
+Dependency graph & boundary analysis:
+  SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV", "whitelist": "$ZCOMMON,$ZUTIL*"})
+  SAP(action="analyze", params={"type": "check_boundaries", "object": "ZCL_TEST", "whitelist": "$ZCOMMON"})
+  SAP(action="analyze", params={"type": "check_boundaries", "source": "REPORT z.\nCALL FUNCTION 'Z_FM'.", "package": "$Z"})
+  SAP(action="analyze", params={"type": "graph_stats", "source": "REPORT z.\nDATA lo TYPE REF TO zcl_x."})`)
 
 	case "system":
 		return mcp.NewToolResultText(`SAP(action="system") - System operations
@@ -264,6 +283,54 @@ File operations:
   SAP(action="system", params={"type": "save_to_file", "object_type": "CLAS", "object_name": "ZCL_TEST", "output_dir": "/tmp"})
   SAP(action="system", params={"type": "rename", "objType": "CLAS/OC", "oldName": "ZCL_OLD", "newName": "ZCL_NEW", "packageName": "$TMP"})`)
 
+	case "tips", "best_practices", "workflows", "best":
+		return mcp.NewToolResultText(`SAP Best Practices & Workflows
+
+=== EDITING WORKFLOW (recommended) ===
+1. Read object with context:    SAP(action="read", target="CLAS ZCL_TEST")
+2. Edit (auto lock/activate):   SAP(action="edit", target="CLAS ZCL_TEST", params={"source": "..."})
+   → Handles lock → save → unlock → activate automatically
+
+=== FILE-BASED WORKFLOW (for complex edits) ===
+1. Export to local file:         SAP(action="system", params={"type": "save_to_file", "object_type": "CLAS", "object_name": "ZCL_TEST", "output_dir": "/tmp"})
+2. Edit locally (your editor)
+3. Deploy back:                  SAP(action="system", params={"type": "deploy_from_file", "file_path": "/tmp/zcl_test.clas.abap", "package_name": "$TMP"})
+   → Best for large classes — edit locally, deploy per-file
+
+=== PACKAGE ANALYSIS ===
+1. Check boundaries:             SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV", "whitelist": "$ZCOMMON"})
+2. Offline (no SAP):             SAP(action="analyze", params={"type": "check_boundaries", "source": "...", "package": "$ZDEV"})
+
+=== TESTING ===
+1. Run unit tests:               SAP(action="test", params={"object_url": "/sap/bc/adt/oo/classes/zcl_test"})
+2. ATC check:                    SAP(action="test", target="ATC", params={"object_uri": "/sap/bc/adt/oo/classes/zcl_test"})
+3. Syntax check:                 SAP(action="analyze", params={"type": "syntax_check", "object_url": "/sap/bc/adt/oo/classes/zcl_test"})
+
+=== DEPENDENCY ANALYSIS ===
+1. Call graph (down):            SAP(action="analyze", params={"type": "callees", "object_uri": "..."})
+2. Where-used (up):              SAP(action="analyze", params={"type": "callers", "object_uri": "..."})
+3. CDS dependencies:             SAP(action="read", target="CDS_DEPS ZDDL_VIEW")
+4. CDS impact (consumers):      SAP(action="analyze", params={"type": "cds_impact", "cds_view": "ZDDL_VIEW"})
+5. Boundary check:               SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV"})
+
+=== SEARCH & GREP ===
+1. Find objects:                 SAP(action="search", target="ZCL_*")
+2. Grep in package:              SAP(action="grep", params={"package_name": "$TMP", "pattern": "SELECT"})
+3. Grep specific object:         SAP(action="grep", params={"object_name": "ZCL_TEST", "pattern": "MODIFY"})
+
+=== DEBUGGING ===
+1. Set breakpoint:               SAP(action="debug", target="SET_BREAKPOINT", params={"program": "ZCL_TEST", "line": 10})
+2. Run report:                   SAP(action="debug", target="RUN_REPORT", params={"report": "ZREPORT"})
+3. Call RFC:                     SAP(action="debug", target="CALL_RFC", params={"function": "Z_MY_FM", "params": "{...}"})
+
+=== TIPS ===
+• Use "read" before "edit" — it gives context (deps, structure)
+• Use deploy_from_file for classes with many methods — edit locally, deploy per-file
+• Use save_to_file + export to get objects locally for offline analysis/editing
+• Use check_boundaries with whitelist to enforce package architecture
+• Always test after edit: syntax check → unit tests → ATC
+• For large refactors: export → edit locally → deploy → test`)
+
 	default:
 		return mcp.NewToolResultText(`SAP - Universal ABAP Development Tool
 
@@ -276,7 +343,7 @@ Actions:
   query    - Query table contents or run SQL
   grep     - Search patterns in source code
   test     - Run unit tests, ATC checks
-  analyze  - Syntax check, call graph, code intelligence, profiler, dumps
+  analyze  - Syntax check, call graph, code intelligence, profiler, dumps, boundary analysis
   debug    - Breakpoints, stepping, variables, RFC calls, report execution
   system   - System info, transports, git, install tools, file operations
   help     - This help. Use SAP(action="help", target="<action>") for details.
@@ -287,7 +354,10 @@ Quick examples:
   SAP(action="search", target="ZCL_*")
   SAP(action="test", params={"object_url": "/sap/bc/adt/oo/classes/zcl_test"})
   SAP(action="grep", params={"package_name": "$TMP", "pattern": "SELECT"})
-  SAP(action="system", target="INFO")`)
+  SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV", "whitelist": "$ZCOMMON"})
+  SAP(action="system", target="INFO")
+
+Use SAP(action="help", target="tips") for best practices and workflow guides.`)
 	}
 }
 
