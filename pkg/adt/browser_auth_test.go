@@ -302,11 +302,17 @@ func TestSanitizeURLForLog(t *testing.T) {
 }
 
 func TestEmptyCookieJar(t *testing.T) {
-	// Verify that no cookie names from an empty set produce false positives
-	names := []string{}
-	for _, name := range names {
+	// Verify that unrelated cookie names don't trigger false positives
+	unrelatedCookies := []string{
+		"_ga", "PHPSESSID", "csrf_token", "__cfduid",
+		"connect.sid", "laravel_session", "rack.session",
+	}
+	for _, name := range unrelatedCookies {
 		if matchesSAPAuthCookie(name) {
-			t.Errorf("empty jar should have no auth cookies, but %q matched", name)
+			t.Errorf("unrelated cookie %q should not match as SAP auth cookie", name)
+		}
+		if matchesSAPWeakCookie(name) {
+			t.Errorf("unrelated cookie %q should not match as SAP weak cookie", name)
 		}
 	}
 }

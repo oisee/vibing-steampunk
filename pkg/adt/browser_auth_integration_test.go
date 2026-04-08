@@ -131,25 +131,32 @@ func TestBrowserAuth_SAMLRedirectChain(t *testing.T) {
 }
 
 // TestBrowserAuth_PollDetectsCookies verifies that pollForSAPCookies
-// correctly detects cookies that appear after a delay (simulating slow
-// SAML redirect chains).
+// correctly detects cookies that appear after a delayed redirect chain
+// (simulating slow SAML IdP responses).
+//
+// The test uses a multi-step redirect: initial page → delayed redirect →
+// final page that sets cookies. This ensures cookies land in the browser's
+// cookie jar where network.GetCookies (CDP) can read them.
 func TestBrowserAuth_PollDetectsCookies(t *testing.T) {
-	// Server that sets auth cookies only on the second request to /check
-	requestCount := 0
 	mux := http.NewServeMux()
 
+	// Step 1: Initial page with a meta-refresh that triggers a delayed redirect.
+	// This simulates a slow IAS login page that eventually redirects.
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		if requestCount >= 3 {
-			// After a few requests, set auth cookies (simulates delayed SAML completion)
-			http.SetCookie(w, &http.Cookie{
-				Name:  "MYSAPSSO2",
-				Value: "delayed_sso_token",
-				Path:  "/",
-			})
-		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "<html><body>Loading...</body></html>")
+		// Meta-refresh after 1 second to simulate delayed SAML redirect
+		fmt.Fprint(w, `<html><head><meta http-equiv="refresh" content="1;url=/auth-complete"></head><body>Authenticating...</body></html>`)
+	})
+
+	// Step 2: Auth complete — sets SAP cookies
+	mux.HandleFunc("/auth-complete", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:  "MYSAPSSO2",
+			Value: "delayed_sso_token",
+			Path:  "/",
+		})
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "<html><body>Welcome</body></html>")
 	})
 
 	ts := httptest.NewServer(mux)
@@ -174,19 +181,19 @@ func TestBrowserAuth_PollDetectsCookies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(browserCtx, 15*time.Second)
 	defer cancel()
 
-	// Navigate to the test server
+	// Navigate to the test server (triggers delayed redirect)
 	if err := chromedp.Run(ctx, chromedp.Navigate(ts.URL)); err != nil {
 		t.Fatalf("navigation failed: %v", err)
 	}
 
-	// Poll for cookies — should eventually find MYSAPSSO2
+	// Poll for cookies — should eventually find MYSAPSSO2 after the meta-refresh
 	cookies, err := pollForSAPCookies(ctx, ts.URL, true)
 	if err != nil {
 		t.Fatalf("pollForSAPCookies failed: %v", err)
 	}
 
 	if _, ok := cookies["MYSAPSSO2"]; !ok {
-		t.Error("expected MYSAPSSO2 cookie to be found by polling")
+		t.Error("expected MYSAPSSO2 cookie to be found by polling after delayed redirect")
 	}
 }
 
