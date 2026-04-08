@@ -66,7 +66,7 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 - [x] T1.4: Write unit tests — `TestCookieURLsForSAP` (3 cases), `TestMatchesSAPAuthCookie` (10 cases), `TestMatchesSAPWeakCookie` (5 cases), `TestSAPCookieClassification`, `TestEmptyCookieJar`
 - [x] T1.5: Write integration test — `browser_auth_integration_test.go` (`//go:build integration`): `TestBrowserAuth_SAMLRedirectChain` (3-hop httptest + chromedp), `TestBrowserAuth_PollDetectsCookies` (delayed cookie appearance)
 - [ ] T1.6: Manual test against K0B DEV (`vsp --browser-auth --url https://my413862.s4hana.cloud.sap -v`) — pending access
-- [ ] GATE: `go test ./pkg/adt/...` passes (verify T1.4 unit tests + T1.5 integration test exist) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
+- [x] GATE: `go test ./pkg/adt/...` PASS + `mcp__pal__codereview` PASS [C+O] + `mcp__pal__thinkdeep` PASS [C+O] + `/check saml.1` audit APPROVE [C+O] — 1 MEDIUM + 2 LOW found and fixed (commit 9ef3db0)
 
 **Rollback:**
 1. `git revert <commit>` — single file change, clean revert

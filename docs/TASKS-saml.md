@@ -13,7 +13,7 @@
 | T1.4 | Write unit tests for cookie filtering logic | DONE | test-engineer |
 | T1.5 | Write integration test (chromedp + httptest, build tag) | DONE | test-engineer |
 | T1.6 | Manual test against K0B DEV | PENDING | backend-dev |
-| GATE | Tests pass + PAL codereview + thinkdeep | IN PROGRESS | orchestrator |
+| GATE | Tests pass + PAL codereview + thinkdeep + /check audit | DONE | orchestrator |
 
 ## Phase SAML.2: Programmatic SAML Flow
 
