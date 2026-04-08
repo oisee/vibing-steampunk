@@ -138,6 +138,35 @@ jobs:
           COMMITS_BEHIND: ${{ steps.check.outputs.commits_behind }}
           CONFLICTING_FILES: ${{ steps.merge.outputs.conflicting_files }}
         run: |
+          # Build the markdown bodies with printf so we don't have to worry
+          # about multi-line strings tripping YAML's literal-block indentation
+          # rules (heredocs would either break YAML or require dedenting).
+          printf '%s\n' \
+            "Still behind: ${COMMITS_BEHIND} commits." \
+            "Conflicting files: \`${CONFLICTING_FILES}\`" \
+            "Run \`./scripts/sync-upstream.sh\` locally to resolve." \
+            > /tmp/comment-body.md
+
+          printf '%s\n' \
+            "The daily upstream sync workflow detected conflicts that require manual resolution." \
+            "" \
+            "**Commits behind upstream/main:** ${COMMITS_BEHIND}" \
+            "**Conflicting files:** \`${CONFLICTING_FILES}\`" \
+            "" \
+            "### How to resolve" \
+            "" \
+            "Run the local sync script — it has policy-aware conflict resolution and a human-in-the-loop step:" \
+            "" \
+            '```bash' \
+            "git fetch upstream" \
+            "./scripts/sync-upstream.sh" \
+            '```' \
+            "" \
+            "See [\`CLAUDE.md\`](../blob/main/CLAUDE.md) → \"Conflict Resolution Strategy\" for the per-file policy (CLAUDE.md HEAD wins, README.md keeps vinchacho URLs, articles/ keeps oisee references, etc)." \
+            "" \
+            "This issue will be auto-commented if the situation persists, and can be closed once the sync is done." \
+            > /tmp/issue-body.md
+
           # Avoid duplicate issues — search for an existing open one with the same title prefix
           EXISTING=$(gh issue list --repo "$GH_REPO" \
             --state open \
@@ -146,30 +175,12 @@ jobs:
 
           if [ -n "$EXISTING" ]; then
             echo "Existing open issue #$EXISTING already tracks manual sync — adding a comment"
-            gh issue comment "$EXISTING" --repo "$GH_REPO" --body "Still behind: $COMMITS_BEHIND commits.
-Conflicting files: \`$CONFLICTING_FILES\`
-Run \`./scripts/sync-upstream.sh\` locally to resolve."
+            gh issue comment "$EXISTING" --repo "$GH_REPO" --body-file /tmp/comment-body.md
           else
             gh issue create \
               --repo "$GH_REPO" \
               --title "Manual upstream sync needed ($COMMITS_BEHIND commits behind)" \
-              --body "The daily upstream sync workflow detected conflicts that require manual resolution.
-
-**Commits behind upstream/main:** $COMMITS_BEHIND
-**Conflicting files:** \`$CONFLICTING_FILES\`
-
-### How to resolve
-
-Run the local sync script — it has policy-aware conflict resolution and a human-in-the-loop step:
-
-\`\`\`bash
-git fetch upstream
-./scripts/sync-upstream.sh
-\`\`\`
-
-See [\`CLAUDE.md\`](../blob/main/CLAUDE.md) → \"Conflict Resolution Strategy\" for the per-file policy (CLAUDE.md HEAD wins, README.md keeps vinchacho URLs, articles/ keeps oisee references, etc).
-
-This issue will be auto-commented if the situation persists, and can be closed once the sync is done."
+              --body-file /tmp/issue-body.md
             echo "Created tracking issue"
           fi
 
