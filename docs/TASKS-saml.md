@@ -19,14 +19,14 @@
 
 | Task | Description | Status | Assignee |
 |------|-------------|--------|----------|
-| T2.1 | Create `saml_auth.go` with `SAMLLogin()` | TODO | backend-dev |
-| T2.2 | HTML form parser using `x/net/html` | TODO | backend-dev |
-| T2.3 | Add CLI flags to `main.go` | TODO | backend-dev |
-| T2.4 | Add `processSAMLAuth()` between browser and cookie auth | TODO | backend-dev |
-| T2.5 | Wire 401 re-auth into Transport (ReauthFunc + singleflight) | TODO | backend-dev |
-| T2.6 | Write comprehensive unit tests (8 cases) | TODO | test-engineer |
-| T2.7 | Manual test against K0B DEV | TODO | backend-dev |
-| GATE | Tests pass + PAL codereview + thinkdeep | TODO | orchestrator |
+| T2.1 | Create `saml_auth.go` with `SAMLLogin()` | DONE | backend-dev |
+| T2.2 | HTML form parser using `x/net/html` | DONE | backend-dev |
+| T2.3 | Add CLI flags to `main.go` | DONE | backend-dev |
+| T2.4 | Add `processSAMLAuth()` between browser and cookie auth | DONE | backend-dev |
+| T2.5 | Wire 401 re-auth into Transport (ReauthFunc + cookiesMu) | DONE | backend-dev |
+| T2.6 | Write comprehensive unit tests (14 cases) | DONE | test-engineer |
+| T2.7 | Manual test against K0B DEV | PENDING | backend-dev |
+| GATE | Tests pass + PAL codereview + thinkdeep | IN PROGRESS | orchestrator |
 
 ## Phase SAML.3: Credential Helper
 

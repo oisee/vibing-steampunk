@@ -80,22 +80,22 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 **New deps:** `golang.org/x/net` (for `html` package — form parsing)
 **Estimated effort:** 2-3 days
 
-- [ ] T2.1: Create `pkg/adt/saml_auth.go` with `SAMLLogin(ctx, sapURL, user, password, insecure, verbose)` — 4-step SAML dance:
+- [x] T2.1: Create `pkg/adt/saml_auth.go` with `SAMLLogin(ctx, sapURL, user, password, insecure, verbose)` — 4-step SAML dance:
   - Step 1: GET target URL → detect SAML form, extract SAMLRequest + action URL using `x/net/html` tokenizer
   - Step 2: POST SAMLRequest to IAS → parse IAS login form (j_username, j_password fields)
   - Step 3: POST credentials to IAS → extract SAMLResponse
   - Step 4: Follow SAMLResponse chain (loop up to 10 form POSTs) → extract SAP session cookies
   - **Credential lifecycle:** Use `CredentialProvider func(ctx) (user, pass []byte, err error)` callback pattern. The provider re-reads credentials from env/credential-cmd on each invocation — no long-term credential retention in memory. This resolves the zeroing vs re-auth conflict: credentials are obtained fresh for each SAML dance (initial + re-auth on 401). Zero `[]byte` buffers after each use.
   - **InsecureSkipVerify:** When `--insecure` is set, TLS verification is also skipped for the IAS endpoint. Document in `--saml-auth` help text with warning.
-- [ ] T2.2: Implement HTML form parser helper using `golang.org/x/net/html` — extract `<form action>` and `<input name value>` from HTML response body. Target SAML-standard field names (SAMLRequest, SAMLResponse, RelayState), not layout.
-- [ ] T2.3: Add CLI flags to `cmd/vsp/main.go`: `--saml-auth`, `--saml-user` / `SAP_SAML_USER`, `--saml-password` / `SAP_SAML_PASSWORD`. Add `processSAMLAuth()` function.
-- [ ] T2.4: Add `processSAMLAuth(cmd)` function called between `processBrowserAuth` and `processCookieAuth` in the PersistentPreRunE chain. `processSAMLAuth` performs the SAML dance and populates `cfg.Cookies`, identical to how `processBrowserAuth` works. The existing `authMethods` counter in `processCookieAuth` already handles mutual exclusivity.
-- [ ] T2.5: Wire 401 re-auth into Transport layer:
+- [x] T2.2: Implement HTML form parser helper using `golang.org/x/net/html` — extract `<form action>` and `<input name value>` from HTML response body. Target SAML-standard field names (SAMLRequest, SAMLResponse, RelayState), not layout.
+- [x] T2.3: Add CLI flags to `cmd/vsp/main.go`: `--saml-auth`, `--saml-user` / `SAP_SAML_USER`, `--saml-password` / `SAP_SAML_PASSWORD`. Add `processSAMLAuth()` function.
+- [x] T2.4: Add `processSAMLAuth(cmd)` function called between `processBrowserAuth` and `processCookieAuth` in the PersistentPreRunE chain. `processSAMLAuth` performs the SAML dance and populates `cfg.Cookies`, identical to how `processBrowserAuth` works. The existing `authMethods` counter in `processCookieAuth` already handles mutual exclusivity.
+- [x] T2.5: Wire 401 re-auth into Transport layer:
   - Add `ReauthFunc func(ctx context.Context) (map[string]string, error)` field to `Config` (config.go)
   - Modify 401 handler in `http.go` `retryRequest()`: when `HasBasicAuth()` is false and `ReauthFunc` is set, call it to get fresh cookies instead of `fetchCSRFToken()` Basic Auth path
   - Use `sync.Once` or `singleflight` to prevent concurrent 401 stampede (multiple goroutines triggering simultaneous IAS logins)
   - `processSAMLAuth` in main.go sets `cfg.ReauthFunc` = closure calling `SAMLLogin` with the `CredentialProvider`
-- [ ] T2.6: Write comprehensive unit tests with mock HTTP server:
+- [x] T2.6: Write comprehensive unit tests with mock HTTP server:
   - `TestSAMLLogin_FullFlow` — 4-endpoint mock simulating SAP→IAS→SAP chain
   - `TestSAMLLogin_WrongPassword` — IAS returns error page
   - `TestSAMLLogin_IASUnavailable` — connection refused
@@ -104,8 +104,8 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
   - `TestSAMLAuth_VerboseNoSecrets` — capture stderr, verify no passwords/assertions logged
   - `TestSAMLLogin_ReauthOn401` — verify Transport calls ReauthFunc on 401, gets fresh cookies, retries request
   - `TestSAMLLogin_ReauthConcurrent` — verify singleflight prevents stampede on simultaneous 401s
-- [ ] T2.7: Manual test against K0B DEV (`vsp --saml-auth --saml-user user@example.com --saml-password *** --url https://my413862.s4hana.cloud.sap`)
-- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 8 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
+- [ ] T2.7: Manual test against K0B DEV (`vsp --saml-auth --saml-user user@example.com --saml-password *** --url https://my413862.s4hana.cloud.sap`) — pending access
+- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 14 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
 
 **Rollback:**
 1. `git revert <commit>` — new files + minimal changes to main.go, http.go, config.go

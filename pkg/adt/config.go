@@ -2,6 +2,7 @@
 package adt
 
 import (
+	"context"
 	"crypto/tls"
 	"net/http"
 	"net/http/cookiejar"
@@ -48,6 +49,10 @@ type Config struct {
 	Features FeatureConfig
 	// TerminalID for debugger session (shared with SAP GUI for cross-tool debugging)
 	TerminalID string
+
+	// ReauthFunc is called on 401 to re-authenticate (e.g., re-run SAML dance).
+	// Returns fresh cookies for the SAP system. Only used when HasBasicAuth() is false.
+	ReauthFunc func(ctx context.Context) (map[string]string, error)
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -200,6 +205,14 @@ func NewConfig(baseURL, username, password string, opts ...Option) *Config {
 func WithFeatures(features FeatureConfig) Option {
 	return func(c *Config) {
 		c.Features = features
+	}
+}
+
+// WithReauthFunc sets the re-authentication function for 401 recovery.
+// Used by SAML auth to re-run the SAML dance when the session expires.
+func WithReauthFunc(f func(ctx context.Context) (map[string]string, error)) Option {
+	return func(c *Config) {
+		c.ReauthFunc = f
 	}
 }
 
