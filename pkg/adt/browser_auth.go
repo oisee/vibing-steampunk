@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -114,7 +115,12 @@ func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout tim
 	// We use the ADT root which returns an HTML page after auth.
 	// The /sap/bc/adt/core/discovery endpoint returns XML which browsers
 	// try to download as a file, breaking the flow.
-	targetURL := strings.TrimRight(sapURL, "/") + "/sap/bc/adt/"
+	// Build from parsed URL to handle sapURL with query/fragment correctly.
+	adtURL := *u
+	adtURL.Path = "/sap/bc/adt/"
+	adtURL.RawQuery = ""
+	adtURL.Fragment = ""
+	targetURL := adtURL.String()
 
 	// Create a headed (non-headless) browser context
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
@@ -172,6 +178,26 @@ func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout tim
 	fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Opening %s for SSO login: %s\n", browserName, targetURL)
 	fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Complete login in the browser window. Timeout: %s\n", timeout)
 
+	// In verbose mode, listen for navigation events to track SAML redirect chain.
+	// This logs URL path + host for each redirect hop — never cookie values or SAML assertion bodies.
+	// Query parameters are stripped to prevent leaking SAMLRequest/SAMLResponse in redirect-binding flows.
+	if verbose {
+		chromedp.ListenTarget(timeoutCtx, func(ev any) {
+			switch e := ev.(type) {
+			case *page.EventFrameNavigated:
+				if e.Frame != nil && e.Frame.URL != "" {
+					safeURL := sanitizeURLForLog(e.Frame.URL)
+					fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Navigated → %s\n", safeURL)
+				}
+			case *network.EventResponseReceived:
+				if e.Response != nil && e.Response.Status >= 300 && e.Response.Status < 400 {
+					safeURL := sanitizeURLForLog(e.Response.URL)
+					fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Redirect %d → %s\n", e.Response.Status, safeURL)
+				}
+			}
+		})
+	}
+
 	// Navigate to the target URL (this triggers SSO redirect).
 	// SSO flows (Kerberos 401, SAML redirect, etc.) often cause the initial
 	// navigation to report ERR_ABORTED or similar — this is expected.
@@ -208,16 +234,28 @@ func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout tim
 	return cookies, nil
 }
 
-// pollForSAPCookies polls the browser for SAP-specific cookies at 1-second intervals.
+// samlPollInterval is the cookie polling interval.
+// SAML SSO flows involve multi-hop redirects (SAP → IAS → SAP) that can take
+// several seconds. A 500ms interval provides responsive detection without
+// excessive CDP calls.
+const samlPollInterval = 500 * time.Millisecond
+
+// pollForSAPCookies polls the browser for SAP-specific cookies.
+// It uses a faster poll interval (500ms) for responsive SAML cookie detection
+// and logs each poll cycle in verbose mode for debugging redirect chains.
 func pollForSAPCookies(ctx context.Context, sapURL string, verbose bool) (map[string]string, error) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(samlPollInterval)
 	defer ticker.Stop()
 
+	start := time.Now()
 	pollCount := 0
+	lastCookieCount := -1
+
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("browser auth timed out — login was not completed in time")
+			elapsed := time.Since(start)
+			return nil, fmt.Errorf("browser auth timed out after %s — login was not completed in time", elapsed.Truncate(time.Second))
 		case <-ticker.C:
 			pollCount++
 			cookies, found, err := extractSAPCookies(ctx, sapURL)
@@ -226,22 +264,69 @@ func pollForSAPCookies(ctx context.Context, sapURL string, verbose bool) (map[st
 					return nil, fmt.Errorf("browser was closed before authentication completed")
 				}
 				if verbose {
-					fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Poll #%d: error reading cookies: %v\n", pollCount, err)
+					fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Poll #%d (%.1fs): error reading cookies: %v\n",
+						pollCount, time.Since(start).Seconds(), err)
 				}
 				continue
 			}
-			if verbose {
+
+			// Log in verbose mode, but only when cookie count changes or periodically
+			if verbose && (len(cookies) != lastCookieCount || pollCount%10 == 0) {
 				names := make([]string, 0, len(cookies))
 				for name := range cookies {
 					names = append(names, name)
 				}
-				fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Poll #%d: %d cookies [%s]\n", pollCount, len(cookies), strings.Join(names, ", "))
+				fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Poll #%d (%.1fs): %d cookies [%s]\n",
+					pollCount, time.Since(start).Seconds(), len(cookies), strings.Join(names, ", "))
+				lastCookieCount = len(cookies)
 			}
+
 			if found {
+				if verbose {
+					fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Auth cookies detected after %d polls (%.1fs)\n",
+						pollCount, time.Since(start).Seconds())
+				}
 				return cookies, nil
 			}
 		}
 	}
+}
+
+// sanitizeURLForLog returns a URL safe for verbose logging.
+// It strips query parameters to prevent leaking SAMLRequest/SAMLResponse
+// values that may appear in redirect-binding flows. Returns "scheme://host/path".
+func sanitizeURLForLog(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "(unparseable URL)"
+	}
+	// Reconstruct without query or fragment — only scheme + host + path
+	safe := fmt.Sprintf("%s://%s%s", parsed.Scheme, parsed.Host, parsed.Path)
+	return safe
+}
+
+// cookieURLsForSAP returns the set of URLs to query for cookies.
+// SAML SSO flows often set cookies scoped to specific paths (e.g. /sap/bc/adt/)
+// rather than the root domain. Querying multiple URL paths ensures we capture
+// cookies regardless of their path scope.
+// Uses proper URL parsing to handle sapURL with query/fragment correctly.
+func cookieURLsForSAP(sapURL string) []string {
+	u, err := url.Parse(sapURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return []string{sapURL}
+	}
+	u.RawQuery = ""
+	u.Fragment = ""
+	base := *u
+
+	paths := []string{"", "/sap/", "/sap/bc/", "/sap/bc/adt/"}
+	urls := make([]string, 0, len(paths))
+	for _, p := range paths {
+		tmp := base
+		tmp.Path = p
+		urls = append(urls, tmp.String())
+	}
+	return urls
 }
 
 // extractSAPCookies retrieves all cookies from the browser and checks for SAP auth cookies.
@@ -250,9 +335,10 @@ func extractSAPCookies(ctx context.Context, sapURL string) (map[string]string, b
 
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
-		// Request cookies for the SAP URL explicitly, so they are returned
-		// even when the browser page is in a download/redirect state.
-		browserCookies, err = network.GetCookies().WithURLs([]string{sapURL}).Do(ctx)
+		// Request cookies for multiple SAP URL paths explicitly.
+		// SAML flows may set cookies scoped to /sap/bc/adt/ or /sap/bc/
+		// rather than the root, so we query all relevant paths.
+		browserCookies, err = network.GetCookies().WithURLs(cookieURLsForSAP(sapURL)).Do(ctx)
 		return err
 	})); err != nil {
 		return nil, false, err
@@ -275,6 +361,27 @@ func extractSAPCookies(ctx context.Context, sapURL string) (map[string]string, b
 	}
 
 	return result, hasAuthCookie, nil
+}
+
+// matchesSAPAuthCookie checks whether a cookie name matches any known SAP auth cookie prefix.
+// Exported as a testable helper for unit tests.
+func matchesSAPAuthCookie(name string) bool {
+	for _, prefix := range sapAuthCookieNames {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesSAPWeakCookie checks whether a cookie name matches any known SAP weak cookie prefix.
+func matchesSAPWeakCookie(name string) bool {
+	for _, prefix := range sapWeakCookieNames {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // SaveCookiesToFile writes cookies in Netscape cookie file format.
