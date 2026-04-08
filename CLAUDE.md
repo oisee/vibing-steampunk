@@ -22,6 +22,16 @@ Plan: MCP debug sessions → DAP → Web UI. ADT REST API mapped from `CL_TPDA_A
 - **#55** RunReport in APC — architectural limit
 - **#46, #45** Sync script — low effort
 
+### 4. Recent Additions (post-merge, v2.32 → v2.38.1)
+Discoverable but not yet load-bearing in workflows:
+- **`AnalyzeABAPCode`** — abaplint static analysis MCP tool (PR #89)
+- **Slim V2** — method-level dead-code analysis (`vsp slim --level method`)
+- **Package health MVP** — `vsp health <package>` with E070 transport fallback
+- **`internal/lsp/`** — ABAP LSP server (online diagnostics, go-to-definition)
+- **`cmd/abapgit-pack/`** — standalone abapGit ZIP packer
+- **Browser auth** — `pkg/adt/browser_auth.go` (chromedp-based interactive login)
+- **New MCP handler domains** — `cds`, `codeanalysis`, `gcts`, `graph`, `health`, `i18n`, `revisions`, `testing`
+
 ---
 
 ## Build & Test
@@ -85,181 +95,70 @@ SAP_URL=http://host:50000 SAP_USER=user SAP_PASSWORD=pass ./vsp
 ## Codebase Structure
 
 ```
-cmd/vsp/                             # CLI entry point (6 files)
-├── main.go                          # Entry point, Cobra root command
-├── cli.go                           # CLI mode (interactive terminal)
-├── config_cmd.go                    # System profile management commands
-├── debug.go                         # Debug/diagnostic commands
-├── lua.go                           # Lua REPL command
-└── workflow.go                      # Workflow CLI commands
+cmd/
+├── vsp/                  # Main CLI + MCP server (18 files: cli, devops, compile, deps, lsp, lua, workflow, ...)
+└── abapgit-pack/         # Standalone abapGit ZIP packer
 
-internal/mcp/                        # MCP server (27 files)
-├── server.go                        # Server core, tool registration, mode/group logic
-├── server_test.go                   # Server tests
-└── handlers_*.go                    # 25 domain-specific handler files:
-    handlers_amdp.go                 #   AMDP/HANA debugger
-    handlers_analysis.go             #   Code analysis (call graph, structure)
-    handlers_atc.go                  #   ATC checks
-    handlers_classinclude.go         #   Class include operations
-    handlers_codeintel.go            #   Code intelligence (find def/refs)
-    handlers_crud.go                 #   CRUD operations (create, update, delete)
-    handlers_debugger.go             #   External debugger (WebSocket)
-    handlers_debugger_legacy.go      #   Legacy HTTP debugger
-    handlers_deploy.go               #   abapGit ZIP deployment (3-phase bulk deploy)
-    handlers_devtools.go             #   Dev tools (syntax, activate, pretty print)
-    handlers_dumps.go                #   Runtime errors / short dumps
-    handlers_fileio.go               #   File import/export
-    handlers_git.go                  #   abapGit integration
-    handlers_grep.go                 #   Grep/search operations
-    handlers_install.go              #   Install tools (ZADT_VSP, abapGit)
-    handlers_read.go                 #   Read operations (source, metadata)
-    handlers_report.go               #   Report execution
-    handlers_search.go               #   Object search
-    handlers_servicebinding.go       #   RAP service binding publish
-    handlers_sqltrace.go             #   SQL trace (ST05)
-    handlers_system.go               #   System info
-    handlers_traces.go               #   ABAP profiler traces
-    handlers_transport.go            #   CTS transport management
-    handlers_ui5.go                  #   UI5/Fiori BSP management
-    handlers_workflow.go             #   Workflow operations
+internal/
+├── mcp/                  # MCP server core + 37 handlers_*.go (one per domain: crud, git, graph, health, ...)
+└── lsp/                  # ABAP LSP server (online diagnostics, go-to-definition)
 
 pkg/
-├── adt/                             # ADT client library (28 source files)
-│   ├── client.go                    # ADT client + read operations
-│   ├── crud.go                      # CRUD operations (lock, create, update, delete)
-│   ├── devtools.go                  # Dev tools (syntax check, activate, unit tests)
-│   ├── codeintel.go                 # Code intelligence (find def, refs, completion)
-│   ├── debugger.go                  # External debugger (breakpoints, listener)
-│   ├── amdp_debugger.go            # HANA/AMDP debugger (SQLScript debugging)
-│   ├── amdp_websocket.go           # AMDP WebSocket client
-│   ├── websocket_base.go           # WebSocket base client (shared)
-│   ├── websocket.go                # WebSocket connection management
-│   ├── websocket_debug.go          # WebSocket debug service
-│   ├── websocket_rfc.go            # WebSocket RFC service
-│   ├── websocket_types.go          # WebSocket type definitions
-│   ├── git.go                       # abapGit integration (GitTypes, GitExport)
-│   ├── help.go                      # ABAP keyword help (GetAbapHelp)
-│   ├── history.go                   # Object history / versions
-│   ├── reports.go                   # Report execution (RunReport, variants)
-│   ├── transport.go                 # CTS transport management
-│   ├── fileparser.go                # File parser utilities
-│   ├── recorder.go                  # HTTP request recorder
-│   ├── ui5.go                       # UI5/Fiori BSP management
-│   ├── workflows.go                 # High-level workflow operations
-│   ├── cds.go                       # CDS view dependency analysis
-│   ├── safety.go                    # Safety & protection configuration
-│   ├── features.go                  # Feature detection (safety network)
-│   ├── http.go                      # HTTP transport (CSRF, sessions)
-│   ├── config.go                    # Configuration
-│   ├── cookies.go                   # Cookie file parsing (Netscape format)
-│   └── xml.go                       # XML types
-│
-├── config/                          # System profile management
-│   ├── systems.go                   # Multi-system config (add, list, switch)
-│   └── systems_test.go              # Config tests
-│
-├── dsl/                             # Fluent API & Workflow Engine
-│   ├── types.go                     # Core types (ObjectRef, TestConfig, etc.)
-│   ├── search.go                    # Fluent search builder
-│   ├── test_runner.go               # Unit test orchestration
-│   ├── workflow.go                  # YAML workflow engine
-│   ├── batch.go                     # Batch operations & pipeline builder
-│   └── import.go                    # Import operations
-│
-├── scripting/                       # Lua Scripting Engine
-│   ├── lua.go                       # Lua VM wrapper, REPL
-│   ├── bindings.go                  # ADT tool bindings for Lua
-│   └── helpers.go                   # Lua<->Go value conversion
-│
-├── abaplint/                        # Native Go port of abaplint lexer
-│   ├── lexer.go                     # Lexer (mechanical port from TS), 48 token types
-│   ├── lexer_test.go                # Unit tests + oracle differential (29 files, 22K tokens)
-│   └── testdata/
-│       ├── oracle.js                # Node.js oracle using @abaplint/core
-│       └── oracle_fixtures.json     # Oracle reference data
-│
-└── cache/                           # Caching infrastructure
-    ├── cache.go                     # Core interfaces and types
-    ├── memory.go                    # In-memory cache (default)
-    ├── sqlite.go                    # SQLite cache (optional)
-    ├── cache_test.go                # Unit tests (16 tests)
-    ├── example_test.go              # Usage examples
-    └── README.md                    # Documentation
+├── adt/                  # ADT REST client (HTTP, CSRF, sessions, all SAP ops; 28+ files)
+├── abaplint/             # Native Go port of abaplint: lexer, statement parser, 8 lint rules (oracle-verified)
+├── graph/                # Dependency graph engine: queries (slim/health/rename/impact/api-surface), builders, scopes
+├── ctxcomp/              # Context compression: dep resolution + contract injection for GetSource
+├── dsl/                  # Fluent API + YAML workflow engine, batch import/export, pipelines
+├── cache/                # In-memory + SQLite cache
+├── config/               # Multi-system profile management (add/list/switch)
+├── scripting/            # Lua VM + 50+ ADT tool bindings, REPL
+├── jseval/               # JavaScript evaluator
+├── llvm2abap/            # LLVM IR → ABAP compiler (research)
+├── ts2abap/              # TypeScript → ABAP transpiler (research)
+├── ts2go/                # TypeScript → Go transpiler (used to port abaplint)
+└── wasmcomp/             # WASM → ABAP AOT compiler (QuickJS proven on SAP)
 
 embedded/
-├── abap/                            # ABAP source files (13 files)
-│   ├── zcl_vsp_apc_handler.clas.abap        # APC WebSocket handler
-│   ├── zcl_vsp_amdp_service.clas.abap       # AMDP debug service
-│   ├── zcl_vsp_debug_service.clas.abap      # Debug service
-│   ├── zcl_vsp_git_service.clas.abap        # Git/abapGit service
-│   ├── zcl_vsp_report_service.clas.abap     # Report execution service
-│   ├── zcl_vsp_rfc_service.clas.abap        # RFC service
-│   ├── zcl_vsp_utils.clas.abap              # Utility functions
-│   ├── zif_vsp_service.intf.abap            # Service interface
-│   ├── zadt_cl_tadir_move.clas.abap         # TADIR object mover
-│   ├── zcl_adt_00_amdp_test.clas.abap       # AMDP test class
-│   ├── zcl_adt_00_amdp_test.clas.testclasses.abap  # AMDP test methods
-│   ├── zadt_test_alv_report.prog.abap       # ALV test report
-│   └── zadt_test_simple_report.prog.abap    # Simple test report
-└── deps/                            # Dependency embeddings
-    └── embed.go
+├── abap/                 # ABAP sources installed on SAP (ZADT_VSP service, debug, git, AMDP, reports, RFC)
+└── deps/                 # Embedded abapGit dependency ZIPs
 
-docs/                                # Project documentation
-├── adr/                             # Architecture Decision Records (3 ADRs)
-├── architecture.md                  # Architecture diagrams (Mermaid)
-├── cli-agents/                      # CLI coding agents guide (4 languages)
-├── reviewer-guide.md                # Reviewer guide (8 hands-on tasks)
-└── plans/                           # Phase planning docs
+docs/                     # Architecture, ADRs, cli-agents guides (4 langs), reviewer guide
+contexts/                 # Session handoff notes (chronological)
+reports/                  # Research / design / status reports (YYYY-MM-DD-NNN-title.md)
+articles/                 # Published articles (upstream author content — do not rewrite oisee URLs)
+abap/src/zadt_vsp/        # ABAP source mirror in abapGit format
+scripts/                  # Sync upstream, release helpers
 
-articles/                            # Published articles
-
-abap/src/zadt_vsp/                   # ABAP source (abapGit-format mirror)
-
-Makefile                             # Cross-compilation (9 platforms)
-ARCHITECTURE.md                      # Architecture overview
-ROADMAP.md                           # Feature roadmap
-VISION.md                            # Project vision
-README_TOOLS.md                      # Tool reference (all 122 tools)
+Makefile                  # Cross-compilation (9 platforms)
+ARCHITECTURE.md  ROADMAP.md  VISION.md  README_TOOLS.md
 ```
 
-| Task | Files |
+> File-level detail rots fast. To list current files in a package: `ls pkg/<name>/`. To find a handler: `ls internal/mcp/handlers_*.go`.
+
+### Where things live
+
+| Task | Where |
 |------|-------|
-| Register new MCP tool | `internal/mcp/server.go` (registerTools) |
-| Add MCP tool handler | `internal/mcp/handlers_*.go` (domain-specific file) |
-| Add ADT read operation | `pkg/adt/client.go` |
-| Add CRUD operation | `pkg/adt/crud.go` |
-| Add development tool | `pkg/adt/devtools.go` |
-| Add code intelligence | `pkg/adt/codeintel.go` |
-| Add ABAP debugger feature | `pkg/adt/debugger.go` |
-| Add HANA/AMDP debugger | `pkg/adt/amdp_debugger.go` |
-| Add WebSocket feature | `pkg/adt/websocket_base.go` |
-| Add abapGit feature | `pkg/adt/git.go` |
-| Add report feature | `pkg/adt/reports.go` |
-| Add transport feature | `pkg/adt/transport.go` |
-| Add UI5/BSP feature | `pkg/adt/ui5.go` |
-| Add deployment feature | `internal/mcp/handlers_deploy.go` |
-| Add workflow | `pkg/adt/workflows.go` |
-| Add XML types | `pkg/adt/xml.go` |
-| Add system config | `pkg/config/systems.go` |
-| Add ABAP lint rule | `pkg/abaplint/lexer.go` / `pkg/abaplint/rules.go` |
-| Add graph feature | `pkg/graph/` |
-| Add MCP tool (modern) | `tools_register.go` + `handlers_*.go` + `tools_focused.go` |
-| Add integration test | `pkg/adt/integration_test.go` |
-| Fix MCP/docs/config | `README.md`, `docs/cli-agents/*`, `handlers_universal.go` |
+| New MCP tool | `tools_register.go` + `handlers_<domain>.go` + (optional) `tools_focused.go` — see "Adding a New MCP Tool" below |
+| New ADT operation | `pkg/adt/` — `client.go` (read), `crud.go` (write), `devtools.go` (syntax/activate), `codeintel.go` (def/refs), `debugger.go` / `amdp_debugger.go`, `git.go`, `reports.go`, `transport.go`, `ui5.go`, `workflows.go` |
+| New graph query | `pkg/graph/queries_*.go` |
+| New ABAP lint rule | `pkg/abaplint/rules.go` |
+| New CLI command | `cmd/vsp/cli_*.go` (see existing: `cli_extra.go`, `cli_compile.go`, `cli_deps.go`, `devops.go`) |
+| Integration test | `pkg/adt/integration_test.go` (build tag `integration`) |
+| One-tool / hyperfocused mode | `internal/mcp/handlers_universal.go` |
 
 ---
 
 ## Adding a New MCP Tool
 
-1. **Add ADT client method** in appropriate file (`client.go`, `crud.go`, etc.)
-2. **Register tool** in `tools_register.go` with `shouldRegister("ToolName")` (or `internal/mcp/server.go` → `registerTools()` for legacy paths):
-   - Add to `focusedTools` whitelist if it should appear in focused mode
-3. **Add tool handler** in appropriate `internal/mcp/handlers_*.go` file:
-   - Each domain has its own handler file (e.g., `handlers_crud.go`, `handlers_git.go`)
-   - Handler functions are routed from `handleToolCall()` in `server.go`
-4. **Add integration test** in `pkg/adt/integration_test.go`
-5. **Update documentation**:
-   - `README.md` tool tables
+1. **Add ADT client method** in `pkg/adt/` (e.g. `client.go`, `crud.go`, `devtools.go`).
+2. **Register tool** in `internal/mcp/tools_register.go` with `shouldRegister("ToolName")` and the tool definition.
+3. **Whitelist for focused mode** (optional): add to `internal/mcp/tools_focused.go`. For tool grouping (`--disabled-groups`), update `tools_groups.go`.
+4. **Add handler** in the appropriate `internal/mcp/handlers_<domain>.go` (37 domain files exist; pick the closest fit or create a new one). Handlers are routed from `handleToolCall()` in `server.go`.
+5. **Add integration test** in `pkg/adt/integration_test.go` (build tag `integration`).
+6. **Update `README_TOOLS.md`** tool reference table.
+
+> Legacy path: `internal/mcp/server.go` → `registerTools()` still exists for some early tools, but new work goes through `tools_register.go`.
 
 ## Code Patterns
 
@@ -353,10 +252,6 @@ The SAP ADT REST API documentation can be found at:
 4. **Auth** — use basic OR cookies, not both
 5. **ZADT_VSP** — WebSocket debug/RFC/RunReport require it installed on SAP
 
-## Security
-
-Never commit `.env`, `cookies.txt`, `.mcp.json`, or local agent/MCP config files (all in `.gitignore`).
-
 ## Conventions
 
 ### Object Naming
@@ -447,61 +342,30 @@ When creating a new report:
 
 ---
 
-## Areas Requiring Care
-
 ## Project Status
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 122 (81 focused, 122 expert) |
-| **Unit Tests** | 499 |
-| **Integration Tests** | 35 |
-| **Platforms** | 9 |
-| **Phase** | 5 (TAS-Style Debugging) - Complete |
-| **Reports** | 123 dated + 11 reference docs |
-| **Lua Scripting** | ✅ Complete (v2.32 - REPL, 50+ bindings, 8 example scripts) |
-| **Cache Package** | ✅ Complete (in-memory + SQLite) |
-| **Safety System** | ✅ Complete (operation filtering, package restrictions) |
-| **Feature Detection** | ✅ Complete (GetFeatures tool, auto/on/off for abapGit, RAP, AMDP, UI5, Transport) |
-| **DSL Package** | ✅ Complete (fluent API, YAML workflows, test orchestration, batch import/export) |
-| **Batch Import/Export** | ✅ Complete (v2.12 - abapGit-compatible format, priority ordering) |
-| **Pipeline Builder** | ✅ Complete (v2.12 - DeployPipeline, RAPPipeline, ExportPipeline) |
-| **ExecuteABAP** | ✅ Complete (code execution via Unit Test wrapper) |
-| **System Info** | ✅ Complete (GetSystemInfo, GetInstalledComponents) |
-| **Code Analysis** | ✅ Complete (GetCallGraph, GetObjectStructure, GetCallersOf, GetCalleesOf) |
-| **Runtime Errors** | ✅ Complete (ListDumps, GetDump - RABAX) |
-| **ABAP Profiler** | ✅ Complete (ListTraces, GetTrace - ATRA) |
-| **SQL Trace** | ✅ Complete (GetSQLTraceState, ListSQLTraces - ST05) |
-| **RAP OData E2E** | ✅ Complete (DDLS, SRVD, SRVB create + publish) |
-| **Report Execution** | ✅ Complete (v2.18.0 - RunReport, GetVariants, text elements via ZADT_VSP) |
-| **Async Execution** | ✅ Complete (v2.19.0 - RunReportAsync, GetAsyncResult for background tasks) |
-| **Interactive Debugger** | ✅ Complete (v2.18.1 - WebSocket-based breakpoints, step, stack, variables) |
-| **CLI Mode** | ✅ Complete (v2.20.0 - Interactive terminal mode with Cobra commands) |
-| **System Profiles** | ✅ Complete (v2.20.0 - Multi-system config management via pkg/config) |
-| **Method-Level Ops** | ✅ Complete (v2.21.0 - GetClassComponents, GetClassInclude, UpdateClassInclude) |
-| **SAP GUI Integration** | ✅ Complete (v2.22.0 - GetTransaction, CallRFC via WebSocket) |
-| **Transportable Edits** | ✅ Complete (v2.24.0 - --allow-transportable-edits safety control) |
-| **External Debugger** | ✅ Complete via WebSocket ZADT_VSP (stateful APC, replaced HTTP) |
-| **AMDP Debugger** | ⚠️ Experimental (Session works, breakpoints need investigation - expert mode only) |
-| **Transport Mgmt** | ✅ Complete (5 tools with safety controls - v2.11.0) |
-| **UI5/BSP Mgmt** | ✅ Partial (Read ops work; Create needs alternate API) |
-| **Tool Groups** | ✅ Complete (--disabled-groups: 5/U, T, H, D, C, G, R, I, X) |
-| **Class Includes** | ✅ Complete (v2.12 - testclasses, locals_def, locals_imp, macros) |
-| **abapGit Integration** | ✅ Complete (v2.16.0 - WebSocket, GitTypes, GitExport - 158 object types) |
-| **Install Tools** | ✅ Complete (v2.17.0 - InstallZADTVSP, InstallAbapGit, ListDependencies) |
-| **GetAbapHelp** | ✅ Complete (v2.23.0 - ABAP keyword docs via WebSocket/ZADT_VSP) |
-| **GitExport to Disk** | ✅ Complete (v2.23.0 - ZIP files written directly, no base64) |
-| **Tool Visibility** | ✅ Complete (v2.22.0 - .vsp.json for granular tool control) |
-| **HTTP Proxy** | ✅ Complete (v2.22.0 - HTTP_PROXY/HTTPS_PROXY support) |
-| **DeployZip** | ✅ Complete (3-phase bulk deploy from abapGit ZIP: create → upload → activate) |
-| **Iterative Activation** | ✅ Complete (ActivatePackageIterative with package filtering) |
-| **Native ABAP Lexer** | ✅ Complete (v2.31 - abaplint lexer ported to Go, 100% oracle match, 22K tokens verified) |
-| **ABAP Statement Parser** | ✅ Complete (v2.31 - 91 statement types, 100% oracle match, 3,254 statements) |
-| **ABAP Linter** | ✅ Complete (v2.32 - 8 rules, 100% oracle match, 795μs/file) |
-| **Context Depth** | ✅ Complete (v2.31 - multi-level dep expansion, depth 1-3, cycle detection) |
-| **CLI Toolchain** | ✅ Complete (v2.32 - 28 commands: query, grep, graph, deps, lint, parse, compile, execute) |
-| **WASM Self-Host** | ✅ Verified (v2.32 - 3-way proof: Native 51/51, Go OK, ABAP 11/11 on SAP) |
-| **TS→Go Transpiler** | ✅ Complete (v2.32 - produces valid Go from abaplint TS, 3 files compile) |
+| **Latest version** | v2.38.1 |
+| **Modes** | `focused` (~81 tools, default) · `expert` (122 tools) · `hyperfocused` (1 universal tool) |
+| **Tests** | ~1,000 unit test cases across 16 packages + 35 integration tests |
+| **Platforms** | 9 (cross-compiled via Makefile) |
+| **Reports** | 179 in `reports/` (`YYYY-MM-DD-NNN-title.md`) |
+| **Sync** | 0 commits behind upstream `oisee/vibing-steampunk` (auto-merged via `scripts/sync-upstream.sh`) |
+
+### Recent / in-flight (post v2.32)
+
+| Area | Status |
+|------|--------|
+| `pkg/graph/` engine | 🚧 In progress — queries (slim, health, impact, rename, api-surface), SQL/transport builders, scope analysis |
+| `AnalyzeABAPCode` tool | ✅ abaplint-based static analysis (PR #89) |
+| Slim V2 dead-code | ✅ Method-level with `--level` flag, TDEVC hierarchy resolution |
+| Package health MVP | ✅ E070 transport fallback for staleness signal, package-level CLI |
+| Browser auth | ✅ `pkg/adt/browser_auth.go` (chromedp-based) |
+| ABAP LSP server | ✅ `internal/lsp/` — online diagnostics, go-to-definition |
+| New MCP handlers | ✅ `cds`, `codeanalysis`, `gcts`, `graph`, `health`, `i18n`, `revisions`, `testing` |
+| AMDP Debugger | ⚠️ Experimental — session works, breakpoints need investigation (expert mode only) |
+| UI5/BSP Mgmt | ⚠️ Partial — Read ops work; Create needs alternate API |
 
 ### DSL & Workflow Usage
 
@@ -592,9 +456,3 @@ When resolving fork-vs-upstream conflicts:
 - **`docs/` markdown**: fix `oisee` → `vinchacho` in all repo URLs
 - **`articles/`**: do NOT change `oisee` references — these are published upstream author content referencing their own repos (`oisee/zork-abap`, `oisee/vivid-vibes`)
 
-### Upstream Roadmap (from last session 2026-03-20)
-
-- [ ] **Phase 2: Statement parser** — port abaplint 2_statements to Go (318 types, 227 expressions)
-- [ ] **Phase 3: Lint rules** — cherry-pick naming, obsolete, line_length rules
-- [ ] **Wire `pkg/abaplint` lexer** into MCP parse_abap handler (replace self-written tokenizer)
-- [ ] **Re-add ALV capture for RunReport**
