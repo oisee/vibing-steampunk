@@ -1,10 +1,19 @@
 name: Sync with Upstream
 
+# Watches upstream oisee/vibing-steampunk and either:
+#   1. Opens a PR if the merge is clean (trivial sync), OR
+#   2. Opens an issue asking for a manual sync if there are conflicts.
+#
+# It does NOT try to auto-resolve conflicts. Conflict resolution is the
+# job of scripts/sync-upstream.sh run locally — see CLAUDE.md "Conflict
+# Resolution Strategy" for the policy. Auto-resolving in CI was the
+# cause of all the broken sync PRs from Feb–Apr 2026.
+
 on:
   schedule:
-    # Run daily at 2 AM UTC
+    # Daily at 02:00 UTC
     - cron: '0 2 * * *'
-  workflow_dispatch: # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -12,6 +21,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
 
     steps:
       - name: Checkout repository
@@ -23,14 +33,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version-file: go.mod
 
       - name: Configure Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Add upstream remote and fetch
         run: |
           git remote add upstream https://github.com/oisee/vibing-steampunk.git || true
           git fetch upstream
@@ -39,11 +49,13 @@ jobs:
         id: check
         run: |
           BEHIND=$(git rev-list --count HEAD..upstream/main)
-          echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "commits_behind=$BEHIND" >> "$GITHUB_OUTPUT"
           if [ "$BEHIND" -gt 0 ]; then
-            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "Fork is $BEHIND commits behind upstream/main"
           else
-            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "Fork is up to date with upstream/main"
           fi
 
       - name: Create sync branch
@@ -51,44 +63,40 @@ jobs:
         run: |
           TIMESTAMP=$(date +%Y%m%d-%H%M%S)
           BRANCH_NAME="sync-upstream-${TIMESTAMP}"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_ENV"
           git checkout -b "$BRANCH_NAME"
 
-      - name: Merge upstream changes
+      - name: Attempt clean merge
+        id: merge
         if: steps.check.outputs.has_changes == 'true'
         run: |
-          # Attempt merge
-          if ! git merge upstream/main --no-edit; then
-            echo "Merge conflict detected - attempting auto-resolution"
-
-            # Check if conflict is in main.go (import paths)
-            if git status | grep -q "cmd/vsp/main.go"; then
-              # Fix import paths automatically
-              sed -i 's|github.com/oisee/vibing-steampunk|github.com/vinchacho/vibing-steampunk|g' cmd/vsp/main.go
-              git add cmd/vsp/main.go
-            fi
-
-            # Try to continue merge
-            if ! git commit --no-edit; then
-              echo "::error::Merge conflict could not be auto-resolved"
-              exit 1
-            fi
+          if git merge upstream/main --no-edit; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            echo "Clean merge succeeded"
+          else
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+            # Capture conflicting filenames as a single space-joined string.
+            # Even if upstream contains exotic filenames, we only echo into
+            # GITHUB_OUTPUT here and read it back via an env var below — never
+            # interpolated directly into a shell command.
+            CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+            echo "conflicting_files=$CONFLICTS" >> "$GITHUB_OUTPUT"
+            echo "Merge has conflicts in: $CONFLICTS"
+            git merge --abort
           fi
 
-      - name: Fix import paths globally
-        if: steps.check.outputs.has_changes == 'true'
+      - name: Fix import paths globally (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
         run: |
-          # Replace any oisee references with vinchacho
-          find . -name "*.go" -type f ! -path "./vendor/*" -exec sed -i 's|github.com/oisee/vibing-steampunk|github.com/vinchacho/vibing-steampunk|g' {} +
-
-          # Stage any changes
+          find . -name "*.go" -type f ! -path "./vendor/*" \
+            -exec sed -i 's|github.com/oisee/vibing-steampunk|github.com/vinchacho/vibing-steampunk|g' {} +
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "chore: fix import paths to vinchacho organization"
           fi
 
-      - name: Update dependencies
-        if: steps.check.outputs.has_changes == 'true'
+      - name: Update dependencies (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
         run: |
           go mod tidy
           if ! git diff --quiet go.mod go.sum; then
@@ -96,42 +104,94 @@ jobs:
             git commit -m "chore: update dependencies after upstream merge"
           fi
 
-      - name: Run tests
-        if: steps.check.outputs.has_changes == 'true'
-        run: |
-          go test ./... || echo "::warning::Some tests failed"
+      - name: Build (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
+        run: go build -o vsp ./cmd/vsp
 
-      - name: Build
-        if: steps.check.outputs.has_changes == 'true'
-        run: |
-          go build -o vsp ./cmd/vsp
+      - name: Run tests (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
+        run: go test ./... || echo "::warning::Some tests failed — review the PR"
 
-      - name: Update CLAUDE.md
-        if: steps.check.outputs.has_changes == 'true'
-        run: |
-          # Get latest upstream commit info
-          LATEST_COMMIT=$(git log upstream/main --oneline -1)
-          MERGE_DATE=$(date +%Y-%m-%d)
+      - name: Push sync branch (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
+        run: git push origin "$BRANCH_NAME"
 
-          # TODO: This is a placeholder - would need more sophisticated parsing
-          # For now, just add a note to update manually
-          echo "::notice::Remember to update CLAUDE.md Last Session Reference manually"
-
-      - name: Push sync branch
-        if: steps.check.outputs.has_changes == 'true'
-        run: |
-          git push origin "$BRANCH_NAME"
-
-      - name: Create Pull Request
-        if: steps.check.outputs.has_changes == 'true'
+      - name: Create Pull Request (clean-merge path only)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          COMMITS_BEHIND: ${{ steps.check.outputs.commits_behind }}
         run: |
-          COMMITS=$(git rev-list --count origin/main..HEAD)
-
           gh pr create \
-            --repo "${{ github.repository }}" \
-            --title "Sync with upstream (${COMMITS} new commits)" \
-            --body "Automated upstream sync - merged ${{ steps.check.outputs.commits_behind }} commits from oisee/vibing-steampunk. Review and merge if tests pass." \
+            --repo "$GH_REPO" \
+            --title "Sync with upstream ($COMMITS_BEHIND new commits)" \
+            --body "Automated upstream sync from \`oisee/vibing-steampunk\`. Clean merge — no conflicts. Review tests and merge if green." \
             --base main \
             --head "$BRANCH_NAME"
+
+      - name: Open issue on conflict (no PR created)
+        if: steps.check.outputs.has_changes == 'true' && steps.merge.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          COMMITS_BEHIND: ${{ steps.check.outputs.commits_behind }}
+          CONFLICTING_FILES: ${{ steps.merge.outputs.conflicting_files }}
+        run: |
+          # Avoid duplicate issues — search for an existing open one with the same title prefix
+          EXISTING=$(gh issue list --repo "$GH_REPO" \
+            --state open \
+            --search 'in:title "Manual upstream sync needed"' \
+            --json number --jq '.[0].number // empty')
+
+          if [ -n "$EXISTING" ]; then
+            echo "Existing open issue #$EXISTING already tracks manual sync — adding a comment"
+            gh issue comment "$EXISTING" --repo "$GH_REPO" --body "Still behind: $COMMITS_BEHIND commits.
+Conflicting files: \`$CONFLICTING_FILES\`
+Run \`./scripts/sync-upstream.sh\` locally to resolve."
+          else
+            gh issue create \
+              --repo "$GH_REPO" \
+              --title "Manual upstream sync needed ($COMMITS_BEHIND commits behind)" \
+              --body "The daily upstream sync workflow detected conflicts that require manual resolution.
+
+**Commits behind upstream/main:** $COMMITS_BEHIND
+**Conflicting files:** \`$CONFLICTING_FILES\`
+
+### How to resolve
+
+Run the local sync script — it has policy-aware conflict resolution and a human-in-the-loop step:
+
+\`\`\`bash
+git fetch upstream
+./scripts/sync-upstream.sh
+\`\`\`
+
+See [\`CLAUDE.md\`](../blob/main/CLAUDE.md) → \"Conflict Resolution Strategy\" for the per-file policy (CLAUDE.md HEAD wins, README.md keeps vinchacho URLs, articles/ keeps oisee references, etc).
+
+This issue will be auto-commented if the situation persists, and can be closed once the sync is done."
+            echo "Created tracking issue"
+          fi
+
+      - name: Sync status summary
+        if: always()
+        env:
+          HAS_CHANGES: ${{ steps.check.outputs.has_changes }}
+          MERGE_CLEAN: ${{ steps.merge.outputs.clean }}
+          COMMITS_BEHIND: ${{ steps.check.outputs.commits_behind }}
+          CONFLICTING_FILES: ${{ steps.merge.outputs.conflicting_files }}
+        run: |
+          {
+            echo "## Upstream Sync Status"
+            echo ""
+            if [ "$HAS_CHANGES" = "false" ]; then
+              echo "✅ Fork is up to date with upstream/main"
+            elif [ "$MERGE_CLEAN" = "true" ]; then
+              echo "✅ Clean merge — PR opened for $COMMITS_BEHIND commits"
+            else
+              echo "⚠️ Conflicts detected — issue opened for manual sync"
+              echo ""
+              echo "**Commits behind:** $COMMITS_BEHIND"
+              echo "**Conflicts:** \`$CONFLICTING_FILES\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
