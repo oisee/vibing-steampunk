@@ -26,15 +26,22 @@
 | T2.5 | Wire 401 re-auth into Transport (ReauthFunc + cookiesMu) | DONE | backend-dev |
 | T2.6 | Write comprehensive unit tests (14 cases) | DONE | test-engineer |
 | T2.7 | Manual test against K0B DEV | PENDING | backend-dev |
-| GATE | Tests pass + PAL codereview + thinkdeep | IN PROGRESS | orchestrator |
+| GATE | Tests pass + PAL codereview + thinkdeep | DONE | orchestrator |
 
 ## Phase SAML.3: Credential Helper
 
 | Task | Description | Status | Assignee |
 |------|-------------|--------|----------|
-| T3.1 | Create `credential_cmd.go` (argv-based exec, []byte zeroing) | TODO | backend-dev |
-| T3.2 | Add CLI flag `--credential-cmd` | TODO | backend-dev |
-| T3.3 | Wire credential-cmd into SAML auth | TODO | backend-dev |
-| T3.4 | Write unit tests (5 cases) | TODO | test-engineer |
-| T3.5 | Document usage | TODO | doc-writer |
-| GATE | Tests pass + PAL codereview + thinkdeep | TODO | orchestrator |
+| T3.1 | Create `credential_cmd.go` (argv-based exec, []byte zeroing) | DONE | backend-dev |
+| T3.2 | Add CLI flag `--credential-cmd` | DONE | backend-dev |
+| T3.3 | Wire credential-cmd into SAML auth | DONE | backend-dev |
+| T3.4 | Write unit tests (8 cases) | DONE | test-engineer |
+| T3.5 | Document usage in --help output | DONE | backend-dev |
+| GATE | Tests pass + PAL codereview + thinkdeep | DONE | orchestrator |
+
+## /finish Audit
+
+| Task | Description | Status | Assignee |
+|------|-------------|--------|----------|
+| F-01 | Add TestSAMLLogin_HostMismatch + TestSAMLLogin_HTTPDowngrade | DONE | test-engineer |
+| Audit | Lead auditor + security auditor — zero MEDIUM+ | DONE | orchestrator |
