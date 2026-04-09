@@ -116,6 +116,8 @@ func init() {
 	rootCmd.Flags().Bool("saml-auth", false, "Authenticate via programmatic SAML SSO (no browser, no MFA)")
 	rootCmd.Flags().String("saml-user", "", "SAML/IAS username (email)")
 	rootCmd.Flags().String("saml-password", "", "SAML/IAS password")
+	rootCmd.Flags().String("credential-cmd", "", "External command returning JSON {\"username\":...,\"password\":...} (space-separated argv, no shell)")
+
 
 	// Session keep-alive
 	rootCmd.Flags().Duration("keepalive", 5*time.Minute, "Session keep-alive interval (e.g., 60s, 5m). Prevents session timeout during idle periods. 0 = disabled")
@@ -168,6 +170,7 @@ func init() {
 	viper.BindPFlag("saml-auth", rootCmd.Flags().Lookup("saml-auth"))
 	viper.BindPFlag("saml-user", rootCmd.Flags().Lookup("saml-user"))
 	viper.BindPFlag("saml-password", rootCmd.Flags().Lookup("saml-password"))
+	viper.BindPFlag("credential-cmd", rootCmd.Flags().Lookup("credential-cmd"))
 	viper.BindPFlag("browser-exec", rootCmd.Flags().Lookup("browser-exec"))
 	viper.BindPFlag("cookie-save", rootCmd.Flags().Lookup("cookie-save"))
 	viper.BindPFlag("keepalive", rootCmd.Flags().Lookup("keepalive"))
@@ -553,33 +556,60 @@ func processSAMLAuth(cmd *cobra.Command) error {
 		return fmt.Errorf("--saml-auth requires --url to be set")
 	}
 
-	samlUser, _ := cmd.Flags().GetString("saml-user")
-	if samlUser == "" {
-		samlUser = viper.GetString("SAML_USER")
-	}
-	samlPassword, _ := cmd.Flags().GetString("saml-password")
-	if samlPassword == "" {
-		samlPassword = viper.GetString("SAML_PASSWORD")
+	// Resolve credential source. Priority: credential-cmd > env vars > flags.
+	credCmdStr, _ := cmd.Flags().GetString("credential-cmd")
+	if credCmdStr == "" {
+		credCmdStr = viper.GetString("CREDENTIAL_CMD")
+		if credCmdStr != "" && cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "[SAML-AUTH] Warning: credential-cmd sourced from environment variable\n")
+		}
 	}
 
-	if samlUser == "" || samlPassword == "" {
-		return fmt.Errorf("--saml-auth requires --saml-user and --saml-password (or SAP_SAML_USER / SAP_SAML_PASSWORD env vars)")
-	}
+	var credProvider adt.CredentialProvider
 
-	// Build credential provider that re-reads env vars on each call.
-	// This supports credential rotation and avoids long-term retention.
-	flagUser := samlUser
-	flagPassword := samlPassword
-	credProvider := func(ctx context.Context) ([]byte, []byte, error) {
-		u := os.Getenv("SAP_SAML_USER")
-		if u == "" {
-			u = flagUser
+	if credCmdStr != "" {
+		// Credential command mode: parse and execute external command on each auth.
+		credArgs := adt.ParseCredentialCmd(credCmdStr)
+		if len(credArgs) == 0 {
+			return fmt.Errorf("--credential-cmd: empty command after parsing")
 		}
-		p := os.Getenv("SAP_SAML_PASSWORD")
-		if p == "" {
-			p = flagPassword
+		credProvider = func(ctx context.Context) ([]byte, []byte, error) {
+			user, pass, err := adt.RunCredentialCmd(ctx, credArgs, cfg.Verbose)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []byte(user), []byte(pass), nil
 		}
-		return []byte(u), []byte(p), nil
+	} else {
+		// Direct credentials mode: env vars > flags.
+		samlUser, _ := cmd.Flags().GetString("saml-user")
+		if samlUser == "" {
+			samlUser = viper.GetString("SAML_USER")
+		}
+		samlPassword, _ := cmd.Flags().GetString("saml-password")
+		if samlPassword == "" {
+			samlPassword = viper.GetString("SAML_PASSWORD")
+		}
+
+		if samlUser == "" || samlPassword == "" {
+			return fmt.Errorf("--saml-auth requires credentials: use --credential-cmd, --saml-user/--saml-password, or SAP_SAML_USER/SAP_SAML_PASSWORD env vars")
+		}
+
+		// Build credential provider that re-reads env vars on each call.
+		// This supports credential rotation and avoids long-term retention.
+		flagUser := samlUser
+		flagPassword := samlPassword
+		credProvider = func(ctx context.Context) ([]byte, []byte, error) {
+			u := os.Getenv("SAP_SAML_USER")
+			if u == "" {
+				u = flagUser
+			}
+			p := os.Getenv("SAP_SAML_PASSWORD")
+			if p == "" {
+				p = flagPassword
+			}
+			return []byte(u), []byte(p), nil
+		}
 	}
 
 	ctx := context.Background()
