@@ -185,22 +185,6 @@ func (c *Client) SearchObject(ctx context.Context, query string, maxResults int)
 	return ParseSearchResults(resp.Body)
 }
 
-// GetObjectReleaseState retrieves the release state of an ABAP object (e.g., released, unreleased).
-// The objectName must be passed as FQN (e.g. /sap/bc/adt/oo/classes/CL_MY_CLASS e.g.)
-
-func (c *Client) GetObjectAPIReleaseState(ctx context.Context, objectName string) (string, error) {
-	sourcePath := fmt.Sprintf("/sap/bc/adt/apireleases/%s", url.PathEscape(objectName))
-
-	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
-		Method: http.MethodGet,
-	})
-	if err != nil {
-		return "", fmt.Errorf("getting object release state: %w", err)
-	}
-
-	return string(resp.Body), nil
-}
-
 // --- Program Operations ---
 
 // GetProgram retrieves the source code of an ABAP program.
