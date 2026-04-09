@@ -149,11 +149,18 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 	}
 
 	// Steps 3-4: Follow SAMLResponse form chain back to SAP.
+	// Allow form actions only to the current page host or the original SAP host,
+	// and reject HTTPS→HTTP downgrades to prevent assertion exfiltration.
 	for i := 0; i < maxSAMLHops; i++ {
 		form, err = extractFormData(body, resp.Request.URL)
 		if err != nil {
 			// No more forms to submit — check cookies below.
 			break
+		}
+
+		// Validate form action host/scheme to prevent SAMLResponse exfiltration.
+		if err := validateFormAction(resp.Request.URL, form.Action, u.Host); err != nil {
+			return nil, fmt.Errorf("SAML step %d: %w", i+3, err)
 		}
 
 		if verbose {
@@ -199,6 +206,44 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 	}
 
 	return sapCookies, nil
+}
+
+// canonicalHost normalizes a host string for comparison: lowercase and strip
+// default ports (:443 for HTTPS, :80 for HTTP).
+func canonicalHost(host, scheme string) string {
+	h := strings.ToLower(host)
+	if scheme == "https" && strings.HasSuffix(h, ":443") {
+		h = h[:len(h)-4]
+	} else if scheme == "http" && strings.HasSuffix(h, ":80") {
+		h = h[:len(h)-3]
+	}
+	return h
+}
+
+// validateFormAction checks that a form action URL is safe to POST to.
+// It allows the current page host and the original SAP host, and rejects
+// HTTPS→HTTP downgrades. This prevents exfiltration of SAMLResponse assertions
+// or other sensitive form data to attacker-controlled hosts.
+// Host comparison is case-insensitive and ignores default ports.
+func validateFormAction(currentPageURL *url.URL, action string, sapHost string) error {
+	a, err := url.Parse(action)
+	if err != nil {
+		return fmt.Errorf("invalid form action URL: %w", err)
+	}
+	// Relative URLs (empty host) are safe — they target the current host.
+	if a.Host != "" {
+		actionHost := canonicalHost(a.Host, a.Scheme)
+		currentHost := canonicalHost(currentPageURL.Host, currentPageURL.Scheme)
+		sapHostNorm := canonicalHost(sapHost, currentPageURL.Scheme)
+		if actionHost != currentHost && actionHost != sapHostNorm {
+			return fmt.Errorf("refusing to POST form to different host (%s vs %s/%s)",
+				sanitizeURLForLog(action), sanitizeURLForLog(currentPageURL.String()), sapHost)
+		}
+	}
+	if currentPageURL.Scheme == "https" && a.Scheme == "http" {
+		return fmt.Errorf("refusing HTTP downgrade: %s", sanitizeURLForLog(action))
+	}
+	return nil
 }
 
 // submitForm submits an HTML form using the method specified in the form data.

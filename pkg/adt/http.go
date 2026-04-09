@@ -531,10 +531,15 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	t.cookiesMu.Lock()
 	t.config.Cookies = cookies
 	t.cookiesMu.Unlock()
-	t.lastReauth = time.Now()
 
 	// Fetch CSRF token with the new cookies.
-	return t.fetchCSRFToken(ctx)
+	// Set lastReauth only after CSRF succeeds — if it fails, the next
+	// goroutine should retry rather than hitting the cooldown skip.
+	if err := t.fetchCSRFToken(ctx); err != nil {
+		return err
+	}
+	t.lastReauth = time.Now()
+	return nil
 }
 
 // addCookies adds user-provided cookies to a request under cookiesMu read lock.
