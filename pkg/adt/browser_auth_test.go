@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestSaveCookiesToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cannot stat cookie file: %v", err)
 	}
-	if info.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Errorf("expected permissions 0600, got %o", info.Mode().Perm())
 	}
 

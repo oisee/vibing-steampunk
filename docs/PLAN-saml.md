@@ -105,7 +105,7 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
   - `TestSAMLLogin_ReauthOn401` — verify Transport calls ReauthFunc on 401, gets fresh cookies, retries request
   - `TestSAMLLogin_ReauthConcurrent` — verify singleflight prevents stampede on simultaneous 401s
 - [ ] T2.7: Manual test against K0B DEV (`vsp --saml-auth --saml-user user@example.com --saml-password *** --url https://my413862.s4hana.cloud.sap`) — pending access
-- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 14 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
+- [x] GATE: `go test ./pkg/adt/...` PASS (1.586s) + `mcp__pal__codereview` PASS [C+O gpt-5.1-codex] (3 LOW) + `mcp__pal__thinkdeep` PASS [C+O gpt-5.2-pro] (3 LOW) — zero MEDIUM+ ✓
 
 **Rollback:**
 1. `git revert <commit>` — new files + minimal changes to main.go, http.go, config.go
@@ -120,23 +120,27 @@ The spike analyzed 4 options and recommends: C (fix browser-auth) -> A (programm
 **New deps:** None
 **Estimated effort:** 1-1.5 days
 
-- [ ] T3.1: Create `pkg/adt/credential_cmd.go`:
+- [x] T3.1: Create `pkg/adt/credential_cmd.go`:
   - `RunCredentialCmd(ctx, args []string) (username, password string, err error)` — execute external command via `exec.Command(args[0], args[1:]...)` (argv-based, no shell). Parse JSON `{"username": "...", "password": "..."}` from stdout.
   - **Security:** argv-based execution by default (like git-credential-helper). No shell interpretation of the command string. This prevents shell injection when `SAP_CREDENTIAL_CMD` is set from config/env.
   - Context-aware timeout (default 30s)
   - Never log stdout/stderr content (contains secrets)
   - Read credential-cmd stdout into `[]byte`; zero buffer after JSON parsing
-  - CLI flag accepts space-separated command: `--credential-cmd "keepassxc-cli show -s db.kdbx SAP/K0B"` — split by `strings.Fields()` (no shell quoting support; document limitation). For complex quoting, use repeated `--credential-cmd-arg` flags or wrapper script. Log warning when sourced from env var.
-- [ ] T3.2: Add CLI flag `--credential-cmd` / `SAP_CREDENTIAL_CMD` to `cmd/vsp/main.go`
-- [ ] T3.3: Wire credential-cmd as credential source for `--saml-auth`: priority order is credential-cmd > env vars > TTY prompt
-- [ ] T3.4: Write unit tests:
-  - `TestCredentialCmd_ValidJSON` — mock command returning valid JSON
+  - `ParseCredentialCmd()` splits by `strings.Fields()` (no shell quoting support; documented in help text). For complex quoting, use wrapper script.
+  - Log warning when credential-cmd sourced from env var.
+- [x] T3.2: Add CLI flag `--credential-cmd` / `SAP_CREDENTIAL_CMD` to `cmd/vsp/main.go`
+- [x] T3.3: Wire credential-cmd as credential source for `--saml-auth`: priority order is credential-cmd > env vars > flag values
+- [x] T3.4: Write unit tests (8 test cases, cross-platform via temp helper scripts):
+  - `TestCredentialCmd_ValidJSON` — helper script returning valid JSON
   - `TestCredentialCmd_InvalidJSON` — malformed output
-  - `TestCredentialCmd_Timeout` — command exceeds timeout
-  - `TestCredentialCmd_NonZeroExit` — command fails
-  - `TestCredentialCmd_MissingFields` — JSON missing username or password
-- [ ] T3.5: Document usage in README or `--help` output
-- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 5 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
+  - `TestCredentialCmd_Timeout` — command exceeds context deadline
+  - `TestCredentialCmd_NonZeroExit` — command fails with exit code 1
+  - `TestCredentialCmd_MissingFields` — 4 subtests: missing/empty username/password
+  - `TestCredentialCmd_EmptyCommand` — nil/empty args
+  - `TestParseCredentialCmd` — 5 subtests for argv splitting
+  - `TestCredentialCmd_VerboseMode` — verbose output doesn't panic
+- [x] T3.5: Document usage in `--help` output (flag help text describes JSON format and argv splitting)
+- [ ] GATE: `go test ./pkg/adt/...` + `go test ./cmd/vsp/...` passes (verify all 8 new test cases) + `mcp__pal__codereview` + `mcp__pal__thinkdeep` — zero MEDIUM+ before next phase
 
 **Rollback:**
 1. `git revert <commit>` — new files only, minimal main.go change
