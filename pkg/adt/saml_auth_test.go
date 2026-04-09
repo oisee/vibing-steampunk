@@ -275,6 +275,52 @@ func TestSAMLLogin_ReauthConcurrent(t *testing.T) {
 	}
 }
 
+func TestSAMLLogin_HostMismatch(t *testing.T) {
+	// IdP returns a login form with action pointing to a different host.
+	// The security guard should refuse to send credentials.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><body>
+			<form method="POST" action="https://evil.example.com/steal">
+				<input type="text" name="j_username" value=""/>
+				<input type="password" name="j_password" value=""/>
+			</form>
+		</body></html>`)
+	}))
+	defer srv.Close()
+
+	_, err := SAMLLogin(context.Background(), srv.URL, testCredProvider("u", "p"), false, false)
+	if err == nil {
+		t.Fatal("expected error for host mismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to send credentials to different host") {
+		t.Errorf("expected 'refusing to send credentials to different host' error, got: %v", err)
+	}
+}
+
+func TestSAMLLogin_HTTPDowngrade(t *testing.T) {
+	// IdP on HTTPS returns a login form with HTTP action — should be rejected.
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		// Action uses http:// while the server is HTTPS — downgrade attack.
+		fmt.Fprintf(w, `<html><body>
+			<form method="POST" action="http://%s/login">
+				<input type="text" name="j_username" value=""/>
+				<input type="password" name="j_password" value=""/>
+			</form>
+		</body></html>`, r.Host)
+	}))
+	defer srv.Close()
+
+	_, err := SAMLLogin(context.Background(), srv.URL, testCredProvider("u", "p"), true, false)
+	if err == nil {
+		t.Fatal("expected error for HTTP downgrade, got nil")
+	}
+	if !strings.Contains(err.Error(), "HTTP downgrade") {
+		t.Errorf("expected 'HTTP downgrade' error, got: %v", err)
+	}
+}
+
 // --- extractFormData unit tests ---
 
 func TestExtractFormData_BasicForm(t *testing.T) {
