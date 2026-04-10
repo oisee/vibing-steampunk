@@ -321,6 +321,72 @@ func TestSAMLLogin_HTTPDowngrade(t *testing.T) {
 	}
 }
 
+func TestSAMLLogin_SPInitiated(t *testing.T) {
+	// SAP responds with a SAMLRequest auto-submit form (HTTP-POST binding)
+	// instead of HTTP 302 redirect. Step 1b should follow it to reach the IdP.
+	mux := http.NewServeMux()
+
+	// SAP SP: responds with SAMLRequest form (SP-initiated, no redirect)
+	mux.HandleFunc("/sap/bc/adt/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<html><body>
+				<form method="POST" action="http://%s/idp/sso">
+					<input type="hidden" name="SAMLRequest" value="base64samlrequest"/>
+					<input type="hidden" name="RelayState" value="relay"/>
+				</form>
+				<script>document.forms[0].submit();</script>
+			</body></html>`, r.Host)
+			return
+		}
+	})
+
+	// IdP SSO endpoint: shows login form
+	mux.HandleFunc("/idp/sso", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<form method="POST" action="/idp/authenticate">
+			<input type="hidden" name="SAMLRequest" value="base64req"/>
+			<input type="text" name="j_username" value=""/>
+			<input type="password" name="j_password" value=""/>
+		</form>`)
+	})
+
+	// IdP auth: returns SAMLResponse
+	mux.HandleFunc("/idp/authenticate", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "bad form", http.StatusBadRequest)
+			return
+		}
+		if r.FormValue("j_username") != "user" || r.FormValue("j_password") != "pass" {
+			http.Error(w, "bad creds", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<form method="POST" action="/sap/saml2/sp/acs">
+			<input type="hidden" name="SAMLResponse" value="base64resp"/>
+		</form>`)
+	})
+
+	// SAP ACS: sets cookies
+	mux.HandleFunc("/sap/saml2/sp/acs", func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "MYSAPSSO2", Value: "token", Path: "/"})
+		http.SetCookie(w, &http.Cookie{Name: "SAP_SESSIONID_X_001", Value: "sess", Path: "/sap/"})
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<html><body>OK</body></html>`)
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cookies, err := SAMLLogin(context.Background(), srv.URL, testCredProvider("user", "pass"), false, true)
+	if err != nil {
+		t.Fatalf("SAMLLogin (SP-initiated) failed: %v", err)
+	}
+	if cookies["MYSAPSSO2"] != "token" {
+		t.Errorf("expected MYSAPSSO2=token, got %q", cookies["MYSAPSSO2"])
+	}
+}
+
 func TestSAMLLogin_FormChainHostMismatch(t *testing.T) {
 	// After successful login, the IdP returns a SAMLResponse form that points
 	// to an evil host instead of the SAP ACS. The chain validation should reject this.

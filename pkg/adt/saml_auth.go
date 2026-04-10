@@ -102,6 +102,37 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 		return nil, fmt.Errorf("reading step 1 response: %w", err)
 	}
 
+	// Step 1b: SP-initiated SAML — SAP may respond with a SAMLRequest auto-submit form
+	// instead of HTTP 302 redirect. Follow it to reach the actual IdP login page.
+	// Distinguish from IdP login form: SP form has SAMLRequest but no credential fields.
+	if spForm, ferr := extractFormData(body, resp.Request.URL); ferr == nil {
+		_, hasSAMLRequest := spForm.Fields["SAMLRequest"]
+		_, hasUsername := spForm.Fields["j_username"]
+		if hasSAMLRequest && !hasUsername {
+			// SAMLRequest form goes from SAP to IdP — cross-host is expected.
+			// Only reject HTTPS→HTTP downgrade (no credential data, but signed artifact).
+			if spActionURL, perr := url.Parse(spForm.Action); perr == nil {
+				if resp.Request.URL.Scheme == "https" && spActionURL.Scheme == "http" {
+					return nil, fmt.Errorf("SAML step 1b: refusing HTTP downgrade: %s",
+						sanitizeURLForLog(spForm.Action))
+				}
+			}
+			if verbose {
+				fmt.Fprintf(os.Stderr, "[SAML-AUTH] Step 1b: Following SAMLRequest form → %s\n",
+					sanitizeURLForLog(spForm.Action))
+			}
+			resp, err = submitForm(ctx, client, spForm)
+			if err != nil {
+				return nil, fmt.Errorf("SAML step 1b (SAMLRequest to IdP): %w", err)
+			}
+			body, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				return nil, fmt.Errorf("reading step 1b response: %w", err)
+			}
+		}
+	}
+
 	// Step 2: Parse IdP login form and fill in credentials.
 	form, err := extractFormData(body, resp.Request.URL)
 	if err != nil {
