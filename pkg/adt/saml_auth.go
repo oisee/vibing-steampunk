@@ -61,6 +61,13 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 			if len(via) >= maxSAMLHops {
 				return fmt.Errorf("SAML redirect loop: exceeded %d hops", maxSAMLHops)
 			}
+			// Block HTTPS→HTTP downgrade on redirects to prevent credential/assertion leakage.
+			if len(via) > 0 {
+				prev := via[len(via)-1].URL
+				if prev.Scheme == "https" && req.URL.Scheme == "http" {
+					return fmt.Errorf("refusing HTTPS→HTTP redirect downgrade: %s", sanitizeURLForLog(req.URL.String()))
+				}
+			}
 			if verbose {
 				fmt.Fprintf(os.Stderr, "[SAML-AUTH] Redirect → %s\n", sanitizeURLForLog(req.URL.String()))
 			}
@@ -147,13 +154,21 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 
 	// Validate that credentials are sent to the same host as the IdP page
 	// to prevent exfiltration via a crafted form action.
+	// Use canonicalHost for case-insensitive, port-normalized comparison
+	// (consistent with validateFormAction in Steps 3-4).
 	actionURL, err := url.Parse(form.Action)
 	if err != nil {
 		return nil, fmt.Errorf("invalid login form action URL: %w", err)
 	}
-	if actionURL.Host != "" && actionURL.Host != resp.Request.URL.Host {
-		return nil, fmt.Errorf("refusing to send credentials to different host (%s vs %s)",
-			sanitizeURLForLog(form.Action), sanitizeURLForLog(resp.Request.URL.String()))
+	if actionURL.Host != "" {
+		actionScheme := actionURL.Scheme
+		if actionScheme == "" {
+			actionScheme = resp.Request.URL.Scheme
+		}
+		if canonicalHost(actionURL.Host, actionScheme) != canonicalHost(resp.Request.URL.Host, resp.Request.URL.Scheme) {
+			return nil, fmt.Errorf("refusing to send credentials to different host (%s vs %s)",
+				sanitizeURLForLog(form.Action), sanitizeURLForLog(resp.Request.URL.String()))
+		}
 	}
 	if resp.Request.URL.Scheme == "https" && actionURL.Scheme == "http" {
 		return nil, fmt.Errorf("refusing to send credentials over HTTP downgrade: %s",

@@ -427,6 +427,27 @@ func TestSAMLLogin_FormChainHostMismatch(t *testing.T) {
 	}
 }
 
+func TestSAMLLogin_RedirectHTTPDowngrade(t *testing.T) {
+	// HTTPS server redirects to HTTP — CheckRedirect should reject the downgrade.
+	httpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request should not reach HTTP server after downgrade rejection")
+	}))
+	defer httpSrv.Close()
+
+	httpsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, httpSrv.URL+"/idp/login", http.StatusFound)
+	}))
+	defer httpsSrv.Close()
+
+	_, err := SAMLLogin(context.Background(), httpsSrv.URL, testCredProvider("u", "p"), true, false)
+	if err == nil {
+		t.Fatal("expected error for HTTPS→HTTP redirect downgrade, got nil")
+	}
+	if !strings.Contains(err.Error(), "downgrade") {
+		t.Errorf("expected downgrade error, got: %v", err)
+	}
+}
+
 // --- extractFormData unit tests ---
 
 func TestExtractFormData_BasicForm(t *testing.T) {

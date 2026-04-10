@@ -5,6 +5,7 @@
 **Status:** COMPLETE
 **Audit round 1:** 3 MEDIUM fixed (argv exec, credential zeroing, test split)
 **Audit round 2:** 1 HIGH + 2 MEDIUM fixed (401 re-auth gap, shlex dep, credential lifecycle)
+**Audit round 3 (/finish):** 1 HIGH + 2 MEDIUM fixed (redirect downgrade, host normalization, context propagation)
 **Final verdict:** APPROVE [C+O] — zero MEDIUM+ remaining
 **Spike:** [docs/spikes/2026-04-08-saml-auth-public-cloud.md](spikes/2026-04-08-saml-auth-public-cloud.md)
 **Cross-validation:** [C+O] Porfiry [Opus 4.6] + GPT-5.2-Pro + GPT-5.1-Codex — 8/10 confidence

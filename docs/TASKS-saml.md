@@ -39,9 +39,19 @@
 | T3.5 | Document usage in --help output | DONE | backend-dev |
 | GATE | Tests pass + PAL codereview + thinkdeep | DONE | orchestrator |
 
-## /finish Audit
+## /finish Audit (Round 1)
 
 | Task | Description | Status | Assignee |
 |------|-------------|--------|----------|
 | F-01 | Add TestSAMLLogin_HostMismatch + TestSAMLLogin_HTTPDowngrade | DONE | test-engineer |
 | Audit | Lead auditor + security auditor — zero MEDIUM+ | DONE | orchestrator |
+
+## /finish Audit (Round 2 — 2026-04-10)
+
+| Task | Description | Status | Assignee |
+|------|-------------|--------|----------|
+| F-02 | Add HTTPS→HTTP downgrade check in CheckRedirect (HIGH) | DONE | Porfiry |
+| F-03 | Normalize host comparison in Step 2 using canonicalHost (MEDIUM) | DONE | Porfiry |
+| F-04 | Use cmd.Context() instead of context.Background() in processSAMLAuth/processBrowserAuth (MEDIUM) | DONE | Porfiry |
+| F-05 | Add TestSAMLLogin_RedirectHTTPDowngrade test | DONE | Porfiry |
+| Gate | PAL codereview PASS [gpt-5.2-pro] + PAL thinkdeep PASS [gpt-5.1-codex] — zero MEDIUM+ | DONE | orchestrator |
