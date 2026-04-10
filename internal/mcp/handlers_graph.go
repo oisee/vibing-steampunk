@@ -967,13 +967,13 @@ func (s *Server) handleUsageExamples(ctx context.Context, request mcp.CallToolRe
 
 // fetchConfigRefs finds programs referencing a TVARVC variable via CROSS + optional grep.
 // Steps:
-//  1. CROSS WHERE NAME = 'TVARVC' AND TYPE = 'DA' → programs that read TVARVC table
+//  1. CROSS WHERE NAME = 'TVARVC' AND TYPE = 'D' → programs that read TVARVC table
 //  2. NormalizeInclude → deduplicate to object level
 //  3. For each candidate, grep source for literal variable name (if doGrep=true)
 //  4. Return TVARVCReference slice with Confirmed flag
 func (s *Server) fetchConfigRefs(ctx context.Context, variable string, doGrep bool) ([]graph.TVARVCReference, error) {
 	// Step 1: Find programs that reference TVARVC table
-	crossQuery := "SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = 'TVARVC' AND TYPE = 'DA'"
+	crossQuery := "SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = 'TVARVC' AND TYPE = 'D'"
 	crossResult, err := s.adtClient.RunQuery(ctx, crossQuery, 500)
 	if err != nil {
 		return nil, fmt.Errorf("CROSS query: %w", err)

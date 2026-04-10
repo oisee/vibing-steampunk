@@ -1690,7 +1690,7 @@ func runGraphWhereUsedConfig(cmd *cobra.Command, args []string) error {
 
 	// Step 1: Find programs that reference TVARVC table
 	fmt.Fprintf(os.Stderr, "Querying CROSS for TVARVC references...\n")
-	crossQuery := "SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = 'TVARVC' AND TYPE = 'DA'"
+	crossQuery := "SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = 'TVARVC' AND TYPE = 'D'"
 	crossResult, err := client.RunQuery(ctx, crossQuery, 500)
 	if err != nil {
 		return fmt.Errorf("CROSS query failed: %w", err)
