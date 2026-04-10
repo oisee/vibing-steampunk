@@ -522,7 +522,7 @@ func processBrowserAuth(cmd *cobra.Command) error {
 		browserExec = viper.GetString("BROWSER_EXEC")
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	cookies, err := adt.BrowserLogin(ctx, cfg.BaseURL, cfg.InsecureSkipVerify, timeout, browserExec, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("browser authentication failed: %w", err)
@@ -612,7 +612,7 @@ func processSAMLAuth(cmd *cobra.Command) error {
 		}
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	cookies, err := adt.SAMLLogin(ctx, cfg.BaseURL, credProvider, cfg.InsecureSkipVerify, cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("SAML authentication failed: %w", err)
