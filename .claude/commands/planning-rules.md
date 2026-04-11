@@ -230,3 +230,44 @@ Before starting implementation, verify all six:
 ### Artifact Index
 
 After creating any decision artifact (ADR, spike, postmortem, plan): update `docs/INDEX.md` with a link to the new artifact.
+
+---
+
+## Plan & Phase Numbering Convention
+
+Consistent numbering prevents confusion between roadmap phases and sub-phases within implementation plans.
+
+**Roadmap phases** (`docs/ROADMAP.md`): `Phase N` (N = integer, e.g. 1-9).
+These are the canonical top-level identifiers. Never reuse them as sub-phase names inside plan files.
+
+> **Legacy exception -- claude-team-control Phases 5A-5P:** These phases predate the `Phase N` integer rule (introduced 2026-03) and use a letter-suffix system (5A, 5B, 5B.2, 5C.1...5P). They are **frozen and immutable**. The next roadmap phase in that project is **Phase 6** (integer only, no letters). Never introduce new letter-suffix phases.
+
+**Sub-phases within a plan file**: `Phase N.M`
+- N = parent roadmap phase number (matches ROADMAP.md)
+- M = sequential sub-phase index within that plan (1, 2, 3...)
+- Example: Phase 9.1, Phase 9.2, Phase 9.3 are the first three sub-phases of the Phase 9 plan
+
+**Off-roadmap plans** (tooling, infra, optimization -- no roadmap phase number):
+- Format: `LABEL.M` where LABEL is a 2-5 char uppercase acronym from the plan name
+- Example: `GPU.0`, `GPU.1`, `GPU.2` for a GPU optimization plan
+
+**Tasks within a sub-phase**: `T[M].[K]`
+- M = local sub-phase number (same digit as Phase N.M suffix)
+- K = task sequence within that sub-phase (1, 2, 3...)
+- Example: T1.1, T1.2 within Phase 9.1; T2.1, T2.2 within Phase 9.2
+- Within the plan file, short form T[M].[K] is unambiguous (phase heading provides N)
+- Cross-file references must use full form: `Phase 9.2 T2.3`
+
+**Tasks within off-roadmap phases** (LABEL.M): use the same `T[M].[K]` format where M is the
+numeric index of that phase. Example: T0.1, T1.2 for tasks within GPU.0 and GPU.1.
+
+**GATE steps**: not numbered -- always the last item in a phase, written as `- [ ] GATE: ...`
+
+**IDs are immutable**: never renumber existing phase or task assignments once created.
+To insert a new phase between existing ones: add it at the end and document the logical ordering,
+or leave a gap. Do NOT shift existing numbers.
+
+**Completed / archived plans**: do NOT renumber historical plan files. Leave as written.
+
+**Why this matters**: using Phase 1-6 inside a Phase 9 sub-plan collides with roadmap Phase 1-6,
+causing ambiguity in cross-references, audit trails, and ROADMAP.md log entries.

@@ -13,19 +13,19 @@ You are executing the `/save` skill — a context cleanup checkpoint between pha
 
 **FIRST OUTPUT:** Before any tool calls, print: `▶ /save`
 
-**Step 0 — Detect session context (silently — NO visible bash calls):**
-**Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip to step 0b.
-**Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
-  - `[SESSION] label=X ...` → SESSION_LABEL=`X`. PLAN_FILE=`docs/PLAN-{X}.md`, TASKS_FILE=`docs/TASKS-{X}.md`.
-  - `[SESSION] default ...` → SESSION_LABEL=(none). PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`.
-**Priority 3 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
-**Output:** Print session result ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+**Step 0 — Resolve session context:**
+Call `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = CLAUDE_SESSION env var (empty if unset), `branch` = current git branch, `skill_args` = ARGUMENTS, `skill_name` = "save".
+
+Use returned `plan_file`, `tasks_file`, `review_file`, `label`, `project_suffix` throughout. Set SESSION_LABEL=`label`, PLAN_FILE=`plan_file`, TASKS_FILE=`tasks_file`.
+Print: "Session: **{label}** → {plan_file}" only when label is set. Otherwise proceed silently.
 
 **Step 0b — Validate session label against plan file (MANDATORY anti-hallucination gate):**
 After Step 0 resolves SESSION_LABEL and PLAN_FILE:
 1. **If SESSION_LABEL is set:** save ORIGINAL_LABEL=SESSION_LABEL. Validate format `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` — if invalid: print "Warning: invalid session label '{ORIGINAL_LABEL}'", force SESSION_LABEL=(none), PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`. If valid: glob `docs/PLAN-{SESSION_LABEL}.md`. If file NOT found: force SESSION_LABEL=(none), PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`. Print: "Warning: PLAN-{ORIGINAL_LABEL}.md not found — falling back to docs/PLAN.md".
 2. **If SESSION_LABEL is not set:** confirm `docs/PLAN.md` exists. If not: print "Warning: no plan file found."
-3. **NEVER derive SESSION_LABEL from the conversation topic, task description, or user request content.** SESSION_LABEL comes ONLY from: (a) CLAUDE_SESSION env var, (b) git branch name. Any other source is a hallucination.
+3. **NEVER derive SESSION_LABEL from the conversation topic, task description, or user request content.** SESSION_LABEL comes ONLY from: (a) CLAUDE_SESSION env var, (b) git branch name, (c) `.claude/.session` file (read by hook), (d) single PLAN-*.md auto-detect (hook). Any other source is a hallucination.
+
+**Step 0c — Persist session label (ONLY after step 0b validation passes):** If SESSION_LABEL is still set (not overridden by 0b) AND was set from Priority 3 (Bash fallback) — NOT from Priority 1 (Reuse) or Priority 2 (Hook tag): run `bash -c 'tmp=".claude/.session.tmp.$$"; printf "%s" "{SESSION_LABEL}" > "$tmp" && mv -f "$tmp" .claude/.session 2>/dev/null || rm -f "$tmp" 2>/dev/null'` (atomic write to persist session across `/clear`).
 
 ## Steps
 

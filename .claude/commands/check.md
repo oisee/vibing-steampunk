@@ -9,22 +9,24 @@ You are executing the `/check` command — a shortcut for a quality checkpoint.
 
 **FIRST OUTPUT:** Before any tool calls, print: `▶ /check`
 
-**Step 0 — Detect session context (silently — NO visible bash calls):**
-**Priority 1 — Reuse:** if session context is already known from this conversation (Session Start Protocol ran earlier, or a previous skill resolved it): reuse existing SESSION_LABEL, PLAN_FILE, TASKS_FILE, REVIEW_FILE. Skip to step 7.
-**Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (injected by sync-check.py SessionStart hook). Parse it:
-  - `[SESSION] label=X source=env|branch ...` → SESSION_LABEL=`X`. Skip to step 5.
-  - `[SESSION] default escape=true` → force no-session mode. Skip to step 6.
-  - `[SESSION] default branch=...` → no session. Check args (step 4b), then step 6.
-**Priority 3 — Args:** if SESSION_LABEL still not set AND ARGUMENTS (`$ARGUMENTS`) non-empty: extract FIRST_ARG = first whitespace-delimited word. If FIRST_ARG matches `^[A-Za-z][A-Za-z0-9_-]{1,62}$`: glob `docs/PLAN-*.md` — if match found → SESSION_LABEL=FIRST_ARG (from args). Skip to step 5.
-**Priority 4 — Bash fallback (ONLY if no `[SESSION]` tag in context AND no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse and resolve as before.
-5. SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`, PROJECT_SUFFIX=`__{SESSION_LABEL}`. Verify header if PLAN_FILE exists: read first 3 lines — must contain `Session: {SESSION_LABEL}`; if mismatch: ABORT.
-6. SESSION_LABEL not set: PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`, PROJECT_SUFFIX=(none).
-7. Use PLAN_FILE/TASKS_FILE/REVIEW_FILE throughout. For `start_pipeline`: use `project=<basename_of_cwd><PROJECT_SUFFIX>`. For `list_active_pipelines`: if SESSION_LABEL set, pass `project=<basename_of_cwd><PROJECT_SUFFIX>`.
-**Output:** Print session result in ONE line ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+**Step 0 — Resolve session context:**
+Call the `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = value of CLAUDE_SESSION env var (or `""` if unset), `branch` = current git branch name, `skill_args` = ARGUMENTS string (if any), `skill_name` = name of the invoking skill (e.g. `"run"`, `"check"`).
 
-**Anti-hallucination rule:** NEVER derive SESSION_LABEL from conversation topic, task description, or user request content. SESSION_LABEL comes ONLY from: (a) CLAUDE_SESSION env var, (b) git branch name, (c) args matching an existing `PLAN-*.md` file. Any other source is a hallucination.
+The tool returns `SessionResult` JSON with: `plan_file`, `tasks_file`, `review_file`, `label`, `source`, `project_suffix`, `warnings`, `parsed_args`.
+
+**Use the returned values throughout:**
+- `plan_file` / `tasks_file` / `review_file` — session-scoped file paths
+- `label` — session label (null = no session)
+- `project_suffix` — append to project name for `start_pipeline` / `list_active_pipelines`
+- `parsed_args` — skill-specific extracted arguments (e.g. `count`, `mode`, `description`, `workflow`)
+
+**Output:** Print session result ONLY when `label` is set: "Session: **{label}** → {plan_file}". When no label: proceed silently.
+
+**Anti-hallucination rule:** NEVER derive session label from conversation topic, task description, or user request content. The `resolve_session` tool is the ONLY valid source. Any other derivation is a hallucination.
 
 **CONTEXT GATHERING (MANDATORY — run BEFORE invoking orchestrate):**
+
+**CRITICAL RULE: ALWAYS RUN REAL VERIFICATION.** When the user invokes `/check`, they expect actual audit work — never shortcut with "already audited in this session", "no changes since last check", or "no further action needed." If the same code was checked 5 minutes ago, check it again. The user explicitly asked. If there are genuinely zero changes AND zero commits AND no user description, ask "What should I check?" rather than deciding on your own to skip.
 
 **CRITICAL RULE: NEVER ask the user clarifying questions about scope.** Determine CHECK_SCOPE algorithmically from the rules below and proceed immediately. If the user wrote something after `/check`, that is the primary target — combine it with any uncommitted changes and act. Do not ask "what do you want to check?" — the user already told you.
 

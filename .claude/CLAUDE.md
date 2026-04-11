@@ -1,5 +1,5 @@
 ﻿<!-- DO NOT EDIT -- managed by sync.ps1 from claude-team-control -->
-<!-- Synced: 2026-04-03 11:04:15 -->
+<!-- Synced: 2026-04-08 20:15:52 -->
 <!-- Base: base/CLAUDE.md | Overlay: overlays/vibing-steampunk.md -->
 
 
@@ -39,6 +39,7 @@ Before forming any conclusion about code, architecture, or technical decisions: 
 | "I already know what this file does" | Read the file with the Read tool |
 | "The tests probably pass" | Run tests and read the output |
 | "PAL is slow, I'll skip cross-validation" | PAL is mandatory — call it |
+| "This is pre-existing / not my code" | All code in the repo is ours — if audit found it, fix it |
 
 Full catalog of anti-patterns: see `/red-flags` skill.
 
@@ -64,7 +65,7 @@ Before concluding on architecture, bugs, or security: call the appropriate PAL M
 File placement rules and directory conventions: see `docs/PROJECT-STRUCTURE.md` in the claude-team-control repo.
 
 **Quick reference — prohibited (never do these):**
-- Do NOT create files in `base/` other than `CLAUDE.md`
+- Do NOT create files in `base/` other than `CLAUDE.md`, `CLAUDE-global.md`, and `fragments/`
 - Do NOT put agent/skill files outside their designated directories (`agents/`, `skills/`)
 - Do NOT add Python packages to orchestrator without updating `pyproject.toml`
 - Do NOT edit `projects.local.json` in commits -- it is user-specific and gitignored
@@ -213,7 +214,7 @@ Enforced automatically by `protect-db.sh` hook -- blocks destructive commands on
 At the start of each session, execute these steps in order:
 0. **Detect session scope** (silently — NO visible bash calls):
    a. Check conversation context for `[SESSION]` tag injected by sync-check.py SessionStart hook. This tag is always present when the hook runs. Parse it:
-      - `[SESSION] label=X source=env|branch ...` → SESSION_LABEL=`X` (explicit or auto from branch).
+      - `[SESSION] label=X source=env|branch|file|single-plan ...` → SESSION_LABEL=`X` (explicit or auto-detected).
       - `[SESSION] default escape=true` → force no-session mode, skip to step f.
       - `[SESSION] default branch=...` → no session, skip to step f.
    b. **Bash fallback** (ONLY if no `[SESSION]` tag in context — e.g. hook didn't run): Run `Bash: S="${CLAUDE_SESSION:-}"; B="$(git branch --show-current 2>/dev/null)"; echo "S=$S B=$B"`. Parse `S` and `B` as before.
@@ -221,16 +222,30 @@ At the start of each session, execute these steps in order:
    d. If `S` non-empty and not `_`: validate `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`. If invalid: ABORT. SESSION_LABEL=`{S}`. Skip to step e.
    e. If SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`. Report to user: "Session: **{SESSION_LABEL}** → {PLAN_FILE}".
    f. If SESSION_LABEL not set: PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`. Do NOT print "no session" — just proceed silently to step 1.
+
+   **Detection priority** (hook resolves in this order): env var > branch > `.claude/.session` file > single PLAN-*.md auto-detect > default. Skills add args-based detection (between branch and `.session`) as a skill-only priority. The hook validates `.session` label against `docs/PLAN-{label}.md` existence and cleans up stale files automatically.
 1. Read PLAN_FILE -- check for in-progress plans.
 2. Read `docs/ROADMAP.md` -- check current phase status.
-3. Call `list_active_pipelines()` -- check for interrupted pipelines. If SESSION set, pass `project=<basename_of_cwd>__{SESSION}` to filter.
+3. Call `list_active_pipelines(project=<basename_of_cwd>)` -- ALWAYS pass project. Prefix matching on the server returns all sessions for this project and excludes foreign pipelines.
 4. Check the `[SYNC CHECK]` line from the SessionStart hook output:
    - Out of sync: report the stale files to the user and ask if they want to run `/sync`.
    - In sync: confirm to the user ("rules are up to date").
    - No `[SYNC CHECK]` line (unmanaged project): skip silently.
 5. When active pipelines exist: report them to the user with resume instructions before accepting new tasks.
-5b. For each active pipeline reported: check git log -- if all pipeline work is committed, call `cancel_pipeline(id, reason)` to close it. Do not leave orphans.
+5b. Call `index_ops(action="orphan_scan", project=<basename>, root_path=<project_root>)` to scan for stale pipelines. For each result: if `auto_cancel_safe=True` (risk_level="low"), auto-cancel via `pipeline_ops(action="cancel", pipeline_id=id, reason="orphan auto-cancel: stale >72h, HEAD contains commit, no unpushed")`. Report remaining `high` risk pipelines to the user for manual review. Do not leave orphans.
 6. When other pending work exists: report it before accepting new tasks.
+
+## Project & Pipeline Isolation (CRITICAL — NEVER VIOLATE)
+
+**Scope rule:** Every session operates within ONE project (the current working directory). All actions — file reads, edits, pipeline operations, git commands — MUST stay within the current project scope unless the user **explicitly names** another project and requests a cross-project action.
+
+**Forbidden without explicit user instruction:**
+- Reading, modifying, or deleting files in other projects' directories
+- Resuming, completing steps in, or cancelling pipelines that belong to other projects
+- Running git commands in other projects' repositories
+- Making assumptions about other projects' state based on shared pipeline lists
+
+**Pipeline isolation:** Always pass `project=<basename_of_cwd>` to `list_active_pipelines` — server-side prefix matching excludes foreign pipelines. Never call without project filter in production use.
 
 ## Per-Phase Gate (MANDATORY)
 
@@ -247,70 +262,9 @@ Never skip this gate. Never proceed to the next phase while the previous phase h
 **TDD advisory:** For features and bugfixes: write the failing test first, verify it fails, then implement. For refactoring: ensure existing tests pass before and after. Exception: spike/exploratory work where the interface is not yet defined.
 If a PAL finding is believed to be a false positive: use `mcp__pal__challenge` to contest it, or escalate to the user. Never silently skip or downgrade findings.
 
-## Parallel Session Protocol
+## Parallel Sessions
 
-When working on two or more unrelated features simultaneously in the same project directory:
-
-### Session detection order (skills resolve in this priority)
-
-1. `CLAUDE_SESSION` env var — set once per terminal (works in terminal Claude Code only, NOT in VSCode extension)
-2. Git branch — auto-detected when on a non-default branch (works everywhere)
-3. **Args-based** — first word of command arguments matches an existing `docs/PLAN-{word}.md` (e.g. `/check INC` → session `INC`)
-4. Single auto-detect — when exactly 1 `docs/PLAN-*.md` exists, it is used automatically
-5. Default — `docs/PLAN.md`
-
-**`/phase` auto-labels from description:** `/phase routing rules for the dashboard` → auto-session `routing` → plan saved to `docs/PLAN-routing.md`. No setup required.
-
-### Setup options
-
-**VSCode (recommended) — use args or let Claude ask:**
-```
-/check INC           # args-based: picks PLAN-INC.md automatically
-/check               # if 2+ plans exist: shows selection menu
-/phase routing rules # auto-labels as "routing" → creates PLAN-routing.md
-```
-
-**Terminal — env var (explicit, works across all commands):**
-```bash
-export CLAUDE_SESSION=<label>   # e.g., INC, feat-auth, WI-12345
-```
-
-**Git branch (automatic, works everywhere):**
-```bash
-git checkout -b feat-auth   # → session label "feat-auth" auto-detected
-```
-
-### Label naming rules
-**Must derive label from a unique identifier:**
-
-| Source | Examples | Safe? |
-|--------|----------|-------|
-| Phase / roadmap number | `15-E`, `5P`, `SES` | Yes — unique by definition |
-| TFS work item / ticket | `WI-12345`, `BUG-789` | Yes — unique by definition |
-| Git branch name | `feat-auth`, `bugfix-login` | Yes — unique per branch |
-| Date + topic | `0320-transport` | Yes — unique per day+topic |
-
-**Forbidden:** generic categories — `bugfix`, `feature`, `docs`, `fix` — two sessions can pick the same label.
-
-### What gets scoped vs. global
-| Artifact | Scoped? | How |
-|----------|---------|-----|
-| `docs/PLAN-{label}.md` | YES | Session plan file |
-| `docs/TASKS-{label}.md` | YES | Session task breakdown |
-| `docs/REVIEW-{label}.md` | YES | Session code review |
-| `docs/AUDIT.md` | NO | Global — project audit history |
-| `docs/ROADMAP.md` | NO | Global — pull before write |
-| `MEMORY.md` | NO | Global — sessions append entries |
-
-### ROADMAP.md concurrent write safety
-Before writing to `docs/ROADMAP.md`: run `git pull --rebase` if another session is active.
-Write only append-only entries (new phase rows). On merge conflict: keep both entries, sort by phase number.
-
-### Best choice for long-running parallel tracks: git worktrees
-```bash
-git worktree add ../project-feature -b feature/15E
-# Each worktree has own docs/PLAN.md and naturally scoped pipelines
-```
+For parallel work setup, session detection order, label naming rules, and scoping details: see `/new-session` skill.
 
 ## Context & Token Optimization (MANDATORY)
 
@@ -339,60 +293,13 @@ Documentation quality standards (Mermaid, tables, collapsibles, emoji markers, c
 
 Cost-aware development (scripts-over-agents table, CV gate applicability, agent memory protocol, collaboration handoff): see `/agent-memory-rules` skill.
 
-## Plan & Phase Numbering Convention
+## Plan & Phase Numbering
 
-Consistent numbering prevents confusion between roadmap phases and sub-phases within implementation plans.
-
-**Roadmap phases** (`docs/ROADMAP.md`): `Phase N` (N = integer, e.g. 1–9).
-These are the canonical top-level identifiers. Never reuse them as sub-phase names inside plan files.
-
-> **Legacy exception — claude-team-control Phases 5A–5P:** These phases predate the `Phase N` integer rule (introduced 2026-03) and use a letter-suffix system (5A, 5B, 5B.2, 5C.1…5P). They are **frozen and immutable**. The next roadmap phase in that project is **Phase 6** (integer only, no letters). Never introduce new letter-suffix phases.
-
-**Sub-phases within a plan file**: `Phase N.M`
-- N = parent roadmap phase number (matches ROADMAP.md)
-- M = sequential sub-phase index within that plan (1, 2, 3…)
-- Example: Phase 9.1, Phase 9.2, Phase 9.3 are the first three sub-phases of the Phase 9 plan
-
-**Off-roadmap plans** (tooling, infra, optimization — no roadmap phase number):
-- Format: `LABEL.M` where LABEL is a 2–5 char uppercase acronym from the plan name
-- Example: `GPU.0`, `GPU.1`, `GPU.2` for a GPU optimization plan
-
-**Tasks within a sub-phase**: `T[M].[K]`
-- M = local sub-phase number (same digit as Phase N.M suffix)
-- K = task sequence within that sub-phase (1, 2, 3…)
-- Example: T1.1, T1.2 within Phase 9.1; T2.1, T2.2 within Phase 9.2
-- Within the plan file, short form T[M].[K] is unambiguous (phase heading provides N)
-- Cross-file references must use full form: `Phase 9.2 T2.3`
-
-**Tasks within off-roadmap phases** (LABEL.M): use the same `T[M].[K]` format where M is the
-numeric index of that phase. Example: T0.1, T1.2 for tasks within GPU.0 and GPU.1.
-
-**GATE steps**: not numbered — always the last item in a phase, written as `- [ ] GATE: ...`
-
-**IDs are immutable**: never renumber existing phase or task assignments once created.
-To insert a new phase between existing ones: add it at the end and document the logical ordering,
-or leave a gap. Do NOT shift existing numbers.
-
-**Completed / archived plans**: do NOT renumber historical plan files. Leave as written.
-
-**Why this matters**: using Phase 1–6 inside a Phase 9 sub-plan collides with roadmap Phase 1–6,
-causing ambiguity in cross-references, audit trails, and ROADMAP.md log entries.
+Plan numbering convention (Phase N.M, T[M].[K], GATE steps, off-roadmap LABEL.M): see `/planning-rules` skill.
 
 ## Independent Audit (MANDATORY)
 
-After creating any implementation plan OR implementing changes touching >3 files: conduct a structured audit before proceeding.
-
-Full audit workflow, verification evidence format, depth checklist, Rules Architect agent: see `/planning-rules` skill.
-
-**Minimum requirement when `/planning-rules` is not loaded:**
-- After plan design: launch `lead-auditor` agent before implementation begins.
-- Every APPROVE verdict must include Verification Evidence (files read, PAL tools called, edge cases analyzed).
-- Zero MEDIUM+ findings before proceeding (MEDIUM+ means CRITICAL, HIGH, or MEDIUM severity). Any CRITICAL, HIGH, or MEDIUM finding = HALT + fix + re-audit.
-- Audit is recursive: re-run after every fix cycle until the audit returns zero CRITICAL, HIGH, and MEDIUM findings. Do not proceed while any MEDIUM+ finding is open.
-- After the audit completes (APPROVE or final ESCALATE): output a **Session Summary** to the user with three parts:
-  1. **What was done** — one-paragraph summary of changes made and findings resolved.
-  2. **Findings table** — all findings across all audit cycles, with columns: `ID | Severity | Description | Status | Action taken`. Status values: `Fixed`, `Deferred`, `Open`.
-  3. **Manual review table** — separate table listing items the user must verify manually: `Item | Why manual | Risk if skipped`. Include: all Deferred and Open findings, external integrations not covered by automated tests, security controls requiring human sign-off. Exclude: Fixed findings.
+After creating any implementation plan OR implementing changes touching >3 files: launch `lead-auditor` agent. Verification evidence required on every APPROVE. Zero MEDIUM+ findings before proceeding (recursive audit until clean). Session summary after APPROVE/ESCALATE. Full workflow: see `/planning-rules` skill.
 
 
 <!-- === Project-specific overlay: vibing-steampunk.md === -->

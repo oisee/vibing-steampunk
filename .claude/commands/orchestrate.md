@@ -11,18 +11,12 @@ description: "Orchestrate multi-agent workflows: feature, bugfix, deploy, audit,
 
 **STANDALONE — when invoked directly** (ARGUMENTS does NOT begin with `__RESOLVED__`):
 1. Print: `▶ /orchestrate {first word of ARGUMENTS}` — then proceed.
-2. **Detect session (silently — NO visible bash calls):**
-   **Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip to step 5.
-   **Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
-     - `[SESSION] label=X ...` → SESSION_LABEL=`X`. Skip to step 4a.
-     - `[SESSION] default escape=true` → no session. Skip to step 4b.
-     - `[SESSION] default branch=...` → no session. Check args (step 3b), then step 4b.
-   **Priority 3 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
-3b. If SESSION_LABEL still not set: extract SECOND_ARG = second whitespace-delimited word of ARGUMENTS (first word is workflow type). If SECOND_ARG matches `^[A-Za-z][A-Za-z0-9_-]{1,62}$`: glob `docs/PLAN-*.md` — if match → SESSION_LABEL=SECOND_ARG (from args). Skip to step 4a.
-4a. SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`, PROJECT_SUFFIX=`__{SESSION_LABEL}`.
-4b. SESSION_LABEL not set: PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`, PROJECT_SUFFIX=(none).
-5. Use PLAN_FILE/TASKS_FILE/REVIEW_FILE throughout. For `start_pipeline`: `project=<basename_of_cwd><PROJECT_SUFFIX>`. For `list_active_pipelines`: pass `project=<basename_of_cwd><PROJECT_SUFFIX>` if session set.
-**Output:** Print session result ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+2. Call `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = CLAUDE_SESSION env var (empty if unset), `branch` = current git branch, `skill_args` = ARGUMENTS, `skill_name` = "orchestrate".
+
+Use returned `plan_file`, `tasks_file`, `review_file`, `label`, `project_suffix`, `parsed_args` throughout. For `start_pipeline`: `project=<basename_of_cwd>{project_suffix}`. For `list_active_pipelines`: ALWAYS pass `project=<basename_of_cwd>`.
+Print: "Session: **{label}** → {plan_file}" only when label is set. Otherwise proceed silently.
+
+**Anti-hallucination rule:** NEVER derive session label from conversation topic, task description, or user request content. The `resolve_session` tool is the ONLY valid source. `__RESOLVED__` shortcut from a caller skill is also valid. Any other derivation is a hallucination.
 
 You are the Workflow Orchestrator. You coordinate multi-agent workflows by invoking the right agents in the right order, passing context between them, and ensuring quality gates are met.
 
@@ -472,6 +466,16 @@ When launching agents, you MUST:
 4. For parallel launches: MCP-dependent agents run foreground sequentially, non-MCP agents can run background in parallel
 5. NEVER launch an MCP-dependent agent in background — this causes silent failure
 6. For pipeline steps: always inject `pipeline_id`, step number, and STEP RESULT requirement into Task agent prompt (see Task Agent Launch Protocol below)
+
+## Context Minimization (Pipeline-Aware)
+
+When a pipeline is active and `pipeline_ops(action="next_step")` returns `output_format` and `skill_section` fields, agents SHOULD:
+
+1. Use the `output_format` hint to structure their response correctly without loading full skill documentation.
+2. Use the `skill_section` reference to load ONLY the referenced section if additional context is needed — not the entire skill file.
+3. The `recommended_context` list in `StepResult` provides pointers (`skill:<section>`, `output:<format>`) for the next step. Pass these to the next agent's prompt.
+
+This reduces per-step token overhead by avoiding full skill text injection when the pipeline already provides structured step contracts.
 
 ## Task Agent Launch Protocol (MANDATORY)
 

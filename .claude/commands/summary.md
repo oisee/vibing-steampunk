@@ -9,15 +9,14 @@ You are executing the `/summary` command.
 
 **FIRST OUTPUT:** Before any tool calls, print: `▶ /summary {$ARGUMENTS or ''}`
 
-**Step 0 — Detect session context (silently — NO visible bash calls):**
-**Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip past step 0.
-**Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
-  - `[SESSION] label=X ...` → SESSION_LABEL=`X`. PLAN_FILE=`docs/PLAN-{X}.md`.
-  - `[SESSION] default ...` → SESSION_LABEL=(none). PLAN_FILE=`docs/PLAN.md`.
-**Priority 3 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
-**Output:** Print session result ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+**Step 0 — Resolve session context:**
+Call `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = CLAUDE_SESSION env var (empty if unset), `branch` = current git branch, `skill_args` = ARGUMENTS, `skill_name` = "summary".
 
-**Anti-hallucination rule:** NEVER derive SESSION_LABEL from conversation topic, task description, or user request content. SESSION_LABEL comes ONLY from: (a) CLAUDE_SESSION env var, (b) git branch name, (c) args matching an existing `PLAN-*.md` file. Any other source is a hallucination.
+Use returned `plan_file`, `tasks_file`, `review_file`, `label`, `project_suffix`, `parsed_args` throughout.
+Use `parsed_args.mode` for summary mode (values: `"session"`, `"project"`, `"all"`, `"subtotal"`).
+Print: "Session: **{label}** → {plan_file}" only when label is set. Otherwise proceed silently.
+
+**Anti-hallucination rule:** NEVER derive session label from conversation topic, task description, or user request content. The `resolve_session` tool is the ONLY valid source. Any other derivation is a hallucination.
 
 **ARGUMENTS check (MANDATORY — evaluate in this order):**
 1. If ARGUMENTS contains word `subtotal` (case-insensitive, whole word): SUBTOTAL_MODE=true — skip Steps 3 and 4. Print: `[subtotal mode — deep analysis skipped]`. SUMMARY_MODE=`session`.

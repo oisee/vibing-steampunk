@@ -35,7 +35,7 @@ When performing these tasks, use CLI tools, not LLM agents:
 ### Cost Monitoring
 
 - When daily cost exceeds $1.00: review the cost report and reduce CV gate usage.
-- Use `cost_report` MCP tool for in-session analytics with optimization hints.
+- Use `validate(action="cost_report")` MCP tool for in-session analytics with optimization hints.
 
 ### Zero-Token CLI Tools (config repo only)
 

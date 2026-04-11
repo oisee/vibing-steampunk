@@ -9,20 +9,14 @@ You are executing the `/phase` command — a shortcut for structured phase plann
 
 **FIRST OUTPUT:** Before any tool calls, print: `▶ /phase {$ARGUMENTS}`
 
-**Step 0 — Detect session context (silently — NO visible bash calls):**
-**Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip to step 7.
-**Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
-  - `[SESSION] label=X ...` → SESSION_LABEL=`X`. Skip to step 5.
-  - `[SESSION] default escape=true` → no session. Check args (step 4b), then step 6.
-  - `[SESSION] default branch=...` → no session. Check args (step 4b), then step 6.
-**Priority 3 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
-4b. If SESSION_LABEL still not set AND ARGUMENTS non-empty: auto-extract a session label from the description. Algorithm: split ARGUMENTS on whitespace; skip stop words (a, an, the, for, with, in, of, to, from, by, and, or, but) and generic action words (fix, add, update, implement, create, build, run, use, write, change, refactor, configure, setup, set, get, make, new); take the first remaining word; sanitize (replace `[^A-Za-z0-9_-]` with `-`, strip leading/trailing `-`). If result is ≥ 3 chars and matches `^[A-Za-z][A-Za-z0-9_-]*$`: SESSION_LABEL=result. Print: "Auto-session: {SESSION_LABEL} → docs/PLAN-{SESSION_LABEL}.md". Skip to step 5. (PLAN file may not exist yet — will be created during planning.)
-5. SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`, PROJECT_SUFFIX=`__{SESSION_LABEL}`. Verify header if PLAN_FILE exists: read first 3 lines — must contain `Session: {SESSION_LABEL}`; if mismatch: ABORT.
-6. SESSION_LABEL not set: PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`, PROJECT_SUFFIX=(none).
-7. Use PLAN_FILE/TASKS_FILE/REVIEW_FILE throughout. For `start_pipeline`: use `project=<basename_of_cwd><PROJECT_SUFFIX>`. For `list_active_pipelines`: if SESSION_LABEL set, pass `project=<basename_of_cwd><PROJECT_SUFFIX>`.
-**Output:** Print session result ONLY when SESSION_LABEL is set: "Session: {SESSION_LABEL} → {PLAN_FILE}". When no session: print NOTHING — proceed silently.
+**Step 0 — Resolve session context:**
+Call `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = CLAUDE_SESSION env var (empty if unset), `branch` = current git branch, `skill_args` = ARGUMENTS, `skill_name` = "phase".
 
-**Anti-hallucination rule (phase.md exception):** `/phase` is the ONLY skill that may derive SESSION_LABEL from description text (Step 4b above) because it CREATES new plan files. All other skills (`/run`, `/save`, `/check`, `/finish`, `/summary`) MUST NOT — they only reference EXISTING plans. Even in `/phase`, the derived label must pass sanitization (`^[A-Za-z][A-Za-z0-9_-]*$`, min 3 chars) and must not be a conversation topic or generic word.
+Use returned `plan_file`, `tasks_file`, `review_file`, `label`, `project_suffix`, `parsed_args` throughout. For `start_pipeline`: use `project=<basename_of_cwd>{project_suffix}`. For `list_active_pipelines`: ALWAYS pass `project=<basename_of_cwd>`.
+Use `parsed_args.auto_label` for the auto-extracted session label (when `resolve_session` derives a label from the description). Use `parsed_args.description` as the planning description.
+Print: "Session: **{label}** → {plan_file}" only when label is set (print "Auto-session: **{label}** → {plan_file}" when label was auto-extracted from description). Otherwise proceed silently.
+
+**Anti-hallucination rule (phase exception):** `/phase` is the ONLY skill that may derive a session label from description text (`parsed_args.auto_label`) because it CREATES new plan files. All other skills (`/run`, `/save`, `/check`, `/finish`, `/summary`) MUST NOT — they only reference EXISTING plans. Even in `/phase`, the derived label must pass sanitization (`^[A-Za-z][A-Za-z0-9_-]*$`, min 3 chars) and must not be a conversation topic or generic word. The `resolve_session` tool enforces this — any other derivation is a hallucination.
 
 **Immediately invoke the `orchestrate` skill** using the Skill tool with:
 - skill: `orchestrate`

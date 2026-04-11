@@ -9,23 +9,15 @@ You are executing the `/run` command — a shortcut for implementing one or more
 
 **FIRST OUTPUT:** Before any tool calls, print: `▶ /run {$ARGUMENTS or '1'}`
 
-**Step 0 — Detect session context (silently — NO visible bash calls):**
-**Priority 1 — Reuse:** if session context already known from this conversation: reuse. Skip to step 7.
-**Priority 2 — Hook tag:** check conversation context for `[SESSION]` tag (from sync-check.py hook):
-  - `[SESSION] label=X ...` → SESSION_LABEL=`X`. Skip to step 5.
-  - `[SESSION] default escape=true` → no session. Skip to step 6.
-  - `[SESSION] default branch=...` → no session. Check args (step 4b), then step 6.
-**Priority 3 — Args:** if SESSION_LABEL still not set AND ARGUMENTS non-empty AND ARGUMENTS is NOT purely numeric AND NOT `all`: extract FIRST_ARG. If FIRST_ARG matches `^[A-Za-z][A-Za-z0-9_-]{1,62}$`: glob `docs/PLAN-*.md` — if match found → SESSION_LABEL from matched filename. Remove FIRST_ARG from ARGUMENTS. Skip to step 5.
-   - If NO match found → print: "ERROR: No docs/PLAN-{FIRST_ARG}.md found." Then glob `docs/PLAN-*.md` and `docs/PLAN.md`, list each with status (COMPLETE / has TODO phases / does not exist). Check `session_resume.md` from project memory — if it has `## Resume Command`, print: "Last session suggested: {command}".
-**Priority 4 — Bash fallback (ONLY if no `[SESSION]` tag and no reuse):** run `bash -c 'printf "%s\n%s" "${CLAUDE_SESSION:-(no session)}" "$(git branch --show-current 2>/dev/null || true)"'`. Parse as before.
-Note: if args match failed (Priority 3 found no matching PLAN file), **STOP** — do not fall through. The user explicitly asked for a specific label; silently ignoring it causes confusion.
-5. SESSION_LABEL set: PLAN_FILE=`docs/PLAN-{SESSION_LABEL}.md`, TASKS_FILE=`docs/TASKS-{SESSION_LABEL}.md`, REVIEW_FILE=`docs/REVIEW-{SESSION_LABEL}.md`, PROJECT_SUFFIX=`__{SESSION_LABEL}`. Verify header if PLAN_FILE exists: read first 3 lines — must contain `Session: {SESSION_LABEL}`; if mismatch: ABORT.
-6. SESSION_LABEL not set — **session resume probe** (before defaulting):
-   a. Read `session_resume.md` from project memory directory. If it exists and has `## Active Plans` section with exactly 1 active plan (status "has TODO phases") → extract label, set SESSION_LABEL. Skip to step 5.
-   b. Otherwise → PLAN_FILE=`docs/PLAN.md`, TASKS_FILE=`docs/TASKS.md`, REVIEW_FILE=`docs/REVIEW.md`, PROJECT_SUFFIX=(none). Print: "No session — using docs/PLAN.md".
-7. Use PLAN_FILE/TASKS_FILE/REVIEW_FILE throughout. For `start_pipeline`: use `project=<basename_of_cwd><PROJECT_SUFFIX>`. For `list_active_pipelines`: if SESSION_LABEL set, pass `project=<basename_of_cwd><PROJECT_SUFFIX>`.
+**Step 0 — Resolve session context:**
+Call `resolve_session` MCP tool with: `project_root` = current working directory, `env_session` = CLAUDE_SESSION env var (empty if unset), `branch` = current git branch, `skill_args` = ARGUMENTS, `skill_name` = "run".
 
-**Anti-hallucination rule:** NEVER derive SESSION_LABEL from conversation topic, task description, or user request content. SESSION_LABEL comes ONLY from: (a) CLAUDE_SESSION env var, (b) git branch name, (c) args matching an existing `PLAN-*.md` file. Any other source is a hallucination.
+Use returned `plan_file`, `tasks_file`, `review_file`, `label`, `project_suffix`, `parsed_args` throughout. For `start_pipeline`: use `project=<basename_of_cwd>{project_suffix}`. For `list_active_pipelines`: ALWAYS pass `project=<basename_of_cwd>`.
+Print: "Session: **{label}** → {plan_file}" only when label is set. Otherwise proceed silently.
+
+Use `parsed_args.count` (integer or `"all"`) for the run scope instead of inline N/all parsing.
+
+**Anti-hallucination rule:** NEVER derive session label from conversation topic, task description, or user request content. The `resolve_session` tool is the ONLY valid source. Any other derivation is a hallucination.
 
 **Step 0.5 — Work Discovery (when PLAN_FILE has no incomplete phases):**
 

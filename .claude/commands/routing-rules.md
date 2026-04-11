@@ -14,26 +14,26 @@ This skill contains the detailed routing rules referenced by the `Automatic Task
 Before starting any non-trivial implementation: call `orchestrator.route_task(task_description)` and follow the returned routing decision.
 
 - **`route_task(description)`** -- returns pipeline type, recommended agents, CV requirements, complexity estimate.
-- **`get_agent_info(name)`** -- returns agent metadata: tier, model, tools, CV requirement, MCP servers.
-- **`list_agents(tier?)`** -- lists available agents, optionally filtered by model tier.
+- **`registry(action="get_agent", name=...)`** -- returns agent metadata: tier, model, tools, CV requirement, MCP servers.
+- **`registry(action="list_agents", tier=...)`** -- lists available agents, optionally filtered by model tier.
 
 **After receiving a route_task response:**
 - Follow the returned `pipeline` and `agents` list.
 - When `cv_required` is true: ensure cross-validation agents participate.
-- When `llm_refinement_suggested` is true: call `mcp__orchestrator__refine_routing(routing_decision_json, task_description)` to get LLM-classified pipeline before proceeding.
+- When `llm_refinement_suggested` is true: call `mcp__orchestrator__registry(action="refine_routing", routing_json=..., task_description=...)` to get LLM-classified pipeline before proceeding.
 - When the orchestrator MCP server is unavailable: fall back to the manual routing rules in CLAUDE.md.
 
 ---
 
 ## Cross-Validation via Orchestrator (Level 2)
 
-After completing each pipeline stage involving a CV-enabled agent: call `orchestrator.cv_gate(stage_output, gate_type)` before proceeding.
+After completing each pipeline stage involving a CV-enabled agent: call `orchestrator.validate(action="cv_gate", stage_output=..., gate_type=...)` before proceeding.
 
 | cv_gate result | Action |
 |----------------|--------|
 | `PASS` | Continue to next step |
 | `HALT` | Fix the CRITICAL issue, re-submit the step output |
-| `DISPUTE` | Call `orchestrator.cross_validate(topic, claude_analysis)` for multi-round debate |
+| `DISPUTE` | Call `orchestrator.validate(action="cross_validate", topic=..., claude_analysis=...)` for multi-round debate |
 | `SKIP` | Continue (CV temporarily unavailable, log warning) |
 | `FAIL` | Report configuration error to user |
 
@@ -49,7 +49,7 @@ When a task requires multi-step execution: use orchestrator pipeline tools inste
 
 - **`start_pipeline(pipeline_type, description, project?)`** -- initialize pipeline, get pipeline_id and first step. Pass `project=<basename of cwd>` so the dashboard can group pipelines by project.
 - **`complete_step(pipeline_id, step_output)`** -- report step completion. Server runs CV-gate if required. Returns next step or HALT/PIPELINE_COMPLETE.
-- **`pipeline_status(pipeline_id)`** -- get current state. Use to resume after context window reset.
+- **`pipeline_ops(action="status", pipeline_id=...)`** -- get current state. Use to resume after context window reset.
 
 **Pipeline types:** `feature`, `bugfix`, `deploy`, `audit`, `qa`, `review`, `refactor`, `incident`, `migration`, `spike`, `perf`, `onboard`, `docs`, `techdebt`, `deep-validate`.
 
@@ -65,7 +65,7 @@ When a task requires multi-step execution: use orchestrator pipeline tools inste
 **Pipeline rules:**
 - Never skip `complete_step` -- the server tracks state and enforces CV gates.
 - Pipeline state persists to disk and survives context resets.
-- After a context window reset: call `pipeline_status` to resume with full context.
+- After a context window reset: call `pipeline_ops(action="status")` to resume with full context.
 - Optional steps (e.g., frontend-dev, visual-qa) are auto-skipped when not applicable.
 
 ---
