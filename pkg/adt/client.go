@@ -1000,10 +1000,20 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	}
 
 	// Try to detect HANA from CVERS (optional)
-	hanaResult, err := c.RunQuery(ctx, "SELECT RELEASE FROM CVERS WHERE COMPONENT LIKE '%HDB%' OR COMPONENT LIKE '%HANA%'", 1)
+	hanaResult, err := c.RunQuery(ctx,
+		"SELECT RELEASE FROM CVERS WHERE COMPONENT LIKE '%HDB%' OR COMPONENT LIKE '%HANA%'", 1)
 	if err == nil && len(hanaResult.Rows) > 0 {
 		info.DatabaseSystem = "HDB"
 		info.DatabaseRelease = getString(hanaResult.Rows[0], "RELEASE")
+	} else {
+		// Step 2: S4CORE in CVERS — pure S/4HANA.
+		// S/4HANA implies HANA database. However its version cannot be inferred from the software component.
+		// Therefore DatabaseRelease is left blank
+		s4Result, err := c.RunQuery(ctx,
+			"SELECT COMPONENT FROM CVERS WHERE COMPONENT = 'S4CORE'", 1)
+		if err == nil && len(s4Result.Rows) > 0 {
+			info.DatabaseSystem = "HDB"
+		}
 	}
 
 	// If we couldn't get SystemID from T000, use fallback
