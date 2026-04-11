@@ -71,6 +71,7 @@ func focusedToolSet() map[string]bool {
 		"CompareCallGraphs":  true, // Compare static vs actual execution
 		"TraceExecution":     true, // Composite RCA tool
 		"CheckBoundaries":   true, // Package boundary violation analysis
+		"AnalyzeABAPCode":   true, // Native Go code analysis (abaplint v2)
 
 		// Runtime errors / Short dumps (2)
 		"ListDumps": true, // List runtime errors (consistent with List* pattern)

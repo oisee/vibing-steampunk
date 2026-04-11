@@ -59,9 +59,9 @@ Copy and edit them to create your actual configuration.`,
 
 func runConfigInit(cmd *cobra.Command, args []string) error {
 	files := map[string]string{
-		".env.example":          envExample,
-		".vsp.json.example":     vspSystemsExample,
-		".mcp.json.example":     mcpJsonExample,
+		".env.example":      envExample,
+		".vsp.json.example": vspSystemsExample,
+		".mcp.json.example": mcpJsonExample,
 	}
 
 	created := 0
@@ -105,8 +105,8 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 
 	// Environment variables
-	fmt.Println("Environment Variables (SAP_*):")
-	envVars := []string{"SAP_URL", "SAP_USER", "SAP_CLIENT", "SAP_LANGUAGE", "SAP_INSECURE", "SAP_MODE"}
+	fmt.Println("Environment Variables (SAP_* / VSP_*):")
+	envVars := []string{"SAP_URL", "SAP_USER", "SAP_CLIENT", "SAP_LANGUAGE", "SAP_INSECURE", "SAP_MODE", "VSP_TRANSPORT_ATTRIBUTE"}
 	hasEnv := false
 	for _, key := range envVars {
 		if val := os.Getenv(key); val != "" {
@@ -158,7 +158,26 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 			if name == cfg.Default {
 				marker = " (default)"
 			}
-			fmt.Printf("    %s: %s [%s@%s] pwd:%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, marker)
+			attrStatus := sys.TransportAttribute
+			if attrStatus == "" {
+				envAttrKey := fmt.Sprintf("VSP_%s_TRANSPORT_ATTRIBUTE", strings.ToUpper(name))
+				if envAttr := os.Getenv(envAttrKey); envAttr != "" {
+					attrStatus = strings.ToUpper(envAttr) + " (env)"
+				} else if envAttr := os.Getenv("VSP_TRANSPORT_ATTRIBUTE"); envAttr != "" {
+					attrStatus = strings.ToUpper(envAttr) + " (global env)"
+				}
+			}
+			if attrStatus == "" {
+				attrStatus = "-"
+			}
+			cacheStatus := "-"
+			if sys.Cache {
+				cacheStatus = sys.CachePath
+				if cacheStatus == "" {
+					cacheStatus = "on"
+				}
+			}
+			fmt.Printf("    %s: %s [%s@%s] pwd:%s attr:%s cache:%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, attrStatus, cacheStatus, marker)
 		}
 	}
 
@@ -848,7 +867,7 @@ const envExample = `# vsp Environment Configuration
 # Copy this file to .env and fill in your SAP credentials.
 #
 # This is the DEFAULT system used when running vsp without --system flag.
-# For multiple systems, use .vsp-systems.json instead.
+# For multiple systems, use .vsp.json instead.
 #
 # Priority: CLI flags > Environment variables > .env > Defaults
 
@@ -861,6 +880,9 @@ SAP_PASSWORD=YOUR_PASSWORD
 SAP_CLIENT=001
 SAP_LANGUAGE=EN
 SAP_INSECURE=false
+
+# CR-level change grouping attribute (optional)
+# VSP_TRANSPORT_ATTRIBUTE=SAPTEST
 
 # Tool Mode (optional)
 # focused = 81 essential tools (default)
@@ -887,10 +909,11 @@ var vspSystemsExample = func() string {
 		Default: "dev",
 		Systems: map[string]config.SystemConfig{
 			"dev": {
-				URL:      "http://dev-sap.example.com:50000",
-				User:     "DEVELOPER",
-				Client:   "001",
-				Language: "EN",
+				URL:                "http://dev-sap.example.com:50000",
+				User:               "DEVELOPER",
+				Client:             "001",
+				Language:           "EN",
+				TransportAttribute: "SAPTEST",
 			},
 			"a4h": {
 				URL:      "http://a4h.local:50000",
@@ -917,6 +940,9 @@ var vspSystemsExample = func() string {
 //
 // Passwords are loaded from environment variables:
 //   VSP_<SYSTEM>_PASSWORD (e.g., VSP_DEV_PASSWORD, VSP_A4H_PASSWORD)
+// Optional change-correlation attribute overrides:
+//   VSP_TRANSPORT_ATTRIBUTE
+//   VSP_<SYSTEM>_TRANSPORT_ATTRIBUTE
 //
 // Config file locations (searched in order):
 //   .vsp.json                (current directory, preferred)

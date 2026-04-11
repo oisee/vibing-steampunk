@@ -212,6 +212,24 @@ Analyze dependencies (unified 5-layer: regex + parser + SCAN + CROSS + ADT):
   SAP(action="analyze", params={"type": "analyze_deps", "source": "..."})
   SAP(action="analyze", params={"type": "analyze_deps", "object_type": "CLAS", "name": "ZCL_TEST"})
 
+Graph queries:
+  SAP(action="analyze", params={"type": "co_change", "object_type": "CLAS", "object_name": "ZCL_FOO", "top_n": 10})
+  SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "max_depth": 3})
+  SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO", "include_source_analysis": true})
+  SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE"})
+  SAP(action="analyze", params={"type": "where_used_config", "variable": "ZKEKEKE", "grep": false})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "FUNC", "object_name": "Z_MY_FM"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "CLAS", "object_name": "ZCL_API", "method": "GET_DATA"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZLEGACY", "form": "BUILD_OUTPUT"})
+
+Transport analysis:
+  SAP(action="analyze", params={"type": "cr_history", "object_type": "CLAS", "object_name": "ZCL_FOO"})
+  SAP(action="analyze", params={"type": "tr_boundaries", "transports": "A4HK900001,A4HK900002"})
+  SAP(action="analyze", params={"type": "cr_boundaries", "cr_id": "JIRA-123"})
+  SAP(action="analyze", params={"type": "usage_examples", "object_type": "PROG", "object_name": "ZBATCH_RUN", "submit": true})
+  SAP(action="analyze", params={"type": "health", "package": "$ZDEV"})
+  SAP(action="analyze", params={"type": "health", "object_type": "CLAS", "object_name": "ZCL_ORDER_SERVICE"})
+
 Execute ABAP:
   SAP(action="analyze", params={"type": "execute_abap", "code": "WRITE 'Hello'."})
 

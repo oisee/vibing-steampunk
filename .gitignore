@@ -95,3 +95,7 @@ integration-test-*.log
 # Transient files
 *.jsonl
 2026-*-last-login-*
+
+# GoReleaser artifacts
+RELEASE_NOTES.md
+dist/

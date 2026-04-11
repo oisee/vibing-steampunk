@@ -42,6 +42,16 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, ob
 		return s.callHandler(ctx, s.handleImpact, params)
 	case "where_used_config":
 		return s.callHandler(ctx, s.handleWhereUsedConfig, params)
+	case "usage_examples":
+		return s.callHandler(ctx, s.handleUsageExamples, params)
+	case "health":
+		return s.callHandler(ctx, s.handleHealth, params)
+	case "cr_history":
+		return s.callHandler(ctx, s.handleCRHistory, params)
+	case "tr_boundaries":
+		return s.callHandler(ctx, s.handleTransportBoundaries, params)
+	case "cr_boundaries":
+		return s.callHandler(ctx, s.handleCRBoundaries, params)
 	}
 	return nil, false, nil
 }

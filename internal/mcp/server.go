@@ -84,6 +84,9 @@ type Config struct {
 	FeatureUI5       string // UI5/Fiori BSP management
 	FeatureTransport string // CTS transport management (distinct from EnableTransports safety)
 
+	// Graph / co-change configuration
+	TransportAttribute string // E070A attribute name for CR-level co-change aggregation
+
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
 

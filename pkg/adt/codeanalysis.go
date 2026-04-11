@@ -63,8 +63,10 @@ func ruleCategory(key string) string {
 	switch key {
 	case "select_star", "commit_in_loop":
 		return "performance"
-	case "hardcoded_credentials", "catch_cx_root", "dynamic_call_no_try":
+	case "hardcoded_credentials":
 		return "security"
+	case "catch_cx_root", "dynamic_call_no_try":
+		return "robustness"
 	default:
 		return "quality"
 	}
@@ -78,7 +80,7 @@ func ruleSuggestion(key string) string {
 	case "hardcoded_credentials":
 		return "Use secure storage (SSF, ICM, Destination service) instead of hardcoded credentials"
 	case "catch_cx_root":
-		return "Catch specific exception classes instead of CX_ROOT or CX_SY_*"
+		return "Catch specific exception classes instead of broad bases like CX_ROOT"
 	case "commit_in_loop":
 		return "Move COMMIT WORK outside the loop, process all records in one LUW"
 	case "dynamic_call_no_try":

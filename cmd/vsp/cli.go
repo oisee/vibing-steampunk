@@ -39,6 +39,11 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+
+	TransportAttribute string
+
+	Cache     bool
+	CachePath string
 }
 
 // resolveSystemParams resolves system parameters from --system flag or env vars.
@@ -49,8 +54,19 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		fmt.Fprintf(os.Stderr, "[DEBUG] resolveSystemParams: systemName=%q\n", systemName)
 	}
 
-	// If --system is specified, load from systems config
-	if systemName != "" {
+	// Resolve effective system name: --system flag > .vsp.json default
+	effectiveName := systemName
+	if effectiveName == "" {
+		if cfg, _, err := config.LoadSystems(); err == nil && cfg != nil && cfg.Default != "" {
+			effectiveName = cfg.Default
+			if verbose || os.Getenv("VSP_DEBUG") == "true" {
+				fmt.Fprintf(os.Stderr, "[DEBUG] No --system flag, using default '%s' from .vsp.json\n", effectiveName)
+			}
+		}
+	}
+
+	// If we have a system name (explicit or default), load from systems config
+	if effectiveName != "" {
 		cfg, path, err := config.LoadSystems()
 		if err != nil {
 			return nil, fmt.Errorf("failed to load systems config: %w", err)
@@ -59,7 +75,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			return nil, fmt.Errorf("no systems config found. Create .vsp.json or ~/.vsp.json\n\nExample:\n%s", config.ExampleConfig())
 		}
 
-		sys, err := cfg.GetSystem(systemName)
+		sys, err := cfg.GetSystem(effectiveName)
 		if err != nil {
 			return nil, err
 		}
@@ -67,31 +83,34 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		// Require either password or cookie auth
 		hasCookieAuth := sys.CookieFile != "" || sys.CookieString != ""
 		if sys.Password == "" && !hasCookieAuth {
-			return nil, fmt.Errorf("auth not found for system '%s'. Set VSP_%s_PASSWORD env var or use cookie_file/cookie_string", systemName, strings.ToUpper(systemName))
+			return nil, fmt.Errorf("auth not found for system '%s'. Set VSP_%s_PASSWORD env var or use cookie_file/cookie_string", effectiveName, strings.ToUpper(effectiveName))
 		}
 
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		if verbose || os.Getenv("VSP_VERBOSE") == "true" || os.Getenv("VSP_DEBUG") == "true" {
-			fmt.Fprintf(os.Stderr, "[INFO] Using system '%s' from %s\n", systemName, path)
+			fmt.Fprintf(os.Stderr, "[INFO] Using system '%s' from %s\n", effectiveName, path)
 			fmt.Fprintf(os.Stderr, "[DEBUG] URL: %s, User: %s\n", sys.URL, sys.User)
 		}
 
 		return &systemParams{
-			URL:          sys.URL,
-			User:         sys.User,
-			Password:     sys.Password,
-			Client:       sys.Client,
-			Language:     sys.Language,
-			Insecure:     sys.Insecure,
-			CookieFile:   sys.CookieFile,
-			CookieString: sys.CookieString,
+			URL:                sys.URL,
+			User:               sys.User,
+			Password:           sys.Password,
+			Client:             sys.Client,
+			Language:           sys.Language,
+			Insecure:           sys.Insecure,
+			CookieFile:         sys.CookieFile,
+			CookieString:       sys.CookieString,
+			TransportAttribute: sys.TransportAttribute,
+			Cache:              sys.Cache,
+			CachePath:          sys.CachePath,
 		}, nil
 	}
 
 	// Fall back to environment variables
 	url := os.Getenv("SAP_URL")
 	if url == "" {
-		return nil, fmt.Errorf("SAP_URL not set. Use --system flag or set SAP_* env vars")
+		return nil, fmt.Errorf("SAP_URL not set. Use --system flag, set \"default\" in .vsp.json, or set SAP_* env vars")
 	}
 
 	user := os.Getenv("SAP_USER")
@@ -100,14 +119,30 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required")
 	}
 
+	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
+	cachePath := os.Getenv("VSP_CACHE_PATH")
+	if cacheEnabled && cachePath == "" {
+		cachePath = ".vsp-cache/default.db"
+	}
+
 	return &systemParams{
-		URL:      url,
-		User:     user,
-		Password: password,
-		Client:   getEnvOrDefault("SAP_CLIENT", "001"),
-		Language: getEnvOrDefault("SAP_LANGUAGE", "EN"),
-		Insecure: os.Getenv("SAP_INSECURE") == "true",
+		URL:                url,
+		User:               user,
+		Password:           password,
+		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
+		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
+		Insecure:           os.Getenv("SAP_INSECURE") == "true",
+		TransportAttribute: resolveTransportAttributeFromEnv(),
+		Cache:              cacheEnabled,
+		CachePath:          cachePath,
 	}, nil
+}
+
+func resolveTransportAttributeFromEnv() string {
+	if v := strings.TrimSpace(os.Getenv("VSP_TRANSPORT_ATTRIBUTE")); v != "" {
+		return strings.ToUpper(v)
+	}
+	return ""
 }
 
 // getClient creates an ADT client from system params.

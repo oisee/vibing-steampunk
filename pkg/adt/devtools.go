@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -570,11 +571,22 @@ type UnitTestResult struct {
 	Classes []UnitTestClass `json:"classes"`
 }
 
+// UnitTestProgram groups test classes by their parent program/class.
+type UnitTestProgram struct {
+	URI     string          `json:"uri"`
+	Type    string          `json:"type"`
+	Name    string          `json:"name"`
+	Classes []UnitTestClass `json:"classes"`
+}
+
 // UnitTestClass represents a test class result.
 type UnitTestClass struct {
 	URI              string           `json:"uri"`
 	Type             string           `json:"type"`
 	Name             string           `json:"name"`
+	ParentURI        string           `json:"parentUri,omitempty"`
+	ParentType       string           `json:"parentType,omitempty"`
+	ParentName       string           `json:"parentName,omitempty"`
 	URIType          string           `json:"uriType,omitempty"`
 	NavigationURI    string           `json:"navigationUri,omitempty"`
 	DurationCategory string           `json:"durationCategory,omitempty"`
@@ -663,6 +675,12 @@ func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
 		return &UnitTestResult{Classes: []UnitTestClass{}}, nil
 	}
 
+	// Debug: write raw XML to stderr if VSP_DEBUG_XML is set
+	if os.Getenv("VSP_DEBUG_XML") != "" {
+		_ = os.WriteFile("aunit_debug.xml", data, 0644)
+		fmt.Fprintf(os.Stderr, "[DEBUG] Raw ABAP Unit XML saved to aunit_debug.xml (%d bytes)\n", len(data))
+	}
+
 	// Strip namespace prefixes and declarations for consistent parsing
 	xmlStr := string(data)
 	xmlStr = strings.ReplaceAll(xmlStr, "aunit:", "")
@@ -718,6 +736,9 @@ func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
 		} `xml:"alerts"`
 	}
 	type program struct {
+		URI  string `xml:"uri,attr"`
+		Type string `xml:"type,attr"`
+		Name string `xml:"name,attr"`
 		TestClasses struct {
 			Items []testClass `xml:"testClass"`
 		} `xml:"testClasses"`
@@ -770,6 +791,9 @@ func parseUnitTestResult(data []byte) (*UnitTestResult, error) {
 				URI:              tc.URI,
 				Type:             tc.Type,
 				Name:             tc.Name,
+				ParentURI:        prog.URI,
+				ParentType:       prog.Type,
+				ParentName:       prog.Name,
 				URIType:          tc.URIType,
 				NavigationURI:    tc.NavigationURI,
 				DurationCategory: tc.DurationCategory,

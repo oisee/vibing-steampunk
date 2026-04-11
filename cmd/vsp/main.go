@@ -134,7 +134,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&cfg.AllowTransportableEdits, "allow-transportable-edits", false, "Allow editing objects in transportable packages (requires transport parameter)")
 
 	// Mode options
-	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "focused", "Tool mode: focused (100 tools), expert (147 tools), or hyperfocused (single universal SAP tool)")
+	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "hyperfocused", "Tool mode: hyperfocused (single universal SAP tool), focused (100 tools), or expert (147 tools)")
 	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug, GC=gCTS, N=i18n")
 
 	// Transport options
@@ -275,7 +275,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Load granular tool visibility from .vsp.json if present
+	// Load granular tool visibility and per-system settings from .vsp.json if present
 	if systemsCfg, configPath, err := config.LoadSystems(); err == nil && systemsCfg != nil {
 		if systemsCfg.Tools != nil {
 			cfg.ToolsConfig = systemsCfg.Tools
@@ -290,6 +290,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 					}
 				}
 				fmt.Fprintf(os.Stderr, "[VERBOSE] Tool config loaded from %s: %d enabled, %d disabled\n", configPath, enabled, disabled)
+			}
+		}
+
+		// Load transport_attribute from default system if not already set via env
+		if cfg.TransportAttribute == "" && systemsCfg.Default != "" {
+			if sys, err := systemsCfg.GetSystem(systemsCfg.Default); err == nil && sys.TransportAttribute != "" {
+				cfg.TransportAttribute = sys.TransportAttribute
 			}
 		}
 	}
@@ -448,6 +455,11 @@ func resolveConfig(cmd *cobra.Command) {
 		if v := viper.GetString("FEATURE_TRANSPORT"); v != "" {
 			cfg.FeatureTransport = v
 		}
+	}
+
+	// Transport attribute for CR-level co-change: SAP_TRANSPORT_ATTRIBUTE env > .vsp.json
+	if v := viper.GetString("TRANSPORT_ATTRIBUTE"); v != "" {
+		cfg.TransportAttribute = strings.ToUpper(strings.TrimSpace(v))
 	}
 
 	// Terminal ID for debugger: flag > SAP_TERMINAL_ID env

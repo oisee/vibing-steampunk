@@ -42,9 +42,10 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 	params.Set("accessMode", accessMode)
 
 	resp, err := c.transport.Request(ctx, objectURL, &RequestOptions{
-		Method: http.MethodPost,
-		Query:  params,
-		Accept: "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
+		Method:   http.MethodPost,
+		Query:    params,
+		Accept:   "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
+		Stateful: true, // Lock handles are session-specific — force stateful (issue #88)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("locking object: %w", err)
@@ -94,8 +95,9 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 	params.Set("lockHandle", lockHandle)
 
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
-		Method: http.MethodPost,
-		Query:  params,
+		Method:   http.MethodPost,
+		Query:    params,
+		Stateful: true, // Must match lock session (issue #88)
 	})
 	if err != nil {
 		return fmt.Errorf("unlocking object: %w", err)
@@ -133,6 +135,7 @@ func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, sourc
 		Query:       params,
 		Body:        []byte(source),
 		ContentType: contentType,
+		Stateful:    true, // Must match lock session (issue #88)
 	})
 	if err != nil {
 		return fmt.Errorf("updating source: %w", err)
@@ -295,12 +298,25 @@ func isLockConflictError(err error) bool {
 }
 
 // packageExists checks if a package exists in the system.
-// Returns true if package exists, false otherwise.
+// Returns true if package exists or if the check is inconclusive (API errors).
+// Only returns false when GetPackage succeeds but returns an empty/invalid result.
 // Uses GetPackage (nodestructure API) which passes the package name as a query
 // parameter, avoiding URL path encoding issues with $ in local package names.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
-	_, err := c.GetPackage(ctx, packageName)
-	return err == nil
+	pkg, err := c.GetPackage(ctx, packageName)
+	if err != nil {
+		// API call failed — could be CSRF, auth, network, etc.
+		// Be optimistic: let the actual create call handle real errors
+		// rather than blocking on a false negative.
+		errStr := err.Error()
+		if strings.Contains(errStr, "404") || strings.Contains(errStr, "not found") {
+			return false
+		}
+		return true
+	}
+	// GetPackage succeeded but returned no objects and no sub-packages —
+	// still a valid (possibly empty) package
+	return pkg != nil
 }
 
 // CreateObject creates a new ABAP object.

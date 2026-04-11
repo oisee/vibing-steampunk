@@ -6,10 +6,10 @@ import (
 
 func TestIsToolEnabled(t *testing.T) {
 	tests := []struct {
-		name      string
-		tools     map[string]bool
-		toolName  string
-		want      bool
+		name     string
+		tools    map[string]bool
+		toolName string
+		want     bool
 	}{
 		{
 			name:     "nil tools map - enabled by default",
@@ -163,5 +163,82 @@ func TestDefaultDisabledTools(t *testing.T) {
 		if !found {
 			t.Errorf("Expected %q in DefaultDisabledTools(), not found", tool)
 		}
+	}
+}
+
+func TestGetSystem_TransportAttributeFromConfig(t *testing.T) {
+	cfg := &SystemsConfig{
+		Systems: map[string]SystemConfig{
+			"dev": {
+				URL:                "https://example",
+				TransportAttribute: "saptest",
+			},
+		},
+	}
+
+	sys, err := cfg.GetSystem("dev")
+	if err != nil {
+		t.Fatalf("GetSystem() error = %v", err)
+	}
+	if sys.TransportAttribute != "SAPTEST" {
+		t.Fatalf("TransportAttribute = %q, want SAPTEST", sys.TransportAttribute)
+	}
+}
+
+func TestGetSystem_TransportAttributeFromSystemEnv(t *testing.T) {
+	t.Setenv("VSP_DEV_TRANSPORT_ATTRIBUTE", "saptest")
+	t.Setenv("VSP_TRANSPORT_ATTRIBUTE", "global")
+
+	cfg := &SystemsConfig{
+		Systems: map[string]SystemConfig{
+			"dev": {URL: "https://example"},
+		},
+	}
+
+	sys, err := cfg.GetSystem("dev")
+	if err != nil {
+		t.Fatalf("GetSystem() error = %v", err)
+	}
+	if sys.TransportAttribute != "SAPTEST" {
+		t.Fatalf("TransportAttribute = %q, want SAPTEST", sys.TransportAttribute)
+	}
+}
+
+func TestGetSystem_TransportAttributeFromGlobalEnv(t *testing.T) {
+	t.Setenv("VSP_TRANSPORT_ATTRIBUTE", "saptest")
+
+	cfg := &SystemsConfig{
+		Systems: map[string]SystemConfig{
+			"dev": {URL: "https://example"},
+		},
+	}
+
+	sys, err := cfg.GetSystem("dev")
+	if err != nil {
+		t.Fatalf("GetSystem() error = %v", err)
+	}
+	if sys.TransportAttribute != "SAPTEST" {
+		t.Fatalf("TransportAttribute = %q, want SAPTEST", sys.TransportAttribute)
+	}
+}
+
+func TestGetSystem_TransportAttributeEnvDoesNotOverrideConfig(t *testing.T) {
+	t.Setenv("VSP_DEV_TRANSPORT_ATTRIBUTE", "othertest")
+
+	cfg := &SystemsConfig{
+		Systems: map[string]SystemConfig{
+			"dev": {
+				URL:                "https://example",
+				TransportAttribute: "saptest",
+			},
+		},
+	}
+
+	sys, err := cfg.GetSystem("dev")
+	if err != nil {
+		t.Fatalf("GetSystem() error = %v", err)
+	}
+	if sys.TransportAttribute != "SAPTEST" {
+		t.Fatalf("TransportAttribute = %q, want SAPTEST", sys.TransportAttribute)
 	}
 }

@@ -35,8 +35,8 @@ func TestAnalyzeABAPSource_CatchCxRoot(t *testing.T) {
 	if found == nil {
 		t.Fatal("expected catch_cx_root finding")
 	}
-	if found.Category != "security" {
-		t.Errorf("category = %q, want security", found.Category)
+	if found.Category != "robustness" {
+		t.Errorf("category = %q, want robustness", found.Category)
 	}
 }
 

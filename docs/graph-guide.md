@@ -19,8 +19,10 @@ Current graph-MVP capabilities:
 Current entry points:
 
 - CLI: `vsp graph co-change <type> <name>`
+- CLI: `vsp graph where-used-config <variable>`
 - MCP: `SAP(action="analyze", params={"type":"co_change", ...})`
 - MCP: `SAP(action="analyze", params={"type":"impact", ...})`
+- MCP: `SAP(action="analyze", params={"type":"where_used_config", ...})`
 
 The core implementation lives in [`pkg/graph`](/home/alice/dev/vibing-steampunk/pkg/graph).
 
@@ -93,6 +95,7 @@ This is intentionally modeled as heuristic evidence, not exact repository truth.
 vsp -s a4h graph co-change CLAS ZCL_PRICING
 vsp -s a4h graph co-change CLAS ZCL_PRICING --top 10
 vsp -s a4h graph co-change PROG ZREPORT --format json
+vsp -s a4h graph co-change CLAS ZCL_PRICING --format mermaid > cochange.mmd
 ```
 
 What it does:
@@ -107,6 +110,26 @@ Good for:
 - hidden change bundles
 - upgrade wave planning
 - spotting objects that usually move together
+
+### Where-used-config
+
+```bash
+vsp -s a4h graph where-used-config ZKEKEKE
+vsp -s a4h graph where-used-config ZKEKEKE --no-grep
+vsp -s a4h graph where-used-config ZKEKEKE --format html > config.html
+```
+
+What it does:
+
+1. queries `CROSS` for objects that reference the `TVARVC` table at all
+2. normalizes those candidates to object level
+3. optionally greps source for the literal variable name
+4. returns readers ranked by confidence
+
+Confidence model:
+
+- `HIGH` = literal variable name found in source
+- `MEDIUM` = object references `TVARVC`, but literal variable match was not confirmed or grep was skipped
 
 ## MCP Usage
 
@@ -132,6 +155,18 @@ SAP(action="analyze", params={
 })
 ```
 
+Parser overlay:
+
+```json
+SAP(action="analyze", params={
+  "type": "impact",
+  "object_type": "CLAS",
+  "object_name": "ZCL_FOO",
+  "max_depth": 3,
+  "include_source_analysis": true
+})
+```
+
 Optional filter:
 
 ```json
@@ -144,29 +179,52 @@ SAP(action="analyze", params={
 })
 ```
 
+### Where-used-config
+
+```json
+SAP(action="analyze", params={
+  "type": "where_used_config",
+  "variable": "ZKEKEKE"
+})
+```
+
+Fast/noisier variant:
+
+```json
+SAP(action="analyze", params={
+  "type": "where_used_config",
+  "variable": "ZKEKEKE",
+  "grep": false
+})
+```
+
 ## What "Impact" Means Right Now
 
-The current exposed MCP `impact` slice is code-level reverse dependency analysis over static cross-reference sources.
+The current exposed MCP `impact` slice is code-level reverse dependency analysis over `WBCROSSGT`/`CROSS`, with optional parser augmentation.
 
 It is honest, but limited:
 
 - good for "who statically references or calls this object?"
+- better with `include_source_analysis=true` when local/procedural gaps matter
 - not a full runtime impact engine
 - not yet the final hybrid of ADT + cross-reference tables + parser augmentation
 
 That means:
 
 - dynamic calls can be missed
-- some include-level/procedural edge cases still need parser overlay
+- some include-level/procedural edge cases are improved by parser overlay, but frontier expansion still comes from `WBCROSSGT`/`CROSS`
 - transport/config impact is not yet merged into the exposed `impact` acquisition path
 
 ## What "Where-Used Config" Means Right Now
 
-The graph core supports `where-used-config` over canonical `TVARVC` nodes and `READS_CONFIG` edges.
+`where-used-config` is now wired through both CLI and MCP.
 
-Today this is implemented in `pkg/graph`, but not yet wired through CLI/MCP in the same way as co-change and impact.
+It is useful, but still intentionally heuristic:
 
-That makes it a good next integration slice, not vaporware.
+- `CROSS` finds objects that touch `TVARVC` at all
+- grep upgrades confidence when the literal variable name is found
+- comments/string literals can still produce false positives
+- dynamic variable-name construction can still produce false negatives
 
 ## Current Limitations
 
@@ -178,6 +236,7 @@ Be explicit about the current boundaries:
 - no generic Cypher/Gremlin layer is exposed
 - no persistence layer yet
 - no auth graph yet
+- Mermaid/HTML export exists for CLI co-change and where-used-config, but not for MCP or impact yet
 
 This is deliberate. The MVP is trying to prove value first, not freeze a platform too early.
 
@@ -185,12 +244,12 @@ This is deliberate. The MVP is trying to prove value first, not freeze a platfor
 
 The next sensible improvements are:
 
-1. wire `where-used-config` through CLI and MCP
-2. upgrade `impact` acquisition into a hybrid:
+1. upgrade `impact` acquisition further into a hybrid:
    - `WBCROSSGT/CROSS` as reverse-index backbone
    - ADT call graph as high-confidence overlay
    - parser as local/procedural gap-filler
-3. add export surfaces once the query model settles
+2. add export surfaces for MCP and eventually impact
+3. consider persistence/export once the query model settles
 
 ## Practical Advice
 

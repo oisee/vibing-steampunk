@@ -331,20 +331,45 @@ func ExtractSourceLink(links []Link) string {
 
 // APIReleaseState represents the release state of an ABAP object for Clean Core compatibility.
 // This is used to check if an object is released for use in ABAP Cloud / S/4HANA Cloud.
+
 type APIReleaseState struct {
-	XMLName               xml.Name            `xml:"apiState" json:"-"`
-	ReleaseState          string              `xml:"releaseState,attr" json:"releaseState"`
-	UseInCloudDevelopment bool                `xml:"useInCloudDevelopment,attr" json:"useInCloudDevelopment"`
-	UseInKeyUserApps      bool                `xml:"useInKeyUserApps,attr" json:"useInKeyUserApps"`
-	Deprecated            *APIDeprecationInfo `xml:"deprecation,omitempty" json:"deprecation,omitempty"`
+	Object  *APIReleaseStateObj     `xml:"releasableObject" json:"releasableObject,omitempty"`
+	C0      *APIReleaseStateRelease `xml:"c0Release" json:"c0,omitempty"`
+	C1      *APIReleaseStateRelease `xml:"c1Release" json:"c1,omitempty"`
+	C2      *APIReleaseStateRelease `xml:"c2Release" json:"c2,omitempty"`
+	C3      *APIReleaseStateRelease `xml:"c3Release" json:"c3,omitempty"`
+	C4      *APIReleaseStateRelease `xml:"c4Release" json:"c4,omitempty"`
+	Catalog APIReleaseStateCatalog  `xml:"apiCatalogData" json:"apiCatalogData"`
 }
 
-// APIDeprecationInfo contains deprecation details for a released API.
-type APIDeprecationInfo struct {
-	XMLName        xml.Name `xml:"deprecation" json:"-"`
-	ReleaseState   string   `xml:"releaseState,attr,omitempty" json:"releaseState,omitempty"`
-	Successor      string   `xml:"successor,attr,omitempty" json:"successor,omitempty"`
-	DeprecatedSince string  `xml:"deprecatedSince,attr,omitempty" json:"deprecatedSince,omitempty"`
+type APIReleaseStateObj struct {
+	URI  string `xml:"uri,attr" json:"uri,omitempty"`
+	Type string `xml:"type,attr" json:"type,omitempty"`
+	Name string `xml:"name,attr" json:"name,omitempty"`
+}
+
+type APIReleaseStateRelease struct {
+	Contract              string                  `xml:"contract,attr" json:"contract,omitempty"`
+	UseInKeyUserApps      bool                    `xml:"useInKeyUserApps,attr" json:"useInKeyUserApps"`
+	UseInSAPCloudPlatform bool                    `xml:"useInSAPCloudPlatform,attr" json:"useInSAPCloudPlatform"`
+	Name                  string                  `xml:"name,attr" json:"name,omitempty"`
+	ChangedAt             string                  `xml:"changedAt,attr" json:"changedAt,omitempty"`
+	ChangedBy             string                  `xml:"changedBy,attr" json:"changedBy,omitempty"`
+	Status                APIReleaseStateStatus   `xml:"status" json:"status"`
+	UseConceptAsSuccessor bool                    `xml:"useConceptAsSuccessor" json:"useConceptAsSuccessor"`
+	Successors            []APIReleaseStateObj    `xml:"successors>successor" json:"successors,omitempty"`
+	SuccessorConceptName  string                  `xml:"successorConceptName" json:"successorConceptName,omitempty"`
+	StateTransitions      []APIReleaseStateStatus `xml:"stateTransitions>status" json:"stateTransitions,omitempty"`
+}
+
+type APIReleaseStateStatus struct {
+	State            string `xml:"state,attr" json:"state,omitempty"`
+	StateDescription string `xml:"stateDescription,attr" json:"stateDescription,omitempty"`
+}
+
+type APIReleaseStateCatalog struct {
+	IsAnyAssignmentPossible bool `xml:"isAnyAssignmentPossible,attr" json:"isAnyAssignmentPossible"`
+	IsAnyContractReleased   bool `xml:"isAnyContractReleased,attr" json:"isAnyContractReleased"`
 }
 
 // --- Revision (Version History) Types ---

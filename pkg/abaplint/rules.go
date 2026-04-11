@@ -416,7 +416,7 @@ type HardcodedCredentialsRule struct{}
 func (r *HardcodedCredentialsRule) GetKey() string { return "hardcoded_credentials" }
 
 // credentialNames contains lowercase substrings that indicate credential variables.
-var credentialNames = []string{"password", "passwd", "secret", "api_key", "apikey", "token"}
+var credentialNames = []string{"password", "passwd", "secret", "api_key", "apikey", "auth_token", "access_token", "bearer_token", "refresh_token", "api_token"}
 
 func (r *HardcodedCredentialsRule) Run(file *ABAPFile) []Issue {
 	var issues []Issue
@@ -467,10 +467,20 @@ func (r *HardcodedCredentialsRule) Run(file *ABAPFile) []Issue {
 
 // --- catch_cx_root ---
 
-// CatchCxRootRule detects CATCH CX_ROOT or CATCH CX_SY_* (overly broad exception handling).
+// CatchCxRootRule detects CATCH with overly broad exception classes
+// (CX_ROOT, CX_STATIC_CHECK, CX_DYNAMIC_CHECK, CX_NO_CHECK).
 type CatchCxRootRule struct{}
 
 func (r *CatchCxRootRule) GetKey() string { return "catch_cx_root" }
+
+// broadExceptions is the set of exception classes that are too broad to catch.
+var broadExceptions = map[string]bool{
+	"CX_ROOT":          true,
+	"CX_STATIC_CHECK":  true,
+	"CX_DYNAMIC_CHECK": true,
+	"CX_NO_CHECK":      true,
+}
+
 
 func (r *CatchCxRootRule) Run(file *ABAPFile) []Issue {
 	var issues []Issue
@@ -488,10 +498,10 @@ func (r *CatchCxRootRule) Run(file *ABAPFile) []Issue {
 				break
 			}
 			upper := strings.ToUpper(tok.Str)
-			if upper == "CX_ROOT" || strings.HasPrefix(upper, "CX_SY_") {
+			if broadExceptions[upper] {
 				issues = append(issues, Issue{
 					Key: r.GetKey(), Row: tok.Row, Col: tok.Col,
-					Message:  fmt.Sprintf("CATCH %s catches too broadly — use specific exception classes", tok.Str),
+					Message:  fmt.Sprintf("Catching broad exception %s — use specific exception classes", tok.Str),
 					Severity: "Warning",
 				})
 				break

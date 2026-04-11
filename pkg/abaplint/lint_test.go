@@ -414,19 +414,44 @@ func TestCatchCxRootRule_Detect(t *testing.T) {
 		}
 	})
 
-	t.Run("catch_cx_sy_prefix", func(t *testing.T) {
+	t.Run("catch_cx_sy_prefix_no_issue", func(t *testing.T) {
+		// CX_SY_* are specific system exceptions, not broad — should NOT trigger
 		source := "TRY.\n  do_something( ).\nCATCH cx_sy_conversion_error.\nENDTRY."
 		issues := l.Run("test.abap", source)
+		if len(issues) != 0 {
+			t.Errorf("expected no catch_cx_root for specific cx_sy_conversion_error, got %d", len(issues))
+		}
+	})
+
+	t.Run("catch_cx_static_check", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_static_check.\nENDTRY."
+		issues := l.Run("test.abap", source)
 		if len(issues) == 0 {
-			t.Fatal("expected catch_cx_root issue for cx_sy_ prefix")
+			t.Fatal("expected catch_cx_root issue for CX_STATIC_CHECK")
+		}
+	})
+
+	t.Run("catch_cx_dynamic_check", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_dynamic_check.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected catch_cx_root issue for CX_DYNAMIC_CHECK")
+		}
+	})
+
+	t.Run("catch_cx_no_check", func(t *testing.T) {
+		source := "TRY.\n  do_something( ).\nCATCH cx_no_check.\nENDTRY."
+		issues := l.Run("test.abap", source)
+		if len(issues) == 0 {
+			t.Fatal("expected catch_cx_root issue for CX_NO_CHECK")
 		}
 	})
 
 	t.Run("specific_exception_no_issue", func(t *testing.T) {
-		source := "TRY.\n  do_something( ).\nCATCH cx_no_check.\nENDTRY."
+		source := "TRY.\n  do_something( ).\nCATCH zcx_my_exception.\nENDTRY."
 		issues := l.Run("test.abap", source)
 		if len(issues) != 0 {
-			t.Errorf("expected no catch_cx_root for specific cx_no_check, got %d", len(issues))
+			t.Errorf("expected no catch_cx_root for specific zcx_my_exception, got %d", len(issues))
 		}
 	})
 }

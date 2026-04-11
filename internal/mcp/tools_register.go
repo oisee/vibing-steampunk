@@ -2239,6 +2239,21 @@ func (s *Server) registerTestingQualityTools(shouldRegister func(string) bool) {
 			),
 		), s.handleGetCheckRunResults)
 	}
+
+	if shouldRegister("AnalyzeABAPCode") {
+		s.mcpServer.AddTool(mcp.NewTool("AnalyzeABAPCode",
+			mcp.WithDescription("Analyze ABAP source code for quality, performance, security, and robustness issues using the native Go abaplint engine. Provide source directly or specify object_type + object_name to fetch from SAP. Returns findings with severity, category, line numbers, and fix suggestions."),
+			mcp.WithString("object_type",
+				mcp.Description("ADT object type (e.g., PROG, CLAS, FUGR) — required when using object_name"),
+			),
+			mcp.WithString("object_name",
+				mcp.Description("ABAP object name (e.g., ZTEST, ZCL_MY_CLASS) — fetches source from SAP"),
+			),
+			mcp.WithString("source",
+				mcp.Description("ABAP source code to analyze directly (alternative to object_name)"),
+			),
+		), s.handleAnalyzeABAPCode)
+	}
 }
 
 // registerI18NTools registers i18n/translation tools.

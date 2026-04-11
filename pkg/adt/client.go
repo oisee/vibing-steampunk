@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -312,6 +314,22 @@ func (c *Client) GetClassMethods(ctx context.Context, className string) ([]Metho
 	}
 
 	return structure.GetMethods(), nil
+}
+
+// GetClassObjectStructure returns the full parsed class structure (methods, attributes, types, events).
+func (c *Client) GetClassObjectStructure(ctx context.Context, className string) (*ClassObjectStructure, error) {
+	className = strings.ToUpper(className)
+
+	path := fmt.Sprintf("/sap/bc/adt/oo/classes/%s/objectstructure", url.PathEscape(className))
+	resp, err := c.transport.Request(ctx, path, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("getting class object structure: %w", err)
+	}
+
+	return ParseClassObjectStructure(resp.Body)
 }
 
 // GetClassMethodSource retrieves the source code of a specific method in a class.
@@ -2369,20 +2387,32 @@ func parseSQLTraceDirectory(data []byte) ([]SQLTraceEntry, error) {
 
 // GetAPIReleaseState retrieves the API release state for an ABAP object.
 // This checks whether the object is released for use in ABAP Cloud (S/4HANA Clean Core).
-// objectURI is the full ADT path, e.g. "/sap/bc/adt/oo/classes/cl_abap_typedescr".
-// Do NOT url-escape this — it is already a valid URI path.
 func (c *Client) GetAPIReleaseState(ctx context.Context, objectURI string) (*APIReleaseState, error) {
-	resp, err := c.transport.Request(ctx, objectURI, &RequestOptions{
+	// objectURI is the full ADT path of the OBJECT, e.g. "/sap/bc/adt/oo/classes/cl_abap_typedescr".
+	// We escape it to attach it to the endpoint path.
+	endpoint := fmt.Sprintf("/sap/bc/adt/apireleases/%s", url.PathEscape(objectURI))
+
+	resp, err := c.transport.Request(ctx, endpoint, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.api.releasestate.v1+xml",
+		Accept: "application/vnd.sap.adt.apirelease.v10+xml",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting API release state: %w", err)
 	}
 
+	body := strings.TrimSpace(string(resp.Body))
+
+	if u, err := strconv.Unquote(body); err == nil {
+		body = u
+	}
+
+	if strings.Contains(body, "&lt;") {
+		body = html.UnescapeString(body)
+	}
+
 	var state APIReleaseState
-	if err := xml.Unmarshal(resp.Body, &state); err != nil {
-		return nil, fmt.Errorf("parsing API release state XML: %w", err)
+	if err := xml.Unmarshal([]byte(body), &state); err != nil {
+		return nil, fmt.Errorf("unmarshal API release state: %w", err)
 	}
 
 	return &state, nil
