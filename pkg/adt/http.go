@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // HTTPDoer is an interface for executing HTTP requests.
@@ -31,6 +32,15 @@ type Transport struct {
 	// Session management
 	sessionID string
 	sessionMu sync.RWMutex
+
+	// Cookie access protection: guards config.Cookies against concurrent
+	// read (Request/retryRequest) and write (callReauthFunc) access.
+	cookiesMu sync.RWMutex
+
+	// Re-auth stampede protection: prevents concurrent 401 handlers
+	// from triggering simultaneous SAML dances.
+	reauthMu   sync.Mutex
+	lastReauth time.Time
 }
 
 // NewTransport creates a new Transport with the given configuration.
@@ -111,9 +121,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	}
 
 	// Add user-provided cookies for cookie-based authentication
-	for name, value := range t.config.Cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
+	t.addCookies(req)
 
 	// Set default headers
 	t.setDefaultHeaders(req, opts)
@@ -192,10 +200,17 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 		if resp.StatusCode == http.StatusUnauthorized {
 			t.setCSRFToken("")
 			t.setSessionID("")
-			if err := t.fetchCSRFToken(ctx); err != nil {
-				// Return both errors: re-auth failure wraps the original 401 context
-				// so callers can see which endpoint triggered the expiry.
-				return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, err, apiErr)
+
+			if !t.config.HasBasicAuth() && t.config.ReauthFunc != nil {
+				// Cookie/SAML auth: re-run full auth dance to get fresh cookies.
+				if err := t.callReauthFunc(ctx); err != nil {
+					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, err, apiErr)
+				}
+			} else {
+				// Basic auth: just refresh CSRF token.
+				if err := t.fetchCSRFToken(ctx); err != nil {
+					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, err, apiErr)
+				}
 			}
 			return t.retryRequest(ctx, path, opts)
 		}
@@ -231,9 +246,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	if t.config.HasBasicAuth() {
 		req.SetBasicAuth(t.config.Username, t.config.Password)
 	}
-	for name, value := range t.config.Cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
+	t.addCookies(req)
 	t.setDefaultHeaders(req, opts)
 	req.Header.Set("X-CSRF-Token", t.getCSRFToken())
 
@@ -286,9 +299,7 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 	if t.config.HasBasicAuth() {
 		req.SetBasicAuth(t.config.Username, t.config.Password)
 	}
-	for name, value := range t.config.Cookies {
-		req.AddCookie(&http.Cookie{Name: name, Value: value})
-	}
+	t.addCookies(req)
 	req.Header.Set("X-CSRF-Token", "fetch")
 	req.Header.Set("Accept", "*/*")
 
@@ -501,4 +512,48 @@ func IsSessionExpiredError(err error) bool {
 // It refreshes the CSRF token as a side effect.
 func (t *Transport) Ping(ctx context.Context) error {
 	return t.fetchCSRFToken(ctx)
+}
+
+// reauthCooldown prevents concurrent 401 handlers from triggering simultaneous
+// SAML dances. If a re-auth completed within this window, skip the duplicate.
+const reauthCooldown = 5 * time.Second
+
+// callReauthFunc invokes config.ReauthFunc with stampede protection.
+// Multiple goroutines hitting 401 simultaneously will serialize through the mutex;
+// the first one performs the re-auth, subsequent ones within the cooldown window skip it.
+func (t *Transport) callReauthFunc(ctx context.Context) error {
+	t.reauthMu.Lock()
+	defer t.reauthMu.Unlock()
+
+	// Another goroutine already re-authed while we waited for the lock.
+	if !t.lastReauth.IsZero() && time.Since(t.lastReauth) < reauthCooldown {
+		return nil
+	}
+
+	cookies, err := t.config.ReauthFunc(ctx)
+	if err != nil {
+		return err
+	}
+
+	t.cookiesMu.Lock()
+	t.config.Cookies = cookies
+	t.cookiesMu.Unlock()
+
+	// Fetch CSRF token with the new cookies.
+	// Set lastReauth only after CSRF succeeds — if it fails, the next
+	// goroutine should retry rather than hitting the cooldown skip.
+	if err := t.fetchCSRFToken(ctx); err != nil {
+		return err
+	}
+	t.lastReauth = time.Now()
+	return nil
+}
+
+// addCookies adds user-provided cookies to a request under cookiesMu read lock.
+func (t *Transport) addCookies(req *http.Request) {
+	t.cookiesMu.RLock()
+	defer t.cookiesMu.RUnlock()
+	for name, value := range t.config.Cookies {
+		req.AddCookie(&http.Cookie{Name: name, Value: value})
+	}
 }

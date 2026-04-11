@@ -90,6 +90,10 @@ type Config struct {
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
 
+	// ReauthFunc is called on 401 to re-authenticate (e.g., re-run SAML dance).
+	// Returns fresh cookies. Passed through to adt.Config.
+	ReauthFunc func(ctx context.Context) (map[string]string, error)
+
 	// Session keep-alive interval (0 = disabled)
 	// Sends periodic pings to prevent session timeout during idle periods.
 	// Useful for cookie/browser-auth where sessions expire server-side.
@@ -121,6 +125,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.Verbose {
 		opts = append(opts, adt.WithVerbose())
+	}
+	if cfg.ReauthFunc != nil {
+		opts = append(opts, adt.WithReauthFunc(cfg.ReauthFunc))
 	}
 
 	// Configure safety settings
