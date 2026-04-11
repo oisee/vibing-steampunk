@@ -159,7 +159,7 @@ func TestParseCredentialCmd(t *testing.T) {
 		input string
 		want  int
 	}{
-		{"keepassxc-cli show -s db.kdbx SAP/K0B", 5},
+		{"keepassxc-cli show -s db.kdbx SAP/DEV", 5},
 		{"simple-cmd", 1},
 		{"cmd arg1 arg2", 3},
 		{"", 0},

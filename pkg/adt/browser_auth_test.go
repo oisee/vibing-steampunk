@@ -112,12 +112,12 @@ func TestCookieURLsForSAP(t *testing.T) {
 	}{
 		{
 			name:   "standard HTTPS URL",
-			sapURL: "https://my413862.s4hana.cloud.sap",
+			sapURL: "https://example.s4hana.cloud.sap",
 			wantURLs: []string{
-				"https://my413862.s4hana.cloud.sap",
-				"https://my413862.s4hana.cloud.sap/sap/",
-				"https://my413862.s4hana.cloud.sap/sap/bc/",
-				"https://my413862.s4hana.cloud.sap/sap/bc/adt/",
+				"https://example.s4hana.cloud.sap",
+				"https://example.s4hana.cloud.sap/sap/",
+				"https://example.s4hana.cloud.sap/sap/bc/",
+				"https://example.s4hana.cloud.sap/sap/bc/adt/",
 			},
 		},
 		{
