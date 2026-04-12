@@ -518,6 +518,11 @@ func (t *Transport) Ping(ctx context.Context) error {
 // SAML dances. If a re-auth completed within this window, skip the duplicate.
 const reauthCooldown = 5 * time.Second
 
+// reauthTimeout caps the total time spent in a single re-auth attempt (SAML dance +
+// CSRF fetch). Prevents concurrent 401 handlers from blocking indefinitely when the
+// re-auth holder is stuck on a slow or unresponsive IdP.
+const reauthTimeout = 30 * time.Second
+
 // callReauthFunc invokes config.ReauthFunc with stampede protection.
 // Multiple goroutines hitting 401 simultaneously will serialize through the mutex;
 // the first one performs the re-auth, subsequent ones within the cooldown window skip it.
@@ -530,7 +535,11 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 		return nil
 	}
 
-	cookies, err := t.config.ReauthFunc(ctx)
+	// Apply a timeout so the mutex is not held indefinitely during network I/O.
+	reauthCtx, cancel := context.WithTimeout(ctx, reauthTimeout)
+	defer cancel()
+
+	cookies, err := t.config.ReauthFunc(reauthCtx)
 	if err != nil {
 		return err
 	}
@@ -542,7 +551,7 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	// Fetch CSRF token with the new cookies.
 	// Set lastReauth only after CSRF succeeds — if it fails, the next
 	// goroutine should retry rather than hitting the cooldown skip.
-	if err := t.fetchCSRFToken(ctx); err != nil {
+	if err := t.fetchCSRFToken(reauthCtx); err != nil {
 		return err
 	}
 	t.lastReauth = time.Now()

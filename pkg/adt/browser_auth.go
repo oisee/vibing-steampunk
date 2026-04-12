@@ -386,6 +386,8 @@ func matchesSAPWeakCookie(name string) bool {
 
 // SaveCookiesToFile writes cookies in Netscape cookie file format.
 // This allows reuse via --cookie-file on subsequent runs.
+// WARNING: The output file contains session secrets (SAP auth cookies).
+// It is created with mode 0600 (owner-only). Do not share or commit it.
 func SaveCookiesToFile(cookies map[string]string, sapURL, filePath string) error {
 	u, err := url.Parse(sapURL)
 	if err != nil {
