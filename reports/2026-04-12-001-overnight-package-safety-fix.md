@@ -84,32 +84,115 @@ errors) and the low-level CRUD layer (backstop). This is intentional
 redundancy — it makes intent obvious at the call sites and prevents future
 workflow additions from silently bypassing the guard.
 
-## Remaining Gap — Tracked Follow-up
+## Phase 2 — Unified Mutation Gate (commit `c3a5341`)
 
-UI5/BSP mutation paths (`UI5UploadFile`, `UI5DeleteFile`, `UI5DeleteApp`) are
-**not yet guarded**. These use a different URL scheme
-(`/sap/bc/adt/filestore/ui5-bsp/objects/...`) and need a separate
-app-to-package resolution helper before they can share the same check.
+After Phase 1 landed, Alice asked for a single unified gate instead of
+scattered per-function checks:
 
-Recommended approach (from Codex's audit):
+> "давайте сделайте всё через один auth/filter gate - потому что у нас
+> гейты есть по CRUD, по TR (по CR!) по пакетам"
+
+Phase 2 consolidates all three policy dimensions behind one entry point.
+
+### Design
+
+New file `pkg/adt/mutation_gate.go`:
+
+```go
+type MutationContext struct {
+    Op        OperationType     // safety op (R/U/C/D/A/W/...)
+    OpName    string            // human name for error messages
+    ObjectURL string            // for existing-object path resolution
+    Package   string            // for create path (explicit package)
+    Transport string            // transport request number
+    Surface   MutationSurface   // ADT or UI5 (different resolution)
+}
+
+func (c *Client) checkMutation(ctx, m) error {
+    // 1. Operation type check
+    // 2. Package ownership check
+    //    - explicit Package > resolve via ObjectURL > fail closed
+    // 3. Transportable-edit check
+}
+```
+
+Precedence: explicit `Package` wins for create ops; otherwise the gate
+resolves the package from `ObjectURL` via `SearchObject`; if neither is
+available under an active whitelist, **fail closed** with a clear error
+naming the op.
+
+### Migrated mutators (15 functions)
+
+All mutation paths in `pkg/adt/` now use the unified gate:
+
+- `workflows_edit.go`: `EditSourceWithOptions`
+- `workflows.go`: `WriteProgram`, `WriteClass`, `CreateAndActivateProgram`,
+  `CreateClassWithTests`
+- `workflows_source.go`: `WriteSource` (top-level gate; delegates still gate)
+- `workflows_fileio.go`: `RenameObject` (dual gate: delete old + create target)
+- `crud.go`: `UpdateSource`, `DeleteObject`, `CreateObject`,
+  `CreateTestInclude`, `UpdateClassInclude`
+- `i18n.go`: `WriteMessageClassTexts`, `WriteDataElementLabels`
+- `ui5.go`: `UI5CreateApp`, `UI5UploadFile`, `UI5DeleteFile`, `UI5DeleteApp`
+
+### Behavior change — UI5 fail-closed
+
+The UI5 surface previously bypassed package policy silently. In Phase 2
+this is closed:
+
+- `UI5CreateApp` works as before (explicit `Package` parameter)
+- `UI5UploadFile`, `UI5DeleteFile`, `UI5DeleteApp` now **fail closed**
+  when `SAP_ALLOWED_PACKAGES` is set — they return a clear error
+  pointing to the follow-up (UI5 app→package resolution)
+- When no package policy is configured, UI5 mutations work as before
+
+Users combining `AllowedPackages` with UI5 writes will see:
+
+> operation 'UI5UploadFile' on UI5 surface is blocked: UI5 app→package
+> resolution not yet implemented, cannot verify package against
+> SAP_ALLOWED_PACKAGES (tracked as follow-up)
+
+### Tests
+
+New file `pkg/adt/mutation_gate_test.go` with 10 tests:
+
+- `TestCheckMutation_NoPolicy_Passes`
+- `TestCheckMutation_OpType_Blocked`
+- `TestCheckMutation_ExplicitPackage_NotInWhitelist`
+- `TestCheckMutation_ObjectURL_ResolvesADTPackage`
+- `TestCheckMutation_UI5Surface_BlockedWhenPolicyActive`
+- `TestCheckMutation_UI5Surface_AllowedWhenNoPolicy`
+- `TestCheckMutation_MissingObjectURLAndPackage_FailsClosed`
+- `TestClient_UI5UploadFile_BlockedUnderAllowedPackages`
+- `TestClient_UI5DeleteFile_BlockedUnderAllowedPackages`
+- `TestClient_UI5DeleteApp_BlockedUnderAllowedPackages`
+
+Full suite still green.
+
+## Remaining Follow-up
+
+UI5 app→package resolution remains the one outstanding item, but the gap
+is no longer a silent bypass — it's a clear fail-closed error until the
+resolver is implemented. Recommended approach (from Codex's audit):
+
 1. Add `UI5ResolveAppPackage(appName)` using BSP metadata
-2. Apply package enforcement on all UI5 mutation paths
+2. Let `SurfaceUI5` use that resolver instead of fail-closed
 3. Ship as a follow-up PR
-
-This gap is not a regression — those paths were never guarded. It's an
-existing edge case that warrants its own focused fix.
 
 ## Timeline
 
 - **23:00** — User report received from Philip Dolker via Alice
-- **23:05** — Code audit by Claude and Codex independently; both identified
-  the same gap in the workflow layer
-- **23:15** — Alice approved fix implementation; Claude took implementation,
-  Codex switched to review/foreman mode
-- **23:35** — Fix implemented across 7 files, tests pass
-- **23:45** — Codex review approved, no blockers
-- **23:50** — Committed (08e3d78), pushed, PR #101 created
-- **23:55** — Graceful handover, session wrap-up
+- **23:05** — Independent audits by Claude and Codex; both identified the
+  same gap in the workflow layer
+- **23:15** — Alice approved fix implementation
+- **23:35** — Phase 1 fix implemented across 7 files, tests pass
+- **23:45** — Codex review approved Phase 1, no blockers
+- **23:50** — Phase 1 committed (`08e3d78`), pushed, PR #101 created
+- **23:55** — Graceful handover
+- **next day** — Alice requested unified gate ("один auth/filter gate")
+- **next day** — Phase 2 implemented: `checkMutation`, 15 mutators
+  migrated, UI5 fail-closed, 10 new tests; Codex reviewed and approved
+- **next day** — Phase 2 committed (`c3a5341`), pushed
 
 ## Philip Reply Draft (not yet sent)
 
