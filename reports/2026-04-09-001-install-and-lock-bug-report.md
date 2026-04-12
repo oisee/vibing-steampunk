@@ -1,153 +1,223 @@
-# Bug Report: Install Silent Failure + Lock Errors on Trial Systems
+# Issue Overview: `install zadt-vsp` False Success + Trial-System Lock Failures
 
-**Date:** 2026-04-09
-**Reporter:** Marcello Urbani (SAP 2023 Trial, muabap.ydns.eu)
-**Severity:** HIGH — installer lies about success
+**Date:** 2026-04-09  
+**Reporter:** Marcello Urbani  
+**Context:** SAP 2023 trial / public repro system, plus local code review of current `main`
 
----
+## Summary
 
-## Reported Symptoms
+There are two separate problems:
 
-1. **`vsp install zadt-vsp` says it works but only creates the package** — no objects inside
-2. **Editing objects reliably fails** — "not locked" / lock instance errors
+1. `vsp install zadt-vsp` can report success while deploying no objects.
+2. Edit/lock operations can still fail on some systems even after the stateful-session fix.
 
-## Bug 1: Install Silent Failure
+The installer problem is the more concrete and higher-confidence issue. It is not just a diagnostics problem. On a clean system, the current installer path is structurally unable to create the embedded objects, and then it also hides that failure.
 
-### Root Cause
+## Findings
 
-The install handler in `cmd/vsp/devops.go:2119-2131` only checks Go errors (`err != nil`), NOT the SAP operation result (`result.Success`):
+### 1. Clean install path is missing required create metadata
 
-```go
-_, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-if err != nil {
-    fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
-    failed++
-} else {
-    fmt.Fprintf(os.Stderr, "OK\n")  // ← LOGS OK EVEN IF result.Success = false!
-    deployed++
-}
-```
+The installer deploy loop in [cmd/vsp/devops.go](/home/alice/dev/vibing-steampunk/cmd/vsp/devops.go) and the MCP install loop in [internal/mcp/handlers_install.go](/home/alice/dev/vibing-steampunk/internal/mcp/handlers_install.go) call `WriteSource(..., Mode: upsert)` with only `Package` and `Mode`.
 
-`WriteSource` returns `(result, nil)` — nil error — in these failure scenarios:
-- **Syntax errors**: source has errors → `result.Success = false`, `result.Message = "Source has syntax errors"`, but `err == nil`
-- **Activation failure**: object won't activate → `result.Success = false`, `result.Activation.Success = false`, but `err == nil`
-- **Object exists conflict**: mode mismatch → `result.Message = "Object already exists"`, but `err == nil`
-- **Lock failure inside WriteSource**: lock fails → returns result with error message, but `err == nil` in some paths
+They do **not** pass `Description`.
 
-**On a 2023 trial system**, the embedded ABAP source may have syntax issues due to missing dependencies or SAP version differences. Each `WriteSource` call returns a result with `Success=false` but the handler prints "OK" and increments `deployed`.
+That matters because the create branch of `WriteSource` in [pkg/adt/workflows_source.go](/home/alice/dev/vibing-steampunk/pkg/adt/workflows_source.go) explicitly requires both:
 
-### Fix Required
+- `Package`
+- `Description`
 
-```go
-result, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-if err != nil {
-    // Go-level error (network, auth, etc.)
-    fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
-    failed++
-} else if !result.Success {
-    // SAP-level error (syntax, activation, lock, etc.)
-    fmt.Fprintf(os.Stderr, "FAILED: %s\n", result.Message)
-    failed++
-} else {
-    fmt.Fprintf(os.Stderr, "OK\n")
-    deployed++
-}
-```
+If `Description` is empty, `writeSourceCreate()` returns a result with:
 
-Same fix needed in MCP handler (`handlers_install.go:418-441`).
+- `Success = false`
+- `Message = "Description is required for creating new objects"`
+- `error = nil`
 
-### Additional Issue: Package Creation Continues on Error
+So on a fresh target package:
 
-`handlers_install.go:398-403` logs a warning when package creation fails but continues. On a trial system where `/sap/bc/adt/packages` API may not exist, the package is never created, and all subsequent `WriteSource` calls fail silently because they try to assign objects to a non-existent package.
+- package creation can succeed
+- object creation can fail for every embedded object
+- the installer sees no Go error
+- the installer prints `OK` / `Deployed`
 
-**Fix:** After package creation failure, verify the package exists via `GetPackage()` before continuing. If it doesn't exist, abort with a clear message: "Package creation failed and package doesn't exist. Create it manually via SE80/SE21."
+This exactly matches the user symptom: “it says it worked but only creates the package”.
 
----
+This is the primary root cause.
 
-## Bug 2: Lock/Edit Failures on Trial Systems
+### 2. Installer loops ignore `result.Success`
 
-### Root Cause
+Both install loops currently only check `err != nil` after `WriteSource`.
 
-The stateful session fix (commit 27f4d7c) added `Stateful: true` to `LockObject`, `UnlockObject`, and `UpdateSource` in `pkg/adt/crud.go`. This fix is correct and should work on trial systems.
+That is insufficient because `WriteSource` is intentionally designed to return many SAP/workflow failures as:
 
-### Why Marcello May Still See Lock Errors
+- `result.Success = false`
+- `result.Message = ...`
+- `error = nil`
 
-Possible causes on SAP 2023 trial:
+Examples include:
 
-1. **Running old vsp binary** — the fix is in v2.38.x, Marcello may have an older version
-2. **Cookie authentication issues** — trial systems may require specific cookie handling
-3. **CSRF token bound to wrong session** — CSRF fetch uses stateless, but lock uses stateful. If the CSRF token is session-bound on strict systems, it may be rejected in the stateful session
-4. **SAP_ABA 7.51 stricter session enforcement** — even with stateful header, the trial system may enforce additional session requirements
+- missing description/package for create
+- syntax-check failures
+- activation failures
+- object existence mode mismatch
+- lock/update/unlock workflow failures surfaced as workflow result messages
 
-### Verification Steps
+For installer/reporting purposes, `result.Success` is the real success bit. Ignoring it makes the installer optimistic when SAP/workflow-level execution already failed.
 
-1. Check which vsp version Marcello is running
-2. Try `vsp -s trial source CLAS ZCL_SOMETHING` (read) — does basic auth work?
-3. Try `vsp -s trial source edit CLAS ZCL_TEST --old "X" --new "Y"` — does edit work?
-4. Check verbose output: `vsp -s trial -v source edit ...` to see session headers
+### 3. The MCP install handler also lacks post-write verification
 
-### Potential Fix: CSRF Token in Stateful Mode
+The main ZADT_VSP install handler in [internal/mcp/handlers_install.go](/home/alice/dev/vibing-steampunk/internal/mcp/handlers_install.go) does not verify that deployed objects actually exist afterward.
 
-In `pkg/adt/http.go:295-298`, CSRF token fetch only uses stateful if the GLOBAL config is stateful:
+Given that the tool is a bootstrap installer and uses only standard ADT capabilities, it should be conservative:
 
-```go
-if t.config.SessionType == SessionStateful {
-    req.Header.Set("X-sap-adt-sessiontype", "stateful")
-}
-```
+- detect per-object failure
+- verify existence after deploy
+- summarize missing objects clearly
 
-But the global default is stateless. If a trial system requires the CSRF token to be in the same session as the lock, we need to fetch CSRF in stateful mode when the subsequent operation will be stateful.
+At the moment it can end with a success-looking summary while the package is empty or partially populated.
 
----
+### 4. Package creation handling should be gentler on older ADT systems
 
-## Recommendations
+The MCP handler already documents that `/sap/bc/adt/packages` may be missing on older systems and continues after package creation failure. That is reasonable in principle, but incomplete in execution.
 
-### Immediate (fix for next release)
+If package creation fails and the package truly does not exist, the installer should stop early with a direct diagnostic instead of cascading into a long stream of object failures.
 
-1. **Fix install handler** — check `result.Success`, not just `err != nil`
-2. **Fix package creation** — verify package exists after creation attempt
-3. **Print result.Message on failure** — users need to see what SAP actually said
-4. **Add `--verbose` to install** — show SAP responses for each step
+The gentle behavior should be:
 
-### Short-term
+- try create
+- if create fails, probe package existence
+- continue only if existence is confirmed
+- otherwise stop with a message that the package must be pre-created manually
 
-5. **Add install smoke test** — after deployment, verify each object exists via `SearchObject`
-6. **Recommend abapGit path** — for trial systems, `vsp install abapgit` + import via abapGit may be more reliable than direct object creation
-7. **Test on a4h-110-adt** — reproduce the install flow and check result.Success values
+The CLI path is currently stricter: it aborts immediately on package create failure. The MCP path is more tolerant, but not yet diagnostic enough.
 
-### Medium-term
+### 5. Lock/edit path is improved, but still has one plausible session-risk area
 
-8. **CSRF+stateful alignment** — ensure CSRF token is fetched in stateful mode when lock operations follow
-9. **Session keep-alive for install** — install creates 9 objects sequentially; session may timeout between objects on slow systems
+The lock fix from issue `#88` is present in [pkg/adt/crud.go](/home/alice/dev/vibing-steampunk/pkg/adt/crud.go):
 
----
+- `LockObject` forces `Stateful: true`
+- `UpdateSource` forces `Stateful: true`
+- `UnlockObject` forces `Stateful: true`
 
-## Test Plan
+That is the correct direction and likely fixes the original same-session lock-handle problem for most systems.
 
-```bash
-# 1. Test install on a4h-110-adt
-vsp -s a4h-110-adt install zadt-vsp --package '$ZTEST_INSTALL'
+However, one plausible remaining edge case exists in [pkg/adt/http.go](/home/alice/dev/vibing-steampunk/pkg/adt/http.go):
 
-# 2. Verify objects exist
-vsp -s a4h-110-adt search "ZCL_VSP*" --type CLAS --max 10
-vsp -s a4h-110-adt search "ZIF_VSP*" --type INTF --max 10
+- modifying requests fetch CSRF tokens through `fetchCSRFToken()`
+- `fetchCSRFToken()` uses global `SessionType`, not per-request `Stateful`
+- the later lock/write/unlock requests can be forced stateful per request
 
-# 3. Test edit flow
-vsp -s a4h-110-adt source CLAS ZCL_HIRT_API  # read (should work)
-vsp -s a4h-110-adt source edit CLAS ZCL_HIRT_API --old "PUBLIC" --new "PUBLIC"  # no-op edit
+If a stricter SAP system binds the CSRF token to the same stateful session context that will later be used for locking, this mismatch could still cause trial-specific failures even though the CRUD requests themselves are marked stateful.
 
-# 4. Clean up test package
-# (manual via SE80 or leave for next test)
-```
+I have not yet reproduced that on system `110`, so this remains a plausible secondary cause, not a confirmed one.
 
----
+## Why This Matters
 
-## Files to Modify
+The initial installer is a bootstrap path using standard ADT only. That means it has to be:
 
-| File | Change |
-|------|--------|
-| `cmd/vsp/devops.go:2119-2131` | Check `result.Success` in install loop |
-| `internal/mcp/handlers_install.go:418-441` | Same fix for MCP handler |
-| `cmd/vsp/devops.go:2088-2102` | Verify package exists after creation |
-| `internal/mcp/handlers_install.go:396-403` | Same package verification |
-| `pkg/adt/http.go:295-298` | Consider stateful CSRF for lock sequences |
+- gentle
+- explicit
+- truthful
+- self-diagnosing
+
+A bootstrap installer must never claim success unless it has confirmed object existence. “Package created” is not “tool installed”.
+
+## Recommended Fixes
+
+### Immediate
+
+1. Pass object descriptions into installer `WriteSource` calls.
+
+Use the embedded object metadata already available in the install loop and set:
+
+- `Description: obj.Description`
+
+in both:
+
+- [cmd/vsp/devops.go](/home/alice/dev/vibing-steampunk/cmd/vsp/devops.go)
+- [internal/mcp/handlers_install.go](/home/alice/dev/vibing-steampunk/internal/mcp/handlers_install.go)
+
+2. Treat `!result.Success` as deployment failure.
+
+Installer logic should be:
+
+- if `err != nil`: transport/runtime failure
+- else if `!result.Success`: SAP/workflow failure
+- else: success
+
+3. Print the actual workflow message.
+
+Per object, report at least:
+
+- create/update decision
+- `result.Message`
+- activation or syntax details when available
+
+### Short-term reliability
+
+4. Verify object existence after deployment.
+
+For each expected object, run a read/search/existence probe and include a final “installed / missing” summary.
+
+5. Harden package handling.
+
+If package creation fails:
+
+- re-check package existence
+- only continue if it exists
+- otherwise abort with a direct manual-remediation message
+
+6. Add a `check_only` or “preflight” mode to CLI install if not already exposed equivalently.
+
+Preflight should validate:
+
+- package create capability
+- required ADT endpoints
+- write capability on one scratch object or dry validation path
+- whether abapGit-dependent optional pieces will be skipped
+
+### Lock/edit follow-up
+
+7. Audit CSRF/session alignment for per-request stateful writes.
+
+The safe design is:
+
+- when a write request will be stateful, the CSRF acquisition used for that write path should also be stateful
+
+8. Add an integration test specifically for:
+
+- stateless default client
+- per-request stateful lock/update/unlock sequence
+- token refresh/retry path
+
+## Suggested acceptance criteria
+
+The installer should only report success when all of these are true:
+
+1. target package exists
+2. each required object write returns `result.Success == true`
+3. each required object is readable/searchable after deployment
+4. final summary distinguishes deployed, skipped, failed, and missing-after-verify
+
+## Candidate code touch points
+
+- [cmd/vsp/devops.go](/home/alice/dev/vibing-steampunk/cmd/vsp/devops.go)
+- [internal/mcp/handlers_install.go](/home/alice/dev/vibing-steampunk/internal/mcp/handlers_install.go)
+- [pkg/adt/workflows_source.go](/home/alice/dev/vibing-steampunk/pkg/adt/workflows_source.go)
+- [pkg/adt/http.go](/home/alice/dev/vibing-steampunk/pkg/adt/http.go)
+- [pkg/adt/crud.go](/home/alice/dev/vibing-steampunk/pkg/adt/crud.go)
+
+## Current confidence
+
+- Installer false-success diagnosis: high confidence
+- Missing `Description` as primary clean-install blocker: high confidence
+- Trial-system lock failure exact remaining cause: medium confidence
+
+## Next practical step
+
+Implement the installer fixes first:
+
+- pass `Description`
+- check `result.Success`
+- verify deployed object existence
+
+That addresses the concrete user-visible failure immediately and makes subsequent lock-session debugging much easier because install state becomes trustworthy.
