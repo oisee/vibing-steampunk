@@ -175,8 +175,11 @@ func SAMLLogin(ctx context.Context, sapURL string, credProvider CredentialProvid
 			sanitizeURLForLog(form.Action))
 	}
 
-	// Build form values with credentials added directly — never store credentials
-	// in form.Fields (Go strings are immutable and cannot be zeroed).
+	// Build form values with credentials added directly.
+	// NOTE: string(password) creates an immutable Go string copy that cannot be zeroed.
+	// The original []byte slices are zeroed via defer, but url.Values internally retains
+	// the string until GC collects it. This is a Go language limitation — acceptable
+	// because the string lifetime is short (function-scoped) and memory is reclaimed on GC.
 	credValues := url.Values{}
 	for k, v := range form.Fields {
 		credValues.Set(k, v)

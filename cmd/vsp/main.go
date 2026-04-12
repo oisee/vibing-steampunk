@@ -116,7 +116,7 @@ func init() {
 	rootCmd.Flags().Bool("saml-auth", false, "Authenticate via programmatic SAML SSO (no browser, no MFA)")
 	rootCmd.Flags().String("saml-user", "", "SAML/IAS username (email)")
 	rootCmd.Flags().String("saml-password", "", "SAML/IAS password")
-	rootCmd.Flags().String("credential-cmd", "", "External command returning JSON {\"username\":...,\"password\":...} (space-separated argv, no shell)")
+	rootCmd.Flags().String("credential-cmd", "", "External command returning JSON {\"username\":...,\"password\":...} (space-separated argv, no shell quoting — use a wrapper script for paths with spaces)")
 
 
 	// Session keep-alive
@@ -539,7 +539,7 @@ func processBrowserAuth(cmd *cobra.Command) error {
 		if err := adt.SaveCookiesToFile(cookies, cfg.BaseURL, cookieSave); err != nil {
 			fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Warning: failed to save cookies: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Cookies saved to %s (reuse with --cookie-file)\n", cookieSave)
+			fmt.Fprintf(os.Stderr, "[BROWSER-AUTH] Cookies saved to %s (reuse with --cookie-file). Note: file contains session secrets — do not share or commit.\n", cookieSave)
 		}
 	}
 
@@ -634,7 +634,7 @@ func processSAMLAuth(cmd *cobra.Command) error {
 		if err := adt.SaveCookiesToFile(cookies, cfg.BaseURL, cookieSave); err != nil {
 			fmt.Fprintf(os.Stderr, "[SAML-AUTH] Warning: failed to save cookies: %v\n", err)
 		} else {
-			fmt.Fprintf(os.Stderr, "[SAML-AUTH] Cookies saved to %s (reuse with --cookie-file)\n", cookieSave)
+			fmt.Fprintf(os.Stderr, "[SAML-AUTH] Cookies saved to %s (reuse with --cookie-file). Note: file contains session secrets — do not share or commit.\n", cookieSave)
 		}
 	}
 
