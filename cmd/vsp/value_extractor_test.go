@@ -99,10 +99,11 @@ CALL FUNCTION 'ZZZ_NOT_IN_REGISTRY'
 	}
 }
 
-// TestExtractCodeLiterals_NonLiteralArgSkipped covers the case where
-// the value side of EXPORTING is a variable, not a literal. The
-// extractor must skip that parameter but still record the literal ones.
-func TestExtractCodeLiterals_NonLiteralArgSkipped(t *testing.T) {
+// TestExtractCodeLiterals_HostVarResolved covers the case where the
+// value side of EXPORTING is a host variable that was declared with a
+// VALUE clause. The pre-pass should record the assignment and the
+// extractor should resolve the variable to its literal value.
+func TestExtractCodeLiterals_HostVarResolved(t *testing.T) {
 	source := `
 DATA lv_obj TYPE string VALUE 'ZTEST'.
 CALL FUNCTION 'APPL_LOG_INIT'
@@ -115,14 +116,222 @@ CALL FUNCTION 'APPL_LOG_INIT'
 		t.Fatalf("expected 1 call site, got %d", len(got))
 	}
 	c := got[0]
+	if c.Fields["OBJECT"] != "ZTEST" {
+		t.Errorf("OBJECT = %q, want ZTEST (resolved from DATA … VALUE)", c.Fields["OBJECT"])
+	}
+	if c.Fields["SUBOBJECT"] != "EVENT" {
+		t.Errorf("SUBOBJECT = %q, want EVENT", c.Fields["SUBOBJECT"])
+	}
+	if c.IncompleteKey {
+		t.Error("IncompleteKey = true, want false — both fields resolved")
+	}
+}
+
+// TestExtractCodeLiterals_UnresolvedVarStillIncomplete covers the
+// degenerate case: a variable that was *not* declared with a VALUE
+// clause and is therefore truly dynamic. The extractor should skip
+// that parameter and flag IncompleteKey on the resulting finding.
+func TestExtractCodeLiterals_UnresolvedVarStillIncomplete(t *testing.T) {
+	source := `
+DATA lv_obj TYPE string.
+lv_obj = compute_runtime_value( ).
+CALL FUNCTION 'APPL_LOG_INIT'
+  EXPORTING
+    object = lv_obj
+    sub_object = 'EVENT'.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 call site, got %d", len(got))
+	}
+	c := got[0]
 	if _, ok := c.Fields["OBJECT"]; ok {
-		t.Error("OBJECT should not be set — argument was a variable")
+		t.Errorf("OBJECT should not be set — variable has no static literal, got %q", c.Fields["OBJECT"])
 	}
 	if c.Fields["SUBOBJECT"] != "EVENT" {
 		t.Errorf("SUBOBJECT = %q, want EVENT", c.Fields["SUBOBJECT"])
 	}
 	if !c.IncompleteKey {
-		t.Error("IncompleteKey = false, want true (OBJECT was not a literal)")
+		t.Error("IncompleteKey = false, want true — OBJECT could not be resolved")
+	}
+}
+
+// TestExtractCodeLiterals_ConstantResolved covers the most common real
+// idiom: module-level CONSTANTS declarations referenced from a SELECT
+// or CALL FUNCTION elsewhere in the same source unit.
+func TestExtractCodeLiterals_ConstantResolved(t *testing.T) {
+	source := `
+CONSTANTS gc_obj TYPE c LENGTH 30 VALUE 'ZTEST_LOG'.
+SELECT * FROM ztest_t WHERE object = gc_obj.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
+	}
+	if got[0].Fields["OBJECT"] != "ZTEST_LOG" {
+		t.Errorf("OBJECT = %q, want ZTEST_LOG (resolved from CONSTANTS)", got[0].Fields["OBJECT"])
+	}
+}
+
+// TestExtractCodeLiterals_AtHostVarResolved covers the modern
+// `WHERE field = @lv_var` shape where the lexer splits `@` into a
+// separate token. The extractor should step past the @ and resolve
+// the host variable from the local literal map.
+func TestExtractCodeLiterals_AtHostVarResolved(t *testing.T) {
+	source := `
+DATA lv_obj TYPE string VALUE 'ZTEST_LOG'.
+SELECT * FROM ztest_t WHERE object = @lv_obj.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(got))
+	}
+	if got[0].Fields["OBJECT"] != "ZTEST_LOG" {
+		t.Errorf("OBJECT = %q, want ZTEST_LOG (resolved from DATA via @host-var)", got[0].Fields["OBJECT"])
+	}
+}
+
+// TestExtractCodeLiterals_PlainAssignmentResolved covers the case
+// where a local variable is set by a plain assignment (not a VALUE
+// clause) but the right-hand side is a string literal.
+func TestExtractCodeLiterals_PlainAssignmentResolved(t *testing.T) {
+	source := `
+DATA lv_obj TYPE string.
+lv_obj = 'ZTEST_LOG'.
+SELECT * FROM ztest_t WHERE object = lv_obj.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(got))
+	}
+	if got[0].Fields["OBJECT"] != "ZTEST_LOG" {
+		t.Errorf("OBJECT = %q, want ZTEST_LOG (resolved from plain assignment)", got[0].Fields["OBJECT"])
+	}
+}
+
+// TestExtractCodeLiterals_SimpleSelect covers the v2a.1 SELECT path:
+// SELECT FROM <static table> WHERE <field> = '<literal>' [AND ...] is
+// captured as a finding with Kind="direct_select". Field name
+// qualifiers like `t~field` and `tab-field` are stripped.
+func TestExtractCodeLiterals_SimpleSelect(t *testing.T) {
+	source := `
+SELECT SINGLE * FROM ztest_config
+  WHERE object = 'ZTEST_LOG' AND subobject = 'EVENT'
+  INTO @DATA(ls_row).
+`
+	got := extractCodeLiterals("CLAS:ZCL_TEST", source)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
+	}
+	c := got[0]
+	if c.Kind != "direct_select" {
+		t.Errorf("Kind = %q, want direct_select", c.Kind)
+	}
+	if c.Target != "ZTEST_CONFIG" {
+		t.Errorf("Target = %q, want ZTEST_CONFIG", c.Target)
+	}
+	if c.Fields["OBJECT"] != "ZTEST_LOG" || c.Fields["SUBOBJECT"] != "EVENT" {
+		t.Errorf("Fields = %+v, want {OBJECT:ZTEST_LOG, SUBOBJECT:EVENT}", c.Fields)
+	}
+	if c.Via != "SELECT:ZTEST_CONFIG" {
+		t.Errorf("Via = %q, want SELECT:ZTEST_CONFIG", c.Via)
+	}
+}
+
+// TestExtractCodeLiterals_SelectWithQualifiers covers `table~field`
+// shape used in JOINs and `table-field` used in older syntax. Both
+// must reduce to the bare field name.
+func TestExtractCodeLiterals_SelectWithQualifiers(t *testing.T) {
+	source := `
+SELECT * FROM ztest_t WHERE ztest_t~object = 'ZTEST'.
+SELECT * FROM ztest_t WHERE ztest_t-object = 'ZTEST'.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(got))
+	}
+	for i, c := range got {
+		if c.Fields["OBJECT"] != "ZTEST" {
+			t.Errorf("[%d] Fields[OBJECT] = %q, want ZTEST (qualifier strip failed)", i, c.Fields["OBJECT"])
+		}
+	}
+}
+
+// TestExtractCodeLiterals_SelectSkipsUnresolvedHostVar covers the
+// case where the WHERE value is a host variable that has NO static
+// VALUE clause and therefore cannot be resolved to a literal — those
+// predicates must drop, producing no finding.
+func TestExtractCodeLiterals_SelectSkipsUnresolvedHostVar(t *testing.T) {
+	source := `
+DATA lv_obj TYPE string.
+lv_obj = compute_runtime_value( ).
+SELECT * FROM ztest_t WHERE object = @lv_obj.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings (host var has no static value), got %d: %+v", len(got), got)
+	}
+}
+
+// TestExtractCodeLiterals_SelectIgnoresInLikeNeq covers the operators
+// the extractor must skip: IN, LIKE, !=, <>, <=, >=. Even with literal
+// right-hand sides these are not single-value predicates.
+func TestExtractCodeLiterals_SelectIgnoresInLikeNeq(t *testing.T) {
+	cases := []string{
+		`SELECT * FROM ztest_t WHERE object IN ( 'A' , 'B' ).`,
+		`SELECT * FROM ztest_t WHERE object LIKE 'Z%'.`,
+		`SELECT * FROM ztest_t WHERE object <> 'OLD'.`,
+	}
+	for _, src := range cases {
+		got := extractCodeLiterals("PROG:ZTEST", src)
+		if len(got) != 0 {
+			t.Errorf("expected 0 findings for %q, got %d: %+v", src, len(got), got)
+		}
+	}
+}
+
+// TestExtractCodeLiterals_SelectIgnoresDynamicTable covers FROM (var)
+// — a dynamic table name we cannot resolve at extract time.
+func TestExtractCodeLiterals_SelectIgnoresDynamicTable(t *testing.T) {
+	source := `
+DATA lv_tab TYPE tabname VALUE 'ZTEST_T'.
+SELECT * FROM (lv_tab) WHERE object = 'ZTEST'.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings for dynamic table, got %d", len(got))
+	}
+}
+
+// TestExtractCodeLiterals_UpdateAndDelete covers UPDATE and DELETE
+// FROM. Both should produce findings with the right Via tag.
+func TestExtractCodeLiterals_UpdateAndDelete(t *testing.T) {
+	source := `
+UPDATE ztest_t SET status = 'DONE' WHERE object = 'ZTEST'.
+DELETE FROM ztest_t WHERE object = 'OLD'.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 findings, got %d: %+v", len(got), got)
+	}
+	if got[0].Via != "UPDATE:ZTEST_T" {
+		t.Errorf("first Via = %q, want UPDATE:ZTEST_T", got[0].Via)
+	}
+	if got[1].Via != "DELETE:ZTEST_T" {
+		t.Errorf("second Via = %q, want DELETE:ZTEST_T", got[1].Via)
+	}
+}
+
+// TestExtractCodeLiterals_ModifyWithoutWhereSkipped covers the very
+// common `MODIFY itab` pattern that has no WHERE — it must not become
+// a finding (not interesting for value-level audit).
+func TestExtractCodeLiterals_ModifyWithoutWhereSkipped(t *testing.T) {
+	source := `
+MODIFY ztest_t FROM ls_row.
+`
+	got := extractCodeLiterals("PROG:ZTEST", source)
+	if len(got) != 0 {
+		t.Errorf("expected 0 findings for MODIFY without WHERE, got %d: %+v", len(got), got)
 	}
 }
 
@@ -175,14 +384,16 @@ func TestSubsetMatch(t *testing.T) {
 	}
 }
 
-// TestTR-EXAMPLEFixture is the end-to-end fixture proving v2a-min catches
-// the production-incident class. We stage:
+// TestPostImportMissedRowsFixture is the end-to-end fixture proving
+// v2a-min catches the production-incident class where a CR transports
+// a customizing table but misses some of the specific row keys the
+// code depends on. We stage:
 //
 //   - one caller source doing APPL_LOG_INIT with (ZTEST, EVENT)
 //   - a synthetic transported-row table containing only (ZTEST, META)
 //
 // and assert the matcher lands ValueMissing for the (ZTEST, EVENT) call.
-func TestTR-EXAMPLEFixture(t *testing.T) {
+func TestPostImportMissedRowsFixture(t *testing.T) {
 	source := `
 CALL FUNCTION 'APPL_LOG_INIT'
   EXPORTING

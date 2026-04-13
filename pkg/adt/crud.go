@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -290,6 +291,143 @@ func isLockConflictError(err error) bool {
 	return strings.Contains(errStr, "403") && strings.Contains(errStr, "currently editing")
 }
 
+// PartialCreateError is returned by CreateObject when the SAP backend
+// failed mid-flight but had already persisted the new object before the
+// HTTP failure surfaced. CleanupOK is true when the best-effort
+// compensation that follows the failure (lock recovery, delete) brought
+// SAP back to a clean state; when false, ManualSteps lists the residual
+// recovery actions the operator must run by hand.
+//
+// The original transport error is wrapped via Unwrap so callers using
+// errors.Is / errors.As keep working unchanged. Error() leads with the
+// partial-create class so log scrapers can distinguish this case from a
+// plain pre-persistence failure.
+type PartialCreateError struct {
+	ObjectURL      string
+	Package        string
+	Transport      string
+	OriginalErr    error
+	CleanupActions []string
+	CleanupOK      bool
+	ManualSteps    []string
+}
+
+func (e *PartialCreateError) Error() string {
+	status := "cleanup attempted"
+	if e.CleanupOK {
+		status = "cleanup ok"
+	}
+	return fmt.Sprintf("create failed after partial persistence (%s): %s [object=%s package=%s transport=%s]",
+		status, e.OriginalErr, e.ObjectURL, e.Package, e.Transport)
+}
+
+func (e *PartialCreateError) Unwrap() error { return e.OriginalErr }
+
+// objectExistsByURL probes whether an ADT object URL points at an
+// object SAP currently knows about. Used by reconcileFailedCreate to
+// disambiguate "request failed and SAP has nothing" from "request failed
+// but SAP already created the object". A 200 means yes, 404 means no,
+// any other outcome (5xx, network, auth) is treated as inconclusive and
+// returned as an error so the caller does not falsely classify a partial
+// create as clean.
+func (c *Client) objectExistsByURL(ctx context.Context, objectURL string) (bool, error) {
+	if objectURL == "" {
+		return false, fmt.Errorf("empty object URL")
+	}
+	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/*",
+	})
+	if err == nil {
+		return true, nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+	}
+	return false, err
+}
+
+// reconcileFailedCreate handles the post-failure recovery sequence for
+// CreateObject. If the original error came from a request that landed
+// before SAP committed anything (404 on probe), it returns the original
+// error unchanged. If SAP committed the object before responding (200
+// on probe), it runs best-effort compensating cleanup — lock release
+// and delete — and wraps the original error in a PartialCreateError
+// so the caller sees both the failure and what we did about it.
+//
+// The cleanup is intentionally best-effort: every step swallows its own
+// error and records what it tried in CleanupActions. The original
+// create error is never lost — it is always the OriginalErr of the
+// returned PartialCreateError. Manual recovery hints are only added
+// when our best-effort attempt could not finish.
+func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOptions, createErr error) error {
+	objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
+	if objectURL == "" {
+		// Object type we cannot URL-encode → no probe possible.
+		return createErr
+	}
+
+	exists, probeErr := c.objectExistsByURL(ctx, objectURL)
+	if probeErr != nil {
+		// Probe inconclusive (5xx, network, auth). Returning the
+		// original error keeps the existing failure semantics so we do
+		// not regress callers who already handle plain create errors.
+		return createErr
+	}
+	if !exists {
+		// SAP did not persist anything — original error is final.
+		return createErr
+	}
+
+	pce := &PartialCreateError{
+		ObjectURL:   objectURL,
+		Package:     opts.PackageName,
+		Transport:   opts.Transport,
+		OriginalErr: createErr,
+	}
+
+	// Step 1: orphan lock cleanup (cheap; reuses the existing helper).
+	c.tryCleanupOrphanLock(ctx, objectURL)
+	pce.CleanupActions = append(pce.CleanupActions, "tried orphan-lock cleanup")
+
+	// Step 2: acquire a fresh lock owned by us, then delete the
+	// half-created object. If we cannot acquire a lock the cleanup
+	// stops here and we surface manual recovery steps; we never try
+	// to delete without a lock because that would 403 anyway.
+	lock, lockErr := c.LockObject(ctx, objectURL, "MODIFY")
+	if lockErr != nil {
+		pce.CleanupActions = append(pce.CleanupActions,
+			fmt.Sprintf("could not acquire lock for delete: %v", lockErr))
+		pce.ManualSteps = []string{
+			"check SM12 for stale locks owned by your user and release them",
+			"if transport-bound, check SE09 for the object and remove it from the transport",
+			"manually delete the object via SE80 once locks are clear",
+		}
+		return pce
+	}
+
+	delErr := c.DeleteObject(ctx, objectURL, lock.LockHandle, opts.Transport)
+	if delErr != nil {
+		// Delete failed despite holding a lock — release the lock
+		// so we do not add to the leak, then surface manual steps.
+		_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		pce.CleanupActions = append(pce.CleanupActions,
+			fmt.Sprintf("delete failed: %v", delErr))
+		pce.ManualSteps = []string{
+			"manually delete the object via SE80",
+			"if transport-bound, remove from transport via SE09 first",
+		}
+		return pce
+	}
+
+	pce.CleanupActions = append(pce.CleanupActions, "deleted partially-created object")
+	pce.CleanupOK = true
+	return pce
+}
+
 // packageExists checks if a package exists in the system.
 // Returns true if package exists or if the check is inconclusive (API errors).
 // Only returns false when GetPackage succeeds but returns an empty/invalid result.
@@ -414,7 +552,14 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	}
 
 	if err != nil {
-		return fmt.Errorf("creating object: %w", err)
+		// reconcileFailedCreate probes whether SAP persisted the object
+		// before the request failed and runs best-effort compensating
+		// cleanup if so. On a clean pre-persistence failure it returns
+		// the original error unchanged; on partial persistence it
+		// returns a *PartialCreateError wrapping the original error and
+		// describing what cleanup was attempted.
+		recErr := c.reconcileFailedCreate(ctx, opts, fmt.Errorf("creating object: %w", err))
+		return recErr
 	}
 
 	return nil

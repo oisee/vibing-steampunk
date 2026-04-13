@@ -616,16 +616,23 @@ func walkDDICMetadata(ctx context.Context, client *adt.Client, tables map[string
 	return result, nil
 }
 
-// runValueLevelAudit is the v2a-min driver. It narrows the set of source
-// objects we must fetch to just those that actually call a known
-// customizing FM — via a single CROSS TYPE='FU' query across the whole
-// known-call registry — then fetches source for each caller, runs the
-// literal extractor, and cross-matches against the transported TABKEYs.
+// runValueLevelAudit is the v2a driver. It narrows the set of source
+// objects we must fetch by intersecting two CROSS lookups with the
+// already-validated in-scope set:
 //
-// The CROSS pre-filter matters: without it we would need to fetch source
-// for every in-scope CLAS/PROG/FUGR/INTF (200+ objects on a real CR),
-// which is ~100 HTTP calls at ~500ms each. With it the source-fetch set
-// is usually single digits to low double digits.
+//   - CROSS TYPE='F' NAME IN (<known FMs>) — finds every include that
+//     calls one of our registered customizing FMs (v2a-min path).
+//   - CROSS TYPE='S' INCLUDE IN (<scope object prefixes>) — finds every
+//     scope include that references any DDIC table directly (v2a.1
+//     SELECT path). Tables we already saw in code-side cross-refs.
+//
+// Their union becomes the "interesting callers" set, and only those
+// objects get source-fetched. On a typical 200+ object CR this drops
+// the source-fetch set from ~200 to single-digit / low-double-digit.
+//
+// After source fetch the literal extractor runs on each, both
+// CALL FUNCTION and SELECT shapes feed the same matcher, and the
+// matcher cross-checks against transported TABKEYs.
 func runValueLevelAudit(
 	ctx context.Context,
 	client *adt.Client,
@@ -633,14 +640,9 @@ func runValueLevelAudit(
 	custTables map[string][]graph.TableCustRow,
 	cache *auditCache,
 ) ([]graph.ValueLevelFinding, error) {
-	if len(knownCustCalls) == 0 {
-		return nil, nil
-	}
-
-	// Collect the set of in-scope object identifiers from codeTables.
-	// Each TableCodeRef carries its source "CLAS:ZCL_FOO" — union the
-	// set across all tables so we know which objects cross-ref analysis
-	// already validated as in-scope.
+	// Collect in-scope object identifiers from codeTables. Each
+	// TableCodeRef carries its source "CLAS:ZCL_FOO" — union them so
+	// we know what cross-ref analysis already validated as in-scope.
 	inScope := make(map[string]bool)
 	for _, refs := range codeTables {
 		for _, r := range refs {
@@ -653,56 +655,8 @@ func runValueLevelAudit(
 		return nil, nil
 	}
 
-	// Step 1: find code includes that reference any registered FM by
-	// querying CROSS TYPE='FU' NAME IN (<batch>). INCLUDE column is where
-	// the caller lives — we then map INCLUDE → parent object.
-	fmNames := make([]string, 0, len(knownCustCalls))
-	for name := range knownCustCalls {
-		fmNames = append(fmNames, name)
-	}
-	sort.Strings(fmNames)
-
-	includesByFM := make(map[string][]string) // FM name → list of caller INCLUDEs
-	for i := 0; i < len(fmNames); i += 5 {
-		end := i + 5
-		if end > len(fmNames) {
-			end = len(fmNames)
-		}
-		batch := fmNames[i:end]
-		quoted := make([]string, len(batch))
-		for j, n := range batch {
-			quoted[j] = "'" + n + "'"
-		}
-		q := fmt.Sprintf(
-			"SELECT INCLUDE, NAME FROM CROSS WHERE TYPE = 'F' AND NAME IN (%s)",
-			strings.Join(quoted, ","))
-		res, err := client.RunQuery(ctx, q, 2000)
-		if err != nil || res == nil {
-			continue
-		}
-		for _, row := range res.Rows {
-			inc := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"])))
-			fm := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["NAME"])))
-			if inc == "" || fm == "" {
-				continue
-			}
-			includesByFM[fm] = append(includesByFM[fm], inc)
-		}
-	}
-
-	// Step 2: match each INCLUDE back to an in-scope parent object by
-	// longest name-prefix match.  `inScope` holds IDs like "CLAS:ZCL_FOO"
-	// or "FUGR:ZDEMO_117"; the INCLUDE column holds "ZCL_FOO========CP",
-	// "LZDEMO_117TOP", etc. For each caller we keep the parent ID plus
-	// the object type, which tells us which source-fetch helper to use.
-	type callSite struct {
-		objType string
-		objName string
-	}
-	callers := make(map[callSite]bool)
-
-	// Build a sorted list of (prefix, id) pairs once — longest prefixes
-	// first so "LZDEMO_117" wins over "ZDEMO_117" for FUGR sub-includes.
+	// Build a sorted list of (prefix, type, name) once. Longest
+	// prefixes first so "LZFOO" wins over "ZFOO" for FUGR sub-includes.
 	type prefixEntry struct {
 		prefix  string
 		objType string
@@ -724,22 +678,89 @@ func runValueLevelAudit(
 		return len(prefixes[i].prefix) > len(prefixes[j].prefix)
 	})
 
-	for _, includes := range includesByFM {
-		for _, inc := range includes {
-			for _, p := range prefixes {
-				if strings.HasPrefix(inc, p.prefix) {
-					callers[callSite{p.objType, p.objName}] = true
-					break
+	type callSite struct {
+		objType string
+		objName string
+	}
+	callers := make(map[callSite]bool)
+
+	matchInclude := func(inc string) {
+		for _, p := range prefixes {
+			if strings.HasPrefix(inc, p.prefix) {
+				callers[callSite{p.objType, p.objName}] = true
+				return
+			}
+		}
+	}
+
+	// Path A: callers of known customizing FMs (CROSS TYPE='F').
+	if len(knownCustCalls) > 0 {
+		fmNames := make([]string, 0, len(knownCustCalls))
+		for name := range knownCustCalls {
+			fmNames = append(fmNames, name)
+		}
+		sort.Strings(fmNames)
+		for i := 0; i < len(fmNames); i += 5 {
+			end := i + 5
+			if end > len(fmNames) {
+				end = len(fmNames)
+			}
+			batch := fmNames[i:end]
+			quoted := make([]string, len(batch))
+			for j, n := range batch {
+				quoted[j] = "'" + n + "'"
+			}
+			q := fmt.Sprintf(
+				"SELECT INCLUDE, NAME FROM CROSS WHERE TYPE = 'F' AND NAME IN (%s)",
+				strings.Join(quoted, ","))
+			res, err := client.RunQuery(ctx, q, 2000)
+			if err != nil || res == nil {
+				continue
+			}
+			for _, row := range res.Rows {
+				inc := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"])))
+				if inc != "" {
+					matchInclude(inc)
 				}
 			}
 		}
 	}
 
+	// Path B: scope objects that already reference one of the CR's
+	// transported tables. We rely on the data collectCodeTables already
+	// produced — its codeTables map contains, for every Z/Y table the
+	// scope code touches, the list of TableCodeRef with FromObject set
+	// to "TYPE:NAME" of the calling code. Intersecting codeTables keys
+	// with custTables keys yields exactly the set of objects whose
+	// SELECT statements *might* match a transported row.
+	//
+	// This is significantly more reliable than a CROSS TYPE='S' query:
+	// on S/4HANA the CROSS table is sparsely populated for OO code, so
+	// the SQL-based pre-filter would miss every CLAS/INTF reference.
+	// WBCROSSGT (which collectCodeTables already walked) is the right
+	// source of truth, and we are simply re-using its output.
+	for tab := range custTables {
+		refs, ok := codeTables[tab]
+		if !ok {
+			continue
+		}
+		for _, r := range refs {
+			if r.FromObject == "" {
+				continue
+			}
+			parts := strings.SplitN(r.FromObject, ":", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			callers[callSite{parts[0], parts[1]}] = true
+		}
+	}
+
 	if len(callers) == 0 {
-		fmt.Fprintf(os.Stderr, "Value-level: no in-scope callers of registered customizing FMs found.\n")
+		fmt.Fprintf(os.Stderr, "Value-level: no in-scope callers found for registered FMs or transported tables.\n")
 		return nil, nil
 	}
-	fmt.Fprintf(os.Stderr, "Value-level: fetching source for %d callers of known customizing FMs...\n", len(callers))
+	fmt.Fprintf(os.Stderr, "Value-level: fetching source for %d candidate callers (CALL FUNCTION + direct SELECT)...\n", len(callers))
 
 	// Step 3: fetch source and run the extractor. Sort for stable output.
 	callerList := make([]callSite, 0, len(callers))

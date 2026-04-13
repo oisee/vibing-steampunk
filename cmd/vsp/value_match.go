@@ -70,14 +70,73 @@ func matchValueLevelFindings(
 	}
 
 	var findings []graph.ValueLevelFinding
+	dropNonKey := 0
+	dropNoTable := 0
 	for _, call := range calls {
+		// Direct-SELECT findings carry every literal WHERE predicate the
+		// extractor saw, including non-key fields. Filter them down to
+		// real DDIC key fields here — "WHERE status = 'X'" against a
+		// status field that is not part of the table's primary key has
+		// no business being a value-level finding. CALL_FUNCTION
+		// findings are already pre-keyed via the FM registry's
+		// keyFields, so this filter is a no-op for them.
+		expected := copyFields(call.Fields)
+		if call.Kind == "direct_select" {
+			kf, ok := keyFieldsByTable[call.Target]
+			if !ok || len(kf) == 0 {
+				// Unknown table or no key metadata → nothing we can
+				// validate. Skip silently but count for the summary.
+				dropNoTable++
+				continue
+			}
+			keySet := make(map[string]bool, len(kf))
+			for _, f := range kf {
+				keySet[f.Name] = true
+			}
+			filtered := make(map[string]string, len(expected))
+			for k, v := range expected {
+				if keySet[k] {
+					filtered[k] = v
+				}
+			}
+			if len(filtered) == 0 {
+				// All literals were on non-key fields — common when
+				// code does `SELECT WHERE status = 'X'` against tables
+				// where status is not part of the primary key. Counted
+				// in the summary so the user understands the gap.
+				dropNonKey++
+				if os.Getenv("VSP_VALUE_DEBUG") != "" {
+					nonKeys := make([]string, 0, len(call.Fields))
+					for k, v := range call.Fields {
+						nonKeys = append(nonKeys, k+"='"+v+"'")
+					}
+					sort.Strings(nonKeys)
+					keyNames := make([]string, len(kf))
+					for i, f := range kf {
+						keyNames[i] = f.Name
+					}
+					fmt.Fprintf(os.Stderr, "  [value debug] %s %s line %d: non-key WHERE %s (table key: %v)\n",
+						call.SourceObject, call.Via, call.Row, strings.Join(nonKeys, " "), keyNames)
+				}
+				continue
+			}
+			expected = filtered
+			// IncompleteKey for SELECT is "we matched fewer key fields
+			// than the table actually has". E.g. a SELECT WHERE
+			// object='ZTEST' on BALSUB only filled OBJECT, not
+			// SUBOBJECT — the finding is still valid but partial-key.
+			if len(expected) < len(kf) {
+				call.IncompleteKey = true
+			}
+		}
+
 		finding := graph.ValueLevelFinding{
 			Table:         call.Target,
 			SourceObject:  call.SourceObject,
 			Via:           call.Via,
 			Kind:          call.Kind,
 			Row:           call.Row,
-			ExpectedKeys:  copyFields(call.Fields),
+			ExpectedKeys:  expected,
 			IncompleteKey: call.IncompleteKey,
 		}
 
@@ -110,6 +169,11 @@ func matchValueLevelFindings(
 			finding.Status = "MISSING"
 		}
 		findings = append(findings, finding)
+	}
+
+	if dropNonKey > 0 || dropNoTable > 0 {
+		fmt.Fprintf(os.Stderr, "Value-level: dropped %d direct-SELECT calls (non-key WHERE: %d, unknown target: %d)\n",
+			dropNonKey+dropNoTable, dropNonKey, dropNoTable)
 	}
 
 	// Stable output order: by (table, source object, via, row).
