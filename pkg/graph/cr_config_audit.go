@@ -40,6 +40,30 @@ type TableCustRow struct {
 	ObjFunc string `json:"objfunc"` // I = insert, U = update, D = delete
 }
 
+// TransitiveReachHop records one "reachable via an intermediate call"
+// chain from an in-scope object to an orphan table. FromScope is the
+// starting object that lives inside the CR's code set; Via is the
+// intermediate object (typically a FUGR or CLAS whose source we never
+// see directly) that actually reads the orphan table. Depth is always
+// 0 or 1 for v2a.3 — 0 means the scope object reads the table directly
+// but we missed it in the forward scan (e.g. the FUGR name matches
+// the table name exactly); 1 means one intermediate call is in the
+// chain. Full N-hop propagation is a later refinement.
+//
+// CallerInclude and ReaderInclude point at the SAP include names that
+// closed each half of the chain: CallerInclude calls the intermediate
+// (depth 1) or reads the table directly (depth 0); ReaderInclude is
+// the include inside the intermediate that does the actual SELECT on
+// the orphan table. These are the hooks the user needs to open ADT
+// and see the exact statements that form the chain.
+type TransitiveReachHop struct {
+	FromScope     string `json:"from_scope"`               // in-scope parent id, "TYPE:NAME"
+	Via           string `json:"via"`                      // intermediate parent id, "TYPE:NAME"
+	Depth         int    `json:"depth"`                    // 0 direct-missed | 1 one hop
+	CallerInclude string `json:"caller_include,omitempty"` // SAP include where FromScope calls the intermediate
+	ReaderInclude string `json:"reader_include,omitempty"` // SAP include where the intermediate reads the table
+}
+
 // CoverageEntry is one row of the final audit report. Depending on which
 // bucket it lives in (Covered / Missing / Orphan) either side may be empty.
 type CoverageEntry struct {
@@ -47,6 +71,12 @@ type CoverageEntry struct {
 	DeliveryClass string         `json:"delivery_class,omitempty"`
 	CodeRefs      []TableCodeRef `json:"code_refs,omitempty"`
 	CustRows      []TableCustRow `json:"cust_rows,omitempty"`
+	// TransitiveReach: when non-empty, this orphan is actually reached
+	// from an in-scope object through a function-call chain. The entry
+	// stays in the Orphan bucket (so the user sees the warning) but the
+	// hops give context: the orphan data is not dead, it feeds a code
+	// path inside this CR indirectly.
+	TransitiveReach []TransitiveReachHop `json:"transitive_reach,omitempty"`
 }
 
 // ValueLevelFinding is one code-side literal lookup cross-checked against

@@ -18,6 +18,17 @@ import (
 
 func nowNano() int64 { return time.Now().UnixNano() }
 
+// stripColonName takes a "TYPE:NAME" identifier and returns just the
+// name half. Used by the transitive-reach renderer so the displayed
+// SQL-probe hint (`CROSS TYPE='F' NAME='FOO'`) shows the bare object
+// name instead of the composite id.
+func stripColonName(id string) string {
+	if idx := strings.Index(id, ":"); idx >= 0 {
+		return id[idx+1:]
+	}
+	return id
+}
+
 // renderFieldMap formats a map of field→value into a deterministic
 // "field=value field=value" string for text-output rendering. Used by
 // the value-level section so the same call site always prints the same
@@ -121,14 +132,34 @@ func runCRConfigAudit(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Split: %d workbench, %d customizing, %d other\n",
 		len(split.WorkbenchTRs), len(split.CustomizingTRs), len(split.OtherTRs))
 
-	codeTables, deletedRefs, err := collectCodeTables(ctx, client, split.WorkbenchTRs, cache)
+	// Resolve parent dev objects for the WB transports once; feed the
+	// result into both the table-scan (below) and the transitive reach
+	// walker (after the report is built). The shared helper collapses
+	// LIMU sub-components to their parent and TADIR-filters deleted
+	// entries so every downstream consumer works with the same scope.
+	liveScopeObjs, deletedRefs, err := collectCRDevObjects(ctx, client, split.WorkbenchTRs)
+	if err != nil {
+		return err
+	}
+	if len(deletedRefs) > 0 {
+		fmt.Fprintf(os.Stderr, "Deleted/stale refs in transports: %d\n", len(deletedRefs))
+	}
+
+	// Build the full in-scope object set — every parent that TADIR
+	// validated, regardless of whether it has a direct DDIC-table
+	// reference. The transitive-reach walker needs this superset:
+	// an FUGR that only calls helper FMs (and reads no tables itself)
+	// still belongs to scope when reasoning about indirect coverage.
+	fullScope := make(map[string]bool, len(liveScopeObjs))
+	for _, o := range liveScopeObjs {
+		fullScope[o.ObjectType+":"+o.ObjectName] = true
+	}
+
+	codeTables, err := collectCodeTablesFromScope(ctx, client, liveScopeObjs, cache)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Code-side: %d unique tables referenced\n", len(codeTables))
-	if len(deletedRefs) > 0 {
-		fmt.Fprintf(os.Stderr, "Deleted/stale refs in transports: %d\n", len(deletedRefs))
-	}
 
 	// Customizing data can live in both Workbench and Customizing TRs —
 	// the user explicitly noted this. Walk E071K across the whole CR.
@@ -184,6 +215,12 @@ func runCRConfigAudit(cmd *cobra.Command, args []string) error {
 	}
 
 	graph.FinalizeCRConfigAuditReport(report)
+
+	// v2a.3: annotate orphan tables with 1-hop transitive reach chains
+	// so the user sees when an "orphan" is actually fed into the CR's
+	// code path through a helper function. Runs after Finalize so the
+	// Orphan slice is fully populated.
+	runTransitiveReach(ctx, client, report, fullScope, cache)
 
 	return outputCRConfigAudit(cmd, report)
 }
@@ -292,20 +329,15 @@ func resolveCRTransports(ctx context.Context, client *adt.Client, crID, attr str
 // level. We collect them all then filter by DD02L presence. Likewise
 // CROSS.TYPE='S' mixes tables and structures. DD02L with TABCLASS filter is
 // the truth source for what's actually a table or view.
-func collectCodeTables(ctx context.Context, client *adt.Client, wbTRs []string, cache *auditCache) (map[string][]graph.TableCodeRef, []CRDeletedRef, error) {
+// collectCodeTablesFromScope is the inner half of the code-table scan.
+// The outer half — resolving the CR's WB transports into a deduplicated
+// set of dev objects via collectCRDevObjects — now runs one level up
+// in runCRConfigAudit so the transitive-reach walker can share the
+// full scope set without rebuilding it.
+func collectCodeTablesFromScope(ctx context.Context, client *adt.Client, liveObjs []CRDevObject, cache *auditCache) (map[string][]graph.TableCodeRef, error) {
 	result := make(map[string][]graph.TableCodeRef)
-	if len(wbTRs) == 0 {
-		return result, nil, nil
-	}
-
-	// Step 1: resolve E071 parent objects for the WB transports. The shared
-	// helper handles both R3TR and LIMU entries, collapses LIMU subcomponents
-	// (METH/CPRI/REPS/...) to their parent object, and cross-checks TADIR so
-	// deleted or missing entries land in deletedRefs instead of producing
-	// 404s on source fetch downstream.
-	liveObjs, deletedRefs, err := collectCRDevObjects(ctx, client, wbTRs)
-	if err != nil {
-		return nil, nil, err
+	if len(liveObjs) == 0 {
+		return result, nil
 	}
 
 	objSet := map[devObj]bool{}
@@ -319,7 +351,7 @@ func collectCodeTables(ctx context.Context, client *adt.Client, wbTRs []string, 
 	}
 
 	if len(objSet) == 0 {
-		return result, deletedRefs, nil
+		return result, nil
 	}
 	total := len(objSet)
 	fmt.Fprintf(os.Stderr, "Scanning %d code objects for symbol references...\n", total)
@@ -408,14 +440,14 @@ func collectCodeTables(ctx context.Context, client *adt.Client, wbTRs []string, 
 	}
 	tableSet, err := filterDDICTables(ctx, client, symbols, cache)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	for t, refs := range rawRefs {
 		if tableSet[t] {
 			result[t] = refs
 		}
 	}
-	return result, deletedRefs, nil
+	return result, nil
 }
 
 // walkDDICMetadata expands the DDIC dependency chain for every table in
@@ -1529,16 +1561,58 @@ func printCRConfigAuditText(r *graph.CRConfigAuditReport, details bool) {
 	}
 
 	if len(r.Orphan) > 0 {
-		fmt.Println("ORPHAN — transported rows for tables no code in CR references:")
+		// Split orphans into two visual groups: those reachable from
+		// in-scope code via a 1-hop call chain (annotation only, still
+		// orphan for bookkeeping) and the genuinely unreferenced ones.
+		// The transitive group is less alarming — the CR's code does
+		// drive the table, just through a helper function we can't see
+		// in direct code-refs. Showing the chain keeps the user informed
+		// without quietly hiding a real issue.
+		var transitive, deadEnd []graph.CoverageEntry
 		for _, e := range r.Orphan {
-			fmt.Printf("  %-25s  %d rows\n", e.Table, len(e.CustRows))
-			if details {
-				for _, row := range e.CustRows {
-					fmt.Printf("    %s  %s  TABKEY=%s\n", row.TRKORR, row.ObjFunc, row.TabKey)
-				}
+			if len(e.TransitiveReach) > 0 {
+				transitive = append(transitive, e)
+			} else {
+				deadEnd = append(deadEnd, e)
 			}
 		}
-		fmt.Println()
+
+		if len(deadEnd) > 0 {
+			fmt.Println("ORPHAN — transported rows for tables no code in CR references:")
+			for _, e := range deadEnd {
+				fmt.Printf("  %-25s  %d rows\n", e.Table, len(e.CustRows))
+				if details {
+					for _, row := range e.CustRows {
+						fmt.Printf("    %s  %s  TABKEY=%s\n", row.TRKORR, row.ObjFunc, row.TabKey)
+					}
+				}
+			}
+			fmt.Println()
+		}
+
+		if len(transitive) > 0 {
+			fmt.Println("ORPHAN (reachable via 1-hop call chain — likely intentional indirect reads):")
+			for _, e := range transitive {
+				fmt.Printf("  %-25s  %d rows\n", e.Table, len(e.CustRows))
+				for _, hop := range e.TransitiveReach {
+					if hop.Depth == 0 {
+						fmt.Printf("    ← %s  (direct read in %s)\n", hop.FromScope, hop.ReaderInclude)
+					} else {
+						fmt.Printf("    ← %s → %s → %s\n", hop.FromScope, hop.Via, e.Table)
+						fmt.Printf("        call site: %s  (CROSS TYPE='F' NAME='%s')\n",
+							hop.CallerInclude, stripColonName(hop.Via))
+						fmt.Printf("        read site: %s  (WBCROSSGT OTYPE='TY' NAME='%s')\n",
+							hop.ReaderInclude, e.Table)
+					}
+				}
+				if details {
+					for _, row := range e.CustRows {
+						fmt.Printf("      row: %s  %s  TABKEY=%s\n", row.TRKORR, row.ObjFunc, row.TabKey)
+					}
+				}
+			}
+			fmt.Println()
+		}
 	}
 
 	if len(r.Covered) > 0 {
