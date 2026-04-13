@@ -98,6 +98,56 @@ func (s *Server) handleX(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 
 Never commit `.env`, `cookies.txt`, `.mcp.json`, or local agent/MCP config files (all in `.gitignore`).
 
+### Sanitize policy for tracked docs, tests, and examples
+
+The public repo must not contain concrete identifiers that tie code or
+docs to a live SAP system, a real user, or a customer's ABAP namespace.
+Anything that does belongs under `.local/` (gitignored) and never in
+`contexts/`, `reports/`, `docs/`, or any tracked test fixture.
+
+**Never in tracked files:**
+- Real SAP usernames — use `TESTUSER`
+- Real hostnames or IPs — use `dev.example.local`, `prodsys-a.example`, `trialsys.example`
+- System aliases that name a live box — use `devsys`, `devsys-adt`, `prodsys-a`, `prodsys-b`
+- Live transport numbers (`DEVK[0-9]+`, `R[0-9]{2}K[0-9]+`, `D[0-9]{2}K[0-9]+`) — use `TR-EXAMPLE`
+- Live change request IDs — use `CR-EXAMPLE`
+- Customer ABAP namespaces from real projects — use synthetic `ZDEMO_*`, `ZCL_DEMO_*`, `ZIF_DEMO_*`, `$ZDEMO`
+- Customer transport attribute names — use `Z_CR_ATTR`
+- Real passwords, API keys, bearer tokens (obvious, but stated)
+- Real person names tied to private systems (OSS attribution for upstream libraries is fine — "user X on private host Y" is not)
+
+**Always OK in tracked files:**
+- `$ZHIRTEST*`, `ZCL_HIRT*`, `ZCUSTOM_DEVELOPMENT` — pre-agreed synthetic fixtures
+- Public GitHub handles that are already in the Go module path
+- Upstream OSS attribution for library authors
+
+**Operational scratch goes under `.local/`** — session notes, live CR
+dumps, bug repros with real identifiers, debugging transcripts. The
+`.local/` dir is gitignored. If you need to reference it from a
+tracked doc, redact first.
+
+**Before every commit that touches `reports/`, `contexts/`, `docs/`,
+or test fixtures:** scan the staged diff for the identifier families
+above. The detection signature (concrete literal list of past-leaked
+strings) lives at `.local/scripts/check-identifiers.sh` and is
+gitignored on purpose — the signature itself would otherwise be the
+leak it is trying to prevent. Structural patterns safe to commit:
+
+```bash
+git diff --cached | grep -nE \
+  '\b[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b|' \
+  '\b[A-Z][0-9]{2}K[0-9]{6}\b|' \
+  '\bDEVK[0-9]{6,}\b'
+```
+
+That catches IPv4 literals and SAP transport IDs without hardcoding
+a specific customer's values. Pair it with the private signature
+file for the names-based families (usernames, hostnames, ABAP object
+prefixes). If either matches, move the content under `.local/` and
+replace the tracked version with a synthetic placeholder. Rule of
+thumb: "would a stranger reading this file be able to identify the
+customer, the system, or a live account?" If yes, redact.
+
 ## Conventions
 
 Reports: `reports/YYYY-MM-DD-NNN-title.md`. SAP objects: `ZADT_<nn>_<name>`, `ZCL_ADT_<name>`, packages `$ZADT*`.
