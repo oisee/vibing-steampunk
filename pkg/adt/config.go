@@ -244,17 +244,37 @@ func (c *Config) NewHTTPClient() *http.Client {
 		Timeout:   c.Timeout,
 	}
 
-	// Preserve Authorization header across redirects.
-	// Go's default strips it per RFC 7235 §4.2, but SAP BTP/Cloud
-	// authentication flows require it to survive redirects.
-	// Without this, BTP users get 401 even though curl works (issue #90).
+	// Preserve ADT-critical headers across redirects.
+	//
+	// Go's default strips Authorization / WWW-Authenticate / Cookie / Cookie2
+	// on cross-origin redirects per RFC 7235 §4.2 — SAP BTP/Cloud SAML flows
+	// need Authorization back, otherwise the IdP dance drops it and the user
+	// gets 401 even though curl works (issue #90).
+	//
+	// Custom headers like X-CSRF-Token and X-sap-adt-sessiontype are *not*
+	// in Go's sensitive-headers list, so Go technically forwards them by
+	// default. We re-set them explicitly anyway for two reasons:
+	//   - defensive: guards against any Go version or middleware tweak that
+	//     decides to strip custom headers on its own;
+	//   - intent: makes it obvious in the code that these two headers are
+	//     load-bearing for the lock→write→unlock ADT sequence. If either
+	//     goes missing across a redirect, the second hop hits SAP with a
+	//     fresh (stateless) session-type or a missing CSRF token, and the
+	//     lock handle / mutation is rejected.
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("too many redirects")
 		}
 		if len(via) > 0 {
-			if auth := via[0].Header.Get("Authorization"); auth != "" {
+			first := via[0]
+			if auth := first.Header.Get("Authorization"); auth != "" {
 				req.Header.Set("Authorization", auth)
+			}
+			if csrf := first.Header.Get("X-CSRF-Token"); csrf != "" {
+				req.Header.Set("X-CSRF-Token", csrf)
+			}
+			if st := first.Header.Get("X-sap-adt-sessiontype"); st != "" {
+				req.Header.Set("X-sap-adt-sessiontype", st)
 			}
 		}
 		return nil

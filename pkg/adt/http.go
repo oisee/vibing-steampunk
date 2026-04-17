@@ -8,10 +8,75 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
+
+// httpTraceEnabled reports whether the VSP_HTTP_TRACE env var requests raw
+// HTTP request/response dumps to stderr. Diagnostic-only — never leaves the
+// binary switched on by default, and Authorization / Cookie values are
+// redacted so the dump is safe to paste.
+func httpTraceEnabled() bool {
+	v := os.Getenv("VSP_HTTP_TRACE")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+const httpTraceBodyLimit = 4096
+
+func traceHTTPRequest(req *http.Request, body []byte) {
+	if !httpTraceEnabled() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n>>> HTTP %s %s\n", req.Method, req.URL.String())
+	for k, vs := range req.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "Cookie") {
+				v = "[REDACTED]"
+			}
+			fmt.Fprintf(os.Stderr, ">>> %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(os.Stderr, ">>> body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(os.Stderr, ">>> ... (truncated)\n")
+		}
+	}
+}
+
+func traceHTTPResponse(resp *http.Response, body []byte) {
+	if !httpTraceEnabled() || resp == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "<<< HTTP %d %s\n", resp.StatusCode, resp.Status)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Set-Cookie") {
+				if i := strings.Index(v, "="); i > 0 {
+					v = v[:i] + "=[REDACTED]"
+				}
+			}
+			fmt.Fprintf(os.Stderr, "<<< %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(os.Stderr, "<<< body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(os.Stderr, "<<< ... (truncated)\n")
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+}
 
 // HTTPDoer is an interface for executing HTTP requests.
 // This abstraction allows for easy testing with mock implementations.
@@ -140,6 +205,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	}
 
 	// Execute request
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
@@ -151,6 +217,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 
 	// Handle CSRF token refresh on 403
 	if resp.StatusCode == http.StatusForbidden && isModifyingMethod(opts.Method) {
@@ -255,6 +322,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing retry request: %w", err)
@@ -265,6 +333,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 
 	if resp.StatusCode >= 400 {
 		return nil, &APIError{
@@ -308,6 +377,7 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, nil)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
@@ -316,6 +386,7 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 
 	// Drain body to allow connection reuse
 	_, _ = io.Copy(io.Discard, resp.Body)
+	traceHTTPResponse(resp, nil)
 
 	// Note: HEAD may return 400 but still provides CSRF token in headers
 	// But 401/403 indicates auth failure and won't have a valid token
