@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"strings"
@@ -90,6 +91,14 @@ type Transport struct {
 	config     *Config
 	httpClient HTTPDoer
 
+	// jar, if non-nil, points to the cookie jar of the underlying
+	// *http.Client. Used by clearSAPSessionCookies to drop stale
+	// sap-contextid / SAP_SESSIONID entries on session-expiry recovery;
+	// the cached CSRF token and in-memory sessionID alone are not enough
+	// — SAP keeps replying ICMENOSESSION until the dead contextid cookie
+	// stops leaking back into outgoing requests.
+	jar http.CookieJar
+
 	// CSRF token management
 	csrfToken string
 	csrfMu    sync.RWMutex
@@ -110,19 +119,25 @@ type Transport struct {
 
 // NewTransport creates a new Transport with the given configuration.
 func NewTransport(cfg *Config) *Transport {
+	hc := cfg.NewHTTPClient()
 	return &Transport{
 		config:     cfg,
-		httpClient: cfg.NewHTTPClient(),
+		httpClient: hc,
+		jar:        hc.Jar,
 	}
 }
 
 // NewTransportWithClient creates a new Transport with a custom HTTP client.
 // This is useful for testing with mock HTTP clients.
 func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
-	return &Transport{
+	t := &Transport{
 		config:     cfg,
 		httpClient: client,
 	}
+	if hc, ok := client.(*http.Client); ok {
+		t.jar = hc.Jar
+	}
+	return t
 }
 
 // RequestOptions contains options for an HTTP request.
@@ -250,9 +265,14 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 
 		// Handle session timeout - refresh session and retry once
 		if apiErr.IsSessionExpired() {
-			// Clear cached CSRF token and session ID
+			// Clear cached CSRF token, session ID, AND the stale sap-contextid /
+			// SAP_SESSIONID cookies. Without dropping the jar entries SAP keeps
+			// routing the retry to the same dead context and replies
+			// ICMENOSESSION in a loop (including on the HEAD /core/discovery
+			// fetch that's supposed to open a fresh session).
 			t.setCSRFToken("")
 			t.setSessionID("")
+			t.clearSAPSessionCookies()
 			// Fetch new CSRF token (this establishes a new session)
 			if err := t.fetchCSRFToken(ctx); err != nil {
 				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
@@ -488,6 +508,45 @@ func (t *Transport) extractSessionID(resp *http.Response) string {
 		}
 	}
 	return ""
+}
+
+// clearSAPSessionCookies replaces the cookie jar with a fresh one to
+// drop every stale sap-contextid / SAP_SESSIONID entry the server set
+// during the now-expired stateful context.
+//
+// Long-running MCP-server processes hit this after the first
+// Lock→Write→Unlock→Activate cycle: the stateless Activate call ends
+// the stateful context on SAP's side, but the jar keeps the contextid
+// from the earlier stateful responses. Every subsequent request then
+// re-sends the dead identifier and SAP replies HTTP 400 ICMENOSESSION
+// — including on the HEAD /core/discovery refetch that the
+// IsSessionExpired recovery path relies on. Short-lived CLI
+// subcommands don't see the bug because each spawns a fresh process.
+//
+// Earlier attempts to delete targeted cookies via SetCookies with
+// MaxAge=-1 failed in practice because Go's http.CookieJar keys each
+// entry by (name, domain, path) and does not expose the stored path
+// through its public interface: SAP's ICM sets sap-contextid with
+// paths like /sap/, /sap/bc/, or /sap/bc/adt/, and an expire cookie
+// for Path="/" leaves those entries untouched. Replacing the jar
+// entirely removes every path variant in a single step.
+//
+// User-provided cookies (config.Cookies, e.g. SAML/SSO session
+// cookies from browser-auth) are attached per request via addCookies()
+// on each outbound Request, so the jar swap does not lose them — only
+// cookies that the server had dynamically deposited during the dead
+// session are dropped, which is exactly the desired behaviour.
+func (t *Transport) clearSAPSessionCookies() {
+	hc, ok := t.httpClient.(*http.Client)
+	if !ok {
+		return
+	}
+	fresh, err := cookiejar.New(nil)
+	if err != nil {
+		return
+	}
+	hc.Jar = fresh
+	t.jar = fresh
 }
 
 // CSRF token accessors with mutex protection
