@@ -3158,14 +3158,23 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  [%d/%d] %s ... ", i+1, len(objects), obj.Name)
 
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
+		res, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		switch {
+		case err != nil:
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failed++
-		} else {
+		case res == nil || !res.Success:
+			msg := "unknown failure"
+			if res != nil && res.Message != "" {
+				msg = res.Message
+			}
+			fmt.Fprintf(os.Stderr, "FAILED: %s\n", msg)
+			failed++
+		default:
 			fmt.Fprintf(os.Stderr, "OK\n")
 			deployed++
 		}
