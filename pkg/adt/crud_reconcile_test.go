@@ -550,15 +550,41 @@ func TestCreateTestInclude_UsesStatefulSession(t *testing.T) {
 	}
 }
 
-// TestLockObject_RejectsNoModification covers the BTP / ABAP Cloud
-// case from issue #91: a successful LOCK can return
-// MODIFICATION_SUPPORT=NoModification to signal that the object is
-// read-only via ADT for this user/system. Before the fix the caller
-// proceeded to PUT and got a confusing 423 InvalidLockHandle several
-// seconds later. The expected behaviour is to fail at the LOCK call
-// with a clear, actionable error message.
-func TestLockObject_RejectsNoModification(t *testing.T) {
-	const noModLockXML = `<?xml version="1.0" encoding="UTF-8"?>
+// TestLockObject_PassesThroughModificationSupport pins the correct
+// semantics of the MODIFICATION_SUPPORT field on the ADT lock response.
+//
+// The SAP standard interface IF_ADT_LOCK_RESULT defines four values:
+//
+//   - "ModifcationAssistant"    (CO_MOD_SUPPORT_MODASS)       — SAP/partner
+//     object, Modification Assistant on.
+//   - "ModificationsLoggedOnly" (CO_MOD_SUPPORT_LOGGED_ONLY)  — SAP/partner
+//     object, no Modification Assistant (changes only logged).
+//   - "NoModification"          (CO_MOD_SUPPORT_NOT_NEEDED)   — customer
+//     namespace object; modification tracking is NOT NEEDED. This is the
+//     usual response when a developer edits their own Z*/Y* code.
+//   - ""                        (CO_MOD_SUPPORT_NOT_SPECIFIED) — not set.
+//
+// The string "NoModification" therefore means "no tracking needed", not
+// "no edit allowed". An earlier commit (22517d4) hard-failed on this value
+// as if it meant read-only, which broke every normal customer-code edit
+// on destinations that populate the field (e.g. SAP Business Application
+// Studio via Cloud Connector + Principal Propagation). This test locks
+// the corrected behaviour: LockObject returns the parsed result verbatim
+// for any value of MODIFICATION_SUPPORT, and callers treat it as
+// advisory metadata only.
+func TestLockObject_PassesThroughModificationSupport(t *testing.T) {
+	cases := []struct {
+		name    string
+		support string
+	}{
+		{"customer-namespace-not-needed", "NoModification"},
+		{"sap-modification-assistant", "ModifcationAssistant"},
+		{"sap-logged-only", "ModificationsLoggedOnly"},
+		{"not-specified", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lockXML := `<?xml version="1.0" encoding="UTF-8"?>
 <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
     <DATA>
@@ -568,40 +594,45 @@ func TestLockObject_RejectsNoModification(t *testing.T) {
       <CORRTEXT></CORRTEXT>
       <IS_LOCAL></IS_LOCAL>
       <IS_LINK_UP></IS_LINK_UP>
-      <MODIFICATION_SUPPORT>NoModification</MODIFICATION_SUPPORT>
+      <MODIFICATION_SUPPORT>` + tc.support + `</MODIFICATION_SUPPORT>
     </DATA>
   </asx:values>
 </asx:abap>`
-	mock := &methodPathMock{
-		routes: []routedResponse{
-			resp("", "discovery", 200, "ok"),
-			resp(http.MethodPost, "/oo/classes/ZREADONLY", 200, noModLockXML),
-		},
-	}
-	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
-	transport := NewTransportWithClient(cfg, mock)
-	client := NewClientWithTransport(cfg, transport)
+			mock := &methodPathMock{
+				routes: []routedResponse{
+					resp("", "discovery", 200, "ok"),
+					resp(http.MethodPost, "/oo/classes/ZOBJ", 200, lockXML),
+				},
+			}
+			cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+			transport := NewTransportWithClient(cfg, mock)
+			client := NewClientWithTransport(cfg, transport)
 
-	_, err := client.LockObject(
-		context.Background(),
-		"/sap/bc/adt/oo/classes/ZREADONLY",
-		"MODIFY",
-	)
-	if err == nil {
-		t.Fatal("LockObject should have returned an error for NoModification, got nil")
-	}
-	if !strings.Contains(err.Error(), "not modifiable") {
-		t.Errorf("error = %q, want to contain \"not modifiable\"", err.Error())
-	}
-	if !strings.Contains(err.Error(), "NoModification") {
-		t.Errorf("error = %q, want to surface the raw modificationSupport value", err.Error())
+			result, err := client.LockObject(
+				context.Background(),
+				"/sap/bc/adt/oo/classes/ZOBJ",
+				"MODIFY",
+			)
+			if err != nil {
+				t.Fatalf("LockObject(MODIFY) must not fail on MODIFICATION_SUPPORT=%q, got error: %v", tc.support, err)
+			}
+			if result == nil {
+				t.Fatal("LockObject returned nil result")
+			}
+			if result.LockHandle != "HANDLE-X" {
+				t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
+			}
+			if result.ModificationSupport != tc.support {
+				t.Errorf("ModificationSupport = %q, want %q (must be passed through verbatim)", result.ModificationSupport, tc.support)
+			}
+		})
 	}
 }
 
-// TestLockObject_AllowsNoModificationOnReadLock proves the guard is
-// scoped to MODIFY locks — read-only locks (accessMode != MODIFY)
-// must still succeed even if the system flags the object as not
-// modifiable, because there is no write to fail downstream.
+// TestLockObject_AllowsNoModificationOnReadLock exercises the READ access
+// mode path, which skips the OpLock safety check. Kept as a companion to
+// TestLockObject_PassesThroughModificationSupport so the READ branch
+// keeps explicit coverage for the same metadata-only behaviour.
 func TestLockObject_AllowsNoModificationOnReadLock(t *testing.T) {
 	const noModLockXML = `<?xml version="1.0" encoding="UTF-8"?>
 <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
@@ -639,3 +670,4 @@ func TestLockObject_AllowsNoModificationOnReadLock(t *testing.T) {
 		t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
 	}
 }
+

@@ -7,11 +7,77 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
+
+// httpTraceEnabled reports whether the VSP_HTTP_TRACE env var requests raw
+// HTTP request/response dumps to stderr. Diagnostic-only — never leaves the
+// binary switched on by default, and Authorization / Cookie values are
+// redacted so the dump is safe to paste.
+func httpTraceEnabled() bool {
+	v := os.Getenv("VSP_HTTP_TRACE")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+const httpTraceBodyLimit = 4096
+
+func traceHTTPRequest(req *http.Request, body []byte) {
+	if !httpTraceEnabled() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\n>>> HTTP %s %s\n", req.Method, req.URL.String())
+	for k, vs := range req.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "Cookie") {
+				v = "[REDACTED]"
+			}
+			fmt.Fprintf(os.Stderr, ">>> %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(os.Stderr, ">>> body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(os.Stderr, ">>> ... (truncated)\n")
+		}
+	}
+}
+
+func traceHTTPResponse(resp *http.Response, body []byte) {
+	if !httpTraceEnabled() || resp == nil {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "<<< HTTP %d %s\n", resp.StatusCode, resp.Status)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Set-Cookie") {
+				if i := strings.Index(v, "="); i > 0 {
+					v = v[:i] + "=[REDACTED]"
+				}
+			}
+			fmt.Fprintf(os.Stderr, "<<< %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(os.Stderr, "<<< body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(os.Stderr, "<<< ... (truncated)\n")
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+}
 
 // HTTPDoer is an interface for executing HTTP requests.
 // This abstraction allows for easy testing with mock implementations.
@@ -24,6 +90,14 @@ type HTTPDoer interface {
 type Transport struct {
 	config     *Config
 	httpClient HTTPDoer
+
+	// jar, if non-nil, points to the cookie jar of the underlying
+	// *http.Client. Used by clearSAPSessionCookies to drop stale
+	// sap-contextid / SAP_SESSIONID entries on session-expiry recovery;
+	// the cached CSRF token and in-memory sessionID alone are not enough
+	// — SAP keeps replying ICMENOSESSION until the dead contextid cookie
+	// stops leaking back into outgoing requests.
+	jar http.CookieJar
 
 	// CSRF token management
 	csrfToken string
@@ -45,19 +119,25 @@ type Transport struct {
 
 // NewTransport creates a new Transport with the given configuration.
 func NewTransport(cfg *Config) *Transport {
+	hc := cfg.NewHTTPClient()
 	return &Transport{
 		config:     cfg,
-		httpClient: cfg.NewHTTPClient(),
+		httpClient: hc,
+		jar:        hc.Jar,
 	}
 }
 
 // NewTransportWithClient creates a new Transport with a custom HTTP client.
 // This is useful for testing with mock HTTP clients.
 func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
-	return &Transport{
+	t := &Transport{
 		config:     cfg,
 		httpClient: client,
 	}
+	if hc, ok := client.(*http.Client); ok {
+		t.jar = hc.Jar
+	}
+	return t
 }
 
 // RequestOptions contains options for an HTTP request.
@@ -140,6 +220,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	}
 
 	// Execute request
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
@@ -151,6 +232,7 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 
 	// Handle CSRF token refresh on 403
 	if resp.StatusCode == http.StatusForbidden && isModifyingMethod(opts.Method) {
@@ -183,9 +265,14 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 
 		// Handle session timeout - refresh session and retry once
 		if apiErr.IsSessionExpired() {
-			// Clear cached CSRF token and session ID
+			// Clear cached CSRF token, session ID, AND the stale sap-contextid /
+			// SAP_SESSIONID cookies. Without dropping the jar entries SAP keeps
+			// routing the retry to the same dead context and replies
+			// ICMENOSESSION in a loop (including on the HEAD /core/discovery
+			// fetch that's supposed to open a fresh session).
 			t.setCSRFToken("")
 			t.setSessionID("")
+			t.clearSAPSessionCookies()
 			// Fetch new CSRF token (this establishes a new session)
 			if err := t.fetchCSRFToken(ctx); err != nil {
 				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
@@ -255,6 +342,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing retry request: %w", err)
@@ -265,6 +353,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 
 	if resp.StatusCode >= 400 {
 		return nil, &APIError{
@@ -308,6 +397,7 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, nil)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("executing request: %w", err)
@@ -316,6 +406,7 @@ func (t *Transport) fetchCSRFToken(ctx context.Context) error {
 
 	// Drain body to allow connection reuse
 	_, _ = io.Copy(io.Discard, resp.Body)
+	traceHTTPResponse(resp, nil)
 
 	// Note: HEAD may return 400 but still provides CSRF token in headers
 	// But 401/403 indicates auth failure and won't have a valid token
@@ -417,6 +508,45 @@ func (t *Transport) extractSessionID(resp *http.Response) string {
 		}
 	}
 	return ""
+}
+
+// clearSAPSessionCookies replaces the cookie jar with a fresh one to
+// drop every stale sap-contextid / SAP_SESSIONID entry the server set
+// during the now-expired stateful context.
+//
+// Long-running MCP-server processes hit this after the first
+// Lock→Write→Unlock→Activate cycle: the stateless Activate call ends
+// the stateful context on SAP's side, but the jar keeps the contextid
+// from the earlier stateful responses. Every subsequent request then
+// re-sends the dead identifier and SAP replies HTTP 400 ICMENOSESSION
+// — including on the HEAD /core/discovery refetch that the
+// IsSessionExpired recovery path relies on. Short-lived CLI
+// subcommands don't see the bug because each spawns a fresh process.
+//
+// Earlier attempts to delete targeted cookies via SetCookies with
+// MaxAge=-1 failed in practice because Go's http.CookieJar keys each
+// entry by (name, domain, path) and does not expose the stored path
+// through its public interface: SAP's ICM sets sap-contextid with
+// paths like /sap/, /sap/bc/, or /sap/bc/adt/, and an expire cookie
+// for Path="/" leaves those entries untouched. Replacing the jar
+// entirely removes every path variant in a single step.
+//
+// User-provided cookies (config.Cookies, e.g. SAML/SSO session
+// cookies from browser-auth) are attached per request via addCookies()
+// on each outbound Request, so the jar swap does not lose them — only
+// cookies that the server had dynamically deposited during the dead
+// session are dropped, which is exactly the desired behaviour.
+func (t *Transport) clearSAPSessionCookies() {
+	hc, ok := t.httpClient.(*http.Client)
+	if !ok {
+		return
+	}
+	fresh, err := cookiejar.New(nil)
+	if err != nil {
+		return
+	}
+	hc.Jar = fresh
+	t.jar = fresh
 }
 
 // CSRF token accessors with mutex protection
