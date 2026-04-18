@@ -3058,11 +3058,18 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	// Phase 1: Check prerequisites
 	fmt.Fprintf(os.Stderr, "Checking prerequisites...\n")
 
-	// Check if package exists
-	packageExists := false
-	pkg, err := client.GetPackage(ctx, packageName)
-	if err == nil && pkg.URI != "" {
-		packageExists = true
+	// Check if package exists.
+	// GetPackage reads the nodestructure API and cannot distinguish
+	// "package does not exist" from "package exists but has no children",
+	// so we use the direct PackageExists probe here. If the probe itself
+	// errors (5xx, network), we fall through to the create path and let
+	// SAP's own error surface there.
+	packageExists, err := client.PackageExists(ctx, packageName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Package %s existence check failed: %v — will attempt create\n", packageName, err)
+		packageExists = false
+	}
+	if packageExists {
 		fmt.Fprintf(os.Stderr, "  Package %s exists\n", packageName)
 	} else {
 		fmt.Fprintf(os.Stderr, "  Package %s will be created\n", packageName)
@@ -3310,10 +3317,16 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 
 	ctx := context.Background()
 
-	// Ensure package exists
+	// Ensure package exists. PackageExists probes /packages/{name} directly;
+	// a GetPackage-based check cannot distinguish "absent" from "present but
+	// empty" because nodestructure returns an empty tree in both cases.
 	fmt.Fprintf(os.Stderr, "Checking package %s...\n", packageName)
-	pkg, pkgErr := client.GetPackage(ctx, packageName)
-	if pkgErr != nil || pkg.URI == "" {
+	exists, pkgErr := client.PackageExists(ctx, packageName)
+	if pkgErr != nil {
+		fmt.Fprintf(os.Stderr, "  Package existence check failed: %v — will attempt create\n", pkgErr)
+		exists = false
+	}
+	if !exists {
 		fmt.Fprintf(os.Stderr, "Creating package %s...\n", packageName)
 		err = client.CreateObject(ctx, adt.CreateObjectOptions{
 			ObjectType:  adt.ObjectTypePackage,
