@@ -114,6 +114,7 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 		info.ObjectType = ObjectTypeProgram
 	case strings.HasSuffix(baseName, ".incl.abap"):
 		info.ObjectType = ObjectTypeInclude
+		info.ObjectName = strings.ToUpper(strings.ReplaceAll(strings.TrimSuffix(baseName, ".incl.abap"), "#", "/"))
 	case strings.HasSuffix(baseName, ".intf.abap"):
 		info.ObjectType = ObjectTypeInterface
 	case strings.HasSuffix(baseName, ".fugr.abap"):
