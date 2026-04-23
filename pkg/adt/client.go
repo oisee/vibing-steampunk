@@ -167,11 +167,17 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 func normalizeObjectURLForPackageCheck(objectURL string) string {
 	normalized := strings.TrimSuffix(objectURL, "/")
 
-	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
-		return normalized[:idx]
-	}
 	if strings.HasSuffix(normalized, "/source/main") {
-		return strings.TrimSuffix(normalized, "/source/main")
+		normalized = strings.TrimSuffix(normalized, "/source/main")
+	}
+
+	// Strip /includes/... only for class sub-resources (e.g. /oo/classes/ZCL_FOO/includes/locals_def).
+	// Program includes use /programs/includes/NAME where /includes/ is the collection path — don't strip.
+	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
+		prefix := normalized[:idx]
+		if !strings.HasSuffix(prefix, "/programs") {
+			return prefix
+		}
 	}
 
 	return normalized

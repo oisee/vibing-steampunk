@@ -218,10 +218,10 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 
 	// Validate object type
 	switch objectType {
-	case "PROG", "CLAS", "INTF", "DDLS", "BDEF", "SRVD", "SRVB":
+	case "PROG", "CLAS", "INTF", "INCL", "DDLS", "BDEF", "SRVD", "SRVB":
 		// Supported types
 	default:
-		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF, DDLS, BDEF, SRVD, SRVB)", objectType)
+		result.Message = fmt.Sprintf("Unsupported object type: %s (supported: PROG, CLAS, INTF, INCL, DDLS, BDEF, SRVD, SRVB)", objectType)
 		return result, nil
 	}
 
@@ -238,6 +238,9 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 			objectExists = (err == nil)
 		case "INTF":
 			_, err := c.GetInterface(ctx, name)
+			objectExists = (err == nil)
+		case "INCL":
+			_, err := c.GetInclude(ctx, name)
 			objectExists = (err == nil)
 		case "DDLS":
 			_, err := c.GetDDLS(ctx, name)
@@ -315,6 +318,29 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		result.SyntaxErrors = progResult.SyntaxErrors
 		result.Activation = progResult.Activation
 		result.Message = progResult.Message
+		return result, nil
+
+	case "INCL":
+		if err := c.CreateObject(ctx, CreateObjectOptions{
+			ObjectType:  ObjectTypeInclude,
+			Name:        name,
+			Description: opts.Description,
+			PackageName: opts.Package,
+			Transport:   opts.Transport,
+		}); err != nil {
+			result.Message = fmt.Sprintf("Failed to create include: %v", err)
+			return result, nil
+		}
+		inclResult, err := c.WriteInclude(ctx, name, source, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to write include source: %v", err)
+			return result, nil
+		}
+		result.Success = inclResult.Success
+		result.ObjectURL = inclResult.ObjectURL
+		result.SyntaxErrors = inclResult.SyntaxErrors
+		result.Activation = inclResult.Activation
+		result.Message = inclResult.Message
 		return result, nil
 
 	case "CLAS":
@@ -681,6 +707,19 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		result.SyntaxErrors = progResult.SyntaxErrors
 		result.Activation = progResult.Activation
 		result.Message = progResult.Message
+		return result, nil
+
+	case "INCL":
+		inclResult, err := c.WriteInclude(ctx, name, source, opts.Transport)
+		if err != nil {
+			result.Message = fmt.Sprintf("Failed to update include: %v", err)
+			return result, nil
+		}
+		result.Success = inclResult.Success
+		result.ObjectURL = inclResult.ObjectURL
+		result.SyntaxErrors = inclResult.SyntaxErrors
+		result.Activation = inclResult.Activation
+		result.Message = inclResult.Message
 		return result, nil
 
 	case "CLAS":
