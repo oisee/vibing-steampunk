@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"time"
 )
 
@@ -227,9 +228,32 @@ func WithTerminalID(terminalID string) Option {
 	}
 }
 
+// httpCookieJar wraps cookiejar.Jar and strips the Secure flag when storing cookies
+// received over plain HTTP. This is required for SAP systems accessed via HTTP reverse
+// proxies that still set Secure cookies (e.g. nginx in front of SAP ICM). Go's standard
+// jar won't send Secure cookies on HTTP requests, causing CSRF tokens to appear expired
+// because the session cookie never reaches the server on subsequent requests.
+type httpCookieJar struct {
+	*cookiejar.Jar
+}
+
+func (j *httpCookieJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	if u.Scheme == "http" {
+		stripped := make([]*http.Cookie, len(cookies))
+		for i, c := range cookies {
+			copy := *c
+			copy.Secure = false
+			stripped[i] = &copy
+		}
+		cookies = stripped
+	}
+	j.Jar.SetCookies(u, cookies)
+}
+
 // NewHTTPClient creates an http.Client configured for the given Config.
 func (c *Config) NewHTTPClient() *http.Client {
-	jar, _ := cookiejar.New(nil)
+	base, _ := cookiejar.New(nil)
+	jar := &httpCookieJar{base}
 
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
