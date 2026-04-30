@@ -83,6 +83,65 @@ func TestClient_SearchObject(t *testing.T) {
 	}
 }
 
+func TestClient_SearchObjectByType_QueryParams(t *testing.T) {
+	emptyResponse := `<?xml version="1.0" encoding="UTF-8"?>
+<adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`
+
+	cases := []struct {
+		name        string
+		objectType  string
+		wantPresent bool
+		wantValue   string
+	}{
+		{"with type sends objectType param", "CLAS/OC", true, "CLAS/OC"},
+		{"empty type omits objectType param", "", false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &mockTransportClient{
+				responses: map[string]*http.Response{
+					"search":    newTestResponse(emptyResponse),
+					"discovery": newTestResponse("OK"),
+				},
+			}
+
+			cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+			transport := NewTransportWithClient(cfg, mock)
+			client := NewClientWithTransport(cfg, transport)
+
+			if _, err := client.SearchObjectByType(context.Background(), "Z*", tc.objectType, 50); err != nil {
+				t.Fatalf("SearchObjectByType failed: %v", err)
+			}
+
+			var searchReq *http.Request
+			for _, r := range mock.requests {
+				if strings.Contains(r.URL.Path, "informationsystem/search") {
+					searchReq = r
+					break
+				}
+			}
+			if searchReq == nil {
+				t.Fatalf("no search request captured (got %d requests)", len(mock.requests))
+			}
+
+			q := searchReq.URL.Query()
+			if got := q.Get("query"); got != "Z*" {
+				t.Errorf("query = %q, want %q", got, "Z*")
+			}
+			if got := q.Get("maxResults"); got != "50" {
+				t.Errorf("maxResults = %q, want %q", got, "50")
+			}
+			values, present := q["objectType"]
+			if present != tc.wantPresent {
+				t.Errorf("objectType present = %v, want %v (values=%v)", present, tc.wantPresent, values)
+			}
+			if tc.wantPresent && (len(values) == 0 || values[0] != tc.wantValue) {
+				t.Errorf("objectType = %v, want %q", values, tc.wantValue)
+			}
+		})
+	}
+}
+
 func TestClient_CheckObjectPackageSafety_NormalizesObjectURLs(t *testing.T) {
 	tests := []struct {
 		name      string

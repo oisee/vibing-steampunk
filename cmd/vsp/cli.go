@@ -255,6 +255,40 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 // --- search command ---
 
+// canonicalObjectType maps the documented short forms (CLAS, INTF, PROG, ...)
+// to the ADT-canonical group codes the SAP server expects on the
+// informationsystem/search endpoint. Unknown values pass through verbatim,
+// covering already-canonical input ("CLAS/OC"), namespaced types, or custom codes.
+func canonicalObjectType(s string) string {
+	switch strings.ToUpper(s) {
+	case "":
+		return ""
+	case "CLAS":
+		return "CLAS/OC"
+	case "INTF":
+		return "INTF/OI"
+	case "PROG":
+		return "PROG/P"
+	case "FUGR":
+		return "FUGR/F"
+	case "FUNC":
+		return "FUGR/FF"
+	case "TABL":
+		return "TABL/DT"
+	case "DTEL":
+		return "DTEL/DE"
+	case "DOMA":
+		return "DOMA/DD"
+	case "DDLS":
+		return "DDLS/DF"
+	case "MSAG":
+		return "MSAG/N"
+	case "TRAN":
+		return "TRAN/T"
+	}
+	return s
+}
+
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search for ABAP objects",
@@ -285,7 +319,13 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
 	ctx := context.Background()
 
-	results, err := client.SearchObject(ctx, query, maxResults)
+	adtType := canonicalObjectType(objectType)
+	if v, _ := cmd.Flags().GetBool("verbose"); v {
+		fmt.Fprintf(os.Stderr, "[DEBUG] search: query=%q objectType=%q maxResults=%d\n",
+			query, adtType, maxResults)
+	}
+
+	results, err := client.SearchObjectByType(ctx, query, adtType, maxResults)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}

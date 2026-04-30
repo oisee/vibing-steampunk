@@ -247,6 +247,16 @@ func (c *Client) AllowPackageTemporarily(pkg string) func() {
 // SearchObject searches for ABAP objects by name pattern.
 // The query parameter supports wildcards (* for multiple chars, ? for single char).
 func (c *Client) SearchObject(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
+	return c.SearchObjectByType(ctx, query, "", maxResults)
+}
+
+// SearchObjectByType searches for ABAP objects by name pattern, optionally
+// constrained to a specific ADT object type code (e.g. "CLAS/OC", "PROG/P",
+// "INTF/OI"). An empty objectType means "any type" and behaves identically
+// to SearchObject. Server-side type filtering is required when combined with
+// maxResults: filtering after the fact silently drops results that didn't
+// fit in the pre-filter window.
+func (c *Client) SearchObjectByType(ctx context.Context, query, objectType string, maxResults int) ([]SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 100
 	}
@@ -255,6 +265,9 @@ func (c *Client) SearchObject(ctx context.Context, query string, maxResults int)
 	params.Set("operation", "quickSearch")
 	params.Set("query", query)
 	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	if objectType != "" {
+		params.Set("objectType", objectType)
+	}
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/repository/informationsystem/search", &RequestOptions{
 		Method: http.MethodGet,
