@@ -285,6 +285,7 @@ func canonicalObjectType(s string) string {
 		return "MSAG/N"
 	case "TRAN":
 		return "TRAN/T"
+	// TODO: add INCL→PROG/I once https://github.com/oisee/vibing-steampunk/pull/121 is merged upstream
 	}
 	return s
 }
