@@ -4,7 +4,6 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -88,9 +87,6 @@ type Config struct {
 	// Graph / co-change configuration
 	TransportAttribute string // E070A attribute name for CR-level co-change aggregation
 
-	// Session type: "stateful" keeps SAP session across requests (required for lock/write flows)
-	SessionType string
-
 	// Debugger configuration
 	TerminalID string // SAP GUI terminal ID for cross-tool breakpoint sharing
 
@@ -129,15 +125,6 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.Verbose {
 		opts = append(opts, adt.WithVerbose())
-	}
-	if cfg.SessionType != "" {
-		st := adt.SessionType(cfg.SessionType)
-		switch st {
-		case adt.SessionStateful, adt.SessionStateless, adt.SessionKeep:
-			opts = append(opts, adt.WithSessionType(st))
-		default:
-			fmt.Fprintf(os.Stderr, "[vsp] warning: unknown SAP_SESSION_TYPE %q, using default (stateless)\n", cfg.SessionType)
-		}
 	}
 	if cfg.ReauthFunc != nil {
 		opts = append(opts, adt.WithReauthFunc(cfg.ReauthFunc))
