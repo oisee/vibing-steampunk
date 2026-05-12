@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oisee/vibing-steampunk/pkg/adt"
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 	"github.com/spf13/cobra"
 )
 

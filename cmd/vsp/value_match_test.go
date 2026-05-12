@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 )
 
 // TestSubsetMatch_Basic reproduces the subset semantics directly on

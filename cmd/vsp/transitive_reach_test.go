@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 )
 
 // TestIncludeToParent covers the reverse mapping from SAP include

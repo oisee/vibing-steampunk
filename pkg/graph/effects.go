@@ -3,7 +3,7 @@ package graph
 import (
 	"strings"
 
-	"github.com/oisee/vibing-steampunk/pkg/abaplint"
+	"github.com/vinchacho/vibing-steampunk/pkg/abaplint"
 )
 
 // EffectInfo describes the side effects of a code unit.

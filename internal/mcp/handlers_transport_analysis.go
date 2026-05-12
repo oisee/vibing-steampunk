@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 )
 
 // --- CR History ---

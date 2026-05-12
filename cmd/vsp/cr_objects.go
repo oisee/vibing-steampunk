@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
 // CRDevObject is a canonical, de-duplicated parent-level entry derived from

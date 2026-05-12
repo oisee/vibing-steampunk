@@ -3,7 +3,7 @@ package main
 import (
 	"strings"
 
-	"github.com/oisee/vibing-steampunk/pkg/abaplint"
+	"github.com/vinchacho/vibing-steampunk/pkg/abaplint"
 )
 
 // CodeLiteralCall captures one point in the source where the code supplies

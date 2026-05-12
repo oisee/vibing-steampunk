@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oisee/vibing-steampunk/pkg/adt"
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 )
 
 // newTempCache opens a fresh auditCache rooted in the test's temp dir.

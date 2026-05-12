@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/oisee/vibing-steampunk/pkg/adt"
-	"github.com/oisee/vibing-steampunk/pkg/graph"
+	"github.com/vinchacho/vibing-steampunk/pkg/adt"
+	"github.com/vinchacho/vibing-steampunk/pkg/graph"
 )
 
 // matchValueLevelFindings takes the set of CodeLiteralCall entries the
