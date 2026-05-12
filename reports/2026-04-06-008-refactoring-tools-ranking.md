@@ -36,9 +36,9 @@ It answers:
 Recommended shapes:
 
 ```bash
-vsp refactor plan rename-package '$ZSCR_103' --to '$ZNEO_433'
-vsp refactor plan prefix ZSCR_103 --to ZNEO_433
-vsp refactor plan object CLAS ZCL_SCR_103_FOO --to ZCL_NEO_433_FOO
+vsp refactor plan rename-package '$ZDEMO_103' --to '$ZNEO_433'
+vsp refactor plan prefix ZDEMO_103 --to ZNEO_433
+vsp refactor plan object CLAS ZCL_DEMO_103_FOO --to ZCL_NEO_433_FOO
 ```
 
 Why first:
@@ -80,8 +80,8 @@ This is the bold idea:
 
 Example:
 
-- source package: `$ZSCR_103`
-- source names: `ZCL_SCR_103_*`, `ZIF_SCR_103_*`, `ZSCR_103_*`
+- source package: `$ZDEMO_103`
+- source names: `ZCL_DEMO_103_*`, `ZIF_DEMO_103_*`, `ZDEMO_103_*`
 - target package: `$ZNEO_433`
 - target names: `ZCL_NEO_433_*`, `ZIF_NEO_433_*`, `ZNEO_433_*`
 - explicit allowlist for dependencies that may remain external
@@ -113,7 +113,7 @@ It answers:
 Example:
 
 ```bash
-vsp refactor leaks '$ZSCR_103' --allowed '$ZCOMMON,/VENDOR/*'
+vsp refactor leaks '$ZDEMO_103' --allowed '$ZCOMMON,/VENDOR/*'
 ```
 
 This is an excellent precursor to package clone.
@@ -226,8 +226,8 @@ So the safest architecture is:
 ### Phase A: Planner Only
 
 ```bash
-vsp clone plan '$ZSCR_103' --to-package '$ZNEO_433' \
-  --rename-prefix ZSCR_103=ZNEO_433 \
+vsp clone plan '$ZDEMO_103' --to-package '$ZNEO_433' \
+  --rename-prefix ZDEMO_103=ZNEO_433 \
   --allow '$ZCOMMON,/VENDOR/*'
 ```
 
@@ -243,7 +243,7 @@ Output:
 ### Phase B: Workspace Generation
 
 ```bash
-vsp clone export '$ZSCR_103' --plan plan.json --out clone-work/
+vsp clone export '$ZDEMO_103' --plan plan.json --out clone-work/
 ```
 
 This produces a reviewable artifact workspace.

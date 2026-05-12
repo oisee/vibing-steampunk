@@ -2,6 +2,7 @@ cookies.txt
 cookies
 cookie.txt
 cookie
+cookie*.txt
 
 # Sub-repos
 mcp-abap-adt/
@@ -71,6 +72,9 @@ abap-adt-api/
 sessions/
 node_modules/
 
+# Local stash for in-progress notes / reports with customer-identifying content
+.local/
+
 # Transient files
 *.jsonl
 2026-*-last-login-*
@@ -81,3 +85,23 @@ node_modules/
 # GoReleaser artifacts
 RELEASE_NOTES.md
 dist/
+
+# Operational scratch — sensitive session notes, live CR dumps, bug repros
+# with real identifiers. Anything that names a live system, user, transport,
+# or customer object goes here, NEVER in tracked docs.
+.local/
+.codex
+.codex/
+_bugs/
+CR_*.md
+cr-*.md
+AGENTS.md
+amdp-breakpoint-test-results-*.log
+
+# Live SAP session cookies (credential material)
+cookie-*.txt
+cookie-*
+
+# Third-party source drops evaluated in place
+quickjs/
+quickjs.zip

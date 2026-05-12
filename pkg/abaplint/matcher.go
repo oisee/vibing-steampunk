@@ -120,6 +120,7 @@ func (sm *StatementMatcher) register() {
 	sm.addKeyword("Catch", "CATCH", Seq(Str("CATCH"), anyRest))
 	sm.addKeyword("Raise", "RAISE", Seq(Str("RAISE"), anyRest))
 	sm.addKeyword("Commit", "COMMIT", Seq(Str("COMMIT"), anyRest))
+	sm.addKeyword("LeaveToTransaction", "LEAVE", Seq(Str("LEAVE"), Str("TO"), Str("TRANSACTION"), anyRest))
 	sm.addKeyword("Leave", "LEAVE", Seq(Str("LEAVE"), anyRest))
 	sm.addKeyword("Submit", "SUBMIT", Seq(Str("SUBMIT"), anyRest))
 	sm.addKeyword("Sort", "SORT", Seq(Str("SORT"), anyRest))
@@ -189,6 +190,8 @@ func (sm *StatementMatcher) register() {
 
 	// CALL
 	sm.addKeyword("CallFunction", "CALL", Seq(Str("CALL"), Str("FUNCTION"), anyRest))
+	sm.addKeyword("CallTransaction", "CALL", Seq(Str("CALL"), Str("TRANSACTION"), anyRest))
+	sm.addKeyword("CallTransformation", "CALL", Seq(Str("CALL"), Str("TRANSFORMATION"), anyRest))
 	sm.addKeyword("CallScreen", "CALL", Seq(Str("CALL"), Str("SCREEN"), anyRest))
 	sm.addKeyword("CallSelectionScreen", "CALL", Seq(Str("CALL"), Str("SELECTION"), Tok(TokenDash), Str("SCREEN"), anyRest))
 

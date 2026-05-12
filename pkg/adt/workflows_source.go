@@ -187,11 +187,6 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		fmt.Fprintf(os.Stderr, "[DEBUG] WriteSource: BaseURL=%s, objectType=%s, name=%s\n", c.config.BaseURL, objectType, name)
 	}
 
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "WriteSource"); err != nil {
-		return nil, err
-	}
-
 	if opts == nil {
 		opts = &WriteSourceOptions{Mode: WriteModeUpsert}
 	}
@@ -199,8 +194,17 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		opts.Mode = WriteModeUpsert
 	}
 
-	// Check if transportable edits are allowed when transport is specified
-	if err := c.checkTransportableEdit(opts.Transport, "WriteSource"); err != nil {
+	// Top-level mutation gate. The precise package check runs in the
+	// delegated create/update path (CreateAndActivate* / WriteProgram /
+	// WriteClass) because the target package is known there; here we
+	// enforce op-type and transportable-edit policy up front so the caller
+	// gets a clear early rejection.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "WriteSource",
+		Package:   opts.Package, // empty for update path, present for create
+		Transport: opts.Transport,
+	}); err != nil {
 		return nil, err
 	}
 

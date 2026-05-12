@@ -144,18 +144,18 @@ func (c *Client) EditSource(ctx context.Context, objectURL, oldString, newString
 //     "METHOD foo.\n  rv_result = 42.\n  ENDMETHOD.",
 //     &EditSourceOptions{Method: "FOO"})
 func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString, newString string, opts *EditSourceOptions) (*EditSourceResult, error) {
-	// Safety check
-	if err := c.checkSafety(OpUpdate, "EditSource"); err != nil {
-		return nil, err
-	}
-
 	// Default options
 	if opts == nil {
 		opts = &EditSourceOptions{SyntaxCheck: true}
 	}
 
-	// Check if transportable edits are allowed when transport is specified
-	if err := c.checkTransportableEdit(opts.Transport, "EditSource"); err != nil {
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "EditSource",
+		ObjectURL: objectURL,
+		Transport: opts.Transport,
+	}); err != nil {
 		return nil, err
 	}
 	// SyntaxCheck defaults to true if not explicitly set (zero value is false, so we need to handle this)

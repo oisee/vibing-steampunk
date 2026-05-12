@@ -127,7 +127,7 @@ func runChangelog(cmd *cobra.Command, args []string) error {
 func fetchChangelogRefs(ctx context.Context, client *adt.Client, objects []PackageObject) []transportRef {
 	var refs []transportRef
 	for idx, obj := range objects {
-		fmt.Fprintf(os.Stderr, "\r  [%d/%d] %s %s", idx+1, len(objects), obj.Type, obj.Name)
+		fmt.Fprintf(os.Stderr, "\r  [%d/%d] %s %-40s", idx+1, len(objects), obj.Type, obj.Name)
 		query := fmt.Sprintf(
 			"SELECT TRKORR, PGMID, OBJECT, OBJ_NAME FROM E071 WHERE PGMID = 'R3TR' AND OBJECT = '%s' AND OBJ_NAME = '%s'",
 			obj.Type, obj.Name,

@@ -170,7 +170,14 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 			if attrStatus == "" {
 				attrStatus = "-"
 			}
-			fmt.Printf("    %s: %s [%s@%s] pwd:%s attr:%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, attrStatus, marker)
+			cacheStatus := "-"
+			if sys.Cache {
+				cacheStatus = sys.CachePath
+				if cacheStatus == "" {
+					cacheStatus = "on"
+				}
+			}
+			fmt.Printf("    %s: %s [%s@%s] pwd:%s attr:%s cache:%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, attrStatus, cacheStatus, marker)
 		}
 	}
 

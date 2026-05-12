@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -51,7 +52,29 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 		return nil, fmt.Errorf("locking object: %w", err)
 	}
 
-	return parseLockResult(resp.Body)
+	result, err := parseLockResult(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// BTP / ABAP Cloud systems sometimes return a successful lock with
+	// MODIFICATION_SUPPORT="NoModification" — the lock acquired but the
+	// object is read-only via ADT (typical for SAP-delivered objects in
+	// hyperfocused mode, or systems where the user lacks the edit role).
+	// Without this guard the caller proceeds to PUT/POST and gets a
+	// confusing 423 InvalidLockHandle several seconds later. Surface it
+	// upfront so the user sees a clear, actionable error (issue #91).
+	if accessMode == "MODIFY" && strings.EqualFold(result.ModificationSupport, "NoModification") {
+		return nil, fmt.Errorf(
+			"object %s is not modifiable via ADT on this system "+
+				"(SAP returned modificationSupport=%q during LOCK). "+
+				"Common causes: read-only system class, missing developer/edit role, "+
+				"BTP ABAP Environment object outside the customer namespace, "+
+				"or hyperfocused mode locking the object as read-only",
+			objectURL, result.ModificationSupport)
+	}
+
+	return result, nil
 }
 
 func parseLockResult(data []byte) (*LockResult, error) {
@@ -113,8 +136,13 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, source string, lockHandle string, transport string) error {
-	// Safety check
-	if err := c.checkSafety(OpUpdate, "UpdateSource"); err != nil {
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UpdateSource",
+		ObjectURL: objectSourceURL,
+		Transport: transport,
+	}); err != nil {
 		return err
 	}
 
@@ -285,13 +313,242 @@ func isLockConflictError(err error) bool {
 	return strings.Contains(errStr, "403") && strings.Contains(errStr, "currently editing")
 }
 
+// PartialCreateError is returned by CreateObject when the SAP backend
+// failed mid-flight but had already persisted the new object before the
+// HTTP failure surfaced. CleanupOK is true when the best-effort
+// compensation that follows the failure (lock recovery, delete) brought
+// SAP back to a clean state; when false, ManualSteps lists the residual
+// recovery actions the operator must run by hand.
+//
+// The original transport error is wrapped via Unwrap so callers using
+// errors.Is / errors.As keep working unchanged. Error() leads with the
+// partial-create class so log scrapers can distinguish this case from a
+// plain pre-persistence failure.
+type PartialCreateError struct {
+	ObjectURL      string
+	Package        string
+	Transport      string
+	OriginalErr    error
+	CleanupActions []string
+	CleanupOK      bool
+	ManualSteps    []string
+}
+
+func (e *PartialCreateError) Error() string {
+	status := "cleanup attempted"
+	if e.CleanupOK {
+		status = "cleanup ok"
+	}
+	return fmt.Sprintf("create failed after partial persistence (%s): %s [object=%s package=%s transport=%s]",
+		status, e.OriginalErr, e.ObjectURL, e.Package, e.Transport)
+}
+
+func (e *PartialCreateError) Unwrap() error { return e.OriginalErr }
+
+// objectExistsByURL probes whether an ADT object URL points at an
+// object SAP currently knows about. Used by reconcileFailedCreate to
+// disambiguate "request failed and SAP has nothing" from "request failed
+// but SAP already created the object". A 200 means yes, 404 means no,
+// any other outcome (5xx, network, auth) is treated as inconclusive and
+// returned as an error so the caller does not falsely classify a partial
+// create as clean.
+func (c *Client) objectExistsByURL(ctx context.Context, objectURL string) (bool, error) {
+	if objectURL == "" {
+		return false, fmt.Errorf("empty object URL")
+	}
+	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/*",
+	})
+	if err == nil {
+		return true, nil
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+	}
+	return false, err
+}
+
+// reconcileFailedCreate handles the post-failure recovery sequence for
+// CreateObject. If the original error came from a request that landed
+// before SAP committed anything (404 on probe), it returns the original
+// error unchanged. If SAP committed the object before responding (200
+// on probe), it runs best-effort compensating cleanup — lock release
+// and delete — and wraps the original error in a PartialCreateError
+// so the caller sees both the failure and what we did about it.
+//
+// The cleanup is intentionally best-effort: every step swallows its own
+// error and records what it tried in CleanupActions. The original
+// create error is never lost — it is always the OriginalErr of the
+// returned PartialCreateError. Manual recovery hints are only added
+// when our best-effort attempt could not finish.
+func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOptions, createErr error) error {
+	objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
+	if objectURL == "" {
+		// Object type we cannot URL-encode → no probe possible.
+		return createErr
+	}
+
+	exists, probeErr := c.objectExistsByURL(ctx, objectURL)
+	if probeErr != nil {
+		// Probe inconclusive (5xx, network, auth). Returning the
+		// original error keeps the existing failure semantics so we do
+		// not regress callers who already handle plain create errors.
+		return createErr
+	}
+	if !exists {
+		// SAP did not persist anything — original error is final.
+		return createErr
+	}
+
+	pce := c.cleanupPartialObject(ctx, objectURL, opts.PackageName, opts.Transport)
+	pce.OriginalErr = createErr
+	return pce
+}
+
+// cleanupPartialObject runs the best-effort compensating cleanup for a
+// zombie object: orphan-lock release, then acquire a fresh session-
+// scoped lock and delete. The result is a *PartialCreateError that
+// records what was attempted and whether the object is now gone.
+// Callers that invoke it from an explicit recovery path — e.g. the
+// MCP `recover_failed_create` tool — leave OriginalErr nil; callers
+// that invoke it after a failed CreateObject attach the original
+// transport error on top.
+//
+// Factored out of reconcileFailedCreate so the same cleanup sequence
+// serves both the automatic post-failure path and the explicit
+// operator-driven recovery path.
+func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, transport string) *PartialCreateError {
+	pce := &PartialCreateError{
+		ObjectURL: objectURL,
+		Package:   pkg,
+		Transport: transport,
+	}
+
+	// Step 1: orphan lock cleanup (cheap; reuses the existing helper).
+	c.tryCleanupOrphanLock(ctx, objectURL)
+	pce.CleanupActions = append(pce.CleanupActions, "tried orphan-lock cleanup")
+
+	// Step 2: acquire a fresh lock owned by us, then delete the
+	// half-created object. If we cannot acquire a lock the cleanup
+	// stops here and we surface manual recovery steps; we never try
+	// to delete without a lock because that would 403 anyway.
+	lock, lockErr := c.LockObject(ctx, objectURL, "MODIFY")
+	if lockErr != nil {
+		pce.CleanupActions = append(pce.CleanupActions,
+			fmt.Sprintf("could not acquire lock for delete: %v", lockErr))
+		pce.ManualSteps = []string{
+			"check SM12 for stale locks owned by your user and release them",
+			"if transport-bound, check SE09 for the object and remove it from the transport",
+			"manually delete the object via SE80 once locks are clear",
+		}
+		return pce
+	}
+
+	delErr := c.DeleteObject(ctx, objectURL, lock.LockHandle, transport)
+	if delErr != nil {
+		// Delete failed despite holding a lock — release the lock
+		// so we do not add to the leak, then surface manual steps.
+		_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		pce.CleanupActions = append(pce.CleanupActions,
+			fmt.Sprintf("delete failed: %v", delErr))
+		pce.ManualSteps = []string{
+			"manually delete the object via SE80",
+			"if transport-bound, remove from transport via SE09 first",
+		}
+		return pce
+	}
+
+	pce.CleanupActions = append(pce.CleanupActions, "deleted partially-created object")
+	pce.CleanupOK = true
+	return pce
+}
+
+// RecoverFailedCreate is the operator-facing recovery primitive. It
+// lets the caller clean up a zombie object left behind by an earlier
+// failed CreateObject without needing a lock handle from the original
+// (now-lost) session. The caller passes the object identity — type,
+// name, parent for nested FMs, and optionally the transport it was
+// attached to — and we probe whether SAP currently thinks the object
+// exists:
+//
+//   - if the object does not exist, we return a PartialCreateError
+//     with CleanupOK=true and a "nothing to clean" note. This is the
+//     happy idempotent case: re-running recovery on an already-clean
+//     object is a no-op.
+//   - if the object exists, we run the same best-effort compensating
+//     cleanup used by reconcileFailedCreate after a failed create:
+//     orphan-lock release, fresh lock acquisition, DeleteObject,
+//     structured result with ManualSteps on partial success.
+//
+// Callers MUST validate object ownership themselves before invoking
+// this. The reconcile path is safe because the object was just created
+// by the current user; the operator-driven path must not nuke an
+// object that another user is legitimately editing. The MCP handler
+// enforces this by gating behind SAP_ENABLE_LOCK_ADMIN and by
+// refusing to touch objects whose package is not in the allowed list.
+func (c *Client) RecoverFailedCreate(ctx context.Context, opts CreateObjectOptions) *PartialCreateError {
+	objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
+	if objectURL == "" {
+		return &PartialCreateError{
+			OriginalErr:    fmt.Errorf("unsupported object type %q for recovery", opts.ObjectType),
+			CleanupActions: []string{"could not derive object URL"},
+		}
+	}
+
+	exists, probeErr := c.objectExistsByURL(ctx, objectURL)
+	if probeErr != nil {
+		return &PartialCreateError{
+			ObjectURL:      objectURL,
+			Package:        opts.PackageName,
+			Transport:      opts.Transport,
+			OriginalErr:    fmt.Errorf("existence probe failed: %w", probeErr),
+			CleanupActions: []string{"existence probe inconclusive — aborted without cleanup"},
+			ManualSteps: []string{
+				"retry the recovery once network / auth is stable",
+				"check SM12 and SE09 manually if the retry also fails",
+			},
+		}
+	}
+	if !exists {
+		// Idempotent no-op: nothing to clean. Return CleanupOK=true
+		// with an explanatory note so the operator knows the action
+		// was acknowledged and is safe to retry.
+		return &PartialCreateError{
+			ObjectURL:      objectURL,
+			Package:        opts.PackageName,
+			Transport:      opts.Transport,
+			CleanupActions: []string{"object does not exist — nothing to recover"},
+			CleanupOK:      true,
+		}
+	}
+
+	return c.cleanupPartialObject(ctx, objectURL, opts.PackageName, opts.Transport)
+}
+
 // packageExists checks if a package exists in the system.
-// Returns true if package exists, false otherwise.
+// Returns true if package exists or if the check is inconclusive (API errors).
+// Only returns false when GetPackage succeeds but returns an empty/invalid result.
 // Uses GetPackage (nodestructure API) which passes the package name as a query
 // parameter, avoiding URL path encoding issues with $ in local package names.
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
-	_, err := c.GetPackage(ctx, packageName)
-	return err == nil
+	pkg, err := c.GetPackage(ctx, packageName)
+	if err != nil {
+		// API call failed — could be CSRF, auth, network, etc.
+		// Be optimistic: let the actual create call handle real errors
+		// rather than blocking on a false negative.
+		errStr := err.Error()
+		if strings.Contains(errStr, "404") || strings.Contains(errStr, "not found") {
+			return false
+		}
+		return true
+	}
+	// GetPackage succeeded but returned no objects and no sub-packages —
+	// still a valid (possibly empty) package
+	return pkg != nil
 }
 
 // CreateObject creates a new ABAP object.
@@ -299,11 +556,6 @@ func (c *Client) packageExists(ctx context.Context, packageName string) bool {
 // This prevents orphan ENQUEUE locks that SAP creates internally during CreateObject
 // before validating the request. These orphan locks can only be cleared via SM12.
 func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) error {
-	// Safety check
-	if err := c.checkSafety(OpCreate, "CreateObject"); err != nil {
-		return err
-	}
-
 	typeInfo, ok := objectTypes[opts.ObjectType]
 	if !ok {
 		return fmt.Errorf("unsupported object type: %s", opts.ObjectType)
@@ -312,13 +564,19 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	opts.Name = strings.ToUpper(opts.Name)
 	opts.PackageName = strings.ToUpper(opts.PackageName)
 
-	// Check package restrictions
 	// For package creation, check the package being created (opts.Name), not the parent (opts.PackageName)
 	packageToCheck := opts.PackageName
 	if opts.ObjectType == ObjectTypePackage {
 		packageToCheck = opts.Name
 	}
-	if err := c.checkPackageSafety(packageToCheck); err != nil {
+
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "CreateObject",
+		Package:   packageToCheck,
+		Transport: opts.Transport,
+	}); err != nil {
 		return err
 	}
 
@@ -395,7 +653,14 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 	}
 
 	if err != nil {
-		return fmt.Errorf("creating object: %w", err)
+		// reconcileFailedCreate probes whether SAP persisted the object
+		// before the request failed and runs best-effort compensating
+		// cleanup if so. On a clean pre-persistence failure it returns
+		// the original error unchanged; on partial persistence it
+		// returns a *PartialCreateError wrapping the original error and
+		// describing what cleanup was attempted.
+		recErr := c.reconcileFailedCreate(ctx, opts, fmt.Errorf("creating object: %w", err))
+		return recErr
 	}
 
 	return nil
@@ -585,8 +850,13 @@ func escapeXML(s string) string {
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle string, transport string) error {
-	// Safety check
-	if err := c.checkSafety(OpDelete, "DeleteObject"); err != nil {
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpDelete,
+		OpName:    "DeleteObject",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); err != nil {
 		return err
 	}
 
@@ -597,8 +867,9 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 	}
 
 	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
-		Method: http.MethodDelete,
-		Query:  params,
+		Method:   http.MethodDelete,
+		Query:    params,
+		Stateful: true, // Lock handles are session-specific — must match the session that acquired the lock (issue #88)
 	})
 	if err != nil {
 		return fmt.Errorf("deleting object: %w", err)
@@ -700,6 +971,16 @@ func GetClassIncludeSourceURL(className string, includeType ClassIncludeType) st
 func (c *Client) CreateTestInclude(ctx context.Context, className string, lockHandle string, transport string) error {
 	className = strings.ToUpper(className)
 
+	// Unified mutation policy gate (op type + parent class package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "CreateTestInclude",
+		ObjectURL: GetObjectURL(ObjectTypeClass, className, ""),
+		Transport: transport,
+	}); err != nil {
+		return err
+	}
+
 	body := `<?xml version="1.0" encoding="UTF-8"?>
 <class:abapClassInclude xmlns:class="http://www.sap.com/adt/oo/classes"
   xmlns:adtcore="http://www.sap.com/adt/core"
@@ -718,6 +999,7 @@ func (c *Client) CreateTestInclude(ctx context.Context, className string, lockHa
 		Query:       params,
 		Body:        []byte(body),
 		ContentType: "application/*",
+		Stateful:    true, // Must match lock session — the lock was acquired statefully (issues #88/#92/#98)
 	})
 	if err != nil {
 		return fmt.Errorf("creating test include: %w", err)
@@ -745,6 +1027,16 @@ func (c *Client) GetClassInclude(ctx context.Context, className string, includeT
 func (c *Client) UpdateClassInclude(ctx context.Context, className string, includeType ClassIncludeType, source string, lockHandle string, transport string) error {
 	sourceURL := GetClassIncludeSourceURL(className, includeType)
 
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UpdateClassInclude",
+		ObjectURL: sourceURL,
+		Transport: transport,
+	}); err != nil {
+		return err
+	}
+
 	params := url.Values{}
 	params.Set("lockHandle", lockHandle)
 	if transport != "" {
@@ -756,6 +1048,7 @@ func (c *Client) UpdateClassInclude(ctx context.Context, className string, inclu
 		Query:       params,
 		Body:        []byte(source),
 		ContentType: "text/plain; charset=utf-8",
+		Stateful:    true, // Must match lock session — the lock was acquired statefully (issues #88/#92/#98)
 	})
 	if err != nil {
 		return fmt.Errorf("updating class include: %w", err)

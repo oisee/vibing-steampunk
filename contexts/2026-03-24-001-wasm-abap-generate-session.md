@@ -131,7 +131,7 @@ IF gv_br > 0. gv_br = gv_br - 1. EXIT. ENDIF.  " only inside loops
 ## Next Session Seed
 
 ### Blockers
-SAP work process on a4h-105-adt locked by massive GENERATE (327K instructions).
+SAP work process on devsys2-adt locked by massive GENERATE (327K instructions).
 Needs WP restart before any SAP testing.
 
 ### Priority 1: SAP Recovery + Deploy + Test
@@ -223,8 +223,8 @@ WHEN 17. " call_indirect
 
 | System | Status | What's deployed |
 |--------|--------|-----------------|
-| a4h-105-adt | **LOCKED** (WP stuck on GENERATE) | Old codegen (pre-fd_write, pre-parse-fix) |
-| a4h-110-adt | OK | No WASM classes |
+| devsys2-adt | **LOCKED** (WP stuck on GENERATE) | Old codegen (pre-fd_write, pre-parse-fix) |
+| devsys-adt | OK | No WASM classes |
 | Local | OK | All 20 commits, Go tests 12/12 pass |
 | GitHub | OK | All pushed to origin/main |
 

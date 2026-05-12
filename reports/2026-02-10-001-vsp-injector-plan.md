@@ -17,7 +17,7 @@
 Fresh/wiped SAP system → Connect via ADT → Bootstrap full toolkit → Full AI development power
 
 ### Target System
-- **a4h-110-adt**: `http://192.168.8.110:50000` (freshly restored)
+- **devsys-adt**: `http://dev.example.local:50000` (freshly restored)
 
 ---
 
@@ -61,7 +61,7 @@ embedded/deps/
 ### Phase 0: Connection Test
 ```bash
 # Verify ADT connectivity to fresh system
-vsp --url http://192.168.8.110:50000 --user AVINOGRADOVA test-connection
+vsp --url http://dev.example.local:50000 --user TESTUSER test-connection
 ```
 
 **Checks:**
@@ -90,7 +90,7 @@ vsp --url http://192.168.8.110:50000 --user AVINOGRADOVA test-connection
 
 **Command:**
 ```bash
-vsp deploy --vsp --target http://192.168.8.110:50000
+vsp deploy --vsp --target http://dev.example.local:50000
 ```
 
 ### Phase 2: SAPC/SICF Configuration
@@ -172,20 +172,20 @@ vsp deploy status [--target URL]
 
 ### Alternative: Flags on Main Binary
 ```bash
-vsp --deploy-vsp --target http://192.168.8.110:50000
-vsp --deploy-git --target http://192.168.8.110:50000
-vsp --deploy-bootstrap --target http://192.168.8.110:50000
+vsp --deploy-vsp --target http://dev.example.local:50000
+vsp --deploy-git --target http://dev.example.local:50000
+vsp --deploy-bootstrap --target http://dev.example.local:50000
 ```
 
 ---
 
 ## 5. Implementation Plan
 
-### Step 1: Test Current InstallZADTVSP on a4h-110
+### Step 1: Test Current InstallZADTVSP on devsys
 ```bash
 # Connect to fresh system
-export SAP_URL=http://192.168.8.110:50000
-export SAP_USER=AVINOGRADOVA
+export SAP_URL=http://dev.example.local:50000
+export SAP_USER=TESTUSER
 export SAP_PASSWORD=...
 
 # Check prerequisites
@@ -218,10 +218,10 @@ curl -L https://github.com/abapGit/abapGit/releases/latest/download/abapGit.zip 
 ### Step 5: End-to-End Test
 ```bash
 # Full bootstrap on fresh system
-vsp deploy bootstrap --target http://192.168.8.110:50000
+vsp deploy bootstrap --target http://dev.example.local:50000
 
 # Verify
-vsp --url http://192.168.8.110:50000 tool GetFeatures
+vsp --url http://dev.example.local:50000 tool GetFeatures
 ```
 
 ---
@@ -312,7 +312,7 @@ vsp --url http://192.168.8.110:50000 tool GetFeatures
 
 ## 8. Success Criteria
 
-- [ ] Fresh a4h-110 system accessible via ADT
+- [ ] Fresh devsys system accessible via ADT
 - [ ] InstallZADTVSP deploys all 6 objects successfully
 - [ ] SAPC/SICF configured (manual or automated)
 - [ ] WebSocket connection works (CallRFC test)
@@ -324,7 +324,7 @@ vsp --url http://192.168.8.110:50000 tool GetFeatures
 
 ## 9. Next Actions
 
-1. **Test InstallZADTVSP on a4h-110** - Verify current capability
+1. **Test InstallZADTVSP on devsys** - Verify current capability
 2. **Document SAPC/SICF setup** - Step-by-step guide
 3. **Embed abapGit standalone** - Add ZIP to embedded/deps/
 4. **Implement `vsp deploy` subcommand** - CLI interface

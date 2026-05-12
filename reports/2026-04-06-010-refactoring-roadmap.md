@@ -67,7 +67,7 @@ Examples:
 
 ```bash
 vsp rename-preview CLAS ZCL_OLD ZCL_NEW
-vsp rename-preview --prefix ZSCR_103 --to-prefix ZNEO_433 --package '$ZSCR_103'
+vsp rename-preview --prefix ZDEMO_103 --to-prefix ZNEO_433 --package '$ZDEMO_103'
 ```
 
 Reason:
@@ -174,7 +174,7 @@ vsp method signature-apply ZCL_FOO GET_DATA --rename-param iv_old iv_new
 Examples:
 
 ```bash
-vsp refactor leaks '$ZSCR_103' --allowed '$ZCOMMON,/VENDOR/*'
+vsp refactor leaks '$ZDEMO_103' --allowed '$ZCOMMON,/VENDOR/*'
 ```
 
 Reason:
@@ -188,8 +188,8 @@ Reason:
 Examples:
 
 ```bash
-vsp clone plan '$ZSCR_103' --to-package '$ZNEO_433' \
-  --rename-prefix ZSCR_103=ZNEO_433 \
+vsp clone plan '$ZDEMO_103' --to-package '$ZNEO_433' \
+  --rename-prefix ZDEMO_103=ZNEO_433 \
   --allow '$ZCOMMON,/VENDOR/*'
 ```
 
@@ -203,7 +203,7 @@ Reason:
 Examples:
 
 ```bash
-vsp clone export '$ZSCR_103' --plan plan.json --out clone-work/
+vsp clone export '$ZDEMO_103' --plan plan.json --out clone-work/
 ```
 
 Use abapGit/file-style workspace, not direct mass mutation.

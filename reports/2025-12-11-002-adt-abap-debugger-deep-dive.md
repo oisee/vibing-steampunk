@@ -51,7 +51,7 @@ This report documents the investigation into SAP ADT's external debugging API fo
                  xmlns:adtcore="http://www.sap.com/adt/core"
                  scope="external"
                  debuggingMode="user"
-                 requestUser="AVINOGRADOVA"
+                 requestUser="TESTUSER"
                  terminalId="vsp-05191f0f4f475241"
                  ideId="vsp">
   <dbg:breakpoint kind="line" adtcore:uri="/sap/bc/adt/oo/classes/zcl_adt_debug_test/source/main#start=15"/>
@@ -74,7 +74,7 @@ All return 200 OK but no breakpoints are stored.
 
 ### Test 3: GET Breakpoints
 
-**URL:** `/sap/bc/adt/debugger/breakpoints?scope=external&debuggingMode=user&requestUser=AVINOGRADOVA&terminalId=vsp-...&ideId=vsp`
+**URL:** `/sap/bc/adt/debugger/breakpoints?scope=external&debuggingMode=user&requestUser=TESTUSER&terminalId=vsp-...&ideId=vsp`
 
 **Result:** 200 OK with empty body - no breakpoints found
 
@@ -281,7 +281,7 @@ func getTerminalID(user string) string {
     return "vsp-" + hex.EncodeToString(h)
 }
 
-// Example: "AVINOGRADOVA" -> "vsp-05191f0f4f475241"
+// Example: "TESTUSER" -> "vsp-05191f0f4f475241"
 ```
 
 ---
@@ -335,13 +335,13 @@ The transformations confirm our XML format is correct. The issue is likely:
 **Problem:** Breakpoints cannot be created via ADT API despite correct XML format and 200 OK responses.
 
 **Possible Causes:**
-1. User `AVINOGRADOVA` may not have debugging authorization
+1. User `TESTUSER` may not have debugging authorization
 2. System may need debugging enabled via transaction `SU01` or `SM04`
 3. External debugging may require SAP GUI to be logged in first
 4. Some undocumented cookie or session state required
 
 **Recommended Next Steps:**
-1. **Check User Authorization** - Verify AVINOGRADOVA has `S_DEBUG` authorization
+1. **Check User Authorization** - Verify TESTUSER has `S_DEBUG` authorization
 2. **Try from SAP GUI** - Set breakpoint in SAP GUI first, then query via API
 3. **Capture Eclipse Traffic** - Use HTTP proxy to see exact requests Eclipse sends
 4. **Check SAP Note** - Search for ADT debugger configuration notes

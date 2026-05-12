@@ -103,7 +103,7 @@ Execute any RFC-enabled function module with parameters.
   "action": "call",
   "params": {
     "function": "BAPI_USER_GET_DETAIL",
-    "USERNAME": "AVINOGRADOVA"
+    "USERNAME": "TESTUSER"
   }
 }
 ```

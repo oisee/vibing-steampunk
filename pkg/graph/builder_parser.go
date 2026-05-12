@@ -77,6 +77,12 @@ func extractFromStatement(stmt abaplint.Statement, sourceNodeID string) []*Edge 
 		return extractMethodCall(toks, sourceNodeID)
 	case "Raise":
 		return extractRaise(toks, sourceNodeID)
+	case "CallTransaction":
+		return extractCallTransaction(toks, sourceNodeID)
+	case "LeaveToTransaction":
+		return extractLeaveToTransaction(toks, sourceNodeID)
+	case "CallTransformation":
+		return extractCallTransformation(toks, sourceNodeID)
 	}
 	return nil
 }
@@ -318,6 +324,68 @@ func extractRaise(toks []abaplint.Token, from string) []*Edge {
 	return nil
 }
 
+// CALL TRANSACTION 'VA01' ...
+func extractCallTransaction(toks []abaplint.Token, from string) []*Edge {
+	for i, t := range toks {
+		if strings.EqualFold(t.Str, "TRANSACTION") && i+1 < len(toks) {
+			name := unquote(toks[i+1].Str)
+			if name != "" {
+				return []*Edge{{
+					From:      from,
+					To:        NodeID(NodeTRAN, name),
+					Kind:      EdgeCalls,
+					Source:    SourceParser,
+					RefDetail: "CALL_TRANSACTION:" + name,
+				}}
+			}
+		}
+	}
+	return nil
+}
+
+// LEAVE TO TRANSACTION 'SM30' ...
+func extractLeaveToTransaction(toks []abaplint.Token, from string) []*Edge {
+	for i, t := range toks {
+		if strings.EqualFold(t.Str, "TRANSACTION") && i+1 < len(toks) {
+			name := unquote(toks[i+1].Str)
+			if name != "" {
+				return []*Edge{{
+					From:      from,
+					To:        NodeID(NodeTRAN, name),
+					Kind:      EdgeCalls,
+					Source:    SourceParser,
+					RefDetail: "LEAVE_TO_TRANSACTION:" + name,
+				}}
+			}
+		}
+	}
+	return nil
+}
+
+// CALL TRANSFORMATION id SOURCE ... RESULT ...
+func extractCallTransformation(toks []abaplint.Token, from string) []*Edge {
+	for i, t := range toks {
+		if strings.EqualFold(t.Str, "TRANSFORMATION") && i+1 < len(toks) {
+			name := toks[i+1].Str
+			// Can be a literal ('ID') or identifier
+			cleaned := unquote(name)
+			if cleaned != "" {
+				name = cleaned
+			}
+			if isIdentifier(name) && !strings.EqualFold(name, "SOURCE") && !strings.EqualFold(name, "RESULT") {
+				return []*Edge{{
+					From:      from,
+					To:        NodeID(NodeXSLT, name),
+					Kind:      EdgeCalls,
+					Source:    SourceParser,
+					RefDetail: "CALL_TRANSFORMATION:" + name,
+				}}
+			}
+		}
+	}
+	return nil
+}
+
 // --- Dynamic call detection ---
 // Dynamic calls are invisible to CROSS/WBCROSSGT tables because the target
 // is only known at runtime. The parser can detect the PATTERN and flag it.
@@ -418,6 +486,42 @@ func ExtractDynamicCalls(source string, sourceNodeID string) []*Edge {
 							Kind:      EdgeDynamic,
 							Source:    SourceParser,
 							RefDetail: "DYNAMIC_CREATE:" + varName,
+						})
+					}
+				}
+			}
+		case "CallTransaction":
+			// CALL TRANSACTION lv_variable (not a literal)
+			for i, t := range toks {
+				if strings.EqualFold(t.Str, "TRANSACTION") && i+1 < len(toks) {
+					next := toks[i+1]
+					if next.Str != "" && next.Str[0] != '\'' {
+						edges = append(edges, &Edge{
+							From:      sourceNodeID,
+							To:        "DYNAMIC:" + next.Str,
+							Kind:      EdgeDynamic,
+							Source:    SourceParser,
+							RefDetail: "DYNAMIC_TRANSACTION:" + next.Str,
+						})
+					}
+				}
+			}
+		case "CallTransformation":
+			// CALL TRANSFORMATION (lv_variable) or CALL TRANSFORMATION lv_var
+			for i, t := range toks {
+				if strings.EqualFold(t.Str, "TRANSFORMATION") && i+1 < len(toks) {
+					next := toks[i+1]
+					if next.Str == "(" {
+						varName := ""
+						if i+2 < len(toks) {
+							varName = toks[i+2].Str
+						}
+						edges = append(edges, &Edge{
+							From:      sourceNodeID,
+							To:        "DYNAMIC:" + varName,
+							Kind:      EdgeDynamic,
+							Source:    SourceParser,
+							RefDetail: "DYNAMIC_TRANSFORMATION:" + varName,
 						})
 					}
 				}

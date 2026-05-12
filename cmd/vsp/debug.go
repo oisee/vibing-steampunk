@@ -711,7 +711,7 @@ func (s *debugSession) callRFC(args []string) error {
 	if len(args) < 1 {
 		fmt.Println("Usage: call <function_module> [param=value ...]")
 		fmt.Println("Example: call RFC_PING")
-		fmt.Println("         call BAPI_USER_GET_DETAIL USERNAME=AVINOGRADOVA")
+		fmt.Println("         call BAPI_USER_GET_DETAIL USERNAME=TESTUSER")
 		return nil
 	}
 

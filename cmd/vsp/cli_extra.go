@@ -1374,7 +1374,7 @@ func runSlim(cmd *cobra.Command, args []string) error {
 		if len(classNames) > 0 {
 			fmt.Fprintf(os.Stderr, "Fetching class structures (%d classes)...\n", len(classNames))
 			for i, cls := range classNames {
-				fmt.Fprintf(os.Stderr, "\r  [%d/%d] %s", i+1, len(classNames), cls)
+				fmt.Fprintf(os.Stderr, "\r  [%d/%d] %-40s", i+1, len(classNames), cls)
 				structure, err := client.GetClassObjectStructure(ctx, cls)
 				if err != nil {
 					continue // skip classes we can't inspect

@@ -75,7 +75,7 @@ When starting a new AMDP debug session:
 <exc:exception>
   <type id="AMDB_DBG_Failure"/>
   <properties>
-    <entry key="TEXT">Debugging for user "AVINOGRADOVA" already in use</entry>
+    <entry key="TEXT">Debugging for user "TESTUSER" already in use</entry>
     <entry key="com.sap.adt.communicationFramework.subType">DEBUGGEE_CONTEXT_LOCKED_BY_ME</entry>
   </properties>
 </exc:exception>

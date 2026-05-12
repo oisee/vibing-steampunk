@@ -599,7 +599,7 @@ func TestParseAttachResponse(t *testing.T) {
   isNonExclusive="false"
   isNonExclusiveToggled="false"
   guiEditorGuid=""
-  sessionTitle="AVINOGRADOVA"
+  sessionTitle="TESTUSER"
   isSteppingPossible="true"
   isTerminationPossible="true">
   <dbg:actions>
@@ -918,7 +918,7 @@ func TestParseDebuggeeResponse(t *testing.T) {
         <DEBUGGEE_ID>ABC123</DEBUGGEE_ID>
         <TERMINAL_ID>vsp-12345678</TERMINAL_ID>
         <IDE_ID>vsp</IDE_ID>
-        <DEBUGGEE_USER>AVINOGRADOVA</DEBUGGEE_USER>
+        <DEBUGGEE_USER>TESTUSER</DEBUGGEE_USER>
         <PRG_CURR>ZTEST_MCP_CRUD</PRG_CURR>
         <INCL_CURR>ZTEST_MCP_CRUD</INCL_CURR>
         <LINE_CURR>15</LINE_CURR>
@@ -944,8 +944,8 @@ func TestParseDebuggeeResponse(t *testing.T) {
 	if result.ID != "ABC123" {
 		t.Errorf("expected debuggeeId 'ABC123', got '%s'", result.ID)
 	}
-	if result.User != "AVINOGRADOVA" {
-		t.Errorf("expected user 'AVINOGRADOVA', got '%s'", result.User)
+	if result.User != "TESTUSER" {
+		t.Errorf("expected user 'TESTUSER', got '%s'", result.User)
 	}
 	if result.Program != "ZTEST_MCP_CRUD" {
 		t.Errorf("expected program 'ZTEST_MCP_CRUD', got '%s'", result.Program)
@@ -972,16 +972,16 @@ func TestParseDebuggeeResponse_PostMortem(t *testing.T) {
       <STPDA_DEBUGGEE>
         <CLIENT>001</CLIENT>
         <DEBUGGEE_ID>DUMP123</DEBUGGEE_ID>
-        <DEBUGGEE_USER>AVINOGRADOVA</DEBUGGEE_USER>
+        <DEBUGGEE_USER>TESTUSER</DEBUGGEE_USER>
         <PRG_CURR>ZTEST_MCP_CRUD</PRG_CURR>
         <LINE_CURR>20</LINE_CURR>
         <DBGEE_KIND>POSTMORTEM</DBGEE_KIND>
         <IS_ATTACH_IMPOSSIBLE>X</IS_ATTACH_IMPOSSIBLE>
-        <DUMP_ID>20251205_123456_AVINOGRADOVA</DUMP_ID>
+        <DUMP_ID>20251205_123456_TESTUSER</DUMP_ID>
         <DUMP_DATE>20251205</DUMP_DATE>
         <DUMP_TIME>123456</DUMP_TIME>
         <DUMP_HOST>VHCALA4HCI</DUMP_HOST>
-        <DUMP_UNAME>AVINOGRADOVA</DUMP_UNAME>
+        <DUMP_UNAME>TESTUSER</DUMP_UNAME>
         <DUMP_CLIENT>001</DUMP_CLIENT>
         <DUMP_URI>/sap/bc/adt/runtime/dumps/123456</DUMP_URI>
       </STPDA_DEBUGGEE>
@@ -1000,8 +1000,8 @@ func TestParseDebuggeeResponse_PostMortem(t *testing.T) {
 	if result.IsAttachable {
 		t.Error("expected isAttachable=false for post-mortem")
 	}
-	if result.DumpID != "20251205_123456_AVINOGRADOVA" {
-		t.Errorf("expected dumpId '20251205_123456_AVINOGRADOVA', got '%s'", result.DumpID)
+	if result.DumpID != "20251205_123456_TESTUSER" {
+		t.Errorf("expected dumpId '20251205_123456_TESTUSER', got '%s'", result.DumpID)
 	}
 }
 

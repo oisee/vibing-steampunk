@@ -3,10 +3,10 @@
 **Date:** 2026-02-06
 **Report ID:** 001
 **Subject:** ZADT_VSP APC handler on PM6 (ECC) — 500 on WebSocket handshake
-**Systems:** PM6 (ECC, `pm6.microsoftintegrationdemo.com:8001`, client 800), PM4 (S/4HANA, resolved)
+**Systems:** PM6 (ECC, `prodsys-b.example:8001`, client 800), PM4 (S/4HANA, resolved)
 **Related:** MEMORY.md (WebSocket Auth notes), 2025-12-05-024 (AMDP Goroutine Architecture)
 
-> **Note:** PM4 (`pm4.microsoftintegrationdemo.com:8001`, S/4HANA, client 400) WebSocket issue was **already resolved** in this session — the fix was the Basic Auth → session cookie fallback (commit `4dcce5c`). PM4 rejected standalone Basic Auth on WebSocket upgrade but accepted session cookies. PM6 (ECC) is a different problem — it returns 500 even with the auth fallback.
+> **Note:** PM4 (`prodsys-a.example:8001`, S/4HANA, client 400) WebSocket issue was **already resolved** in this session — the fix was the Basic Auth → session cookie fallback (commit `4dcce5c`). PM4 rejected standalone Basic Auth on WebSocket upgrade but accepted session cookies. PM6 (ECC) is a different problem — it returns 500 even with the auth fallback.
 
 ---
 

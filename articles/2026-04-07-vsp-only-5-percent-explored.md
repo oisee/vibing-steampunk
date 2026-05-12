@@ -26,7 +26,7 @@ If the 100-stars moment was the trailer, this period was the first real season.
 
 | Metric | 100 Stars (Feb 18) | Today (Apr 7) | Delta |
 |--------|:------------------:|:-------------:|:-----:|
-| **GitHub Stars** | 103 | **254** | +151 |
+| **GitHub Stars** | 103 | **257** (0x101 — we overflowed into two bytes!) | +154 |
 | **Forks** | 26 | **58** | +32 |
 | **Commits** | 197 | **455** | +258 |
 | **Releases** | v2.26.0 (44 total) | **v2.38.1** (55 total) | +11 releases |
@@ -292,8 +292,12 @@ And that is exactly why this part is fun.
 
 ---
 
+*P.S. While this article was being written, the star count crossed 257 — that's 0x101. We no longer fit in a single byte. Time to upgrade to `int2`.*
+
+---
+
 **GitHub**: [oisee/vibing-steampunk](https://github.com/oisee/vibing-steampunk)
-**Stars**: 254
+**Stars**: 257
 **Latest**: v2.38.1
 
 *Previous articles:*

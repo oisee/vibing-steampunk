@@ -89,20 +89,20 @@ Priority order from coverage analysis:
 - blicksten has 2 remaining PRs (#82, #86) — don't merge without SAP verification
 - PR #86 needs "do not merge" label — it doesn't compile
 - Community is active: 8 contributors, check for new PRs/issues
-- `.vsp.json` has 3 configured systems: a4h-105, a4h-110, x15-abap
+- `.vsp.json` has 3 configured systems: devsys2, devsys, x15-abap
 
 ## SAP Test Commands (quick smoke test)
 
 ```bash
 # Verify connection
-./build/vsp -s a4h-110-adt search "ZCL_VSP*" --type CLAS --max 5
+./build/vsp -s devsys-adt search "ZCL_VSP*" --type CLAS --max 5
 
 # Verify query (stateless session)
-./build/vsp -s a4h-110-adt query T000 --top 3
+./build/vsp -s devsys-adt query T000 --top 3
 
 # Verify new tools
-./build/vsp -s a4h-110-adt install zadt-vsp --dry-run
+./build/vsp -s devsys-adt install zadt-vsp --dry-run
 
 # Verbose for debugging
-./build/vsp -s a4h-110-adt -v query T100 --top 1
+./build/vsp -s devsys-adt -v query T100 --top 1
 ```

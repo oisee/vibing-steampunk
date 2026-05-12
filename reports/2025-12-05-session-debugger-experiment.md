@@ -105,7 +105,7 @@ Demonstrate that the new debugger tools work end-to-end:
 Debuggee caught!
 
 Debuggee ID: ABC123XYZ...
-User: AVINOGRADOVA
+User: TESTUSER
 Program: ZTEST_MCP_CRUD
 Include: ZTEST_MCP_CRUD
 Line: 15

@@ -1105,6 +1105,37 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 		), s.handleDeleteObject)
 	}
 
+	if shouldRegister("RecoverFailedCreate") {
+		s.mcpServer.AddTool(mcp.NewTool("RecoverFailedCreate",
+			mcp.WithDescription("Recover a zombie object left behind by an earlier failed CreateObject. "+
+				"Probes whether SAP currently persists the object; if yes, runs best-effort compensating "+
+				"cleanup (lock release, fresh-session lock acquisition, DeleteObject); if no, returns an "+
+				"idempotent no-op. Does NOT require a lock_handle from the original session — the handler "+
+				"acquires its own. Returns a structured report with status, attempted cleanup actions, "+
+				"and residual manual steps if cleanup could not finish. "+
+				"Use this when a CreateObject call returned a 5xx error and you cannot edit / delete the "+
+				"object through normal MCP flows because the old lock handle is gone."),
+			mcp.WithString("object_type",
+				mcp.Required(),
+				mcp.Description("ABAP object type (CLAS, PROG, INTF, FUGR, DDLS, FUNC, ...)"),
+			),
+			mcp.WithString("name",
+				mcp.Required(),
+				mcp.Description("Object name"),
+			),
+			mcp.WithString("package_name",
+				mcp.Required(),
+				mcp.Description("Package — used by the safety gate; must be in the configured allowed list"),
+			),
+			mcp.WithString("parent_name",
+				mcp.Description("Parent function group name (required for FUNC / LIMU FUNC recovery)"),
+			),
+			mcp.WithString("transport",
+				mcp.Description("Transport request the zombie object was attached to, if any"),
+			),
+		), s.handleRecoverFailedCreate)
+	}
+
 	// Transport-related tools
 	if shouldRegister("GetUserTransports") {
 		s.mcpServer.AddTool(mcp.NewTool("GetUserTransports",

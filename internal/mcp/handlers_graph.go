@@ -200,7 +200,14 @@ func (s *Server) handleCheckBoundaries(ctx context.Context, request mcp.CallTool
 	return newToolResultError("SAP connection required for online analysis. Provide 'source' for offline mode."), nil
 }
 
-// resolvePackages queries TADIR to fill in missing package info for nodes.
+// resolvePackages queries TADIR to fill in missing package info and correct
+// object types for nodes. The parser often guesses types (e.g., CLAS for an
+// INTF); TADIR is authoritative for both OBJECT type and DEVCLASS assignment.
+//
+// Two-pass resolution:
+//  1. TADIR: resolves CLAS, INTF, PROG, FUGR, TABL, etc.
+//  2. TFDIR→TADIR: for function modules not in TADIR (LIMU objects),
+//     look up TFDIR.PNAME to find the function group, then TADIR for DEVCLASS.
 func (s *Server) resolvePackages(ctx context.Context, g *graph.Graph) {
 	// Collect nodes without packages
 	var names []string
@@ -217,38 +224,129 @@ func (s *Server) resolvePackages(ctx context.Context, g *graph.Graph) {
 		return
 	}
 
-	// Batch query TADIR (up to 100 at a time)
-	batchSize := 100
+	// Pass 1: TADIR batch lookup
+	resolveTADIR(ctx, s.adtClient, names, nodesByName)
+
+	// Pass 2: TFDIR fallback for nodes still without packages (function modules)
+	var unresolved []string
+	for _, n := range names {
+		if nodes, ok := nodesByName[strings.ToUpper(n)]; ok {
+			for _, node := range nodes {
+				if node.Package == "" {
+					unresolved = append(unresolved, strings.ToUpper(n))
+					break
+				}
+			}
+		}
+	}
+	if len(unresolved) > 0 {
+		resolveFMviaTFDIR(ctx, s.adtClient, unresolved, nodesByName)
+	}
+}
+
+// resolveTADIR batch-queries TADIR for R3TR objects and updates node package/type.
+func resolveTADIR(ctx context.Context, client *adt.Client, names []string, nodesByName map[string][]*graph.Node) {
+	// Batch size 5: SAP freestyle query has a ~255 char literal limit for IN clauses
+	batchSize := 5
 	for i := 0; i < len(names); i += batchSize {
 		end := i + batchSize
 		if end > len(names) {
 			end = len(names)
 		}
 		batch := names[i:end]
-
-		// Build IN clause
 		quoted := make([]string, len(batch))
 		for j, n := range batch {
 			quoted[j] = "'" + strings.ToUpper(n) + "'"
 		}
-		inClause := strings.Join(quoted, ",")
-
-		query := fmt.Sprintf("SELECT obj_name, devclass FROM tadir WHERE pgmid = 'R3TR' AND obj_name IN (%s)", inClause)
-
-		result, err := s.adtClient.RunQuery(ctx, query, 0)
+		query := fmt.Sprintf("SELECT object, obj_name, devclass FROM tadir WHERE pgmid = 'R3TR' AND obj_name IN (%s)", strings.Join(quoted, ","))
+		result, err := client.RunQuery(ctx, query, 0)
 		if err != nil {
-			continue // Best effort
+			continue
 		}
-
-		// Parse result and update nodes
 		for _, row := range result.Rows {
+			objType := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJECT"])))
 			objName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
 			devclass := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DEVCLASS"])))
 			if nodes, ok := nodesByName[objName]; ok {
 				for _, n := range nodes {
-					if n.Package == "" {
-						n.Package = devclass
+					n.Package = devclass
+					if objType != "" && n.Type != objType {
+						n.Type = objType
 					}
+				}
+			}
+		}
+	}
+}
+
+// resolveFMviaTFDIR resolves function modules that aren't in TADIR as R3TR objects.
+// Strategy: TFDIR.FUNCNAME → TFDIR.PNAME (e.g., "SAPLZFUGR") → extract FUGR name
+// → TADIR lookup for the FUGR to get DEVCLASS.
+func resolveFMviaTFDIR(ctx context.Context, client *adt.Client, fmNames []string, nodesByName map[string][]*graph.Node) {
+	fugrSet := make(map[string]bool)
+	fmToFugr := make(map[string]string)
+
+	// Batch TFDIR queries (SAP 255-char IN clause limit)
+	for start := 0; start < len(fmNames); start += 5 {
+		end := start + 5
+		if end > len(fmNames) {
+			end = len(fmNames)
+		}
+		batch := fmNames[start:end]
+		quoted := make([]string, len(batch))
+		for i, n := range batch {
+			quoted[i] = "'" + n + "'"
+		}
+		query := fmt.Sprintf("SELECT FUNCNAME, PNAME FROM TFDIR WHERE FUNCNAME IN (%s)", strings.Join(quoted, ","))
+		result, err := client.RunQuery(ctx, query, len(batch)*2)
+		if err != nil || result == nil {
+			continue
+		}
+		for _, row := range result.Rows {
+			funcName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["FUNCNAME"])))
+			pname := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["PNAME"])))
+			fugrName := ""
+			if strings.HasPrefix(pname, "SAPL") {
+				fugrName = pname[4:]
+			} else if pname != "" {
+				fugrName = pname
+			}
+			if fugrName != "" {
+				fmToFugr[funcName] = fugrName
+				fugrSet[fugrName] = true
+			}
+		}
+	}
+
+	if len(fugrSet) == 0 {
+		return
+	}
+
+	// TADIR lookup for the function groups
+	fugrQuoted := make([]string, 0, len(fugrSet))
+	for fg := range fugrSet {
+		fugrQuoted = append(fugrQuoted, "'"+fg+"'")
+	}
+	fugrQuery := fmt.Sprintf("SELECT obj_name, devclass FROM tadir WHERE pgmid = 'R3TR' AND object = 'FUGR' AND obj_name IN (%s)", strings.Join(fugrQuoted, ","))
+	fugrResult, err := client.RunQuery(ctx, fugrQuery, len(fugrSet)*2)
+	if err != nil || fugrResult == nil {
+		return
+	}
+
+	fugrPkg := make(map[string]string) // FUGR name → DEVCLASS
+	for _, row := range fugrResult.Rows {
+		objName := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["OBJ_NAME"])))
+		devclass := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", row["DEVCLASS"])))
+		fugrPkg[objName] = devclass
+	}
+
+	// Update FM nodes: set type to FUNC, package from the FUGR's DEVCLASS
+	for fmName, fugrName := range fmToFugr {
+		if devclass, ok := fugrPkg[fugrName]; ok {
+			if nodes, ok := nodesByName[fmName]; ok {
+				for _, n := range nodes {
+					n.Package = devclass
+					n.Type = "FUNC"
 				}
 			}
 		}
@@ -377,6 +475,71 @@ func (s *Server) fetchTransportData(ctx context.Context, objType, objName string
 		}
 	}
 
+	// Step 2b: CR-level expansion via E070A attribute (if configured)
+	// When a transport attribute is set, find all TRs sharing the same
+	// attribute value (CR ID), expanding the co-change boundary beyond
+	// a single transport request to the full change request scope.
+	if attr := s.config.TransportAttribute; attr != "" && len(requestNums) > 0 {
+		reqList := quoteKeys(requestNums)
+		attrQuery := fmt.Sprintf(
+			"SELECT TRKORR, REFERENCE FROM E070A WHERE ATTRIBUTE = '%s' AND TRKORR IN (%s)",
+			attr, strings.Join(reqList, ","))
+		attrResult, err := s.adtClient.RunQuery(ctx, attrQuery, 500)
+		if err == nil && attrResult != nil {
+			// Collect all CR references for our transports
+			crRefs := make(map[string]bool)
+			for _, row := range attrResult.Rows {
+				ref := strings.TrimSpace(fmt.Sprintf("%v", row["REFERENCE"]))
+				if ref != "" {
+					crRefs[ref] = true
+				}
+			}
+			// Find sibling TRs that share the same CR references
+			if len(crRefs) > 0 {
+				refList := make([]string, 0, len(crRefs))
+				for ref := range crRefs {
+					refList = append(refList, "'"+ref+"'")
+				}
+				siblingAttrQuery := fmt.Sprintf(
+					"SELECT TRKORR FROM E070A WHERE ATTRIBUTE = '%s' AND REFERENCE IN (%s)",
+					attr, strings.Join(refList, ","))
+				siblingAttrResult, err := s.adtClient.RunQuery(ctx, siblingAttrQuery, 1000)
+				if err == nil && siblingAttrResult != nil {
+					// Resolve these new TRs through E070 to get headers + parent mapping
+					newTRs := make(map[string]bool)
+					for _, row := range siblingAttrResult.Rows {
+						tr := strings.TrimSpace(fmt.Sprintf("%v", row["TRKORR"]))
+						if tr != "" && !trNums[tr] {
+							newTRs[tr] = true
+						}
+					}
+					if len(newTRs) > 0 {
+						newTRList := quoteKeys(newTRs)
+						crE070Query := fmt.Sprintf(
+							"SELECT TRKORR, STRKORR, TRFUNCTION, TRSTATUS, AS4USER, AS4DATE FROM E070 WHERE TRKORR IN (%s)",
+							strings.Join(newTRList, ","))
+						crE070Result, err := s.adtClient.RunQuery(ctx, crE070Query, 500)
+						if err == nil && crE070Result != nil {
+							for _, row := range crE070Result.Rows {
+								h := parseTransportHeader(row)
+								if !headerSeen[h.TRKORR] {
+									headers = append(headers, h)
+									headerSeen[h.TRKORR] = true
+									trNums[h.TRKORR] = true
+								}
+								if h.IsRequest() {
+									requestNums[h.TRKORR] = true
+								} else if h.STRKORR != "" {
+									requestNums[h.STRKORR] = true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Step 3: Fetch missing parent request headers
 	var missingParents []string
 	for rn := range requestNums {
@@ -479,8 +642,9 @@ func quoteKeys(m map[string]bool) []string {
 // MCP: SAP(action="analyze", params={"type": "impact", "object_type": "CLAS", "object_name": "ZCL_FOO"})
 // Optional params:
 //   - "max_depth": int (default 3, max 5)
-//   - "edge_kinds": "CALLS,REFERENCES" (comma-separated filter)
+//   - "edge_kinds": "CALLS,REFERENCES,CO_TRANSPORTED" (comma-separated filter)
 //   - "include_source_analysis": bool (default false) — augment with parser edges
+//   - "include_co_change": bool (default false) — augment with transport co-change edges
 //
 // Data sources:
 //   - WBCROSSGT + CROSS tables: reverse cross-references (backbone, always used)
@@ -489,6 +653,10 @@ func quoteKeys(m map[string]bool) []string {
 //     miss (PERFORM IN PROGRAM, local include refs, static method calls within same include).
 //     Dynamic calls (CALL FUNCTION variable) are flagged as DYNAMIC_CALL but do NOT
 //     extend the frontier since targets are unresolved.
+//   - Transport co-change (when include_co_change=true): fetches transport history,
+//     materializes CO_TRANSPORTED edges between objects shipped together. Surfaces
+//     workbench↔customizing correlations invisible to cross-reference tables.
+//     When transport_attribute is configured, expands to CR-level correlation via E070A.
 func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	objType := strings.ToUpper(getStringParam(args, "object_type"))
@@ -503,6 +671,10 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 	includeSourceAnalysis := false
 	if v, ok := getBoolParam(args, "include_source_analysis"); ok {
 		includeSourceAnalysis = v
+	}
+	includeCoChange := false
+	if v, ok := getBoolParam(args, "include_co_change"); ok {
+		includeCoChange = v
 	}
 
 	if objType == "" || objName == "" {
@@ -532,6 +704,14 @@ func (s *Server) handleImpact(ctx context.Context, request mcp.CallToolRequest) 
 	// Optional: parser-based source augmentation
 	if includeSourceAnalysis {
 		s.augmentGraphWithParser(ctx, g)
+	}
+
+	// Optional: co-change augmentation via transport history
+	// Merges transport graph into the structural graph and materializes
+	// CO_TRANSPORTED edges — weaker than CALLS/REFERENCES but surfaces
+	// workbench↔customizing correlations that cross-reference tables miss.
+	if includeCoChange {
+		s.augmentGraphWithCoChange(ctx, g, objType, objName)
 	}
 
 	targetNodeID := graph.NodeID(objType, objName)
@@ -629,6 +809,53 @@ func (s *Server) augmentGraphWithParser(ctx context.Context, g *graph.Graph) {
 			})
 			g.AddEdge(e)
 		}
+	}
+}
+
+// augmentGraphWithCoChange merges transport-based co-change data into an existing
+// structural dependency graph. It fetches transport history for the target object,
+// builds the transport sub-graph, and materializes CO_TRANSPORTED edges between
+// objects that were shipped together (at TR or CR level when transport_attribute
+// is configured). These edges are weaker than structural CALLS/REFERENCES edges
+// but surface workbench↔customizing correlations invisible to cross-reference tables.
+func (s *Server) augmentGraphWithCoChange(ctx context.Context, g *graph.Graph, objType, objName string) {
+	headers, objects, err := s.fetchTransportData(ctx, objType, objName)
+	if err != nil || len(headers) == 0 {
+		return // best effort
+	}
+
+	tg := graph.BuildTransportGraph(headers, objects)
+
+	// Determine source based on whether CR-level expansion was used
+	source := graph.SourceE071
+	if s.config.TransportAttribute != "" {
+		source = graph.SourceE070A
+	}
+
+	// Materialize co-transported edges (min 1 shared TR)
+	graph.MaterializeCoTransported(tg, 1, source)
+
+	// Merge CO_TRANSPORTED edges into the structural graph
+	for _, e := range tg.Edges() {
+		if e.Kind != graph.EdgeCoTransported {
+			continue
+		}
+		// Ensure both nodes exist in the target graph
+		if fromNode := tg.GetNode(e.From); fromNode != nil {
+			g.AddNode(&graph.Node{
+				ID:   fromNode.ID,
+				Name: fromNode.Name,
+				Type: fromNode.Type,
+			})
+		}
+		if toNode := tg.GetNode(e.To); toNode != nil {
+			g.AddNode(&graph.Node{
+				ID:   toNode.ID,
+				Name: toNode.Name,
+				Type: toNode.Type,
+			})
+		}
+		g.AddEdge(e)
 	}
 }
 

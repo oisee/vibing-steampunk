@@ -22,7 +22,7 @@ Open PRs:  0
 Open Issues: 8 (all backlog: #74 CDS DDLX, #55 RunReport, #27 object types, #45/#46 sync, #2 debugger, #88/#90 awaiting reporter validation)
 Branch: main
 Latest commits: e549006 (acquire.go refactor), 8623acd (AnalyzeABAPCode), 9ae10f3 (health E070)
-SAP test system: a4h-110-adt (192.168.8.110:50000, user AVINOGRADOVA)
+SAP test system: devsys-adt (dev.example.local:50000, user TESTUSER)
 Test hierarchy: $ZHIRTEST_00/001/010/101 with 7 objects for slim validation
 ```
 
@@ -53,9 +53,9 @@ Build on api-surface output: check which standard APIs have release state != REL
 ## SAP Smoke Test Commands
 
 ```bash
-./build/vsp -s a4h-110-adt search "ZCL_HIRT*" --type CLAS --max 5
-./build/vsp -s a4h-110-adt query T000 --top 3
-./build/vsp -s a4h-110-adt slim '$ZHIRTEST' --level methods
-./build/vsp -s a4h-110-adt health --package '$ZHIRTEST' --fast
-./build/vsp -s a4h-110-adt api-surface '$ZHIRTEST' --include-subpackages
+./build/vsp -s devsys-adt search "ZCL_HIRT*" --type CLAS --max 5
+./build/vsp -s devsys-adt query T000 --top 3
+./build/vsp -s devsys-adt slim '$ZHIRTEST' --level methods
+./build/vsp -s devsys-adt health --package '$ZHIRTEST' --fast
+./build/vsp -s devsys-adt api-surface '$ZHIRTEST' --include-subpackages
 ```

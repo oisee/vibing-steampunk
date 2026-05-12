@@ -12,7 +12,9 @@ import (
 	"github.com/vinchacho/vibing-steampunk/pkg/adt"
 )
 
-// routeCRUDAction routes "edit" for LOCK/UNLOCK/UPDATE_SOURCE, "create" for OBJECT/DEVC/TABL/CLONE, "delete" for OBJECT.
+// routeCRUDAction routes "edit" for LOCK/UNLOCK/UPDATE_SOURCE/
+// RECOVER_FAILED_CREATE, "create" for OBJECT/DEVC/TABL/CLONE, "delete"
+// for OBJECT.
 func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action == "edit" {
 		switch objectType {
@@ -26,6 +28,8 @@ func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, object
 			return s.callHandler(ctx, s.handleMoveObject, params)
 		case "COMPARE_SOURCE":
 			return s.callHandler(ctx, s.handleCompareSource, params)
+		case "RECOVER_FAILED_CREATE":
+			return s.callHandler(ctx, s.handleRecoverFailedCreate, params)
 		}
 	}
 
@@ -401,6 +405,104 @@ func (s *Server) handleGetClassInfo(ctx context.Context, request mcp.CallToolReq
 	}
 
 	output, _ := json.MarshalIndent(info, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+// handleRecoverFailedCreate is the MCP-facing recovery primitive for a
+// zombie object that a previous CreateObject attempt left behind
+// (e.g. after a 5xx where SAP persisted the skeleton before the HTTP
+// response failed). The caller does NOT need a lock handle from the
+// original session — the handler itself probes existence, acquires a
+// fresh lock, and drives DeleteObject. See pkg/adt.RecoverFailedCreate
+// and the partial-create RCA for the full story.
+//
+// Inputs (all required except transport / parent_name):
+//
+//	object_type   — CLAS / PROG / INTF / FUGR / DDLS / ...
+//	name          — object name
+//	package_name  — for the safety gate; must be in allowed list
+//	parent_name   — required for FUNC (parent function group)
+//	transport     — optional TR the zombie was attached to
+//
+// The output is a structured JSON document describing what was tried:
+//
+//	{
+//	  "status": "cleaned" | "already_clean" | "partial" | "probe_failed",
+//	  "object_url": "...",
+//	  "package": "...",
+//	  "transport": "...",
+//	  "cleanup_actions": ["..."],
+//	  "manual_steps":    ["..."]
+//	}
+//
+// Manual steps are only populated when the cleanup could not finish
+// — typically because another user holds a lock or because DeleteObject
+// itself failed. The operator can copy those directly into SAPGUI.
+func (s *Server) handleRecoverFailedCreate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	objectType, ok := request.GetArguments()["object_type"].(string)
+	if !ok || objectType == "" {
+		return newToolResultError("object_type is required"), nil
+	}
+	name, ok := request.GetArguments()["name"].(string)
+	if !ok || name == "" {
+		return newToolResultError("name is required"), nil
+	}
+	packageName, ok := request.GetArguments()["package_name"].(string)
+	if !ok || packageName == "" {
+		return newToolResultError("package_name is required"), nil
+	}
+	parentName := ""
+	if p, ok := request.GetArguments()["parent_name"].(string); ok {
+		parentName = p
+	}
+	transport := ""
+	if t, ok := request.GetArguments()["transport"].(string); ok {
+		transport = t
+	}
+
+	opts := adt.CreateObjectOptions{
+		ObjectType:  adt.CreatableObjectType(objectType),
+		Name:        name,
+		PackageName: packageName,
+		ParentName:  parentName,
+		Transport:   transport,
+	}
+
+	pce := s.adtClient.RecoverFailedCreate(ctx, opts)
+
+	// Classify the outcome for the UI layer. The four cases correspond
+	// to the four shapes RecoverFailedCreate returns:
+	//
+	//   cleaned        → probe found the object, cleanup succeeded
+	//   already_clean  → probe found nothing, idempotent no-op
+	//   partial        → probe found the object, cleanup could not finish
+	//   probe_failed   → could not even determine whether the object exists
+	status := "partial"
+	switch {
+	case pce.CleanupOK && len(pce.CleanupActions) == 1 &&
+		strings.Contains(pce.CleanupActions[0], "nothing to recover"):
+		status = "already_clean"
+	case pce.CleanupOK:
+		status = "cleaned"
+	case pce.OriginalErr != nil && strings.Contains(pce.OriginalErr.Error(), "existence probe failed"):
+		status = "probe_failed"
+	}
+
+	result := map[string]any{
+		"status":          status,
+		"object_url":      pce.ObjectURL,
+		"package":         pce.Package,
+		"transport":       pce.Transport,
+		"cleanup_actions": pce.CleanupActions,
+	}
+	if len(pce.ManualSteps) > 0 {
+		result["manual_steps"] = pce.ManualSteps
+	}
+	if pce.OriginalErr != nil {
+		result["last_error"] = pce.OriginalErr.Error()
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
 }
 

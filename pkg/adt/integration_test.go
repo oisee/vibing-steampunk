@@ -1635,7 +1635,7 @@ func TestIntegration_ExternalBreakpoints(t *testing.T) {
 	testObjectURI := "/sap/bc/adt/programs/programs/DEMO_ABAP_OBJECTS/source/main"
 
 	// Test user for breakpoints
-	testUser := "AVINOGRADOVA"
+	testUser := "TESTUSER"
 
 	// Step 1: Get initial breakpoints
 	t.Log("Step 1: Getting existing external breakpoints...")
@@ -1742,7 +1742,7 @@ func TestIntegration_DebuggerListener(t *testing.T) {
 	// Get the username from environment
 	testUser := os.Getenv("SAP_USER")
 	if testUser == "" {
-		testUser = "AVINOGRADOVA"
+		testUser = "TESTUSER"
 	}
 
 	t.Logf("Testing debug listener for user: %s", testUser)
@@ -1832,7 +1832,7 @@ func TestIntegration_DebugSessionAPIs(t *testing.T) {
 
 	testUser := os.Getenv("SAP_USER")
 	if testUser == "" {
-		testUser = "AVINOGRADOVA"
+		testUser = "TESTUSER"
 	}
 
 	t.Logf("Testing debug session APIs for user: %s", testUser)

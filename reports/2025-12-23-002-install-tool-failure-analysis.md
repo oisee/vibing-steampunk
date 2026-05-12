@@ -3,7 +3,7 @@
 **Date:** 2025-12-23
 **Report ID:** 002
 **Subject:** InstallZADTVSP reports success but objects not created
-**System:** a4h-110 (192.168.8.110:50000)
+**System:** devsys (dev.example.local:50000)
 
 ---
 
@@ -33,18 +33,18 @@ Deployed: 6, Skipped: 0, Failed: 0
 
 ## Root Cause: CONFIRMED
 
-**The a4h-110 MCP server doesn't have `WriteSource` tool available!**
+**The devsys MCP server doesn't have `WriteSource` tool available!**
 
-When attempting to use `mcp__a4h-110-adt__WriteSource`:
+When attempting to use `mcp__devsys-adt__WriteSource`:
 ```
-Error: No such tool available: mcp__a4h-110-adt__WriteSource
+Error: No such tool available: mcp__devsys-adt__WriteSource
 ```
 
 The `InstallZADTVSP` tool internally calls `WriteSource`, but if that tool isn't registered/available, the operation silently fails while still reporting success.
 
-## Verification Test on a4h-105 (Working System)
+## Verification Test on devsys2 (Working System)
 
-Tested the same workflow on a4h-105 (a4h.desude.su) which has full toolset:
+Tested the same workflow on devsys2 (a4h.desude.su) which has full toolset:
 
 | Step | Action | Result |
 |------|--------|--------|
@@ -55,11 +55,11 @@ Tested the same workflow on a4h-105 (a4h.desude.su) which has full toolset:
 | 5 | WriteSource CLAS `ZCL_INSTALL_TEST` | ✅ Created & Activated |
 | 6 | SearchObject verification | ✅ Found in package |
 
-**Conclusion:** WriteSource works correctly when available. The a4h-110 MCP server configuration is missing required tools.
+**Conclusion:** WriteSource works correctly when available. The devsys MCP server configuration is missing required tools.
 
 ## Fix Required
 
-1. **a4h-110 MCP Configuration**: Add WriteSource and other required tools to the server
+1. **devsys MCP Configuration**: Add WriteSource and other required tools to the server
 2. **InstallZADTVSP**: Add pre-flight check to verify required tools are available:
 
 ```go
@@ -72,7 +72,7 @@ for _, tool := range requiredTools {
 }
 ```
 
-## InstallDummyTest Tool - Full Verification (a4h-105)
+## InstallDummyTest Tool - Full Verification (devsys2)
 
 Created and tested `InstallDummyTest` MCP tool with comprehensive workflow verification:
 
@@ -109,11 +109,11 @@ InstallDummyTest - Workflow Verification
 
 ## Action Items
 
-- [x] Create `$ZADT_INSTALL_TEST` package on a4h-105 ✅
+- [x] Create `$ZADT_INSTALL_TEST` package on devsys2 ✅
 - [x] Test WriteSource with simple interface ✅
 - [x] Test WriteSource with simple class ✅
 - [x] Create InstallDummyTest verification tool ✅
-- [x] Test full 8-step workflow on a4h-105 ✅
-- [ ] Fix a4h-110 MCP server configuration
+- [x] Test full 8-step workflow on devsys2 ✅
+- [ ] Fix devsys MCP server configuration
 - [ ] Add pre-flight tool availability check to Install* tools
 - [ ] Add post-deployment verification to InstallZADTVSP

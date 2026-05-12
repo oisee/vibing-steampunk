@@ -117,3 +117,78 @@ func BuildTransportGraph(headers []TransportHeader, objects []TransportObject) *
 
 	return g
 }
+
+// MaterializeCoTransported creates explicit CO_TRANSPORTED edges between objects
+// that share at least `minCount` transport requests. This makes co-change a
+// first-class relationship in the graph, traversable by Impact BFS.
+//
+// The edges are weaker than CALLS/REFERENCES — they represent historical
+// co-movement, not structural dependency. Use EdgeKinds filter in impact
+// queries to include or exclude them.
+//
+// Direction: edges are created in both directions (A→B and B→A) so that
+// Impact BFS (which follows InEdges) can discover the relationship from
+// either side.
+//
+// Source is SourceE071 for plain TR-level correlation, or SourceE070A if
+// the graph was built with CR-level expansion (caller should set source).
+func MaterializeCoTransported(g *Graph, minCount int, source EdgeSource) int {
+	if minCount < 1 {
+		minCount = 1
+	}
+	if source == "" {
+		source = SourceE071
+	}
+
+	// Collect: for each TR node, which object nodes are connected?
+	trToObjects := make(map[string][]string)
+	for _, e := range g.Edges() {
+		if e.Kind == EdgeInTransport {
+			trToObjects[e.To] = append(trToObjects[e.To], e.From)
+		}
+	}
+
+	// Count co-occurrences between object pairs
+	type pair struct{ a, b string }
+	pairCount := make(map[pair]int)
+	pairTRs := make(map[pair][]string)
+
+	for trID, objs := range trToObjects {
+		for i := 0; i < len(objs); i++ {
+			for j := i + 1; j < len(objs); j++ {
+				a, b := objs[i], objs[j]
+				if a > b {
+					a, b = b, a // canonical order
+				}
+				p := pair{a, b}
+				pairCount[p]++
+				pairTRs[p] = append(pairTRs[p], trID)
+			}
+		}
+	}
+
+	// Create edges for pairs meeting the threshold
+	added := 0
+	for p, count := range pairCount {
+		if count < minCount {
+			continue
+		}
+		// Both directions for BFS traversal
+		for _, dir := range [][2]string{{p.a, p.b}, {p.b, p.a}} {
+			e := &Edge{
+				From:   dir[0],
+				To:     dir[1],
+				Kind:   EdgeCoTransported,
+				Source: source,
+			}
+			e.SetMeta("count", count)
+			if len(pairTRs[p]) <= 10 {
+				e.SetMeta("transports", pairTRs[p])
+			}
+			g.AddEdge(e)
+			added++
+		}
+	}
+
+	return added
+}

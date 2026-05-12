@@ -19,10 +19,10 @@ The `ABDBG_EXTDBPS` table contains our breakpoint:
 
 ```
 CLIENT: 001
-USERNAME: AVINOGRADOVA
+USERNAME: TESTUSER
 BP_INDEX: 1
 TIMESTAMP: 20251214210627
-RQ_USER: AVINOGRADOVA
+RQ_USER: TESTUSER
 RQ_TERMID: (empty)
 RQ_IDEID: (empty)
 ATTRIBUTES: |FLAG_ACTIVE=X||SYSTEM_DEBUGGING= |
@@ -38,10 +38,10 @@ The `ICFATTRIB` table contains the debug activation:
 
 ```
 CLIENT: 001
-USERNAME: AVINOGRADOVA
+USERNAME: TESTUSER
 ATTRIBUTE: D (Debugging)
 URL: %_SYSTEM
-CUSERNAME: AVINOGRADOVA
+CUSERNAME: TESTUSER
 DEBUGID: vsp
 SERVER: vhcala4hci_A4H_00
 CALL_URL: ,K=0,A=XY
@@ -53,7 +53,7 @@ TIMEOUT: 230627 (2+ hours validity)
 Despite data existing in both tables, all HTTP GET requests return empty:
 
 ```
-GET /sap/bc/adt/debugger/breakpoints?scope=external&debuggingMode=user&requestUser=AVINOGRADOVA
+GET /sap/bc/adt/debugger/breakpoints?scope=external&debuggingMode=user&requestUser=TESTUSER
 → Status: 200, Body: (empty)
 ```
 
@@ -297,16 +297,16 @@ Alert: "No execution, risk level of test class exceeds upper limit"
 Contrary to the earlier "Critical Update" section, breakpoints set via the MCP tool (`SetExternalBreakpoint`) **DO persist** to the database:
 
 ```sql
-SELECT * FROM ABDBG_EXTDBPS WHERE USERNAME = 'AVINOGRADOVA'
+SELECT * FROM ABDBG_EXTDBPS WHERE USERNAME = 'TESTUSER'
 ```
 
 Result:
 ```
 CLIENT: 001
-USERNAME: AVINOGRADOVA
+USERNAME: TESTUSER
 BP_INDEX: 1
 TIMESTAMP: 20251214213146
-RQ_USER: AVINOGRADOVA
+RQ_USER: TESTUSER
 ATTRIBUTES: |FLAG_ACTIVE=X||SYSTEM_DEBUGGING= |
 BREAKPOINT: |KIND=SOURCE||PROGRAM=ZCL_ADT_DEBUG_TEST============CP|
             |INCLUDE=ZCL_ADT_DEBUG_TEST============CCAU||LINE=17|
@@ -334,7 +334,7 @@ Despite correct database state:
 ```
 Concurrent Debug Flow Test
 ==========================
-User: AVINOGRADOVA
+User: TESTUSER
 
 1. Checking database for breakpoints...
    Breakpoint confirmed in ABDBG_EXTDBPS

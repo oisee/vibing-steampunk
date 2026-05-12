@@ -25,7 +25,7 @@
 ### Test WASM Binaries (12 functions)
 add, factorial, fibonacci, gcd, is_prime, abs, max, min, negate, sum_to, collatz, pow2
 
-### Unit Test Results on SAP (a4h-105-adt)
+### Unit Test Results on SAP (devsys2-adt)
 
 | Test | Time | Status |
 |------|------|--------|
@@ -174,8 +174,8 @@ lv_s1 = lv_s0 + 96. PERFORM mem_ld_i32 USING lv_s1 CHANGING lv_s1.
 
 | System | What's there |
 |--------|-------------|
-| a4h-105-adt | WASM compiler ($TMP) + ZADT_VSP ($ZADT_VSP) — **primary** |
-| a4h-110-adt | WASM compiler ($ZOZIK) — older, no ZADT_VSP |
+| devsys2-adt | WASM compiler ($TMP) + ZADT_VSP ($ZADT_VSP) — **primary** |
+| devsys-adt | WASM compiler ($ZOZIK) — older, no ZADT_VSP |
 | SMW0 (both) | ZEXT.WASM, ZQJS.WASM |
 
 ---

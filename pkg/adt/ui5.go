@@ -271,11 +271,18 @@ func (c *Client) UI5GetFileContent(ctx context.Context, appName, filePath string
 
 // UI5UploadFile uploads a single file to a UI5/Fiori BSP application.
 func (c *Client) UI5UploadFile(ctx context.Context, appName, filePath string, content []byte, contentType string) error {
-	if err := c.checkSafety(OpUpdate, "UI5UploadFile"); err != nil {
+	appName = strings.ToUpper(appName)
+
+	// Unified mutation policy gate. UI5 surface blocks when AllowedPackages
+	// is configured until app→package resolution is implemented.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UI5UploadFile",
+		ObjectURL: appName,
+		Surface:   SurfaceUI5,
+	}); err != nil {
 		return err
 	}
-
-	appName = strings.ToUpper(appName)
 	// Remove leading slash if present for path construction
 	if strings.HasPrefix(filePath, "/") {
 		filePath = filePath[1:]
@@ -303,11 +310,18 @@ func (c *Client) UI5UploadFile(ctx context.Context, appName, filePath string, co
 
 // UI5DeleteFile deletes a file from a UI5/Fiori BSP application.
 func (c *Client) UI5DeleteFile(ctx context.Context, appName, filePath string) error {
-	if err := c.checkSafety(OpDelete, "UI5DeleteFile"); err != nil {
+	appName = strings.ToUpper(appName)
+
+	// Unified mutation policy gate. UI5 surface blocks when AllowedPackages
+	// is configured until app→package resolution is implemented.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpDelete,
+		OpName:    "UI5DeleteFile",
+		ObjectURL: appName,
+		Surface:   SurfaceUI5,
+	}); err != nil {
 		return err
 	}
-
-	appName = strings.ToUpper(appName)
 	// Remove leading slash if present for path construction
 	if strings.HasPrefix(filePath, "/") {
 		filePath = filePath[1:]
@@ -329,15 +343,18 @@ func (c *Client) UI5DeleteFile(ctx context.Context, appName, filePath string) er
 
 // UI5CreateApp creates a new UI5/Fiori BSP application.
 func (c *Client) UI5CreateApp(ctx context.Context, appName, description, packageName, transport string) error {
-	if err := c.checkSafety(OpCreate, "UI5CreateApp"); err != nil {
-		return err
-	}
-
-	if err := c.checkPackageSafety(packageName); err != nil {
-		return err
-	}
-
 	appName = strings.ToUpper(appName)
+
+	// Unified mutation policy gate. Create path provides an explicit package
+	// so no UI5 app→package resolution is required.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "UI5CreateApp",
+		Package:   packageName,
+		Transport: transport,
+	}); err != nil {
+		return err
+	}
 
 	// Build XML payload for app creation
 	xmlPayload := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -368,11 +385,19 @@ func (c *Client) UI5CreateApp(ctx context.Context, appName, description, package
 
 // UI5DeleteApp deletes a UI5/Fiori BSP application.
 func (c *Client) UI5DeleteApp(ctx context.Context, appName, transport string) error {
-	if err := c.checkSafety(OpDelete, "UI5DeleteApp"); err != nil {
+	appName = strings.ToUpper(appName)
+
+	// Unified mutation policy gate. UI5 surface blocks when AllowedPackages
+	// is configured until app→package resolution is implemented.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpDelete,
+		OpName:    "UI5DeleteApp",
+		ObjectURL: appName,
+		Surface:   SurfaceUI5,
+		Transport: transport,
+	}); err != nil {
 		return err
 	}
-
-	appName = strings.ToUpper(appName)
 	deletePath := fmt.Sprintf("%s/%s", ui5FilestoreBase, url.PathEscape(appName))
 
 	params := url.Values{}

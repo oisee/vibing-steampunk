@@ -36,7 +36,7 @@ Examples:
 
 ```bash
 vsp rename-preview CLAS ZCL_OLD ZCL_NEW
-vsp rename-preview --prefix ZSCR_103 --to-prefix ZNEO_433 --package '$ZSCR_103'
+vsp rename-preview --prefix ZDEMO_103 --to-prefix ZNEO_433 --package '$ZDEMO_103'
 ```
 
 Why first:
@@ -135,7 +135,7 @@ Very useful for class cleanup, especially paired with class section tools.
 Examples:
 
 ```bash
-vsp refactor leaks '$ZSCR_103' --allowed '$ZCOMMON,/VENDOR/*'
+vsp refactor leaks '$ZDEMO_103' --allowed '$ZCOMMON,/VENDOR/*'
 ```
 
 This is the best precursor to package clone.
@@ -170,7 +170,7 @@ Examples:
 
 ```bash
 vsp rename-object CLAS ZCL_OLD ZCL_NEW
-vsp rename-prefix --package '$ZSCR_103' ZSCR_103 ZNEO_433
+vsp rename-prefix --package '$ZDEMO_103' ZDEMO_103 ZNEO_433
 ```
 
 Needs:
@@ -184,12 +184,12 @@ Needs:
 
 Anchor scenario:
 
-- source package: `$ZSCR_103`
+- source package: `$ZDEMO_103`
 - target package: `$ZNEO_433`
 - source naming family:
-  - `ZCL_SCR_103_*`
-  - `ZIF_SCR_103_*`
-  - `ZSCR_103_*`
+  - `ZCL_DEMO_103_*`
+  - `ZIF_DEMO_103_*`
+  - `ZDEMO_103_*`
 - target naming family:
   - `ZCL_NEO_433_*`
   - `ZIF_NEO_433_*`

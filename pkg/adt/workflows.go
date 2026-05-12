@@ -23,14 +23,19 @@ type WriteProgramResult struct {
 // WriteProgram performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow.
 // This is a convenience method for updating existing programs.
 func (c *Client) WriteProgram(ctx context.Context, programName string, source string, transport string) (*WriteProgramResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "WriteProgram"); err != nil {
-		return nil, err
-	}
-
 	programName = strings.ToUpper(programName)
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
 	sourceURL := objectURL + "/source/main"
+
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "WriteProgram",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); err != nil {
+		return nil, err
+	}
 
 	result := &WriteProgramResult{
 		ProgramName: programName,
@@ -113,14 +118,19 @@ type WriteClassResult struct {
 
 // WriteClass performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow for classes.
 func (c *Client) WriteClass(ctx context.Context, className string, source string, transport string) (*WriteClassResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "WriteClass"); err != nil {
-		return nil, err
-	}
-
 	className = strings.ToUpper(className)
 	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(className))
 	sourceURL := objectURL + "/source/main"
+
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "WriteClass",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); err != nil {
+		return nil, err
+	}
 
 	result := &WriteClassResult{
 		ClassName: className,
@@ -203,16 +213,16 @@ type CreateProgramResult struct {
 // CreateAndActivateProgram creates a new program with source code and activates it.
 // Workflow: CreateObject -> Lock -> UpdateSource -> Unlock -> Activate
 func (c *Client) CreateAndActivateProgram(ctx context.Context, programName string, description string, packageName string, source string, transport string) (*CreateProgramResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "CreateAndActivateProgram"); err != nil {
-		return nil, err
-	}
-
 	programName = strings.ToUpper(programName)
 	packageName = strings.ToUpper(packageName)
 
-	// Check package restrictions
-	if err := c.checkPackageSafety(packageName); err != nil {
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "CreateAndActivateProgram",
+		Package:   packageName,
+		Transport: transport,
+	}); err != nil {
 		return nil, err
 	}
 
@@ -296,16 +306,16 @@ type CreateClassWithTestsResult struct {
 // CreateClassWithTests creates a new class with unit tests and runs them.
 // Workflow: CreateObject -> Lock -> UpdateSource -> CreateTestInclude -> UpdateClassInclude -> Unlock -> Activate -> RunUnitTests
 func (c *Client) CreateClassWithTests(ctx context.Context, className string, description string, packageName string, classSource string, testSource string, transport string) (*CreateClassWithTestsResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "CreateClassWithTests"); err != nil {
-		return nil, err
-	}
-
 	className = strings.ToUpper(className)
 	packageName = strings.ToUpper(packageName)
 
-	// Check package restrictions
-	if err := c.checkPackageSafety(packageName); err != nil {
+	// Unified mutation policy gate (op type + package + transport)
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "CreateClassWithTests",
+		Package:   packageName,
+		Transport: transport,
+	}); err != nil {
 		return nil, err
 	}
 

@@ -21,6 +21,10 @@ type SystemConfig struct {
 	// Optional CTS correlation attribute (for CR-level grouping, e.g. SAPTEST/ZCR)
 	TransportAttribute string `json:"transport_attribute,omitempty"`
 
+	// Optional analysis cache (opt-in)
+	Cache     bool   `json:"cache,omitempty"`      // Enable SQLite analysis cache
+	CachePath string `json:"cache_path,omitempty"` // Custom cache path (default: .vsp-cache/<system>.db)
+
 	// Cookie authentication (alternative to user/password)
 	CookieFile   string `json:"cookie_file,omitempty"`   // Path to Netscape-format cookie file
 	CookieString string `json:"cookie_string,omitempty"` // Inline cookie string
@@ -123,6 +127,22 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 		sys.TransportAttribute = strings.ToUpper(strings.TrimSpace(sys.TransportAttribute))
 	}
 
+	// Resolve cache from env if not set in config
+	if !sys.Cache {
+		envKey := fmt.Sprintf("VSP_%s_CACHE", strings.ToUpper(name))
+		if strings.EqualFold(os.Getenv(envKey), "true") {
+			sys.Cache = true
+		}
+	}
+	if !sys.Cache {
+		if strings.EqualFold(os.Getenv("VSP_CACHE"), "true") {
+			sys.Cache = true
+		}
+	}
+	if sys.Cache && sys.CachePath == "" {
+		sys.CachePath = fmt.Sprintf(".vsp-cache/%s.db", strings.ToLower(name))
+	}
+
 	// Apply defaults
 	if sys.Client == "" {
 		sys.Client = "001"
@@ -153,6 +173,7 @@ func ExampleConfig() string {
 				User:               "DEVELOPER",
 				Client:             "001",
 				TransportAttribute: "SAPTEST",
+				Cache:              true,
 			},
 			"a4h": {
 				URL:      "http://a4h.local:50000",

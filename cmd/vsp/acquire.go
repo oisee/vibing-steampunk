@@ -95,7 +95,7 @@ func AcquireReverseRefs(ctx context.Context, client *adt.Client, names []string,
 	var allRefs []graph.SlimRefRow
 	for idx, nm := range names {
 		if progress {
-			fmt.Fprintf(os.Stderr, "\r  [%d/%d] %s", idx+1, len(names), nm)
+			fmt.Fprintf(os.Stderr, "\r  [%d/%d] %-40s", idx+1, len(names), nm)
 		}
 
 		wbQuery := fmt.Sprintf("SELECT INCLUDE, NAME FROM WBCROSSGT WHERE NAME LIKE '%s%%'", nm)

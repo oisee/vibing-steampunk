@@ -247,6 +247,9 @@ SELECT * FROM ztable INTO TABLE lt.
 INCLUDE ztest_incl.
 lo->method( ).
 zcl_utils=>static_method( ).
+CALL TRANSACTION 'ZMY_TCODE'.
+LEAVE TO TRANSACTION 'VA01'.
+CALL TRANSFORMATION zmy_xslt SOURCE data = ls_data RESULT XML lv_xml.
 `
 
 	edges := ExtractDepsFromSource(source, "PROG:ZTEST")
@@ -270,6 +273,9 @@ zcl_utils=>static_method( ).
 		{EdgeReferences, "CLAS:ZCL_FACTORY"},
 		{EdgeContainsInclude, "PROG:ZTEST_INCL"},
 		{EdgeCalls, "CLAS:ZCL_UTILS"},
+		{EdgeCalls, "TRAN:ZMY_TCODE"},
+		{EdgeCalls, "TRAN:VA01"},
+		{EdgeCalls, "XSLT:ZMY_XSLT"},
 	}
 
 	for _, exp := range expected {

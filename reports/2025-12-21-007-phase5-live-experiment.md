@@ -22,7 +22,7 @@ Validate the Phase 5 TAS-Style Debugging tools with a real SAP system:
 
 ```bash
 export SAP_URL="http://a4h.desude.su:50000"
-export SAP_USER="AVINOGRADOVA"
+export SAP_USER="TESTUSER"
 export SAP_PASSWORD="2wsx@WSX2wsx"
 export SAP_CLIENT="001"
 ```

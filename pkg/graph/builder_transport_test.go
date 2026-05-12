@@ -196,6 +196,97 @@ func TestBuildTransportGraph_Stats(t *testing.T) {
 	}
 }
 
+func TestMaterializeCoTransported_Basic(t *testing.T) {
+	headers := []TransportHeader{
+		{TRKORR: "A4HK900001", TRFUNCTION: "K", TRSTATUS: "R"},
+	}
+	objects := []TransportObject{
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_FOO"},
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "TABL", ObjName: "ZTAB_CFG"},
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "PROG", ObjName: "ZPROG"},
+	}
+
+	g := BuildTransportGraph(headers, objects)
+	added := MaterializeCoTransported(g, 1, SourceE071)
+
+	// 3 objects → 3 pairs → 6 directed edges
+	if added != 6 {
+		t.Fatalf("Expected 6 CO_TRANSPORTED edges (3 pairs × 2 dirs), got %d", added)
+	}
+
+	// Check a specific edge exists: CLAS:ZCL_FOO → TABL:ZTAB_CFG
+	found := false
+	for _, e := range g.OutEdges(NodeID("CLAS", "ZCL_FOO")) {
+		if e.Kind == EdgeCoTransported && e.To == NodeID("TABL", "ZTAB_CFG") {
+			found = true
+			if e.Source != SourceE071 {
+				t.Errorf("Expected source E071, got %s", e.Source)
+			}
+		}
+	}
+	if !found {
+		t.Error("Expected CO_TRANSPORTED edge from ZCL_FOO to ZTAB_CFG")
+	}
+
+	// Reverse direction should also exist (for BFS traversal)
+	found = false
+	for _, e := range g.OutEdges(NodeID("TABL", "ZTAB_CFG")) {
+		if e.Kind == EdgeCoTransported && e.To == NodeID("CLAS", "ZCL_FOO") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Expected reverse CO_TRANSPORTED edge from ZTAB_CFG to ZCL_FOO")
+	}
+}
+
+func TestMaterializeCoTransported_MinCount(t *testing.T) {
+	headers := []TransportHeader{
+		{TRKORR: "A4HK900001", TRFUNCTION: "K", TRSTATUS: "R"},
+		{TRKORR: "A4HK900002", TRFUNCTION: "K", TRSTATUS: "R"},
+	}
+	objects := []TransportObject{
+		// Both in TR1
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_A"},
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_B"},
+		// Only ZCL_A in TR2 (with ZCL_C)
+		{TRKORR: "A4HK900002", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_A"},
+		{TRKORR: "A4HK900002", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_B"},
+		{TRKORR: "A4HK900002", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_C"},
+	}
+
+	g := BuildTransportGraph(headers, objects)
+
+	// With minCount=2, only A↔B should get edges (they share 2 TRs)
+	added := MaterializeCoTransported(g, 2, SourceE071)
+
+	// A↔B: 2 TRs → qualifies → 2 directed edges
+	// A↔C: 1 TR → doesn't qualify
+	// B↔C: 1 TR → doesn't qualify
+	if added != 2 {
+		t.Fatalf("Expected 2 CO_TRANSPORTED edges (1 pair × 2 dirs), got %d", added)
+	}
+}
+
+func TestMaterializeCoTransported_E070ASource(t *testing.T) {
+	headers := []TransportHeader{
+		{TRKORR: "A4HK900001", TRFUNCTION: "K", TRSTATUS: "R"},
+	}
+	objects := []TransportObject{
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "CLAS", ObjName: "ZCL_X"},
+		{TRKORR: "A4HK900001", PGMID: "R3TR", Object: "TABL", ObjName: "ZCUST"},
+	}
+
+	g := BuildTransportGraph(headers, objects)
+	MaterializeCoTransported(g, 1, SourceE070A)
+
+	for _, e := range g.Edges() {
+		if e.Kind == EdgeCoTransported && e.Source != SourceE070A {
+			t.Errorf("Expected source E070A for CR-level edges, got %s", e.Source)
+		}
+	}
+}
+
 func TestTransportHeader_IsRequest(t *testing.T) {
 	request := TransportHeader{TRKORR: "A4HK900001", STRKORR: ""}
 	task := TransportHeader{TRKORR: "A4HK900002", STRKORR: "A4HK900001"}

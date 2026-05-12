@@ -91,7 +91,7 @@ The goroutine+channel architecture successfully solves the HTTP session persiste
 
 **Findings:**
 - Only placeholder values in documentation (`your_password`, `pass`, `secret`)
-- Username `AVINOGRADOVA` visible in test data (not sensitive)
+- Username `TESTUSER` visible in test data (not sensitive)
 - Hostname `vhcala4hci` visible (development VM, not sensitive)
 - GitHub Actions use proper `${{ secrets.* }}` references
 

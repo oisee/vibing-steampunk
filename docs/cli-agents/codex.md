@@ -1,6 +1,6 @@
 # OpenAI Codex CLI + VSP: SAP Testing Agent
 
-Guide for configuring [OpenAI Codex CLI](https://github.com/openai/codex) as an SAP Q/A testing agent using [VSP](https://github.com/oisee/vibing-steampunk).
+Guide for configuring [OpenAI Codex CLI](https://github.com/openai/codex) as an SAP Q/A testing agent using [VSP](https://github.com/vinchacho/vibing-steampunk).
 
 ---
 
@@ -22,11 +22,11 @@ npm install -g @openai/codex
 
 ```bash
 # Download prebuilt binary (pick your platform)
-curl -LO https://github.com/oisee/vibing-steampunk/releases/latest/download/vsp-linux-amd64
+curl -LO https://github.com/vinchacho/vibing-steampunk/releases/latest/download/vsp-linux-amd64
 chmod +x vsp-linux-amd64
 
 # Or build from source
-git clone https://github.com/oisee/vibing-steampunk.git
+git clone https://github.com/vinchacho/vibing-steampunk.git
 cd vibing-steampunk && go build -o vsp ./cmd/vsp
 ```
 
@@ -359,7 +359,7 @@ Use the echo MCP server to verify Codex MCP integration works:
 
 ## Links
 
-- VSP Repository: https://github.com/oisee/vibing-steampunk
+- VSP Repository: https://github.com/vinchacho/vibing-steampunk
 - Codex CLI: https://github.com/openai/codex
 - MCP Specification: https://modelcontextprotocol.io
 - CLI Agents Overview: [README.md](README.md)

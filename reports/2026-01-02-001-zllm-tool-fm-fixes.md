@@ -10,7 +10,7 @@
 
 When running `ZLLM_00_TOOL_DEMO` with variant:
 ```
-P_BIN    = $ZRAY_AVINOGRADOVA
+P_BIN    = $ZRAY_TESTUSER
 P_NAME   = DEFAULT_CLAUDE.ENV
 P_PROMPT = What is the current date and time?
 P_FM1    = RFC_SYSTEM_INFO

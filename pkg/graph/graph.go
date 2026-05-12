@@ -21,7 +21,8 @@ const (
 	EdgeDependsOnCDS    EdgeKind = "DEPENDS_ON_CDS"     // CDS view dependency
 
 	// Transport edges (MVP)
-	EdgeInTransport EdgeKind = "IN_TRANSPORT" // object → transport request (E071)
+	EdgeInTransport  EdgeKind = "IN_TRANSPORT"  // object → transport request (E071)
+	EdgeCoTransported EdgeKind = "CO_TRANSPORTED" // object ↔ object: shared TR or CR (weaker, derived)
 
 	// Config edges (MVP)
 	EdgeReadsConfig EdgeKind = "READS_CONFIG" // program → TVARVC variable (heuristic)
@@ -43,8 +44,9 @@ const (
 	SourceTrace        EdgeSource = "TRACE"
 
 	// Transport sources (MVP)
-	SourceE070 EdgeSource = "E070" // Transport request headers
-	SourceE071 EdgeSource = "E071" // Transport object list
+	SourceE070  EdgeSource = "E070"  // Transport request headers
+	SourceE071  EdgeSource = "E071"  // Transport object list
+	SourceE070A EdgeSource = "E070A" // Transport attributes (CR-level correlation)
 
 	// Config sources (MVP)
 	SourceTVARVC_CROSS EdgeSource = "TVARVC_CROSS" // Heuristic: CROSS table + source grep
@@ -64,6 +66,9 @@ const (
 	NodeDDLS = "DDLS" // CDS view
 	NodeDEVC = "DEVC" // Package
 	NodeTYPE = "TYPE" // Data type / type pool
+	NodeTRAN = "TRAN" // Transaction code
+	NodeXSLT = "XSLT" // XSLT / Simple Transformation
+	NodeMSAG = "MSAG" // Message class
 
 	// Transport layer (MVP)
 	NodeTR = "TR" // Transport request (E070, request level only; tasks collapsed as metadata)

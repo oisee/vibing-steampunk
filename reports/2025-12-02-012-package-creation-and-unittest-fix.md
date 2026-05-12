@@ -64,7 +64,7 @@ Through multiple test iterations, discovered SAP expects these elements in order
   adtcore:description="Test package"
   adtcore:name="$ZMCPP_12345"
   adtcore:type="DEVC/K"
-  adtcore:responsible="AVINOGRADOVA">
+  adtcore:responsible="TESTUSER">
   <pack:attributes pack:packageType="development"/>
   <pack:superPackage adtcore:name="$TMP" adtcore:type="DEVC/K"/>
   <pack:applicationComponent/>

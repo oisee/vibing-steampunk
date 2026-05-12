@@ -16,7 +16,7 @@ go build -o vsp ./cmd/vsp
 ### SAP Connection
 ```bash
 export SAP_URL=http://a4h.desude.su:50000
-export SAP_USER=AVINOGRADOVA
+export SAP_USER=TESTUSER
 export SAP_PASSWORD=<password>
 export SAP_CLIENT=001
 ```

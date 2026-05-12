@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -115,9 +119,88 @@ func (c *Client) checkPackageSafety(pkg string) error {
 	return c.config.Safety.CheckPackage(pkg)
 }
 
+// checkObjectPackageSafety resolves the package for an existing object and
+// validates it against the configured package whitelist.
+func (c *Client) checkObjectPackageSafety(ctx context.Context, objectURL string) error {
+	if len(c.config.Safety.AllowedPackages) == 0 {
+		return nil
+	}
+
+	pkg, err := c.getObjectPackage(ctx, objectURL)
+	if err != nil {
+		return fmt.Errorf("resolving package for %s: %w", normalizeObjectURLForPackageCheck(objectURL), err)
+	}
+
+	return c.checkPackageSafety(pkg)
+}
+
 // checkTransportableEdit checks if editing objects that require transports is allowed.
 func (c *Client) checkTransportableEdit(transport, opName string) error {
 	return c.config.Safety.CheckTransportableEdit(transport, opName)
+}
+
+func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string, error) {
+	normalized := normalizeObjectURLForPackageCheck(objectURL)
+	objectName, err := objectNameFromURL(normalized)
+	if err != nil {
+		return "", err
+	}
+
+	results, err := c.SearchObject(ctx, objectName, 20)
+	if err != nil {
+		return "", err
+	}
+
+	canonicalURL := canonicalizeObjectURL(normalized)
+	for _, result := range results {
+		if result.PackageName == "" {
+			continue
+		}
+		if canonicalizeObjectURL(result.URI) == canonicalURL {
+			return result.PackageName, nil
+		}
+	}
+
+	return "", fmt.Errorf("package metadata not found")
+}
+
+func normalizeObjectURLForPackageCheck(objectURL string) string {
+	normalized := strings.TrimSuffix(objectURL, "/")
+
+	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
+		return normalized[:idx]
+	}
+	if strings.HasSuffix(normalized, "/source/main") {
+		return strings.TrimSuffix(normalized, "/source/main")
+	}
+
+	return normalized
+}
+
+func canonicalizeObjectURL(objectURL string) string {
+	normalized := normalizeObjectURLForPackageCheck(objectURL)
+	if decoded, err := url.PathUnescape(normalized); err == nil {
+		normalized = decoded
+	}
+	return strings.ToLower(strings.TrimSuffix(normalized, "/"))
+}
+
+func objectNameFromURL(objectURL string) (string, error) {
+	normalized := normalizeObjectURLForPackageCheck(objectURL)
+	parts := strings.Split(strings.Trim(normalized, "/"), "/")
+	if len(parts) == 0 {
+		return "", fmt.Errorf("invalid object URL")
+	}
+
+	name, err := url.PathUnescape(parts[len(parts)-1])
+	if err != nil {
+		return "", fmt.Errorf("decoding object name: %w", err)
+	}
+	if name == "" {
+		return "", fmt.Errorf("invalid object URL")
+	}
+
+	return strings.ToUpper(name), nil
 }
 
 // Safety returns the safety configuration for checking transport operations.
@@ -349,9 +432,11 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 
 	// URL encode for namespaced objects
 	structPath := fmt.Sprintf("/sap/bc/adt/functions/groups/%s", url.PathEscape(groupName))
+	// S/4HANA rejects application/xml here (406). Use ADT vendor content types; keep
+	// application/xml as a low-priority fallback for older systems.
 	resp, err := c.transport.Request(ctx, structPath, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/xml",
+		Accept: "application/vnd.sap.adt.functions.groups.v3+xml, application/vnd.sap.adt.functions.groups.v2+xml;q=0.9, application/xml;q=0.8",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting function group: %w", err)
@@ -363,6 +448,148 @@ func (c *Client) GetFunctionGroup(ctx context.Context, groupName string) (*Funct
 	}
 
 	return &fg, nil
+}
+
+// GetFunctionGroupAllSources returns the concatenated source of a function group:
+// the top include (source/main), every FUGR include (LxxxTOP, LxxxUXX, LxxxF01, ...),
+// and every function module body. Intended for dependency analysis where the caller
+// needs the full textual footprint of a FUGR, not just its metadata.
+//
+// The function group's objectstructure endpoint enumerates all FUGR/I (includes) and
+// FUGR/FF (function modules); we resolve each child's source/main URI and concatenate.
+// Individual sub-fetches that fail are skipped (best-effort) so a single broken include
+// does not hide deps from the rest of the group.
+func (c *Client) GetFunctionGroupAllSources(ctx context.Context, groupName string) (string, error) {
+	groupName = strings.ToLower(groupName)
+
+	structPath := fmt.Sprintf("/sap/bc/adt/functions/groups/%s/objectstructure", url.PathEscape(groupName))
+	resp, err := c.transport.Request(ctx, structPath, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting function group structure: %w", err)
+	}
+
+	type atomLink struct {
+		Rel  string `xml:"rel,attr"`
+		Href string `xml:"href,attr"`
+	}
+	type element struct {
+		Name     string     `xml:"name,attr"`
+		Type     string     `xml:"type,attr"`
+		Links    []atomLink `xml:"link"`
+		Children []element  `xml:"objectStructureElement"`
+	}
+	var root element
+	if err := xml.Unmarshal(resp.Body, &root); err != nil {
+		return "", fmt.Errorf("parsing function group structure: %w", err)
+	}
+
+	seen := make(map[string]bool)
+	var srcURIs []string
+
+	// The root element is the FUGR itself — pick its source/main link so the TOP-level
+	// INCLUDE skeleton is also analyzed.
+	addLinks := func(e element) {
+		for _, l := range e.Links {
+			if strings.HasSuffix(l.Rel, "/source/definitionIdentifier") || strings.HasSuffix(l.Rel, "/definitionIdentifier") {
+				if strings.Contains(l.Href, "/source/main") && !seen[l.Href] {
+					seen[l.Href] = true
+					srcURIs = append(srcURIs, l.Href)
+				}
+			}
+		}
+	}
+	var walk func(e element)
+	walk = func(e element) {
+		// Include sources for the group itself (FUGR/F), its includes (FUGR/I*),
+		// and its function modules (FUGR/FF).
+		addLinks(e)
+		for _, ch := range e.Children {
+			walk(ch)
+		}
+	}
+	walk(root)
+
+	if len(srcURIs) == 0 {
+		// Fallback: at least fetch the top-level source so we get something.
+		srcURIs = []string{fmt.Sprintf("/sap/bc/adt/functions/groups/%s/source/main", url.PathEscape(groupName))}
+	}
+	sort.Strings(srcURIs)
+
+	// Safety cap. A pathological function group with hundreds of FMs would
+	// otherwise produce a sequential fetch storm that looks like a hang. 150
+	// is well above the largest normal FUGR (~50 modules) and keeps worst-
+	// case latency bounded. We log when we cut things short so the caller
+	// knows the analysis is partial.
+	const maxFUGRSubfetches = 150
+	if len(srcURIs) > maxFUGRSubfetches {
+		fmt.Fprintf(os.Stderr, "    [FUGR %s] capped at %d of %d sub-URIs\n",
+			strings.ToUpper(groupName), maxFUGRSubfetches, len(srcURIs))
+		srcURIs = srcURIs[:maxFUGRSubfetches]
+	}
+	fmt.Fprintf(os.Stderr, "    [FUGR %s] fetching %d sub-sources\n",
+		strings.ToUpper(groupName), len(srcURIs))
+
+	type fetchResult struct {
+		idx  int
+		body string
+	}
+	const fugrWorkers = 6
+	jobCh := make(chan int)
+	resCh := make(chan fetchResult, len(srcURIs))
+
+	var wg sync.WaitGroup
+	for w := 0; w < fugrWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobCh {
+				if ctx.Err() != nil {
+					return
+				}
+				r, err := c.transport.Request(ctx, srcURIs[idx], &RequestOptions{
+					Method: http.MethodGet,
+					Accept: "text/plain",
+				})
+				if err != nil {
+					resCh <- fetchResult{idx: idx}
+					continue
+				}
+				resCh <- fetchResult{idx: idx, body: string(r.Body)}
+			}
+		}()
+	}
+	go func() {
+		for idx := range srcURIs {
+			jobCh <- idx
+		}
+		close(jobCh)
+		wg.Wait()
+		close(resCh)
+	}()
+
+	results := make([]string, len(srcURIs))
+	completed := 0
+	for res := range resCh {
+		results[res.idx] = res.body
+		completed++
+		if completed == len(srcURIs) || completed%5 == 0 {
+			fmt.Fprintf(os.Stderr, "    [FUGR %s] %d/%d sub-sources fetched\n",
+				strings.ToUpper(groupName), completed, len(srcURIs))
+		}
+	}
+
+	var combined strings.Builder
+	for _, body := range results {
+		if body == "" {
+			continue
+		}
+		combined.WriteString(body)
+		combined.WriteString("\n")
+	}
+	return combined.String(), nil
 }
 
 // GetFunction retrieves the source code of a function module.
@@ -467,14 +694,14 @@ func (c *Client) GetSRVD(ctx context.Context, srvdName string) (string, error) {
 
 // ServiceBinding represents an OData Service Binding metadata
 type ServiceBinding struct {
-	Name            string `json:"name"`
-	Type            string `json:"type"`
-	Description     string `json:"description"`
-	Published       bool   `json:"published"`
-	BindingType     string `json:"bindingType"`     // ODATA
-	BindingVersion  string `json:"bindingVersion"`  // V2, V4
-	ServiceURL      string `json:"serviceUrl,omitempty"`
-	ServiceDefName  string `json:"serviceDefName,omitempty"`
+	Name           string `json:"name"`
+	Type           string `json:"type"`
+	Description    string `json:"description"`
+	Published      bool   `json:"published"`
+	BindingType    string `json:"bindingType"`    // ODATA
+	BindingVersion string `json:"bindingVersion"` // V2, V4
+	ServiceURL     string `json:"serviceUrl,omitempty"`
+	ServiceDefName string `json:"serviceDefName,omitempty"`
 }
 
 // GetSRVB retrieves metadata for a Service Binding.
@@ -532,13 +759,13 @@ func parseSRVBMetadata(data []byte) (*ServiceBinding, error) {
 	}
 
 	return &ServiceBinding{
-		Name:            root.Name,
-		Type:            root.Type,
-		Description:     root.Description,
-		Published:       root.Published,
-		BindingType:     root.Binding.Type,
-		BindingVersion:  root.Binding.Version,
-		ServiceDefName:  root.Services.Content.ServiceDef.Name,
+		Name:           root.Name,
+		Type:           root.Type,
+		Description:    root.Description,
+		Published:      root.Published,
+		BindingType:    root.Binding.Type,
+		BindingVersion: root.Binding.Version,
+		ServiceDefName: root.Services.Content.ServiceDef.Name,
 	}, nil
 }
 
@@ -998,10 +1225,20 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 	}
 
 	// Try to detect HANA from CVERS (optional)
-	hanaResult, err := c.RunQuery(ctx, "SELECT RELEASE FROM CVERS WHERE COMPONENT LIKE '%HDB%' OR COMPONENT LIKE '%HANA%'", 1)
+	hanaResult, err := c.RunQuery(ctx,
+		"SELECT RELEASE FROM CVERS WHERE COMPONENT LIKE '%HDB%' OR COMPONENT LIKE '%HANA%'", 1)
 	if err == nil && len(hanaResult.Rows) > 0 {
 		info.DatabaseSystem = "HDB"
 		info.DatabaseRelease = getString(hanaResult.Rows[0], "RELEASE")
+	} else {
+		// Step 2: S4CORE in CVERS — pure S/4HANA.
+		// S/4HANA implies HANA database. However its version cannot be inferred from the software component.
+		// Therefore DatabaseRelease is left blank
+		s4Result, err := c.RunQuery(ctx,
+			"SELECT COMPONENT FROM CVERS WHERE COMPONENT = 'S4CORE'", 1)
+		if err == nil && len(s4Result.Rows) > 0 {
+			info.DatabaseSystem = "HDB"
+		}
 	}
 
 	// If we couldn't get SystemID from T000, use fallback
@@ -1231,11 +1468,11 @@ func FlattenCallGraph(root *CallGraphNode) []CallGraphEdge {
 
 // CallGraphStats provides statistics about a call graph.
 type CallGraphStats struct {
-	TotalNodes   int            `json:"total_nodes"`
-	TotalEdges   int            `json:"total_edges"`
-	MaxDepth     int            `json:"max_depth"`
-	NodesByType  map[string]int `json:"nodes_by_type"`
-	UniqueNodes  []string       `json:"unique_nodes"`
+	TotalNodes  int            `json:"total_nodes"`
+	TotalEdges  int            `json:"total_edges"`
+	MaxDepth    int            `json:"max_depth"`
+	NodesByType map[string]int `json:"nodes_by_type"`
+	UniqueNodes []string       `json:"unique_nodes"`
 }
 
 // AnalyzeCallGraph computes statistics for a call graph.
@@ -1274,10 +1511,10 @@ func AnalyzeCallGraph(root *CallGraphNode) *CallGraphStats {
 
 // CallGraphComparison compares static and actual call graphs.
 type CallGraphComparison struct {
-	CommonEdges    []CallGraphEdge `json:"common_edges"`    // In both static and actual
-	StaticOnly     []CallGraphEdge `json:"static_only"`     // In static but not executed
-	ActualOnly     []CallGraphEdge `json:"actual_only"`     // Executed but not in static (dynamic calls)
-	CoverageRatio  float64         `json:"coverage_ratio"`  // Actual/Static ratio
+	CommonEdges   []CallGraphEdge `json:"common_edges"`   // In both static and actual
+	StaticOnly    []CallGraphEdge `json:"static_only"`    // In static but not executed
+	ActualOnly    []CallGraphEdge `json:"actual_only"`    // Executed but not in static (dynamic calls)
+	CoverageRatio float64         `json:"coverage_ratio"` // Actual/Static ratio
 }
 
 // CompareCallGraphs compares a static call graph with an actual execution trace.
@@ -1774,10 +2011,10 @@ func (c *Client) GetDump(ctx context.Context, dumpID string) (*DumpDetails, erro
 
 // dumpEntryXML is used for parsing dump feed entries.
 type dumpEntryXML struct {
-	ID        string `xml:"id"`
-	Title     string `xml:"title"`
-	Updated   string `xml:"updated"`
-	Category  struct {
+	ID       string `xml:"id"`
+	Title    string `xml:"title"`
+	Updated  string `xml:"updated"`
+	Category struct {
 		Term string `xml:"term,attr"`
 	} `xml:"category"`
 	Link struct {
@@ -1786,9 +2023,9 @@ type dumpEntryXML struct {
 	Content struct {
 		Type   string `xml:"type,attr"`
 		Source struct {
-			Line          string `xml:"line,attr"`
-			Program       string `xml:"program,attr"`
-			Include       string `xml:"include,attr"`
+			Line    string `xml:"line,attr"`
+			Program string `xml:"program,attr"`
+			Include string `xml:"include,attr"`
 		} `xml:"source"`
 		Exception struct {
 			Type string `xml:"type,attr"`
@@ -1898,8 +2135,8 @@ type TraceEntry struct {
 	Program     string  `json:"program,omitempty"`
 	Event       string  `json:"event,omitempty"`
 	Line        int     `json:"line,omitempty"`
-	GrossTime   int64   `json:"grossTime,omitempty"`   // microseconds
-	NetTime     int64   `json:"netTime,omitempty"`     // microseconds
+	GrossTime   int64   `json:"grossTime,omitempty"` // microseconds
+	NetTime     int64   `json:"netTime,omitempty"`   // microseconds
 	Calls       int     `json:"calls,omitempty"`
 	Percentage  float64 `json:"percentage,omitempty"`
 	Statement   string  `json:"statement,omitempty"`
@@ -2095,12 +2332,12 @@ func parseTraceAnalysis(data []byte, traceID, toolType string) (*TraceAnalysis, 
 
 // SQLTraceState represents the current state of SQL tracing.
 type SQLTraceState struct {
-	Active      bool   `json:"active"`
-	User        string `json:"user,omitempty"`
-	TraceType   string `json:"traceType,omitempty"`
-	StartTime   string `json:"startTime,omitempty"`
-	MaxRecords  int    `json:"maxRecords,omitempty"`
-	TraceFile   string `json:"traceFile,omitempty"`
+	Active     bool   `json:"active"`
+	User       string `json:"user,omitempty"`
+	TraceType  string `json:"traceType,omitempty"`
+	StartTime  string `json:"startTime,omitempty"`
+	MaxRecords int    `json:"maxRecords,omitempty"`
+	TraceFile  string `json:"traceFile,omitempty"`
 }
 
 // SQLTraceEntry represents a trace file in the directory.
@@ -2251,22 +2488,33 @@ func parseSQLTraceDirectory(data []byte) ([]SQLTraceEntry, error) {
 
 // GetAPIReleaseState retrieves the API release state for an ABAP object.
 // This checks whether the object is released for use in ABAP Cloud (S/4HANA Clean Core).
-// objectURI is the full ADT path, e.g. "/sap/bc/adt/oo/classes/cl_abap_typedescr".
-// Do NOT url-escape this — it is already a valid URI path.
 func (c *Client) GetAPIReleaseState(ctx context.Context, objectURI string) (*APIReleaseState, error) {
-	resp, err := c.transport.Request(ctx, objectURI, &RequestOptions{
+	// objectURI is the full ADT path of the OBJECT, e.g. "/sap/bc/adt/oo/classes/cl_abap_typedescr".
+	// We escape it to attach it to the endpoint path.
+	endpoint := fmt.Sprintf("/sap/bc/adt/apireleases/%s", url.PathEscape(objectURI))
+
+	resp, err := c.transport.Request(ctx, endpoint, &RequestOptions{
 		Method: http.MethodGet,
-		Accept: "application/vnd.sap.adt.api.releasestate.v1+xml",
+		Accept: "application/vnd.sap.adt.apirelease.v10+xml",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting API release state: %w", err)
 	}
 
+	body := strings.TrimSpace(string(resp.Body))
+
+	if u, err := strconv.Unquote(body); err == nil {
+		body = u
+	}
+
+	if strings.Contains(body, "&lt;") {
+		body = html.UnescapeString(body)
+	}
+
 	var state APIReleaseState
-	if err := xml.Unmarshal(resp.Body, &state); err != nil {
-		return nil, fmt.Errorf("parsing API release state XML: %w", err)
+	if err := xml.Unmarshal([]byte(body), &state); err != nil {
+		return nil, fmt.Errorf("unmarshal API release state: %w", err)
 	}
 
 	return &state, nil
 }
-

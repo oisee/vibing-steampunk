@@ -11,7 +11,7 @@
 ### Problem
 - `.mcp.json` had all 3 systems running in `focused` mode (81 tools) — no `SAP_MODE` was set
 - The one-tool "universal" mode existed but was controlled by a separate axis: `SAP_TOOL_MODE=universal` / `--tool-mode`
-- Only `a4h-110-adt` had `SAP_TOOL_MODE=universal`, others didn't
+- Only `devsys-adt` had `SAP_TOOL_MODE=universal`, others didn't
 - Two separate config axes (`SAP_MODE` + `SAP_TOOL_MODE`) was confusing
 
 ### Solution: Unified `SAP_MODE` with 3 values

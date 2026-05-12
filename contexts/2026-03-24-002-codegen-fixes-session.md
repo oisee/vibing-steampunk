@@ -17,16 +17,16 @@
 
 **Fix (ABAP):** Added `mt_block_depths` parallel table. Save depth at `if`/`block`/`loop`, restore at `else`, pop at `end`.
 
-**Impact:** 4 tests fixed on a4h-110: abs, fibonacci, gcd, max_min.
+**Impact:** 4 tests fixed on devsys: abs, fibonacci, gcd, max_min.
 
-#### 2. Block Without DO Wrapper (a4h-105 only)
-**Root cause:** a4h-105 codegen eliminated `DO 1 TIMES` for blocks. When `br_if N` (N>0) set `gv_br = N; EXIT`, the EXIT had no enclosing DO and exited the FORM entirely, losing rv.
+#### 2. Block Without DO Wrapper (devsys2 only)
+**Root cause:** devsys2 codegen eliminated `DO 1 TIMES` for blocks. When `br_if N` (N>0) set `gv_br = N; EXIT`, the EXIT had no enclosing DO and exited the FORM entirely, losing rv.
 
 **Fix:** Restored `DO 1 TIMES` / `ENDDO` for blocks, with `IF gv_br > 0. gv_br = gv_br - 1. EXIT. ENDIF.` propagation.
 
-**Impact:** 4 tests fixed on a4h-105: collatz, is_prime, pow, sum_to.
+**Impact:** 4 tests fixed on devsys2: collatz, is_prime, pow, sum_to.
 
-#### 3. PERFORM USING Literal Mutation (a4h-105 test harness)
+#### 3. PERFORM USING Literal Mutation (devsys2 test harness)
 **Root cause:** FORM parameters without VALUE() receive references. When WASM functions mutate parameters (e.g., collatz: `n = n/2`), passing literals causes MOVE_TO_LIT_NOTALLOWED_NODATA.
 
 **Fix:** Test harness uses `call1`/`call2`/`call3` wrapper methods that copy IMPORTING params to local variables before PERFORM.
@@ -46,8 +46,8 @@
 | System | Suite | QuickJS GENERATE |
 |--------|-------|-----------------|
 | Go (wazero) | 30/30 PASS | N/A (instantiation OK) |
-| a4h-110 | 11/11 PASS | Not tested |
-| a4h-105 | 11/11 PASS | rc=4, line 207,664: ENDDO without DO |
+| devsys | 11/11 PASS | Not tested |
+| devsys2 | 11/11 PASS | rc=4, line 207,664: ENDDO without DO |
 
 ### QuickJS GENERATE Progress
 
@@ -66,7 +66,7 @@ Added `execute_test.go` with `github.com/tetratelabs/wazero`:
 
 ---
 
-## Current State of ABAP Codegen on a4h-105
+## Current State of ABAP Codegen on devsys2
 
 ### zcl_wasm_codegen changes (surgical edits):
 1. `mt_block_depths` — IF/ELSE stack depth tracking
@@ -84,7 +84,7 @@ Added `execute_test.go` with `github.com/tetratelabs/wazero`:
 
 ## QuickJS GENERATE Deep Debugging (continued)
 
-### Additional fixes applied to ABAP codegen on a4h-105:
+### Additional fixes applied to ABAP codegen on devsys2:
 5. **br_table** (opcode 14) — 555 occurrences unhandled. Added: pop index + branch default label
 6. **call_indirect** (opcode 17) — 1,784 occurrences unhandled! Added: pop index + args, push result stub
 7. **gv_br propagation** — changed `IF gv_br > 0. ... EXIT. ENDIF.` to `CASE gv_br. WHEN 0. WHEN OTHERS. ... EXIT. ENDCASE.` to avoid ELSE conflict
@@ -126,7 +126,7 @@ GENERATE rc=4 at line 229,175: "No open IF statement exists" (ELSE).
 
 | System | Status | What's deployed |
 |--------|--------|-----------------|
-| a4h-105 | OK | Updated codegen (all fixes), test suite 11/11, ZQJS_TEST_RUN report |
-| a4h-110 | OK | Updated codegen (IF/ELSE fix only), test suite 11/11 |
+| devsys2 | OK | Updated codegen (all fixes), test suite 11/11, ZQJS_TEST_RUN report |
+| devsys | OK | Updated codegen (IF/ELSE fix only), test suite 11/11 |
 | Local | OK | Go codegen fix + wazero tests committed (50ebc3b), pushed |
 | GitHub | OK | Up to date |
