@@ -23,6 +23,7 @@ type GetSourceOptions struct {
 	Parent  string // Function group name (required for FUNC type)
 	Include string // Class include type: definitions, implementations, macros, testclasses (optional for CLAS type)
 	Method  string // Method name for method-level source extraction (optional for CLAS type)
+	Merged  bool   // INCL only: splice referenced ENHO enhancements into the output (SE80-style merged view)
 }
 
 // GetSource is a unified tool for reading ABAP source code across different object types.
@@ -92,7 +93,13 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		return string(data), nil
 
 	case "INCL":
+		if opts.Merged {
+			return c.GetIncludeMerged(ctx, name)
+		}
 		return c.GetInclude(ctx, name)
+
+	case "ENHO":
+		return c.GetEnhancement(ctx, name)
 
 	case "DDLS":
 		return c.GetDDLS(ctx, name)
@@ -132,7 +139,7 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		return string(data), nil
 
 	default:
-		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, VIEW, BDEF, SRVD, SRVB, MSAG)", objectType)
+		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, VIEW, BDEF, SRVD, SRVB, MSAG, ENHO)", objectType)
 	}
 }
 

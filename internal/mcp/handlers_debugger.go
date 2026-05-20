@@ -49,6 +49,9 @@ func (s *Server) ensureDebugWSClient(ctx context.Context) error {
 		s.config.Password,
 		s.config.InsecureSkipVerify,
 	)
+	if len(s.config.Cookies) > 0 {
+		s.debugWSClient.SetCookies(s.config.Cookies)
+	}
 
 	return s.debugWSClient.Connect(ctx)
 }

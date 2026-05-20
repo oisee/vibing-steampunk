@@ -138,6 +138,50 @@ func (c *DebugWebSocketClient) RunReportSync(ctx context.Context, report string,
 	return c.SendRawRequest(ctx, id, rawMsg, 60*time.Second)
 }
 
+// ReadSourceResult is the response shape from rfc/readSource.
+type ReadSourceResult struct {
+	Program string   `json:"program"`
+	Source  []string `json:"source"`
+}
+
+// ReadSource reads ABAP source for a program/include via the rfc domain's
+// readSource action. The ABAP-side handler uses native `READ REPORT`, so it
+// works for SUBC=I includes (enhancement plug-in source) where
+// RPY_PROGRAM_READ raises CANCELLED in RFC contexts on classic ECC.
+func (c *DebugWebSocketClient) ReadSource(ctx context.Context, program string) ([]string, error) {
+	if !c.IsConnected() {
+		return nil, fmt.Errorf("not connected")
+	}
+
+	id := c.GenerateID("rfc_read")
+
+	rawMsg := map[string]any{
+		"id":      id,
+		"domain":  "rfc",
+		"action":  "readSource",
+		"params":  map[string]any{"program": program},
+		"timeout": 30000,
+	}
+
+	resp, err := c.SendRawRequest(ctx, id, rawMsg, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	if !resp.Success {
+		if resp.Error != nil {
+			return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return nil, fmt.Errorf("readSource failed")
+	}
+
+	var result ReadSourceResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, err
+	}
+	return result.Source, nil
+}
+
 // --- Package Operations ---
 
 // MoveObjectResult contains the result of a package reassignment.
