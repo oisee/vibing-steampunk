@@ -112,7 +112,7 @@ func (c *Client) GetEnhancement(ctx context.Context, name string) (string, error
 // "ISM_SAPLVKMP==================E" with `=`-padding). Going back through
 // SearchObject would discard that and force the RFC step to fall back to
 // the <NAME>E convention, which doesn't exist as an entry on classic ECC for
-// most non-LEGO HOOK_IMPL plug-ins.
+// most non-company HOOK_IMPL plug-ins.
 //
 // Returns the same step-4 metadata-only error as GetEnhancement when no path
 // resolves the body.

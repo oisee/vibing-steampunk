@@ -348,12 +348,6 @@ func TestGetEnhancement_FallsBackToRFC(t *testing.T) {
 // renderer for HOOK_IMPL ENHOs whose REPOSRC entry uses `=`-padding rather
 // than the simple <NAME>E convention), the RFC fallback must call ReadSource
 // with that exact entry name — not the resolver's guess.
-//
-// Regression target: pre-fix, the include footer called GetEnhancement(name)
-// which routed through resolveEnhancement, dropping EnhInclude and forcing
-// the RFC step to guess "ISM_SAPLVKMPE" — which doesn't exist as a REPOSRC
-// row, so all 7 non-LEGO HOOK_IMPL ENHOs on RVKMP901 rendered as
-// "[source body unavailable]" even though the bridge worked.
 func TestGetEnhancementByRef_PreservesEnhInclude(t *testing.T) {
 	mock := &routedMock{
 		byPath: map[string]*http.Response{
