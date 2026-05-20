@@ -8,6 +8,7 @@ CLASS zcl_vsp_debug_service DEFINITION
 
   PUBLIC SECTION.
     INTERFACES zif_vsp_service.
+    CLASS-METHODS class_constructor.
 
     TYPES:
       BEGIN OF ty_breakpoint_state,
@@ -23,6 +24,7 @@ CLASS zcl_vsp_debug_service DEFINITION
       tt_breakpoints TYPE STANDARD TABLE OF ty_breakpoint_state WITH KEY id.
 
   PRIVATE SECTION.
+    CLASS-DATA gv_pcre_supported TYPE abap_bool.
     DATA mv_session_id TYPE string.
     DATA mv_debug_user TYPE sy-uname.
     DATA mt_breakpoints TYPE tt_breakpoints.
@@ -127,6 +129,17 @@ ENDCLASS.
 
 
 CLASS zcl_vsp_debug_service IMPLEMENTATION.
+
+  METHOD class_constructor.
+    " Probe for PCRE support: \d was introduced in ABAP 7.55 (POSIX ERE on older releases).
+    TRY.
+        DATA lv_pcre_probe TYPE string.
+        FIND REGEX '\d' IN '1' SUBMATCHES lv_pcre_probe.
+        gv_pcre_supported = xsdbool( sy-subrc = 0 AND lv_pcre_probe = '1' ).
+      CATCH cx_root.
+        gv_pcre_supported = abap_false.
+    ENDTRY.
+  ENDMETHOD.
 
   METHOD zif_vsp_service~get_domain.
     rv_domain = 'debug'.
@@ -1002,15 +1015,23 @@ CLASS zcl_vsp_debug_service IMPLEMENTATION.
 
   METHOD extract_param.
     DATA lv_pattern TYPE string.
-    lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES rv_value.
+    IF gv_pcre_supported = abap_true.
+      lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
+    ELSE.
+      lv_pattern = |"{ iv_name }"[[:space:]]*:[[:space:]]*"([^"]*)"|.
+    ENDIF.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
   ENDMETHOD.
 
   METHOD extract_param_int.
     DATA lv_pattern TYPE string.
     DATA lv_str TYPE string.
-    lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES lv_str.
+    IF gv_pcre_supported = abap_true.
+      lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
+    ELSE.
+      lv_pattern = |"{ iv_name }"[[:space:]]*:[[:space:]]*([[:digit:]]+)|.
+    ENDIF.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES lv_str.
     IF sy-subrc = 0.
       rv_value = lv_str.
     ENDIF.

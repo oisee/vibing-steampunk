@@ -21,6 +21,8 @@ CLASS zcl_vsp_apc_handler DEFINITION
     DATA mv_session_id TYPE string.
 
     CLASS-DATA gt_services TYPE STANDARD TABLE OF REF TO zif_vsp_service WITH KEY table_line.
+    " abap_true on 7.55+; abap_false on older releases that only support POSIX ERE
+    CLASS-DATA gv_pcre_supported TYPE abap_bool.
 
     METHODS parse_message
       IMPORTING iv_text           TYPE string
@@ -52,11 +54,25 @@ ENDCLASS.
 CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
   METHOD class_constructor.
+    " Probe for PCRE support: \d was introduced in ABAP 7.55 (POSIX ERE on older releases).
+    " A runtime probe is more reliable than comparing sy-saprl strings.
+    TRY.
+        DATA lv_pcre_probe TYPE string.
+        FIND REGEX '\d' IN '1' SUBMATCHES lv_pcre_probe.
+        gv_pcre_supported = xsdbool( sy-subrc = 0 AND lv_pcre_probe = '1' ).
+      CATCH cx_root.
+        gv_pcre_supported = abap_false.
+    ENDTRY.
+
     APPEND NEW zcl_vsp_rfc_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_git_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_report_service( ) TO gt_services.
+*   Skipped on classic ECC: debug/amdp/git/report services depend on
+*   types/classes (if_amdp_dbg_main, ZCL_ABAPGIT_*, S/4 RAP runtime) that
+*   are absent on this release. The RFC service is sufficient for vsp's
+*   enhancement-source bridge (RPY_PROGRAM_READ via the rfc domain).
+*    APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
+*    APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
+*    APPEND NEW zcl_vsp_git_service( ) TO gt_services.
+*    APPEND NEW zcl_vsp_report_service( ) TO gt_services.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_start.
@@ -114,9 +130,16 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
   METHOD parse_message.
     TRY.
-        FIND PCRE '"id"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
-        FIND PCRE '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
-        FIND PCRE '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
+        " PCRE (7.55+): \s / \d   |   POSIX ERE (pre-7.55): [[:space:]] / [[:digit:]]
+        IF gv_pcre_supported = abap_true.
+          FIND REGEX '"id"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
+          FIND REGEX '"domain"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
+          FIND REGEX '"action"\s*:\s*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
+        ELSE.
+          FIND REGEX '"id"[[:space:]]*:[[:space:]]*"([^"]*)"' IN iv_text SUBMATCHES rs_message-id.
+          FIND REGEX '"domain"[[:space:]]*:[[:space:]]*"([^"]*)"' IN iv_text SUBMATCHES rs_message-domain.
+          FIND REGEX '"action"[[:space:]]*:[[:space:]]*"([^"]*)"' IN iv_text SUBMATCHES rs_message-action.
+        ENDIF.
 
         " Handle nested JSON in params by finding the balanced braces
         DATA(lv_params_start) = find( val = iv_text sub = '"params"' ).
@@ -145,7 +168,11 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
         ENDIF.
 
         DATA lv_timeout TYPE string.
-        FIND PCRE '"timeout"\s*:\s*(\d+)' IN iv_text SUBMATCHES lv_timeout.
+        IF gv_pcre_supported = abap_true.
+          FIND REGEX '"timeout"\s*:\s*(\d+)' IN iv_text SUBMATCHES lv_timeout.
+        ELSE.
+          FIND REGEX '"timeout"[[:space:]]*:[[:space:]]*([[:digit:]]+)' IN iv_text SUBMATCHES lv_timeout.
+        ENDIF.
         IF sy-subrc = 0.
           rs_message-timeout = lv_timeout.
         ELSE.

@@ -8,6 +8,7 @@ CLASS zcl_vsp_amdp_service DEFINITION
 
   PUBLIC SECTION.
     INTERFACES zif_vsp_service.
+    CLASS-METHODS class_constructor.
 
   PRIVATE SECTION.
     " Session state per WebSocket connection
@@ -21,6 +22,7 @@ CLASS zcl_vsp_amdp_service DEFINITION
       END OF ty_session.
 
     CLASS-DATA gt_sessions TYPE HASHED TABLE OF ty_session WITH UNIQUE KEY session_id.
+    CLASS-DATA gv_pcre_supported TYPE abap_bool.
 
     METHODS handle_start
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
@@ -85,6 +87,17 @@ ENDCLASS.
 
 
 CLASS zcl_vsp_amdp_service IMPLEMENTATION.
+
+  METHOD class_constructor.
+    " Probe for PCRE support: \d was introduced in ABAP 7.55 (POSIX ERE on older releases).
+    TRY.
+        DATA lv_pcre_probe TYPE string.
+        FIND REGEX '\d' IN '1' SUBMATCHES lv_pcre_probe.
+        gv_pcre_supported = xsdbool( sy-subrc = 0 AND lv_pcre_probe = '1' ).
+      CATCH cx_root.
+        gv_pcre_supported = abap_false.
+    ENDTRY.
+  ENDMETHOD.
 
   METHOD zif_vsp_service~get_domain.
     rv_domain = 'amdp'.
@@ -844,12 +857,19 @@ CLASS zcl_vsp_amdp_service IMPLEMENTATION.
     " Extract parameter from JSON params string
     " Simple regex-based extraction
     DATA lv_pattern TYPE string.
-    lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
-
+    IF gv_pcre_supported = abap_true.
+      lv_pattern = |"{ iv_name }"\\s*:\\s*"([^"]*)"|.
+    ELSE.
+      lv_pattern = |"{ iv_name }"[[:space:]]*:[[:space:]]*"([^"]*)"|.
+    ENDIF.
     FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
     IF sy-subrc <> 0.
       " Try numeric value
-      lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
+      IF gv_pcre_supported = abap_true.
+        lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
+      ELSE.
+        lv_pattern = |"{ iv_name }"[[:space:]]*:[[:space:]]*([[:digit:]]+)|.
+      ENDIF.
       FIND REGEX lv_pattern IN iv_params SUBMATCHES rv_value.
     ENDIF.
   ENDMETHOD.

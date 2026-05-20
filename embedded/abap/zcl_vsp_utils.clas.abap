@@ -76,10 +76,24 @@ CLASS zcl_vsp_utils DEFINITION
       IMPORTING it_parts       TYPE string_table
       RETURNING VALUE(rv_json) TYPE string.
 
+    CLASS-METHODS class_constructor.
+    CLASS-DATA gv_pcre_supported TYPE abap_bool.
+
 ENDCLASS.
 
 
 CLASS zcl_vsp_utils IMPLEMENTATION.
+
+  METHOD class_constructor.
+    " Probe for PCRE support: \d was introduced in ABAP 7.55 (POSIX ERE on older releases).
+    TRY.
+        DATA lv_pcre_probe TYPE string.
+        FIND REGEX '\d' IN '1' SUBMATCHES lv_pcre_probe.
+        gv_pcre_supported = xsdbool( sy-subrc = 0 AND lv_pcre_probe = '1' ).
+      CATCH cx_root.
+        gv_pcre_supported = abap_false.
+    ENDTRY.
+  ENDMETHOD.
 
   METHOD escape_json.
     rv_escaped = iv_string.
@@ -101,15 +115,24 @@ CLASS zcl_vsp_utils IMPLEMENTATION.
     FIND lv_search IN iv_params MATCH OFFSET lv_pos.
     IF sy-subrc = 0.
       DATA(lv_rest) = iv_params+lv_pos.
-      FIND PCRE ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      IF gv_pcre_supported = abap_true.
+        FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      ELSE.
+        FIND REGEX ':[[:space:]]*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      ENDIF.
     ENDIF.
   ENDMETHOD.
 
 
   METHOD extract_param_int.
     DATA lv_str TYPE string.
-    DATA(lv_pattern) = |"{ iv_name }"\\s*:\\s*(\\d+)|.
-    FIND PCRE lv_pattern IN iv_params SUBMATCHES lv_str.
+    DATA lv_pattern TYPE string.
+    IF gv_pcre_supported = abap_true.
+      lv_pattern = |"{ iv_name }"\\s*:\\s*(\\d+)|.
+    ELSE.
+      lv_pattern = |"{ iv_name }"[[:space:]]*:[[:space:]]*([[:digit:]]+)|.
+    ENDIF.
+    FIND REGEX lv_pattern IN iv_params SUBMATCHES lv_str.
     IF sy-subrc = 0.
       rv_value = lv_str.
     ENDIF.

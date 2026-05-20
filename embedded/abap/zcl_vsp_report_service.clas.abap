@@ -5,8 +5,10 @@ CLASS zcl_vsp_report_service DEFINITION
 
   PUBLIC SECTION.
     INTERFACES zif_vsp_service.
+    CLASS-METHODS class_constructor.
 
   PRIVATE SECTION.
+    CLASS-DATA gv_pcre_supported TYPE abap_bool.
     METHODS handle_run_report
       IMPORTING is_message         TYPE zif_vsp_service=>ty_message
       RETURNING VALUE(rs_response) TYPE zif_vsp_service=>ty_response.
@@ -47,6 +49,17 @@ ENDCLASS.
 
 
 CLASS zcl_vsp_report_service IMPLEMENTATION.
+
+  METHOD class_constructor.
+    " Probe for PCRE support: \d was introduced in ABAP 7.55 (POSIX ERE on older releases).
+    TRY.
+        DATA lv_pcre_probe TYPE string.
+        FIND REGEX '\d' IN '1' SUBMATCHES lv_pcre_probe.
+        gv_pcre_supported = xsdbool( sy-subrc = 0 AND lv_pcre_probe = '1' ).
+      CATCH cx_root.
+        gv_pcre_supported = abap_false.
+    ENDTRY.
+  ENDMETHOD.
 
   METHOD zif_vsp_service~get_domain.
     rv_domain = 'report'.
@@ -115,7 +128,11 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       WHILE lv_work CS '"'.
         DATA lv_pname TYPE string.
         DATA lv_pval TYPE string.
-        FIND PCRE '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_pname lv_pval.
+        IF gv_pcre_supported = abap_true.
+          FIND REGEX '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_pname lv_pval.
+        ELSE.
+          FIND REGEX '"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"' IN lv_work SUBMATCHES lv_pname lv_pval.
+        ENDIF.
         IF sy-subrc = 0.
           TRANSLATE lv_pname TO UPPER CASE.
           DATA lv_selname TYPE rsscr_name.
@@ -359,7 +376,11 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       WHILE lv_work CS '"'.
         DATA lv_key TYPE string.
         DATA lv_val TYPE string.
-        FIND PCRE '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        IF gv_pcre_supported = abap_true.
+          FIND REGEX '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        ELSE.
+          FIND REGEX '"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        ENDIF.
         IF sy-subrc = 0.
           TRANSLATE lv_key TO UPPER CASE.
           REPLACE ALL OCCURRENCES OF '\"' IN lv_val WITH '"'.
@@ -394,7 +415,11 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
       lv_work = lv_sym_json.
       WHILE lv_work CS '"'.
         CLEAR: lv_key, lv_val.
-        FIND PCRE '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        IF gv_pcre_supported = abap_true.
+          FIND REGEX '"([^"]+)"\s*:\s*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        ELSE.
+          FIND REGEX '"([^"]+)"[[:space:]]*:[[:space:]]*"([^"]*)"' IN lv_work SUBMATCHES lv_key lv_val.
+        ENDIF.
         IF sy-subrc = 0.
           REPLACE ALL OCCURRENCES OF '\"' IN lv_val WITH '"'.
           REPLACE ALL OCCURRENCES OF '\\' IN lv_val WITH '\'.
@@ -481,7 +506,11 @@ CLASS zcl_vsp_report_service IMPLEMENTATION.
     IF sy-subrc = 0.
       DATA lv_rest TYPE string.
       lv_rest = iv_params+lv_pos.
-      FIND PCRE ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      IF gv_pcre_supported = abap_true.
+        FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      ELSE.
+        FIND REGEX ':[[:space:]]*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+      ENDIF.
     ENDIF.
   ENDMETHOD.
 
