@@ -8,19 +8,45 @@
 
 ## Current Priorities
 
-### 1. Graph Engine (`pkg/graph/`) — In Progress
+### 1. Bug #132 — ALL objects fail PUT with 423 (on-prem) — Investigation
+**Scope correction (2026-05-27):** Initially reported as "transport-owned objects only" but confirmed to affect
+**all** objects including `$TMP` locals. The lock is always acquired (valid handle returned) but the subsequent
+PUT fails with `423 ExceptionResourceInvalidLockHandle`. `mcp-abap-abap-adt-api` works correctly for the same
+lock+write sequence, proving the ADT API is fine and the bug is in vsp's session handling.
+- Root cause: HTTP session/cookie affinity — SAP ENQUEUE lock is bound to the `sap-contextid` cookie of the
+  session that created it. vsp loses that cookie between the LOCK POST and the UPDATE PUT even when both use
+  `Stateful: true`. See `pkg/adt/http.go`.
+- Guard fix (`&& result.CorrNr == ""`) is still correct — transport-owned objects no longer rejected upfront.
+- Re-lock attempt (second POST with corrNr) also returns invalid handle — approach removed.
+- **Next step:** intercept HTTP from `mcp-abap-abap-adt-api` (mitmproxy) and compare `sap-contextid` cookie
+  between lock and PUT requests vs. vsp's requests.
+- Investigation: [004](reports/2026-05-27-004-issue-132-investigation.md) | Issue: [#132](https://github.com/oisee/vibing-steampunk/issues/132)
+- Workaround: use `mcp-abap-abap-adt-api` for lock+write+unlock. See `~/.claude/sap-mcp-servers.md`.
+
+### 2. Bug #133 — INCL package resolution + isClassInclude detection — FIXED (2026-05-27)
+Two bugs found and fixed:
+- `normalizeObjectURLForPackageCheck` stripped `/programs/includes/NAME` to `/programs` (matched the
+  `/includes/` class-strip before the `/source/main` strip). Fix: reorder strips, scope `/includes/` strip
+  to `/oo/classes/` URLs only. File: `pkg/adt/client.go`.
+- `isClassInclude` in `EditSourceWithOptions` fired on any URL containing `/includes/`, making program
+  includes skip `/source/main` and send wrong Accept header (406). Fix: require `/oo/classes/` too.
+  File: `pkg/adt/workflows_edit.go`.
+- Verified on-prem: source reads correctly (`matchCount: 1`). Write fails with #132 (same as CLAS) — not #133.
+- Issue: [#133](https://github.com/oisee/vibing-steampunk/issues/133)
+
+### 3. Graph Engine (`pkg/graph/`) — In Progress
 Sequence: unify existing dep logic → SQL/ADT adapters → impact/path queries.
 - Done: core types, parser dep extraction, boundary analyzer (11 tests)
 - Pending: SQL adapters (CROSS/WBCROSSGT/D010INC), ADT adapters, unify `cli_deps.go` + `cli_extra.go` + `ctxcomp/analyzer.go`
 - Design: [002](reports/2026-04-05-002-graph-engine-design.md), [003](reports/2026-04-05-003-graph-engine-alignment-for-claude.md)
 
-### 2. GUI Debugger (Issue #2) — Strategic
+### 4. GUI Debugger (Issue #2) — Strategic
 Plan: MCP debug sessions → DAP → Web UI. ADT REST API mapped from `CL_TPDA_ADT_RES_APP`. Design: [001](reports/2026-04-05-001-gui-debugger-design.md)
 
-### 3. Open Issues
-- **#88** Lock handle bug (EditSource/WriteSource) — real user report
+### 5. Open Issues
+- **#88** Lock handle bug (EditSource/WriteSource) — same root cause as #132 (session affinity)
 - **#55** RunReport in APC — architectural limit
-- **#46, #45** Sync script — low effort
+- **#46** / **#45** Sync script flags — closed upstream (script never existed in public repo)
 
 ---
 
@@ -165,3 +191,7 @@ Reports: `reports/YYYY-MM-DD-NNN-title.md`. SAP objects: `ZADT_<nn>_<name>`, `ZC
 | `pkg/llvm2abap/`, `pkg/wasmcomp/` | Research | Not production; don't treat as stable |
 | `pkg/adt/debugger.go` (REST) | Deprecated | Prefer `websocket_debug.go` |
 | `docs/cli-agents/*` | Config drift | Codex TOML format may differ from Claude/Gemini JSON docs |
+
+---
+
+> Workflow dual-server (vsp + mcp-abap-abap-adt-api): ver `~/.claude/sap-mcp-servers.md` (cargado globalmente).

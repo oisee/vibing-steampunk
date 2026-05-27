@@ -639,3 +639,29 @@ func TestLockObject_AllowsNoModificationOnReadLock(t *testing.T) {
 		t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
 	}
 }
+// TestNormalizeObjectURLForPackageCheck pins the fix for issue #133:
+// program include URLs (/programs/includes/{name}) must NOT be truncated
+// to /programs by the /includes/ strip that handles class includes.
+func TestNormalizeObjectURLForPackageCheck(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		// Program includes (INCL) — must not be mangled
+		{"/sap/bc/adt/programs/includes/ZTEST_INCL", "/sap/bc/adt/programs/includes/ZTEST_INCL"},
+		{"/sap/bc/adt/programs/includes/ZTEST_INCL/source/main", "/sap/bc/adt/programs/includes/ZTEST_INCL"},
+		// Regular programs — unchanged
+		{"/sap/bc/adt/programs/programs/ZTEST/source/main", "/sap/bc/adt/programs/programs/ZTEST"},
+		// Class includes — strip to parent class
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/includes/testclasses", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/includes/definitions", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+		// Class source — strip /source/main only
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/source/main", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+	}
+	for _, tc := range cases {
+		got := normalizeObjectURLForPackageCheck(tc.input)
+		if got != tc.want {
+			t.Errorf("normalizeObjectURLForPackageCheck(%q)\n  got  %q\n  want %q", tc.input, got, tc.want)
+		}
+	}
+}

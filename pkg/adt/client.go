@@ -167,11 +167,19 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 func normalizeObjectURLForPackageCheck(objectURL string) string {
 	normalized := strings.TrimSuffix(objectURL, "/")
 
-	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
-		return normalized[:idx]
-	}
+	// Strip /source/main before any other transformation.
 	if strings.HasSuffix(normalized, "/source/main") {
-		return strings.TrimSuffix(normalized, "/source/main")
+		normalized = strings.TrimSuffix(normalized, "/source/main")
+	}
+
+	// Class includes: /oo/classes/{name}/includes/{type} → strip to parent class URL.
+	// This must NOT fire on program-include collection paths like
+	// /programs/includes/{name}, where "includes" is the object-type collection,
+	// not a component suffix appended to a specific object.
+	if strings.Contains(normalized, "/oo/classes/") {
+		if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
+			return normalized[:idx]
+		}
 	}
 
 	return normalized
