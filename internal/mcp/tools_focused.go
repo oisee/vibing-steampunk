@@ -41,6 +41,7 @@ func focusedToolSet() map[string]bool {
 		"RunUnitTests":       true,
 		"RunATCCheck":        true,  // Code quality checks
 		"Activate":           true,  // Re-activate objects without editing
+		"ActivateMultiple":   true,  // Batch activation of specific objects (dependency-aware, like Eclipse)
 		"ActivatePackage":    true,  // Batch activation of all inactive objects
 		"PrettyPrint":        true,  // Format ABAP code
 		"GetInactiveObjects": true,  // List pending activations

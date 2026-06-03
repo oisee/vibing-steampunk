@@ -774,6 +774,18 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
 		), s.handleActivate)
 	}
 
+	if shouldRegister("ActivateMultiple") {
+		s.mcpServer.AddTool(mcp.NewTool("ActivateMultiple",
+			mcp.WithDescription("Activate multiple ABAP objects in a single ADT request, resolving mutual dependencies between them (same behaviour as Eclipse ADT). Use when includes and their main program must be activated together."),
+			mcp.WithArray("objects",
+				mcp.Required(),
+				mcp.Description(`Objects to activate. Each item can be:
+  - {"url": "/sap/bc/adt/programs/programs/zprog", "name": "ZPROG"}
+  - "TYPE NAME" shorthand, e.g. "PROG ZPROG", "INCL ZPROG_TOP", "CLAS ZCL_X"`),
+			),
+		), s.handleActivateMultiple)
+	}
+
 	if shouldRegister("ActivatePackage") {
 		s.mcpServer.AddTool(mcp.NewTool("ActivatePackage",
 			mcp.WithDescription("Activate all inactive objects. Objects are sorted by dependency order (interfaces before classes). If no package specified, activates ALL inactive objects for current user."),
