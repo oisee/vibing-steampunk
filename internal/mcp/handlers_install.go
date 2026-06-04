@@ -415,6 +415,16 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	skipped := []string{}
 	failed := []string{}
 
+	// Service class names whose references must be stripped from the APC handler
+	// because they are skipped or fail to deploy. The handler statically
+	// references each service in its class_constructor, so a missing or
+	// incompatible service would otherwise break handler compilation.
+	// Seed with the git service when abapGit is absent.
+	skipRefs := []string{}
+	if skipGitService {
+		skipRefs = append(skipRefs, "zcl_vsp_git_service")
+	}
+
 	for i, obj := range objects {
 		// Skip Git service if no abapGit
 		if obj.Name == "ZCL_VSP_GIT_SERVICE" && skipGitService {
@@ -425,18 +435,67 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 		fmt.Fprintf(&sb, "  [%d/%d] %s ", i+1, len(objects), obj.Name)
 
-		// Use WriteSource to create/update
-		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+		// The APC handler must not reference any skipped/failed service or it will
+		// not compile. Strip those references (one per source line) so the core
+		// handler activates with whatever services are available.
+		src := obj.Source
+		if obj.Name == "ZCL_VSP_APC_HANDLER" && len(skipRefs) > 0 {
+			lines := strings.Split(src, "\n")
+			kept := lines[:0]
+			for _, ln := range lines {
+				drop := false
+				for _, ref := range skipRefs {
+					if strings.Contains(ln, ref) {
+						drop = true
+						break
+					}
+				}
+				if !drop {
+					kept = append(kept, ln)
+				}
+			}
+			src = strings.Join(kept, "\n")
 		}
-		_, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
-			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
-			failed = append(failed, obj.Name+": "+err.Error())
-		} else {
+
+		// Use WriteSource to create/update.
+		// Description is REQUIRED for the create path — without it WriteSource
+		// returns (result{Success:false}, nil), which previously slipped through
+		// the err-only check and left empty/abstract class shells while the tool
+		// reported "✓ Deployed". We pass Description and check result.Success.
+		opts := &adt.WriteSourceOptions{
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
+		}
+		res, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, src, opts)
+		ok := err == nil && res != nil && res.Success
+		switch {
+		case ok:
 			sb.WriteString("✓ Deployed\n")
 			deployed = append(deployed, obj.Name)
+		case obj.Optional:
+			// Optional service not compatible with this system (e.g. AMDP debugger
+			// APIs absent on this release). Skip it and strip it from the handler
+			// so the core handler still compiles and the other domains work.
+			reason := "not compatible with this system"
+			if err != nil {
+				reason = err.Error()
+			} else if res != nil && res.Message != "" {
+				reason = res.Message
+			}
+			fmt.Fprintf(&sb, "⊘ Skipped (optional: %s)\n", reason)
+			skipped = append(skipped, obj.Name)
+			skipRefs = append(skipRefs, strings.ToLower(obj.Name))
+		case err != nil:
+			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
+			failed = append(failed, obj.Name+": "+err.Error())
+		default:
+			msg := "write did not complete (source not written)"
+			if res != nil && res.Message != "" {
+				msg = res.Message
+			}
+			fmt.Fprintf(&sb, "✗ Failed: %s\n", msg)
+			failed = append(failed, obj.Name+": "+msg)
 		}
 	}
 

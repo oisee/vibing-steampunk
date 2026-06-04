@@ -85,7 +85,7 @@ func GetObjects() []ObjectInfo {
 			Name:        "ZCL_VSP_AMDP_SERVICE",
 			Source:      ZclVspAmdpService,
 			Description: "AMDP domain - HANA debugging (experimental)",
-			Optional:    false,
+			Optional:    true, // AMDP debugger APIs (if_amdp_dbg_*) absent on some releases
 		},
 		{
 			Type:        "CLAS",
