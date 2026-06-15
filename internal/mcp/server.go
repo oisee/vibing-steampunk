@@ -253,6 +253,9 @@ func (s *Server) ensureWSConnected(ctx context.Context, toolName string) *mcp.Ca
 		s.amdpWSClient = adt.NewAMDPWebSocketClient(
 			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 		)
+		if len(s.config.Cookies) > 0 {
+			s.amdpWSClient.SetCookies(s.config.Cookies)
+		}
 		if err := s.amdpWSClient.Connect(ctx); err != nil {
 			s.amdpWSClient = nil
 			return newToolResultError(fmt.Sprintf("%s: WebSocket connect failed: %v", toolName, err))

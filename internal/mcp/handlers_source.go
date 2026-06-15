@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -16,9 +17,9 @@ import (
 // routeSourceAction routes "read" for GetSource and "edit" for WriteSource/EditSource.
 func (s *Server) routeSourceAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action == "read" {
-		// GetSource covers: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, MSAG, VIEW
+		// GetSource covers: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, MSAG, VIEW, ENHO
 		switch objectType {
-		case "CLAS", "PROG", "INTF", "FUNC", "FUGR", "INCL", "DDLS", "BDEF", "SRVD", "MSAG", "VIEW":
+		case "CLAS", "PROG", "INTF", "FUNC", "FUGR", "INCL", "DDLS", "BDEF", "SRVD", "MSAG", "VIEW", "ENHO":
 			args := map[string]any{
 				"object_type": objectType,
 				"name":        objectName,
@@ -37,6 +38,9 @@ func (s *Server) routeSourceAction(ctx context.Context, action, objectType, obje
 			}
 			if v, ok := getFloatParam(params, "max_deps"); ok {
 				args["max_deps"] = v
+			}
+			if v, ok := getBoolParam(params, "merged"); ok {
+				args["merged"] = v
 			}
 			return s.callHandler(ctx, s.handleGetSource, args)
 		}
@@ -167,11 +171,13 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 	parent, _ := request.GetArguments()["parent"].(string)
 	include, _ := request.GetArguments()["include"].(string)
 	method, _ := request.GetArguments()["method"].(string)
+	merged, _ := request.GetArguments()["merged"].(bool)
 
 	opts := &adt.GetSourceOptions{
 		Parent:  parent,
 		Include: include,
 		Method:  method,
+		Merged:  merged,
 	}
 
 	source, err := s.adtClient.GetSource(ctx, objectType, name, opts)
@@ -200,7 +206,101 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		}
 	}
 
+	// Append "Enhancements attached" footer for INCL reads (and only when the
+	// caller did not opt out of contextual enrichment via include_context=false).
+	// Soft-fail: any lookup or fetch error stays a comment in the footer rather
+	// than replacing the source the caller already has.
+	if includeContext && strings.ToUpper(objectType) == "INCL" && !merged {
+		source = appendEnhancementsFooter(ctx, s, source, name)
+	}
+
 	return mcp.NewToolResultText(source), nil
+}
+
+// appendEnhancementsFooter appends a "* === Enhancements attached ===" block
+// listing each ENHO that targets the include. When source-body fetch succeeds,
+// the body is rendered inline (via renderEnhBlock). When it fails — common on
+// classic ECC where HOOK_IMPL bodies are not exposed via REST — a placeholder
+// pointing at SE80 is rendered instead.
+func appendEnhancementsFooter(ctx context.Context, s *Server, source, includeName string) string {
+	refs, err := s.adtClient.ListEnhancementsForInclude(ctx, includeName)
+	if err != nil || len(refs) == 0 {
+		return source
+	}
+
+	var b strings.Builder
+	b.WriteString("\n\n* === Enhancements attached to ")
+	b.WriteString(strings.ToUpper(includeName))
+	b.WriteString(fmt.Sprintf(" (%d) ===\n", len(refs)))
+	for _, r := range refs {
+		b.WriteString(fmt.Sprintf("* ENHO/%s %s", r.Kind, r.Name))
+		if r.PackageName != "" {
+			b.WriteString(fmt.Sprintf(" (package %s)", r.PackageName))
+		}
+		if r.Description != "" {
+			b.WriteString(" — ")
+			b.WriteString(r.Description)
+		}
+		b.WriteString("\n")
+		if r.HostProgram != "" {
+			b.WriteString("*   host: ")
+			b.WriteString(r.HostProgram)
+			if r.EnhInclude != "" {
+				b.WriteString("  (plugin source: ")
+				b.WriteString(r.EnhInclude)
+				b.WriteString(")")
+			}
+			b.WriteString("\n")
+		}
+		if r.FullName != "" {
+			b.WriteString("*   anchor: ")
+			b.WriteString(r.FullName)
+			b.WriteString("\n")
+		}
+
+		// Pass the ref by pointer so EnhInclude (populated by the ENHINCINX
+		// table fallback) survives the body fetch. GetEnhancement(name) would
+		// re-resolve via SearchObject and drop EnhInclude, forcing the RFC
+		// step to guess <NAME>E — which fails for HOOK_IMPL plug-ins whose
+		// REPOSRC names use `=`-padding (ISM_SAPLVKMP==================E).
+		refCopy := r
+		body, ferr := s.adtClient.GetEnhancementByRef(ctx, &refCopy)
+		if ferr != nil {
+			b.WriteString(fmt.Sprintf("*   [source body unavailable: %v]\n", ferr))
+			continue
+		}
+		b.WriteString(adtRenderEnhBlock(r, body))
+	}
+	return source + b.String()
+}
+
+// adtRenderEnhBlock renders an ENHO block in the same shape as the package-
+// internal renderEnhBlock helper. Inlined here because the helper is
+// unexported in pkg/adt; keeping a minimal copy avoids an export-only diff.
+func adtRenderEnhBlock(ref adt.EnhancementRef, source string) string {
+	var b strings.Builder
+	kind := string(ref.Kind)
+	if kind == "" {
+		kind = "?"
+	}
+	b.WriteString("\n* vvv ENHO/")
+	b.WriteString(kind)
+	b.WriteString(" ")
+	b.WriteString(ref.Name)
+	if ref.PackageName != "" {
+		b.WriteString(" (package ")
+		b.WriteString(ref.PackageName)
+		b.WriteString(")")
+	}
+	b.WriteString(" vvv\n")
+	b.WriteString(source)
+	if !strings.HasSuffix(source, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("* ^^^ end of ")
+	b.WriteString(ref.Name)
+	b.WriteString(" ^^^\n")
+	return b.String()
 }
 
 // handleWriteSource handles the unified WriteSource tool call
@@ -373,7 +473,18 @@ func (s *Server) handleGrepObjects(ctx context.Context, request mcp.CallToolRequ
 		contextLines = int(cl)
 	}
 
-	result, err := s.adtClient.GrepObjects(ctx, objectURLs, pattern, caseInsensitive, contextLines)
+	includeEnhancements := readIncludeEnhancementsFlag(request.GetArguments())
+	maxEnhancements := readMaxEnhancementsParam(request.GetArguments())
+
+	var (
+		result interface{}
+		err    error
+	)
+	if includeEnhancements {
+		result, err = s.adtClient.GrepObjectsWithEnhancements(ctx, objectURLs, pattern, caseInsensitive, contextLines, maxEnhancements)
+	} else {
+		result, err = s.adtClient.GrepObjects(ctx, objectURLs, pattern, caseInsensitive, contextLines)
+	}
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GrepObjects failed: %v", err)), nil
 	}
@@ -429,7 +540,18 @@ func (s *Server) handleGrepPackages(ctx context.Context, request mcp.CallToolReq
 		maxResults = int(mr)
 	}
 
-	result, err := s.adtClient.GrepPackages(ctx, packages, includeSubpackages, pattern, caseInsensitive, objectTypes, maxResults)
+	includeEnhancements := readIncludeEnhancementsFlag(request.GetArguments())
+	maxEnhancements := readMaxEnhancementsParam(request.GetArguments())
+
+	var (
+		result interface{}
+		err    error
+	)
+	if includeEnhancements {
+		result, err = s.adtClient.GrepPackagesWithEnhancements(ctx, packages, includeSubpackages, pattern, caseInsensitive, objectTypes, maxResults, maxEnhancements)
+	} else {
+		result, err = s.adtClient.GrepPackages(ctx, packages, includeSubpackages, pattern, caseInsensitive, objectTypes, maxResults)
+	}
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GrepPackages failed: %v", err)), nil
 	}

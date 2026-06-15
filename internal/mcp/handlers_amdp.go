@@ -51,6 +51,9 @@ func (s *Server) handleAMDPDebuggerStart(ctx context.Context, request mcp.CallTo
 		s.config.Password,
 		s.config.InsecureSkipVerify,
 	)
+	if len(s.config.Cookies) > 0 {
+		s.amdpWSClient.SetCookies(s.config.Cookies)
+	}
 
 	// Connect to ZADT_VSP WebSocket
 	if err := s.amdpWSClient.Connect(ctx); err != nil {

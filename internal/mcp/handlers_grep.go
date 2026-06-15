@@ -42,28 +42,61 @@ func (s *Server) routeGrepAction(ctx context.Context, action, objectType, object
 
 // --- Grep/Search Handlers ---
 
+// readIncludeEnhancementsFlag reads the include_enhancements param. Default
+// is true — the whole point of the MCP grep surface is "Claude can see what
+// SE80 sees", which on classic ECC means walking ENHO plug-in bodies that
+// the raw source endpoint never returns.
+func readIncludeEnhancementsFlag(args map[string]interface{}) bool {
+	if v, ok := args["include_enhancements"].(bool); ok {
+		return v
+	}
+	return true
+}
+
+// readMaxEnhancementsParam reads the max_enhancements cap. 0 ⇒ default cap
+// (50, defined in workflows_grep.go).
+func readMaxEnhancementsParam(args map[string]interface{}) int {
+	if v, ok := args["max_enhancements"].(float64); ok && v > 0 {
+		return int(v)
+	}
+	return 0
+}
+
 func (s *Server) handleGrepObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	objectURL, ok := request.GetArguments()["object_url"].(string)
+	args := request.GetArguments()
+
+	objectURL, ok := args["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
 
-	pattern, ok := request.GetArguments()["pattern"].(string)
+	pattern, ok := args["pattern"].(string)
 	if !ok || pattern == "" {
 		return newToolResultError("pattern is required"), nil
 	}
 
 	caseInsensitive := false
-	if ci, ok := request.GetArguments()["case_insensitive"].(bool); ok {
+	if ci, ok := args["case_insensitive"].(bool); ok {
 		caseInsensitive = ci
 	}
 
 	contextLines := 0
-	if cl, ok := request.GetArguments()["context_lines"].(float64); ok {
+	if cl, ok := args["context_lines"].(float64); ok {
 		contextLines = int(cl)
 	}
 
-	result, err := s.adtClient.GrepObject(ctx, objectURL, pattern, caseInsensitive, contextLines)
+	includeEnhancements := readIncludeEnhancementsFlag(args)
+
+	var (
+		result interface{}
+		err    error
+	)
+	if includeEnhancements {
+		// Self-contained walk — no shared state needed for a single object.
+		result, err = s.adtClient.GrepObjectWithEnhancements(ctx, objectURL, pattern, caseInsensitive, contextLines, nil)
+	} else {
+		result, err = s.adtClient.GrepObject(ctx, objectURL, pattern, caseInsensitive, contextLines)
+	}
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GrepObject failed: %v", err)), nil
 	}
@@ -73,37 +106,49 @@ func (s *Server) handleGrepObject(ctx context.Context, request mcp.CallToolReque
 }
 
 func (s *Server) handleGrepPackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	packageName, ok := request.GetArguments()["package_name"].(string)
+	args := request.GetArguments()
+
+	packageName, ok := args["package_name"].(string)
 	if !ok || packageName == "" {
 		return newToolResultError("package_name is required"), nil
 	}
 
-	pattern, ok := request.GetArguments()["pattern"].(string)
+	pattern, ok := args["pattern"].(string)
 	if !ok || pattern == "" {
 		return newToolResultError("pattern is required"), nil
 	}
 
 	caseInsensitive := false
-	if ci, ok := request.GetArguments()["case_insensitive"].(bool); ok {
+	if ci, ok := args["case_insensitive"].(bool); ok {
 		caseInsensitive = ci
 	}
 
 	// Parse object_types (comma-separated string to slice)
 	var objectTypes []string
-	if ot, ok := request.GetArguments()["object_types"].(string); ok && ot != "" {
+	if ot, ok := args["object_types"].(string); ok && ot != "" {
 		objectTypes = strings.Split(ot, ",")
-		// Trim whitespace from each type
 		for i := range objectTypes {
 			objectTypes[i] = strings.TrimSpace(objectTypes[i])
 		}
 	}
 
 	maxResults := 100 // default
-	if mr, ok := request.GetArguments()["max_results"].(float64); ok {
+	if mr, ok := args["max_results"].(float64); ok {
 		maxResults = int(mr)
 	}
 
-	result, err := s.adtClient.GrepPackage(ctx, packageName, pattern, caseInsensitive, objectTypes, maxResults)
+	includeEnhancements := readIncludeEnhancementsFlag(args)
+	maxEnhancements := readMaxEnhancementsParam(args)
+
+	var (
+		result interface{}
+		err    error
+	)
+	if includeEnhancements {
+		result, err = s.adtClient.GrepPackageWithEnhancements(ctx, packageName, pattern, caseInsensitive, objectTypes, maxResults, maxEnhancements)
+	} else {
+		result, err = s.adtClient.GrepPackage(ctx, packageName, pattern, caseInsensitive, objectTypes, maxResults)
+	}
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GrepPackage failed: %v", err)), nil
 	}

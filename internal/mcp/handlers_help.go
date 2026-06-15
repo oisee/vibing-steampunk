@@ -33,6 +33,12 @@ Read with options:
   SAP(action="read", target="CLAS ZCL_TEST", params={"method": "GET_DATA"})
   SAP(action="read", target="CLAS ZCL_TEST", params={"include_context": false})
 
+Read enhancements:
+  SAP(action="read", target="ENHO Y_MY_ENHANCEMENT")        - Enhancement source (returns metadata + body when ADT exposes it)
+  SAP(action="read", target="INCL RVKMP901")                - INCL reads append a "* === Enhancements attached ===" footer listing each ENHO that targets this include
+  SAP(action="read", target="INCL RVKMP901", params={"merged": true})  - SE80-style spliced view (anchors + ENHO bodies inline)
+  SAP(action="analyze", params={"type": "enhancements_on", "target": "INCL RVKMP901"})  - Reverse lookup, JSON
+
 Read metadata:
   SAP(action="read", target="TABL ZTABLE")          - Table definition
   SAP(action="read", target="TABL_CONTENTS ZTABLE") - Table data
@@ -380,7 +386,7 @@ func getUnhandledErrorMessage(action, objectType, objectName string) string {
 
 	switch action {
 	case "read":
-		sb.WriteString("Supported read targets: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, TABL, TABL_CONTENTS, DEVC, MSAG, TRAN, TYPE_INFO, STRUCT, CDS_DEPS\n")
+		sb.WriteString("Supported read targets: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, TABL, TABL_CONTENTS, DEVC, MSAG, TRAN, TYPE_INFO, STRUCT, CDS_DEPS, ENHO\n")
 		sb.WriteString("Use SAP(action=\"help\", target=\"read\") for examples.")
 	case "edit":
 		sb.WriteString("Supported edit targets: CLAS, PROG, INTF, DDLS, BDEF, SRVD, LOCK, UNLOCK, UPDATE_SOURCE, ACTIVATE, ACTIVATE_PACKAGE, EDITSOURCE, PUBLISH_SERVICE, UNPUBLISH_SERVICE\n")

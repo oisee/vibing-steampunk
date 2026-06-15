@@ -25,6 +25,11 @@ type BaseWebSocketClient struct {
 	password string
 	insecure bool
 
+	// cookies, if non-empty, are attached to the WebSocket upgrade via a
+	// cookie jar. Required for SSO/browser-auth flows where no plaintext
+	// password is available for Basic auth.
+	cookies map[string]string
+
 	conn      *websocket.Conn
 	sessionID string
 	mu        sync.RWMutex
@@ -83,21 +88,43 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 		InsecureSkipVerify: c.insecure,
 	}
 
-	header := http.Header{}
-	header.Set("Authorization", basicAuth(c.user, c.password))
+	hasBasic := c.user != "" && c.password != ""
+	hasCookies := len(c.cookies) > 0
 
-	// Try 1: Direct Basic Auth (works on most SAP systems)
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 30 * time.Second,
 		TLSClientConfig:  tlsConfig,
 	}
 
-	conn, resp, err := dialer.DialContext(ctx, wsURL, header)
+	// If cookies are provided, prefer them: build a jar and dial with no
+	// Authorization header. This is the SSO/browser-auth path.
+	var conn *websocket.Conn
+	var resp *http.Response
+	if hasCookies {
+		jar, _ := cookiejar.New(nil)
+		cookieURL := &url.URL{Scheme: u.Scheme, Host: u.Host}
+		httpCookies := make([]*http.Cookie, 0, len(c.cookies))
+		for name, value := range c.cookies {
+			httpCookies = append(httpCookies, &http.Cookie{Name: name, Value: value})
+		}
+		jar.SetCookies(cookieURL, httpCookies)
+		dialer.Jar = jar
+		conn, resp, err = dialer.DialContext(ctx, wsURL, nil)
+	} else if hasBasic {
+		// Try 1: Direct Basic Auth (works on most SAP systems)
+		header := http.Header{}
+		header.Set("Authorization", basicAuth(c.user, c.password))
+		conn, resp, err = dialer.DialContext(ctx, wsURL, header)
+	} else {
+		c.mu.Unlock()
+		return fmt.Errorf("no credentials available for WebSocket dial: need cookies or basic-auth")
+	}
 
-	// Try 2: If 401, pre-authenticate to get session cookies first.
-	// Some SAP systems reject standalone Basic Auth on WebSocket upgrade
-	// but accept it on regular HTTP to issue session cookies.
-	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized {
+	// Try 2: On 401 with Basic-only path, pre-authenticate to get session
+	// cookies via REST first. Some SAP systems reject standalone Basic Auth
+	// on WebSocket upgrade but accept it on regular HTTP to issue session
+	// cookies. Skipped when we already used cookies (those are authoritative).
+	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized && !hasCookies && hasBasic {
 		jar, _ := cookiejar.New(nil)
 		preAuthClient := &http.Client{
 			Jar:       jar,
@@ -183,6 +210,15 @@ func (c *BaseWebSocketClient) IsConnected() bool {
 // GetUser returns the username.
 func (c *BaseWebSocketClient) GetUser() string {
 	return c.user
+}
+
+// SetCookies attaches cookies (as name→value pairs) to be used for the
+// WebSocket upgrade. Required for SSO/browser-auth flows. Must be called
+// before Connect; calls after Connect have no effect on the active dial.
+func (c *BaseWebSocketClient) SetCookies(cookies map[string]string) {
+	c.mu.Lock()
+	c.cookies = cookies
+	c.mu.Unlock()
 }
 
 // readMessages reads messages from WebSocket and routes them.

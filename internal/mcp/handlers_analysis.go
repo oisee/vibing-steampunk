@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -52,8 +53,50 @@ func (s *Server) routeAnalysisAction(ctx context.Context, action, objectType, ob
 		return s.callHandler(ctx, s.handleTransportBoundaries, params)
 	case "cr_boundaries":
 		return s.callHandler(ctx, s.handleCRBoundaries, params)
+	case "enhancements_on":
+		return s.callHandler(ctx, s.handleEnhancementsOn, params)
 	}
 	return nil, false, nil
+}
+
+// handleEnhancementsOn lists ENHO implementations that target a given object.
+// Today supports INCL targets. The target is expressed as "TYPE NAME" (e.g.
+// "INCL RVKMP901") either via the universal handler's target param or via
+// separate object_type/object_name params.
+func (s *Server) handleEnhancementsOn(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+
+	typeName, _ := args["object_type"].(string)
+	objectName, _ := args["object_name"].(string)
+	if typeName == "" || objectName == "" {
+		if target, ok := args["target"].(string); ok {
+			typeName, objectName = parseTarget(target)
+		}
+	}
+
+	if typeName == "" || objectName == "" {
+		return newToolResultError("enhancements_on requires target (e.g. \"INCL RVKMP901\") or object_type + object_name"), nil
+	}
+
+	switch typeName {
+	case "INCL":
+		refs, err := s.adtClient.ListEnhancementsForInclude(ctx, objectName)
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("ListEnhancementsForInclude failed: %v", err)), nil
+		}
+		payload := map[string]any{
+			"target":        fmt.Sprintf("INCL %s", strings.ToUpper(objectName)),
+			"matches":       refs,
+			"matchCount":    len(refs),
+		}
+		if len(refs) == 0 {
+			payload["message"] = "No enhancements target this include."
+		}
+		out, _ := json.MarshalIndent(payload, "", "  ")
+		return mcp.NewToolResultText(string(out)), nil
+	default:
+		return newToolResultError(fmt.Sprintf("enhancements_on does not yet support target type %s (INCL only)", typeName)), nil
+	}
 }
 
 // --- Code Analysis Infrastructure Handlers ---
