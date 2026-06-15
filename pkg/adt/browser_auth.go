@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -102,7 +103,7 @@ func friendlyBrowserName(path string) string {
 // The browser navigates to the ADT discovery endpoint which requires authentication,
 // triggering the SSO redirect. Once SAP-specific cookies appear, they are extracted
 // and the browser is closed.
-func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout time.Duration, execPath string, verbose bool) (map[string]string, error) {
+func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout time.Duration, execPath string, verbose bool, sapClient string) (map[string]string, error) {
 	u, err := url.Parse(sapURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid SAP URL: %w", err)
@@ -120,6 +121,13 @@ func BrowserLogin(ctx context.Context, sapURL string, insecure bool, timeout tim
 	adtURL.Path = "/sap/bc/adt/"
 	adtURL.RawQuery = ""
 	adtURL.Fragment = ""
+	// if a valid sap-Client is provided, add it as a query parameter to ensure cookies are set for the correct client. 
+	matched, _ := regexp.MatchString(`^[0-9]{3}$`, sapClient)
+	if matched {
+		q := adtURL.Query()
+		q.Set("sap-client", sapClient)
+		adtURL.RawQuery = q.Encode()
+	} 
 	targetURL := adtURL.String()
 
 	// Create a headed (non-headless) browser context

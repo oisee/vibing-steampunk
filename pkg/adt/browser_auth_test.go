@@ -91,12 +91,12 @@ func TestSaveCookiesToFile_InvalidURL(t *testing.T) {
 
 func TestBrowserLogin_InvalidURL(t *testing.T) {
 	ctx := context.TODO()
-	_, err := BrowserLogin(ctx, "", false, 0, "", false)
+	_, err := BrowserLogin(ctx, "", false, 0, "", false, "")
 	if err == nil {
 		t.Error("expected error for empty URL")
 	}
 
-	_, err = BrowserLogin(ctx, "not-a-url", false, 0, "", false)
+	_, err = BrowserLogin(ctx, "not-a-url", false, 0, "", false, "")
 	if err == nil {
 		t.Error("expected error for invalid URL")
 	}

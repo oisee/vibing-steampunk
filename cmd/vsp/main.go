@@ -522,8 +522,14 @@ func processBrowserAuth(cmd *cobra.Command) error {
 		browserExec = viper.GetString("BROWSER_EXEC")
 	}
 
+	// Determine sap client
+	sapClient := cfg.Client
+	if sapClient == "" {
+		sapClient = viper.GetString("CLIENT")
+	}
+
 	ctx := cmd.Context()
-	cookies, err := adt.BrowserLogin(ctx, cfg.BaseURL, cfg.InsecureSkipVerify, timeout, browserExec, cfg.Verbose)
+	cookies, err := adt.BrowserLogin(ctx, cfg.BaseURL, cfg.InsecureSkipVerify, timeout, browserExec, cfg.Verbose, sapClient)
 	if err != nil {
 		return fmt.Errorf("browser authentication failed: %w", err)
 	}
