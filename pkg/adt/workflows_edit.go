@@ -191,7 +191,13 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	}
 
 	// Detect if this is a class include (e.g., /sap/bc/adt/oo/classes/ZCL_FOO/includes/testclasses)
-	isClassInclude := strings.Contains(objectURL, "/includes/")
+	// IMPORTANT: must require the /oo/classes/ prefix. A *program* include URL is
+	// /sap/bc/adt/programs/includes/<NAME> and also contains "/includes/", but its
+	// source lives at <url>/source/main (like a program), NOT at the bare object URL.
+	// Without the /oo/classes/ guard, program includes are misdetected as class
+	// includes, the /source/main suffix is skipped, and the GET hits the object
+	// metadata endpoint with Accept: text/plain -> HTTP 406 (not acceptable).
+	isClassInclude := strings.Contains(objectURL, "/oo/classes/") && strings.Contains(objectURL, "/includes/")
 	var className string
 	var includeType ClassIncludeType
 	var parentClassURL string
