@@ -202,3 +202,81 @@ func TestSessionTypes(t *testing.T) {
 		t.Errorf("SessionKeep = %v, want keep", SessionKeep)
 	}
 }
+
+// TestNewHTTPClient_CheckRedirectPreservesADTHeaders verifies that the
+// HTTP client's CheckRedirect callback re-sets headers that are
+// load-bearing for the ADT lock→write→unlock sequence across redirects:
+//   - Authorization: Go strips this by default on cross-origin redirects
+//     (sensitive header per RFC 7235). Without restoration, SAML flows get
+//     401 even when curl works (issue #90).
+//   - X-CSRF-Token: mutation requests are rejected as CSRF-violating if
+//     this disappears mid-sequence.
+//   - X-sap-adt-sessiontype: the lock handle is bound to a stateful
+//     session; if a redirect hop lands stateless, the subsequent PUT
+//     can't find the lock and gets HTTP 423.
+//
+// Go's default forwards custom headers on same-origin redirects, but this
+// test pins the behaviour explicitly so future refactors can't silently
+// drop them.
+func TestNewHTTPClient_CheckRedirectPreservesADTHeaders(t *testing.T) {
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	client := cfg.NewHTTPClient()
+
+	if client.CheckRedirect == nil {
+		t.Fatal("CheckRedirect must be set")
+	}
+
+	// Build the "via" chain: the original request that carries the ADT
+	// headers we expect to be re-set on the redirect target.
+	orig, err := http.NewRequest(http.MethodPost,
+		"https://sap.example.com:44300/sap/bc/adt/oo/classes/ZFOO?_action=LOCK", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(orig): %v", err)
+	}
+	orig.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+	orig.Header.Set("X-CSRF-Token", "ABC123==")
+	orig.Header.Set("X-sap-adt-sessiontype", "stateful")
+
+	// The redirect target that Go would follow — initially without any
+	// of the ADT headers (simulating Go having stripped them cross-origin).
+	next, err := http.NewRequest(http.MethodPost,
+		"https://sap.example.com:44300/sap/bc/adt/follow", nil)
+	if err != nil {
+		t.Fatalf("NewRequest(next): %v", err)
+	}
+
+	if err := client.CheckRedirect(next, []*http.Request{orig}); err != nil {
+		t.Fatalf("CheckRedirect returned error: %v", err)
+	}
+
+	if got := next.Header.Get("Authorization"); got != "Basic dXNlcjpwYXNz" {
+		t.Errorf("Authorization = %q, want preserved from initial request (issue #90)", got)
+	}
+	if got := next.Header.Get("X-CSRF-Token"); got != "ABC123==" {
+		t.Errorf("X-CSRF-Token = %q, want preserved — mutation requests need it to survive redirect hops", got)
+	}
+	if got := next.Header.Get("X-sap-adt-sessiontype"); got != "stateful" {
+		t.Errorf("X-sap-adt-sessiontype = %q, want preserved — lock handles are bound to a stateful session (issue #88)", got)
+	}
+}
+
+// TestNewHTTPClient_CheckRedirectHonoursLimit guards the 10-redirect cap
+// that CheckRedirect enforces to prevent infinite loops.
+func TestNewHTTPClient_CheckRedirectHonoursLimit(t *testing.T) {
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	client := cfg.NewHTTPClient()
+
+	if client.CheckRedirect == nil {
+		t.Fatal("CheckRedirect must be set")
+	}
+
+	next, _ := http.NewRequest(http.MethodGet, "https://sap.example.com:44300/", nil)
+	via := make([]*http.Request, 10)
+	for i := range via {
+		via[i], _ = http.NewRequest(http.MethodGet, "https://sap.example.com:44300/", nil)
+	}
+
+	if err := client.CheckRedirect(next, via); err == nil {
+		t.Error("CheckRedirect must return an error on the 10th redirect")
+	}
+}

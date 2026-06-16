@@ -625,3 +625,92 @@ func TestTransport_Request_BothAuthMethods(t *testing.T) {
 		t.Error("Cookie should also be present when both auth methods are set")
 	}
 }
+
+// TestClearSAPSessionCookies_ReplacesJar pins the ICMENOSESSION
+// recovery path observed in long-running MCP servers: after the first
+// Lock → Write → Unlock → Activate sequence SAP closes the stateful
+// context on its side, but sap-contextid cookies the server issued
+// during that sequence stay in Go's cookie jar — sometimes on multiple
+// paths (/, /sap/, /sap/bc/, /sap/bc/adt/). Every subsequent request
+// re-sends a matching dead identifier and SAP answers HTTP 400
+// ICMENOSESSION, including on the HEAD /core/discovery call that was
+// supposed to open a fresh session.
+//
+// Go's http.CookieJar interface does not expose the stored Path, so a
+// targeted SetCookies-with-MaxAge=-1 expire leaves cookies on unknown
+// paths untouched. The recovery therefore swaps the jar for a fresh
+// one. User-supplied cookies in config.Cookies are attached per
+// request via addCookies() and survive unchanged; only dynamically
+// server-deposited entries are lost, which is the intended behaviour.
+func TestClearSAPSessionCookies_ReplacesJar(t *testing.T) {
+	cfg := NewConfig("https://sap.example.com:44300", "u", "p")
+	transport := NewTransport(cfg)
+
+	baseURL, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		t.Fatalf("parse base URL: %v", err)
+	}
+
+	// Seed the jar with a spread of the cookies SAP is known to plant
+	// during a stateful sequence, including entries on deeper paths
+	// that a targeted-delete approach cannot reach.
+	seed := func(u *url.URL, cs []*http.Cookie) { transport.jar.SetCookies(u, cs) }
+	root := *baseURL
+	root.Path = "/"
+	seed(&root, []*http.Cookie{{Name: "sap-contextid", Value: "ROOT", Path: "/"}})
+	sap := *baseURL
+	sap.Path = "/sap/"
+	seed(&sap, []*http.Cookie{{Name: "sap-contextid", Value: "SAP", Path: "/sap/"}})
+	adt := *baseURL
+	adt.Path = "/sap/bc/adt/"
+	seed(&adt, []*http.Cookie{
+		{Name: "sap-contextid", Value: "ADT", Path: "/sap/bc/adt/"},
+		{Name: "SAP_SESSIONID_ABC_001", Value: "SESS", Path: "/sap/bc/adt/"},
+	})
+
+	originalJar := transport.jar
+
+	transport.clearSAPSessionCookies()
+
+	if transport.jar == originalJar {
+		t.Fatal("expected a new jar instance; jar reference unchanged")
+	}
+
+	// No path deeper than the ADT root should carry any SAP session
+	// cookie after the swap.
+	for _, p := range []string{"/", "/sap/", "/sap/bc/", "/sap/bc/adt/"} {
+		u := *baseURL
+		u.Path = p
+		for _, c := range transport.jar.Cookies(&u) {
+			if c.Name == "sap-contextid" || strings.HasPrefix(c.Name, "SAP_SESSIONID") {
+				t.Errorf("stale cookie %q survived jar swap on path %q: %v", c.Name, p, c)
+			}
+		}
+	}
+
+	// The underlying *http.Client must also point at the new jar — if
+	// only our cached reference changed, outgoing requests would keep
+	// reading from the old (stale-cookie) jar.
+	hc, ok := transport.httpClient.(*http.Client)
+	if !ok {
+		t.Fatal("expected NewTransport to produce an *http.Client")
+	}
+	if hc.Jar != transport.jar {
+		t.Error("*http.Client.Jar must be swapped alongside Transport.jar — otherwise outbound requests keep reading the stale jar")
+	}
+}
+
+// TestClearSAPSessionCookies_NonHTTPClientIsSafe guards the test-only
+// path: NewTransportWithClient fed a mock HTTPDoer leaves the jar nil,
+// and clearSAPSessionCookies must stay a no-op instead of panicking.
+func TestClearSAPSessionCookies_NonHTTPClientIsSafe(t *testing.T) {
+	cfg := NewConfig("https://sap.example.com:44300", "u", "p")
+	transport := NewTransportWithClient(cfg, &mockHTTPClient{})
+	if transport.jar != nil {
+		t.Fatal("expected jar to be nil when HTTPDoer is not *http.Client")
+	}
+	transport.clearSAPSessionCookies() // must not panic
+	if transport.jar != nil {
+		t.Error("mocked transport must remain jar-less after clear (no swap to perform)")
+	}
+}
