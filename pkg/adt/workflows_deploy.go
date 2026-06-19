@@ -224,29 +224,8 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		return nil, err
 	}
 
-	// 4. Lock object
-	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
-			Message:    fmt.Sprintf("Failed to lock object: %v", err),
-		}, nil
-	}
-
-	// Ensure unlock on any error
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
-		}
-	}()
-
-	// 5. Syntax check (skip for class includes - will check after update)
+	// 4. Syntax check before lock — must run before acquiring lock to avoid
+	// breaking the stateful SAP session (SyntaxCheck uses a stateless request).
 	if !isClassInclude {
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 		if err != nil {
@@ -278,6 +257,28 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 			}, nil
 		}
 	}
+
+	// 5. Lock object
+	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
+			Message:    fmt.Sprintf("Failed to lock object: %v", err),
+		}, nil
+	}
+
+	// Ensure unlock on any error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+		}
+	}()
 
 	// 6. Write source
 	if isClassInclude {

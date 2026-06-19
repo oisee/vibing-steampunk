@@ -121,6 +121,30 @@ func TestClient_CheckObjectPackageSafety_NormalizesObjectURLs(t *testing.T) {
 	}
 }
 
+func TestNormalizeObjectURLForPackageCheck(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		// Program includes (INCL) — /includes/ is the collection path, must not be mangled
+		{"/sap/bc/adt/programs/includes/ZTEST_INCL", "/sap/bc/adt/programs/includes/ZTEST_INCL"},
+		{"/sap/bc/adt/programs/includes/ZTEST_INCL/source/main", "/sap/bc/adt/programs/includes/ZTEST_INCL"},
+		// Regular programs — only /source/main stripped
+		{"/sap/bc/adt/programs/programs/ZTEST/source/main", "/sap/bc/adt/programs/programs/ZTEST"},
+		// Class includes — strip /includes/... to parent class
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/includes/testclasses", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/includes/definitions", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+		// Class source — strip /source/main only
+		{"/sap/bc/adt/oo/classes/ZCL_FOO/source/main", "/sap/bc/adt/oo/classes/ZCL_FOO"},
+	}
+	for _, tc := range cases {
+		got := normalizeObjectURLForPackageCheck(tc.input)
+		if got != tc.want {
+			t.Errorf("normalizeObjectURLForPackageCheck(%q)\n  got  %q\n  want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestClient_UpdateSource_EnforcesAllowedPackages(t *testing.T) {
 	mock := &mockTransportClient{
 		responses: map[string]*http.Response{
