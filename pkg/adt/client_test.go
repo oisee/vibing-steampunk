@@ -83,6 +83,41 @@ func TestClient_SearchObject(t *testing.T) {
 	}
 }
 
+func TestCanonicalObjectType(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// Short forms expand to ADT-canonical group codes
+		{"CLAS", "CLAS/OC"},
+		{"INTF", "INTF/OI"},
+		{"PROG", "PROG/P"},
+		{"INCL", "PROG/I"},
+		{"FUGR", "FUGR/F"},
+		{"FUNC", "FUGR/FF"},
+		{"TABL", "TABL/DT"},
+		{"DTEL", "DTEL/DE"},
+		{"DOMA", "DOMA/DD"},
+		{"TTYP", "TTYP/DA"},
+		{"ENQU", "ENQU/DL"},
+		{"DDLS", "DDLS/DF"},
+		{"MSAG", "MSAG/N"},
+		{"TRAN", "TRAN/T"},
+		// Case-insensitive
+		{"clas", "CLAS/OC"},
+		// Empty stays empty (means "any type")
+		{"", ""},
+		// Already-canonical and unknown values pass through verbatim
+		{"CLAS/OC", "CLAS/OC"},
+		{"ZCUSTOM/XX", "ZCUSTOM/XX"},
+	}
+	for _, tc := range cases {
+		if got := CanonicalObjectType(tc.in); got != tc.want {
+			t.Errorf("CanonicalObjectType(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestClient_SearchObjectByType_QueryParams(t *testing.T) {
 	emptyResponse := `<?xml version="1.0" encoding="UTF-8"?>
 <adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`
@@ -95,6 +130,8 @@ func TestClient_SearchObjectByType_QueryParams(t *testing.T) {
 	}{
 		{"with type sends objectType param", "CLAS/OC", true, "CLAS/OC"},
 		{"empty type omits objectType param", "", false, ""},
+		{"short form CLAS expands to CLAS/OC", "CLAS", true, "CLAS/OC"},
+		{"short form FUNC expands to FUGR/FF", "FUNC", true, "FUGR/FF"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

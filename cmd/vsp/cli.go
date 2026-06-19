@@ -255,41 +255,6 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 // --- search command ---
 
-// canonicalObjectType maps the documented short forms (CLAS, INTF, PROG, ...)
-// to the ADT-canonical group codes the SAP server expects on the
-// informationsystem/search endpoint. Unknown values pass through verbatim,
-// covering already-canonical input ("CLAS/OC"), namespaced types, or custom codes.
-func canonicalObjectType(s string) string {
-	switch strings.ToUpper(s) {
-	case "":
-		return ""
-	case "CLAS":
-		return "CLAS/OC"
-	case "INTF":
-		return "INTF/OI"
-	case "PROG":
-		return "PROG/P"
-	case "FUGR":
-		return "FUGR/F"
-	case "FUNC":
-		return "FUGR/FF"
-	case "TABL":
-		return "TABL/DT"
-	case "DTEL":
-		return "DTEL/DE"
-	case "DOMA":
-		return "DOMA/DD"
-	case "DDLS":
-		return "DDLS/DF"
-	case "MSAG":
-		return "MSAG/N"
-	case "TRAN":
-		return "TRAN/T"
-	// TODO: add INCL→PROG/I once https://github.com/oisee/vibing-steampunk/pull/121 is merged upstream
-	}
-	return s
-}
-
 var searchCmd = &cobra.Command{
 	Use:   "search <query>",
 	Short: "Search for ABAP objects",
@@ -320,7 +285,7 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
 	ctx := context.Background()
 
-	adtType := canonicalObjectType(objectType)
+	adtType := adt.CanonicalObjectType(objectType)
 	if v, _ := cmd.Flags().GetBool("verbose"); v {
 		fmt.Fprintf(os.Stderr, "[DEBUG] search: query=%q objectType=%q maxResults=%d\n",
 			query, adtType, maxResults)
@@ -331,12 +296,14 @@ func runSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Filter by type if specified
+	// Filter by type if specified. Compare against the canonical type, since
+	// the server returns canonical codes (e.g. FUNC -> FUGR/FF, INCL -> PROG/I)
+	// where the short form is not a prefix of the result type.
 	filtered := results
-	if objectType != "" {
+	if adtType != "" {
 		filtered = make([]adt.SearchResult, 0)
 		for _, r := range results {
-			if strings.EqualFold(r.Type, objectType) || strings.HasPrefix(r.Type, objectType+"/") {
+			if strings.EqualFold(r.Type, adtType) || strings.HasPrefix(r.Type, adtType+"/") {
 				filtered = append(filtered, r)
 			}
 		}

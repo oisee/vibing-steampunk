@@ -250,6 +250,48 @@ func (c *Client) SearchObject(ctx context.Context, query string, maxResults int)
 	return c.SearchObjectByType(ctx, query, "", maxResults)
 }
 
+// CanonicalObjectType maps the documented short forms (CLAS, INTF, PROG, ...)
+// to the ADT-canonical group codes the SAP server expects on the
+// informationsystem/search endpoint. Unknown values pass through verbatim,
+// covering already-canonical input ("CLAS/OC"), namespaced types, or custom codes.
+// Exported so every caller (CLI, MCP, direct API) gets the same expansion;
+// SearchObjectByType applies it internally.
+func CanonicalObjectType(s string) string {
+	switch strings.ToUpper(s) {
+	case "":
+		return ""
+	case "CLAS":
+		return "CLAS/OC"
+	case "INTF":
+		return "INTF/OI"
+	case "PROG":
+		return "PROG/P"
+	case "INCL":
+		return "PROG/I"
+	case "FUGR":
+		return "FUGR/F"
+	case "FUNC":
+		return "FUGR/FF"
+	case "TABL":
+		return "TABL/DT"
+	case "DTEL":
+		return "DTEL/DE"
+	case "DOMA":
+		return "DOMA/DD"
+	case "TTYP":
+		return "TTYP/DA"
+	case "ENQU":
+		return "ENQU/DL"
+	case "DDLS":
+		return "DDLS/DF"
+	case "MSAG":
+		return "MSAG/N"
+	case "TRAN":
+		return "TRAN/T"
+	}
+	return s
+}
+
 // SearchObjectByType searches for ABAP objects by name pattern, optionally
 // constrained to a specific ADT object type code (e.g. "CLAS/OC", "PROG/P",
 // "INTF/OI"). An empty objectType means "any type" and behaves identically
@@ -260,6 +302,11 @@ func (c *Client) SearchObjectByType(ctx context.Context, query, objectType strin
 	if maxResults <= 0 {
 		maxResults = 100
 	}
+
+	// Expand documented short forms (CLAS, FUNC, INCL, ...) to ADT-canonical
+	// group codes so callers can pass either form. No-op for already-canonical
+	// or unknown input.
+	objectType = CanonicalObjectType(objectType)
 
 	params := url.Values{}
 	params.Set("operation", "quickSearch")
