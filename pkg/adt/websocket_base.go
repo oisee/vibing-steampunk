@@ -87,10 +87,7 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	header.Set("Authorization", basicAuth(c.user, c.password))
 
 	// Try 1: Direct Basic Auth (works on most SAP systems)
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 30 * time.Second,
-		TLSClientConfig:  tlsConfig,
-	}
+	dialer := newZADTVSPDialer(tlsConfig)
 
 	conn, resp, err := dialer.DialContext(ctx, wsURL, header)
 
@@ -99,11 +96,7 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	// but accept it on regular HTTP to issue session cookies.
 	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized {
 		jar, _ := cookiejar.New(nil)
-		preAuthClient := &http.Client{
-			Jar:       jar,
-			Transport: &http.Transport{TLSClientConfig: tlsConfig},
-			Timeout:   30 * time.Second,
-		}
+		preAuthClient := newPreAuthHTTPClient(jar, tlsConfig)
 
 		authURL := fmt.Sprintf("%s/sap/bc/adt/core/discovery?sap-client=%s", c.baseURL, c.client)
 		authReq, authErr := http.NewRequestWithContext(ctx, http.MethodGet, authURL, nil)
@@ -381,6 +374,39 @@ func (c *BaseWebSocketClient) WriteMessage(data []byte) error {
 		return fmt.Errorf("not connected")
 	}
 	return c.conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// newZADTVSPDialer returns the gorilla/websocket dialer used for the
+// ZADT_VSP APC endpoint. Proxy is set to http.ProxyFromEnvironment so
+// the dial honours HTTP_PROXY / HTTPS_PROXY env vars — same fix class
+// as issue #13 on the HTTP transport. Required on SAP Business
+// Application Studio destinations where all outbound traffic has to
+// go through a Connectivity Proxy; without it, every WebSocket-backed
+// tool (debugger, AMDP, RFC, report execution, abapGit WebSocket
+// export) fails to connect even though the HTTP-only tools work.
+func newZADTVSPDialer(tlsConfig *tls.Config) websocket.Dialer {
+	return websocket.Dialer{
+		HandshakeTimeout: 30 * time.Second,
+		TLSClientConfig:  tlsConfig,
+		Proxy:            http.ProxyFromEnvironment,
+	}
+}
+
+// newPreAuthHTTPClient returns the transient HTTP client used to fetch
+// SAP session cookies before the WebSocket upgrade retry on HTTP 401.
+// Proxy env vars are honoured. Kept separate from Config.NewHTTPClient
+// because the WebSocket fallback path deliberately drives its own
+// cookie jar and injects Basic Auth per-request rather than reusing
+// the caller's existing HTTP session state.
+func newPreAuthHTTPClient(jar http.CookieJar, tlsConfig *tls.Config) *http.Client {
+	return &http.Client{
+		Jar: jar,
+		Transport: &http.Transport{
+			Proxy:           http.ProxyFromEnvironment,
+			TLSClientConfig: tlsConfig,
+		},
+		Timeout: 30 * time.Second,
+	}
 }
 
 // basicAuth creates basic auth header value.
