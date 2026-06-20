@@ -427,14 +427,23 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 		// Use WriteSource to create/update
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
-		if err != nil {
+		res, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		switch {
+		case err != nil:
 			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
 			failed = append(failed, obj.Name+": "+err.Error())
-		} else {
+		case res == nil || !res.Success:
+			msg := "unknown failure"
+			if res != nil && res.Message != "" {
+				msg = res.Message
+			}
+			fmt.Fprintf(&sb, "✗ Failed: %s\n", msg)
+			failed = append(failed, obj.Name+": "+msg)
+		default:
 			sb.WriteString("✓ Deployed\n")
 			deployed = append(deployed, obj.Name)
 		}
