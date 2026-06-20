@@ -149,7 +149,13 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		opts = &EditSourceOptions{SyntaxCheck: true}
 	}
 
-	// Unified mutation policy gate (op type + package + transport)
+	// Unified mutation policy gate (op type + package + transport).
+	// We resolve the package here, BEFORE LockObject, so the inner
+	// UpdateSource / UpdateClassInclude do not repeat the resolution
+	// between the stateful Lock and the stateful PUT. Repeating it would
+	// inject a stateless SearchObject hop that retires SAP's stateful ICM
+	// session and invalidates the lock handle (HTTP 423). Same bug class
+	// as commit 8cb45a5 (SyntaxCheck before Lock), different call site.
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpUpdate,
 		OpName:    "EditSource",
@@ -158,6 +164,7 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 	// SyntaxCheck defaults to true if not explicitly set (zero value is false, so we need to handle this)
 	// Note: caller should explicitly set SyntaxCheck=false if they don't want it
 

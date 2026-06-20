@@ -33,10 +33,20 @@ type DeployResult struct {
 // Example:
 //   result, err := client.CreateFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
 func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
-	// Safety check
-	if err := c.checkSafety(OpCreate, "CreateFromFile"); err != nil {
+	// Unified mutation policy gate (op type + package + transport).
+	// Run with the explicit Package the caller supplied, then mark the
+	// context so the inner CreateObject + UpdateSource skip their
+	// redundant gates — preventing the SearchObject hop between Lock and
+	// PUT (mutationGateSkipKey).
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "CreateFromFile",
+		Package:   strings.ToUpper(packageName),
+		Transport: transport,
+	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	// 1. Parse file to detect type and name
 	info, err := ParseABAPFile(filePath)
@@ -195,11 +205,6 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 // Example:
 //   result, err := client.UpdateFromFile(ctx, "/path/to/zcl_test.clas.abap", "")
 func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string) (*DeployResult, error) {
-	// Safety check
-	if err := c.checkSafety(OpUpdate, "UpdateFromFile"); err != nil {
-		return nil, err
-	}
-
 	// 1. Parse file to detect type and name
 	info, err := ParseABAPFile(filePath)
 	if err != nil {
@@ -223,6 +228,21 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 	if err != nil {
 		return nil, err
 	}
+
+	// Unified mutation policy gate (op type + package + transport).
+	// Resolve and check the package up front, then mark the context so
+	// the inner UpdateSource / UpdateClassInclude / CreateTestInclude
+	// skip their redundant gates — preventing the SearchObject hop
+	// between Lock and PUT (mutationGateSkipKey).
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UpdateFromFile",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); err != nil {
+		return nil, err
+	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	// 4. Lock object
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
