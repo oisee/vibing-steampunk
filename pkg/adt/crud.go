@@ -194,6 +194,18 @@ type CreateObjectOptions struct {
 	BindingType string `json:"bindingType,omitempty"`
 	// For SRVB: binding version ("V2" or "V4")
 	BindingVersion string `json:"bindingVersion,omitempty"`
+
+	// IAM options
+	// For SIA6: application type, e.g. "EXT" (external app) or "IBS"
+	// (generated business service). Defaults to EXT.
+	AppType string `json:"appType,omitempty"`
+	// For SIA6: the object the app stands for, e.g. the generated communication
+	// scenario on an IBS app. Empty for a plain external app.
+	SecondaryID string `json:"secondaryID,omitempty"`
+	// For SIA7: the business catalog receiving the app.
+	BusinessCatalogID string `json:"businessCatalogID,omitempty"`
+	// For SIA7: the IAM app being assigned.
+	AppID string `json:"appID,omitempty"`
 	// For SRVB: category ("0" for Web API, "1" for UI)
 	BindingCategory string `json:"bindingCategory,omitempty"`
 
@@ -206,6 +218,11 @@ type objectTypeInfo struct {
 	creationPath string
 	rootName     string
 	namespace    string
+	// bodyBuilder, when set, replaces the generic create payload for this type.
+	// Types whose ADT resource needs a nested <content> block register one from
+	// their own file, so a new type is additive rather than another branch in
+	// buildCreateObjectBody.
+	bodyBuilder func(opts CreateObjectOptions, typeInfo objectTypeInfo, responsible string) string
 }
 
 var objectTypes = map[CreatableObjectType]objectTypeInfo{
@@ -424,6 +441,11 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 	responsible := opts.Responsible
 	if responsible == "" {
 		responsible = defaultResponsible
+	}
+
+	// A type that registered its own builder owns its whole payload.
+	if typeInfo.bodyBuilder != nil {
+		return typeInfo.bodyBuilder(opts, typeInfo, responsible)
 	}
 
 	// For packages, use special structure with attributes element
@@ -887,11 +909,11 @@ func parsePublishResult(data []byte) (*PublishResult, error) {
 
 // CreateTableOptions defines options for creating a DDIC table.
 type CreateTableOptions struct {
-	Name          string       `json:"name"`          // Table name (uppercase, max 30 chars, must start with Z/Y)
-	Description   string       `json:"description"`   // Short description
-	Package       string       `json:"package"`       // Target package
-	Fields        []TableField `json:"fields"`        // Field definitions
-	Transport     string       `json:"transport,omitempty"` // Transport request (optional for $TMP)
+	Name          string       `json:"name"`                    // Table name (uppercase, max 30 chars, must start with Z/Y)
+	Description   string       `json:"description"`             // Short description
+	Package       string       `json:"package"`                 // Target package
+	Fields        []TableField `json:"fields"`                  // Field definitions
+	Transport     string       `json:"transport,omitempty"`     // Transport request (optional for $TMP)
 	DeliveryClass string       `json:"deliveryClass,omitempty"` // A=Application, C=Customizing, L=Temp, etc. (default: A)
 	TableCategory string       `json:"tableCategory,omitempty"` // TRANSPARENT (default), STRUCTURE, etc.
 }
