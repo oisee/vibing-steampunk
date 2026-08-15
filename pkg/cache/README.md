@@ -270,7 +270,7 @@ go test -run=Example ./pkg/cache
 ## Dependencies
 
 - **In-Memory**: None (stdlib only)
-- **SQLite**: `github.com/mattn/go-sqlite3`
+- **SQLite**: `modernc.org/sqlite` (pure Go; no CGO toolchain required)
 
 ## Limitations
 

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/oisee/vibing-steampunk/pkg/cache"
@@ -19,12 +20,12 @@ func Example_inMemory() {
 
 	// Store a node
 	node := &cache.Node{
-		ID:          "ME.ZCL_MY_CLASS\\ME:MY_METHOD",
-		ObjectType:  "CLAS",
-		ObjectName:  "ZCL_MY_CLASS",
-		Package:     "$ZRAY",
-		SourceHash:  "abc123",
-		Valid:       true,
+		ID:         "ME.ZCL_MY_CLASS\\ME:MY_METHOD",
+		ObjectType: "CLAS",
+		ObjectName: "ZCL_MY_CLASS",
+		Package:    "$ZRAY",
+		SourceHash: "abc123",
+		Valid:      true,
 	}
 
 	err := c.PutNode(ctx, node)
@@ -50,10 +51,19 @@ func Example_inMemory() {
 func Example_withSQLite() {
 	ctx := context.Background()
 
-	// Create SQLite cache
+	// Create SQLite cache in a portable temporary path.
+	tmp, err := os.CreateTemp("", "vsp-cache-*.db")
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return
+	}
+	path := tmp.Name()
+	tmp.Close()
+	defer os.Remove(path)
+
 	config := cache.DefaultConfig()
 	config.Type = "sqlite"
-	config.Path = "/tmp/test_cache.db"
+	config.Path = path
 
 	c, err := cache.NewCache(config)
 	if err != nil {
@@ -64,11 +74,11 @@ func Example_withSQLite() {
 
 	// Store a node
 	node := &cache.Node{
-		ID:          "PROG.ZREPORT",
-		ObjectType:  "PROG",
-		ObjectName:  "ZREPORT",
-		Package:     "$TMP",
-		Valid:       true,
+		ID:         "PROG.ZREPORT",
+		ObjectType: "PROG",
+		ObjectName: "ZREPORT",
+		Package:    "$TMP",
+		Valid:      true,
 	}
 
 	err = c.PutNode(ctx, node)
@@ -147,11 +157,11 @@ func Example_hashInvalidation() {
 
 	// Cache node with hash
 	node := &cache.Node{
-		ID:          "ME.ZCL_TEST\\ME:MY_METHOD",
-		ObjectType:  "CLAS",
-		ObjectName:  "ZCL_TEST",
-		SourceHash:  hashStr,
-		Valid:       true,
+		ID:         "ME.ZCL_TEST\\ME:MY_METHOD",
+		ObjectType: "CLAS",
+		ObjectName: "ZCL_TEST",
+		SourceHash: hashStr,
+		Valid:      true,
 	}
 
 	c.PutNode(ctx, node)

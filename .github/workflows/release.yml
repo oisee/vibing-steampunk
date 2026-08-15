@@ -32,7 +32,7 @@ jobs:
       # 1. Checkout — full history required by git-cliff and goreleaser
       # ------------------------------------------------------------------ #
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           # Use a PAT if you need to push to a branch protected by
@@ -43,7 +43,7 @@ jobs:
       # 2. Set up Go (version comes from go.mod toolchain directive)
       # ------------------------------------------------------------------ #
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -52,6 +52,8 @@ jobs:
       # 3. Run tests — abort the release if anything is red
       # ------------------------------------------------------------------ #
       - name: Run tests
+        env:
+          CGO_ENABLED: 0
         run: go test ./...
 
       # ------------------------------------------------------------------ #
@@ -139,7 +141,7 @@ jobs:
       #    Release notes come from git-cliff (GoReleaser changelog is skipped)
       # ------------------------------------------------------------------ #
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: "~> v2"

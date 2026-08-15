@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // auditCache is a tiny on-disk key/value cache for cr-config-audit.
@@ -61,7 +61,7 @@ func openAuditCache(systemName, override string) (*auditCache, error) {
 		// /tmp is outside any repo, survives between runs, cleaned by the OS.
 		path = filepath.Join(os.TempDir(), "vsp-audit-cache-"+sanitizeSystemName(systemName)+".db")
 	}
-	db, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("opening audit cache %s: %w", path, err)
 	}
