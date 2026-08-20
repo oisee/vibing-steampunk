@@ -112,6 +112,9 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 		info.ClassIncludeType = ClassIncludeMain
 	case strings.HasSuffix(baseName, ".prog.abap"):
 		info.ObjectType = ObjectTypeProgram
+	case strings.HasSuffix(baseName, ".incl.abap"):
+		info.ObjectType = ObjectTypeInclude
+		info.ObjectName = strings.ToUpper(strings.ReplaceAll(strings.TrimSuffix(baseName, ".incl.abap"), "#", "/"))
 	case strings.HasSuffix(baseName, ".intf.abap"):
 		info.ObjectType = ObjectTypeInterface
 	case strings.HasSuffix(baseName, ".fugr.abap"):
@@ -130,7 +133,7 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 		// Generic .abap: detect from content
 		return parseFromContent(filePath)
 	default:
-		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .prog.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
+		return nil, fmt.Errorf("unsupported file extension: %s (expected .clas.abap, .clas.testclasses.abap, .clas.locals_def.abap, .clas.locals_imp.abap, .prog.abap, .incl.abap, .intf.abap, .fugr.abap, .func.abap, .ddls.asddls, .bdef.asbdef, or .srvd.srvdsrv)", ext)
 	}
 
 	// 2. Parse file content to extract name and metadata

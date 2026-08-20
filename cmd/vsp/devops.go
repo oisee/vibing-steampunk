@@ -1446,7 +1446,7 @@ func runSourceEdit(cmd *cobra.Command, args []string) error {
 	// Build object URL from type + name
 	objectURL := buildObjectURL(objType, name)
 	if objectURL == "" {
-		return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INTF)", objType)
+		return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INCL, INTF)", objType)
 	}
 
 	ctx := context.Background()
@@ -1563,7 +1563,7 @@ func runTest(cmd *cobra.Command, args []string) error {
 		name := strings.ToUpper(args[1])
 		objectURL = buildObjectURL(objType, name)
 		if objectURL == "" {
-			return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INTF)", objType)
+			return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INCL, INTF)", objType)
 		}
 	}
 
@@ -1643,7 +1643,7 @@ func runATC(cmd *cobra.Command, args []string) error {
 
 	objectURL := buildObjectURL(objType, name)
 	if objectURL == "" {
-		return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INTF)", objType)
+		return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INCL, INTF)", objType)
 	}
 
 	ctx := context.Background()
@@ -3406,6 +3406,8 @@ func buildObjectURL(objType, name string) string {
 		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", name)
 	case "PROG":
 		return fmt.Sprintf("/sap/bc/adt/programs/programs/%s", name)
+	case "INCL":
+		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", name)
 	case "INTF":
 		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", name)
 	case "FUGR":
