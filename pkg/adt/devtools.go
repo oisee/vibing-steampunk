@@ -201,9 +201,6 @@ func parseActivationResult(data []byte) (*ActivationResult, error) {
 			Text string `xml:"txt"`
 		} `xml:"shortText"`
 	}
-	type messages struct {
-		Msgs []msg `xml:"msg"`
-	}
 	type inactiveRef struct {
 		URI       string `xml:"uri,attr"`
 		Type      string `xml:"type,attr"`
@@ -215,12 +212,14 @@ func parseActivationResult(data []byte) (*ActivationResult, error) {
 			Ref inactiveRef `xml:"ref"`
 		} `xml:"object"`
 	}
-	type inactiveObjects struct {
-		Entries []inactiveEntry `xml:"entry"`
-	}
+	// The response ROOT element is either <chkl:messages> (children: <msg>)
+	// or <ioc:inactiveObjects> (children: <ioc:entry>). xml.Unmarshal maps the
+	// root element onto this struct itself, so the root's children must be
+	// declared directly here — a nested `xml:"messages"` field would look for
+	// a <messages> child *inside* the root and silently match nothing.
 	type response struct {
-		Messages messages        `xml:"messages"`
-		Inactive inactiveObjects `xml:"inactiveObjects"`
+		Msgs    []msg           `xml:"msg"`
+		Entries []inactiveEntry `xml:"entry"`
 	}
 
 	var resp response
@@ -234,7 +233,7 @@ func parseActivationResult(data []byte) (*ActivationResult, error) {
 		return result, nil
 	}
 
-	for _, m := range resp.Messages.Msgs {
+	for _, m := range resp.Msgs {
 		result.Messages = append(result.Messages, ActivationResultMessage{
 			ObjDescr:       m.ObjDescr,
 			Type:           m.Type,
@@ -249,7 +248,7 @@ func parseActivationResult(data []byte) (*ActivationResult, error) {
 		}
 	}
 
-	for _, entry := range resp.Inactive.Entries {
+	for _, entry := range resp.Entries {
 		if entry.Object != nil {
 			result.Success = false
 			result.Inactive = append(result.Inactive, InactiveObject{
