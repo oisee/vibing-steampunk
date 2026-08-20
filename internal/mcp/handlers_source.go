@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -243,9 +244,26 @@ func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequ
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("WriteSource failed: %v", err)), nil
 	}
+	if err := validateWriteSourceResult(result); err != nil {
+		return newToolResultError(err.Error()), nil
+	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+func validateWriteSourceResult(result *adt.WriteSourceResult) error {
+	if result == nil {
+		return fmt.Errorf("WriteSource failed: no result returned")
+	}
+	if result.Success {
+		return nil
+	}
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = "operation returned success=false without a diagnostic"
+	}
+	return fmt.Errorf("WriteSource failed: %s", message)
 }
 
 // registerGrepObjects registers the unified GrepObjects tool

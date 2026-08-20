@@ -32,11 +32,11 @@ type WorkflowStep struct {
 
 // WorkflowResult represents the result of a workflow execution.
 type WorkflowResult struct {
-	Name        string               `json:"name"`
-	Success     bool                 `json:"success"`
-	StepResults []StepResult         `json:"stepResults"`
+	Name        string                 `json:"name"`
+	Success     bool                   `json:"success"`
+	StepResults []StepResult           `json:"stepResults"`
 	Variables   map[string]interface{} `json:"variables"`
-	Error       string               `json:"error,omitempty"`
+	Error       string                 `json:"error,omitempty"`
 }
 
 // StepResult represents the result of a single step.
@@ -461,9 +461,9 @@ func handleSyntaxCheck(ctx *ExecutionContext, params map[string]interface{}) (in
 		}
 
 		results = append(results, map[string]interface{}{
-			"object":    obj.Name,
-			"success":   !hasErrors,
-			"messages":  checkResults,
+			"object":   obj.Name,
+			"success":  !hasErrors,
+			"messages": checkResults,
 		})
 	}
 
@@ -515,9 +515,12 @@ func handleActivate(ctx *ExecutionContext, params map[string]interface{}) (inter
 		if err != nil {
 			return nil, err
 		}
+		if err := adt.ActivationResultError(result); err != nil {
+			return nil, fmt.Errorf("activating %s: %w", obj.Name, err)
+		}
 		results = append(results, map[string]interface{}{
-			"object":  obj.Name,
-			"success": result.Success,
+			"object":   obj.Name,
+			"success":  result.Success,
 			"messages": result.Messages,
 		})
 	}

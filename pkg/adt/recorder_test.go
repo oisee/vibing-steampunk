@@ -2,9 +2,37 @@ package adt
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestGenerateRecordingIDUniqueUnderBurst(t *testing.T) {
+	const goroutines = 16
+	const idsPerGoroutine = 250
+
+	ids := make(chan string, goroutines*idsPerGoroutine)
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range idsPerGoroutine {
+				ids <- generateRecordingID()
+			}
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, goroutines*idsPerGoroutine)
+	for id := range ids {
+		if _, exists := seen[id]; exists {
+			t.Fatalf("duplicate recording ID generated: %s", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
 
 func TestNewExecutionRecorder(t *testing.T) {
 	recorder := NewExecutionRecorder("test-session", "ZTEST_PROGRAM")

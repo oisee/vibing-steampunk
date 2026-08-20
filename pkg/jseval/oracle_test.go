@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -133,12 +134,12 @@ function lexer(source) {
 }
 `
 
-type tokenResult struct {
-	Type string `json:"type"`
-	Str  string `json:"str"`
-}
-
 func TestOracleComparison(t *testing.T) {
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node executable is required for oracle comparison")
+	}
+
 	// ABAP test corpus
 	abapSamples := []struct {
 		name string
@@ -188,9 +189,11 @@ for (let i = 0; i < result.length; i++) {
 console.log(out);
 `, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"))
 
-			tmpFile := fmt.Sprintf("/tmp/oracle_test_%s.js", s.name)
-			os.WriteFile(tmpFile, []byte(nodeCode), 0644)
-			nodeResult, err := exec.Command("node", tmpFile).CombinedOutput()
+			tmpFile := filepath.Join(t.TempDir(), "oracle.js")
+			if writeErr := os.WriteFile(tmpFile, []byte(nodeCode), 0600); writeErr != nil {
+				t.Fatalf("write node oracle fixture: %v", writeErr)
+			}
+			nodeResult, err := exec.CommandContext(t.Context(), nodePath, tmpFile).CombinedOutput()
 			if err != nil {
 				t.Fatalf("node error: %v\n%s", err, nodeResult)
 			}

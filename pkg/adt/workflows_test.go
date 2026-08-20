@@ -1,3 +1,4 @@
+//nolint:bodyclose // Mock responses are closed by the transport under test.
 package adt
 
 import (
@@ -19,6 +20,9 @@ func (m *mockWorkflowTransport) Do(req *http.Request) (*http.Response, error) {
 
 	// Match by path
 	path := req.URL.Path
+	if resp, ok := m.responses[req.Method+" "+path]; ok {
+		return resp, nil
+	}
 	if resp, ok := m.responses[path]; ok {
 		return resp, nil
 	}
@@ -40,6 +44,14 @@ func (m *mockWorkflowTransport) Do(req *http.Request) (*http.Response, error) {
 func newWorkflowTestResponse(body string) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"X-CSRF-Token": []string{"test-token"}},
+	}
+}
+
+func newWorkflowStatusResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     http.Header{"X-CSRF-Token": []string{"test-token"}},
 	}
@@ -148,21 +160,19 @@ func TestClient_GetSource_InvalidType(t *testing.T) {
 }
 
 // TestClient_WriteSource_Create tests WriteSource in create mode
+//
+//nolint:bodyclose // The client transport owns and closes all synthetic responses.
 func TestClient_WriteSource_Create(t *testing.T) {
 	sourceCode := `REPORT ztest.
 WRITE: 'Hello, World!'.`
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/programs/programs/ZTEST": newWorkflowTestResponse(`<?xml version="1.0"?>
-<program:abapProgram xmlns:program="http://www.sap.com/adt/programs"
-                     adtcore:name="ZTEST"
-                     adtcore:type="PROG/P"
-                     adtcore:responsible="USER"/>`),
-			"/sap/bc/adt/programs/programs/ZTEST/source/main": newWorkflowTestResponse("OK"),
-			"/sap/bc/adt/checkruns": newWorkflowTestResponse("OK"),
-			"/sap/bc/adt/activation": newWorkflowTestResponse("OK"),
-			"discovery": newWorkflowTestResponse("OK"),
+			"GET /sap/bc/adt/programs/programs/ZTEST/source/main": newWorkflowStatusResponse(http.StatusNotFound, "Not found"),
+			"/sap/bc/adt/programs/programs/ZTEST/source/main":     newWorkflowTestResponse("OK"),
+			"/sap/bc/adt/checkruns":                               newWorkflowTestResponse("OK"),
+			"/sap/bc/adt/activation":                              newWorkflowTestResponse("OK"),
+			"discovery":                                           newWorkflowTestResponse("OK"),
 		},
 	}
 
@@ -216,6 +226,52 @@ WRITE: 'Updated!'.`
 	// Verify it's in update mode (even if workflow didn't complete due to mocks)
 	if result.ObjectType != "PROG" {
 		t.Errorf("Expected ObjectType 'PROG', got %q", result.ObjectType)
+	}
+	if result.Mode != "updated" {
+		t.Errorf("Expected update workflow, got mode %q and message %q", result.Mode, result.Message)
+	}
+}
+
+//nolint:bodyclose // The client transport owns and closes all synthetic responses.
+func TestClient_WriteSource_CreateRejectsExistingObject(t *testing.T) {
+	mock := &mockWorkflowTransport{responses: map[string]*http.Response{
+		"GET /sap/bc/adt/programs/programs/ZEXISTS/source/main": newWorkflowTestResponse("REPORT zexists."),
+	}}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+	result, err := client.WriteSource(context.Background(), "PROG", "ZEXISTS", "REPORT zexists.", &WriteSourceOptions{
+		Mode:        WriteModeCreate,
+		Description: "Synthetic program",
+		Package:     "$TMP",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Success || !strings.Contains(result.Message, "already exists") {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	for _, req := range mock.requests {
+		if req.Method != http.MethodGet {
+			t.Fatalf("create was attempted after object was found: %s %s", req.Method, req.URL.Path)
+		}
+	}
+}
+
+//nolint:bodyclose // The client transport owns and closes all synthetic responses.
+func TestClient_WriteSourceExistenceCheckFailsClosed(t *testing.T) {
+	mock := &mockWorkflowTransport{responses: map[string]*http.Response{
+		"GET /sap/bc/adt/programs/programs/ZUNKNOWN/source/main": newWorkflowStatusResponse(http.StatusInternalServerError, "synthetic failure"),
+	}}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+	result, err := client.WriteSource(context.Background(), "PROG", "ZUNKNOWN", "REPORT zunknown.", nil)
+	if err == nil {
+		t.Fatalf("expected inconclusive existence check to fail closed, got %#v", result)
+	}
+	if !strings.Contains(err.Error(), "checking whether PROG ZUNKNOWN exists") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -292,6 +348,8 @@ WRITE: 'Hello, World!'.`
 }
 
 // TestClient_GrepPackages tests GrepPackages with single package
+//
+//nolint:bodyclose // The client transport owns and closes all synthetic responses.
 func TestClient_GrepPackages(t *testing.T) {
 	packageContents := `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.sap.com/adt/packages" name="$TMP">
@@ -305,7 +363,7 @@ func TestClient_GrepPackages(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/$TMP": newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$TMP":                        newWorkflowTestResponse(packageContents),
 			"/sap/bc/adt/programs/programs/ZTEST1/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},
@@ -352,8 +410,8 @@ func TestClient_GrepPackages_Recursive(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/ZMAIN":       newWorkflowTestResponse(mainPackageContents),
-			"/sap/bc/adt/packages/ZSUB1":       newWorkflowTestResponse(subPackageContents),
+			"/sap/bc/adt/packages/ZMAIN":                          newWorkflowTestResponse(mainPackageContents),
+			"/sap/bc/adt/packages/ZSUB1":                          newWorkflowTestResponse(subPackageContents),
 			"/sap/bc/adt/programs/programs/ZTEST_SUB/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},
@@ -389,8 +447,8 @@ func TestClient_GrepPackages_MultiplePackages(t *testing.T) {
 
 	mock := &mockWorkflowTransport{
 		responses: map[string]*http.Response{
-			"/sap/bc/adt/packages/$TMP":  newWorkflowTestResponse(packageContents),
-			"/sap/bc/adt/packages/$LOCAL": newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$TMP":                        newWorkflowTestResponse(packageContents),
+			"/sap/bc/adt/packages/$LOCAL":                      newWorkflowTestResponse(packageContents),
 			"/sap/bc/adt/programs/programs/ZTEST1/source/main": newWorkflowTestResponse(sourceCode),
 			"discovery": newWorkflowTestResponse("OK"),
 		},

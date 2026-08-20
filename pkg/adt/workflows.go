@@ -12,12 +12,12 @@ import (
 
 // WriteProgramResult represents the result of writing a program.
 type WriteProgramResult struct {
-	Success      bool                       `json:"success"`
-	ProgramName  string                     `json:"programName"`
-	ObjectURL    string                     `json:"objectUrl"`
-	SyntaxErrors []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult          `json:"activation,omitempty"`
-	Message      string                     `json:"message,omitempty"`
+	Success      bool                `json:"success"`
+	ProgramName  string              `json:"programName"`
+	ObjectURL    string              `json:"objectUrl"`
+	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation   *ActivationResult   `json:"activation,omitempty"`
+	Message      string              `json:"message,omitempty"`
 }
 
 // WriteProgram performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow.
@@ -36,6 +36,7 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	result := &WriteProgramResult{
 		ProgramName: programName,
@@ -108,12 +109,12 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 
 // WriteClassResult represents the result of writing a class.
 type WriteClassResult struct {
-	Success      bool                       `json:"success"`
-	ClassName    string                     `json:"className"`
-	ObjectURL    string                     `json:"objectUrl"`
-	SyntaxErrors []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult          `json:"activation,omitempty"`
-	Message      string                     `json:"message,omitempty"`
+	Success      bool                `json:"success"`
+	ClassName    string              `json:"className"`
+	ObjectURL    string              `json:"objectUrl"`
+	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation   *ActivationResult   `json:"activation,omitempty"`
+	Message      string              `json:"message,omitempty"`
 }
 
 // WriteClass performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow for classes.
@@ -131,6 +132,7 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	result := &WriteClassResult{
 		ClassName: className,
@@ -225,6 +227,7 @@ func (c *Client) CreateAndActivateProgram(ctx context.Context, programName strin
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
 	sourceURL := objectURL + "/source/main"
@@ -318,6 +321,7 @@ func (c *Client) CreateClassWithTests(ctx context.Context, className string, des
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(className))
 	sourceURL := objectURL + "/source/main"

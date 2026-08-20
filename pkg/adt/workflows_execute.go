@@ -12,13 +12,13 @@ import (
 
 // ExecuteABAPResult represents the result of executing ABAP code via unit test.
 type ExecuteABAPResult struct {
-	Success       bool     `json:"success"`
-	ProgramName   string   `json:"programName"`
-	Output        []string `json:"output"`        // Values returned via assertion messages
+	Success       bool            `json:"success"`
+	ProgramName   string          `json:"programName"`
+	Output        []string        `json:"output"`              // Values returned via assertion messages
 	RawAlerts     []UnitTestAlert `json:"rawAlerts,omitempty"` // Full alert details for debugging
-	ExecutionTime float64  `json:"executionTime"` // Execution time in seconds
-	Message       string   `json:"message,omitempty"`
-	CleanedUp     bool     `json:"cleanedUp"`
+	ExecutionTime float64         `json:"executionTime"`       // Execution time in seconds
+	Message       string          `json:"message,omitempty"`
+	CleanedUp     bool            `json:"cleanedUp"`
 }
 
 // ExecuteABAPOptions configures ExecuteABAP behavior.
@@ -44,8 +44,11 @@ type ExecuteABAPOptions struct {
 
 // ExecuteABAP executes arbitrary ABAP code via a temporary unit test wrapper.
 //
-// This is a powerful tool that allows executing any ABAP code on the SAP system.
-// The code is wrapped in a test class and executed via RunUnitTests.
+// This is a powerful tool that allows executing ABAP code on the SAP system.
+// The code is wrapped in a test class and executed via RunUnitTests. It runs
+// under ABAP Unit transactional semantics, so normal database changes are
+// rolled back. It is not an API for persistent writes. External side effects
+// may not be reversible and remain subject to the configured risk level.
 // Return values are extracted from assertion messages.
 //
 // Workflow:
@@ -68,10 +71,16 @@ type ExecuteABAPOptions struct {
 //
 // Security: This is gated by OpWorkflow safety check.
 func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAPOptions) (*ExecuteABAPResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "ExecuteABAP"); err != nil {
+	// The temporary program is always local. Resolve package policy before the
+	// stateful lock, then let inner mutators skip only that networked lookup.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:      OpWorkflow,
+		OpName:  "ExecuteABAP",
+		Package: "$TMP",
+	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	if opts == nil {
 		opts = &ExecuteABAPOptions{}
@@ -91,7 +100,7 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 	}
 
 	// Generate unique program name using timestamp
-	timestamp := fmt.Sprintf("%d", time.Now().UnixNano()/1000000) // milliseconds
+	timestamp := fmt.Sprintf("%d", time.Now().UnixNano()/1000000)                     // milliseconds
 	programName := strings.ToUpper(opts.ProgramPrefix + timestamp[len(timestamp)-8:]) // Last 8 digits
 	result.ProgramName = programName
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
@@ -178,9 +187,13 @@ ENDCLASS.
 	}
 
 	// Step 4: Activate
-	_, err = c.Activate(ctx, objectURL, programName)
+	activation, err := c.Activate(ctx, objectURL, programName)
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to activate: %v", err)
+		return result, nil
+	}
+	if activation == nil || !activation.Success {
+		result.Message = "Failed to activate temp program: activation did not succeed"
 		return result, nil
 	}
 
@@ -200,38 +213,94 @@ ENDCLASS.
 		return result, nil
 	}
 
-	// Step 6: Parse results - extract assertion messages
+	// Step 6: Parse results. The wrapper's failed assertion carrying
+	// EXEC_RESULT is the completion sentinel; every other real assertion or
+	// exception must make the workflow fail.
+	analysis := analyzeExecuteABAPUnitResult(testResult)
+	result.Output = analysis.Output
+	result.RawAlerts = analysis.Alerts
+	result.ExecutionTime = analysis.ExecutionTime
+	result.Success = analysis.Success
+	if !analysis.Success {
+		result.Message = analysis.Message
+		return result, nil
+	}
+	if len(result.Output) > 0 {
+		result.Message = fmt.Sprintf("Executed successfully, %d output(s) returned", len(result.Output))
+	} else {
+		result.Message = "Executed successfully"
+	}
+
+	return result, nil
+}
+
+const executeResultMarker = "EXEC_RESULT:"
+
+type executeABAPAnalysis struct {
+	Success       bool
+	Output        []string
+	Alerts        []UnitTestAlert
+	ExecutionTime float64
+	Message       string
+}
+
+func analyzeExecuteABAPUnitResult(testResult *UnitTestResult) executeABAPAnalysis {
+	analysis := executeABAPAnalysis{Output: []string{}}
+	if testResult == nil {
+		analysis.Message = "Execution failed: ABAP Unit returned no result"
+		return analysis
+	}
+
+	markerFound := false
+	realFailureFound := false
+	consumeAlert := func(alert UnitTestAlert) {
+		analysis.Alerts = append(analysis.Alerts, alert)
+		alertHasMarker := false
+		for _, text := range append([]string{alert.Title}, alert.Details...) {
+			if output, ok := extractExecuteABAPOutput(text); ok {
+				analysis.Output = append(analysis.Output, output)
+				markerFound = true
+				alertHasMarker = true
+			}
+		}
+
+		kind := strings.ToLower(strings.TrimSpace(alert.Kind))
+		severity := strings.ToLower(strings.TrimSpace(alert.Severity))
+		intentionalResultAssertion := kind == "failedassertion" && alertHasMarker
+		if !intentionalResultAssertion && (kind == "failedassertion" || kind == "exception" || severity == "fatal" || severity == "critical") {
+			realFailureFound = true
+		}
+	}
+
 	for _, class := range testResult.Classes {
+		for _, alert := range class.Alerts {
+			consumeAlert(alert)
+		}
 		for _, method := range class.TestMethods {
-			result.ExecutionTime += method.ExecutionTime
+			analysis.ExecutionTime += method.ExecutionTime
 			for _, alert := range method.Alerts {
-				result.RawAlerts = append(result.RawAlerts, alert)
-
-				// Look for our EXEC_RESULT marker in the alert title
-				if strings.HasPrefix(alert.Title, "EXEC_RESULT:") {
-					output := strings.TrimPrefix(alert.Title, "EXEC_RESULT:")
-					result.Output = append(result.Output, output)
-				}
-
-				// Also check details for additional output
-				for _, detail := range alert.Details {
-					if strings.HasPrefix(detail, "EXEC_RESULT:") {
-						output := strings.TrimPrefix(detail, "EXEC_RESULT:")
-						result.Output = append(result.Output, output)
-					}
-				}
+				consumeAlert(alert)
 			}
 		}
 	}
 
-	result.Success = true
-	if len(result.Output) > 0 {
-		result.Message = fmt.Sprintf("Executed successfully, %d output(s) returned", len(result.Output))
-	} else {
-		result.Message = "Executed successfully (no output captured)"
+	switch {
+	case realFailureFound:
+		analysis.Message = "Execution failed: ABAP Unit reported an exception or failed assertion"
+	case !markerFound:
+		analysis.Message = "Execution failed: completion marker was not returned"
+	default:
+		analysis.Success = true
 	}
+	return analysis
+}
 
-	return result, nil
+func extractExecuteABAPOutput(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, executeResultMarker) {
+		return "", false
+	}
+	return strings.TrimPrefix(text, executeResultMarker), true
 }
 
 // ExecuteABAPMultiple executes ABAP code and returns multiple results via chained assertions.

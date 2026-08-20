@@ -10,6 +10,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	embedded "github.com/oisee/vibing-steampunk/embedded/abap"
 	"github.com/oisee/vibing-steampunk/embedded/deps"
+	installer "github.com/oisee/vibing-steampunk/internal/install"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
@@ -85,24 +86,22 @@ func (s *Server) handleInstallDummyTest(ctx context.Context, request mcp.CallToo
 
 	// Step 1: Check/Create package (upsert strategy)
 	step("Package Check/Create")
-	pkg, err := s.adtClient.GetPackage(ctx, testPackage)
-	packageExists := err == nil && pkg.URI != "" // URI empty = package doesn't really exist
+	packageExists, err := s.adtClient.PackageExists(ctx, testPackage)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("PackageExists failed: %v", err)), nil
+	}
 	if !packageExists {
 		info("Package doesn't exist, creating...")
 		if checkOnly {
 			info("SKIP (check_only mode)")
 		} else {
-			err = s.adtClient.CreateObject(ctx, adt.CreateObjectOptions{
-				ObjectType:  adt.ObjectTypePackage,
-				Name:        testPackage,
-				Description: "Install Tools Test Package",
-			})
+			_, err = installer.EnsurePackage(ctx, s.adtClient, testPackage, "Install Tools Test Package")
 			if err != nil {
-				fail(fmt.Sprintf("CreateObject(package) failed: %v", err))
+				fail(fmt.Sprintf("EnsurePackage failed: %v", err))
 			} else {
 				// Verify
-				pkg, err = s.adtClient.GetPackage(ctx, testPackage)
-				if err != nil || pkg.URI == "" {
+				packageExists, err = s.adtClient.PackageExists(ctx, testPackage)
+				if err != nil || !packageExists {
 					fail("Verification failed: package not found after create")
 				} else {
 					pass("Package created and verified")
@@ -331,11 +330,13 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	// Phase 1: Check prerequisites
 	sb.WriteString("Checking prerequisites...\n")
 
-	// Check if package exists (verify URI is populated - empty URI means package doesn't really exist)
-	packageExists := false
-	pkg, err := s.adtClient.GetPackage(ctx, packageName)
-	if err == nil && pkg.URI != "" {
-		packageExists = true
+	// Check package identity using the direct resource, which distinguishes an
+	// empty existing package from a missing one.
+	packageExists, err := s.adtClient.PackageExists(ctx, packageName)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to check package %s: %v", packageName, err)), nil
+	}
+	if packageExists {
 		fmt.Fprintf(&sb, "  ✓ Package %s exists\n", packageName)
 	} else {
 		fmt.Fprintf(&sb, "  → Package %s will be created\n", packageName)
@@ -387,23 +388,13 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	defer cleanupPkgSafety()
 
 	// Phase 2: Create package if needed
-	if !packageExists {
+	created, err := installer.EnsurePackage(ctx, s.adtClient, packageName, "VSP WebSocket Handler")
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Failed to ensure package %s: %v", packageName, err)), nil
+	}
+	if created {
 		fmt.Fprintf(&sb, "Creating package %s...\n", packageName)
-		createOpts := adt.CreateObjectOptions{
-			ObjectType:  adt.ObjectTypePackage,
-			Name:        packageName,
-			Description: "VSP WebSocket Handler",
-		}
-		err := s.adtClient.CreateObject(ctx, createOpts)
-		if err != nil {
-			// On older SAP releases (e.g. 7.40), /sap/bc/adt/packages may not exist.
-			// Don't abort — the package may have been pre-created via SE21/SE80,
-			// and WriteSource will fail with a clear error if it truly doesn't exist.
-			fmt.Fprintf(&sb, "  ⚠ Package creation failed: %v\n", err)
-			fmt.Fprintf(&sb, "  → Continuing anyway (package may already exist via SE21/SE80)\n\n")
-		} else {
-			fmt.Fprintf(&sb, "  ✓ Package %s created\n\n", packageName)
-		}
+		fmt.Fprintf(&sb, "  ✓ Package %s created and verified\n\n", packageName)
 	} else {
 		fmt.Fprintf(&sb, "Using existing package %s\n\n", packageName)
 	}
@@ -427,10 +418,11 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 
 		// Use WriteSource to create/update
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := s.adtClient.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		_, err := installer.DeploySource(ctx, s.adtClient, obj.Type, obj.Name, obj.Source, opts)
 		if err != nil {
 			fmt.Fprintf(&sb, "✗ Failed: %v\n", err)
 			failed = append(failed, obj.Name+": "+err.Error())
@@ -457,6 +449,9 @@ func (s *Server) handleInstallZADTVSP(ctx context.Context, request mcp.CallToolR
 	}
 
 	fmt.Fprintf(&sb, "\nDeployed: %d, Skipped: %d, Failed: %d\n\n", len(deployed), len(skipped), len(failed))
+	if len(failed) > 0 {
+		return newToolResultError(sb.String()), nil
+	}
 
 	// Post-deployment instructions
 	sb.WriteString(embedded.PostDeploymentInstructions())

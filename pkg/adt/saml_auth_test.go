@@ -264,7 +264,7 @@ func TestSAMLLogin_ReauthConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = transport.callReauthFunc(context.Background())
+			_ = transport.callReauthFunc(context.Background(), false)
 		}()
 	}
 	wg.Wait()

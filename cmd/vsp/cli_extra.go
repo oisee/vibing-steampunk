@@ -95,7 +95,9 @@ var executeCmd = &cobra.Command{
 	Use:   "execute [code|file]",
 	Short: "Execute ABAP code on SAP",
 	Long: `Execute arbitrary ABAP code via ExecuteABAP (unit test wrapper).
-Requires write permissions. Code can be inline or from a file.
+Requires write permissions. Code can be inline or from a file. The payload runs
+under ABAP Unit transactional semantics; normal database changes are rolled
+back. This command is not an API for persistent writes.
 
 Examples:
   vsp execute "WRITE 'Hello from CLI'."
@@ -615,6 +617,12 @@ func runExecute(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("%w\n\nExecuteABAP requires write permissions.\nCheck --read-only and --allowed-ops settings", err)
 		}
 		return fmt.Errorf("execute failed: %w\n\nNote: ExecuteABAP wraps code in a unit test class.\nFor advanced execution, use ZADT_VSP WebSocket (vsp install zadt-vsp)", err)
+	}
+	if result == nil {
+		return fmt.Errorf("execute failed: no result returned")
+	}
+	if !result.Success {
+		return fmt.Errorf("execute failed: %s", result.Message)
 	}
 
 	if len(result.Output) > 0 {

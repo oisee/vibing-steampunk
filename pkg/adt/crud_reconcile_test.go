@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -33,10 +34,11 @@ type routedResponse struct {
 type recordedCall struct {
 	method string
 	path   string
+	query  url.Values
 }
 
 func (m *methodPathMock) Do(req *http.Request) (*http.Response, error) {
-	m.calls = append(m.calls, recordedCall{method: req.Method, path: req.URL.Path})
+	m.calls = append(m.calls, recordedCall{method: req.Method, path: req.URL.Path, query: req.URL.Query()})
 	for _, r := range m.routes {
 		if r.method != "" && r.method != req.Method {
 			continue
@@ -111,6 +113,7 @@ func newReconcileClient(t *testing.T, mock *methodPathMock) *Client {
 	cfg := NewConfig("https://sap.example.com:44300", "user", "pass",
 		WithAllowedPackages("$TMP"),
 		WithEnableTransports(),
+		WithAllowTransportableEdits(),
 	)
 	transport := NewTransportWithClient(cfg, mock)
 	return NewClientWithTransport(cfg, transport)
@@ -153,6 +156,59 @@ func TestCreateObject_CleanFailureBeforePersistence(t *testing.T) {
 		for _, c := range mock.calls {
 			t.Logf("  mock saw %s %s", c.method, c.path)
 		}
+	}
+}
+
+func TestReconcileFailedCreate_DoesNotDeletePreExistingObject(t *testing.T) {
+	mock := &methodPathMock{}
+	client := newReconcileClient(t, mock)
+	createErr := &APIError{
+		StatusCode: http.StatusBadRequest,
+		Message:    "ExceptionResourceAlreadyExists: synthetic object already exists",
+	}
+
+	err := client.reconcileFailedCreate(context.Background(), CreateObjectOptions{
+		ObjectType:  ObjectTypePackage,
+		Name:        "$SYNTHETIC",
+		PackageName: "$SYNTHETIC",
+	}, createErr)
+	if !errors.Is(err, createErr) {
+		t.Fatalf("error = %v, want original already-exists error", err)
+	}
+	if len(mock.calls) != 0 {
+		t.Fatalf("reconciliation touched a pre-existing object: %#v", mock.calls)
+	}
+}
+
+func TestPackageExistsUsesDirectResource(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		wantExists bool
+		wantErr    bool
+	}{
+		{name: "existing empty package", status: http.StatusOK, wantExists: true},
+		{name: "missing package", status: http.StatusNotFound},
+		{name: "inconclusive server error", status: http.StatusInternalServerError, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &methodPathMock{routes: []routedResponse{
+				resp(http.MethodGet, "/packages/$SYNTHETIC", tt.status, "synthetic response"),
+			}}
+			client := newReconcileClient(t, mock)
+			exists, err := client.PackageExists(context.Background(), "$SYNTHETIC")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr=%t", err, tt.wantErr)
+			}
+			if exists != tt.wantExists {
+				t.Fatalf("exists = %t, want %t", exists, tt.wantExists)
+			}
+			if len(mock.calls) != 1 || mock.calls[0].method != http.MethodGet {
+				t.Fatalf("unexpected calls: %#v", mock.calls)
+			}
+		})
 	}
 }
 
@@ -322,8 +378,8 @@ func TestDeleteObject_UsesStatefulSession(t *testing.T) {
 // stateful-session regression test — the main methodPathMock already
 // records method+path but throws headers away.
 type headerCaptureMock struct {
-	inner     *methodPathMock
-	captured  []capturedReq
+	inner    *methodPathMock
+	captured []capturedReq
 }
 
 type capturedReq struct {
@@ -550,14 +606,11 @@ func TestCreateTestInclude_UsesStatefulSession(t *testing.T) {
 	}
 }
 
-// TestLockObject_RejectsNoModification covers the BTP / ABAP Cloud
-// case from issue #91: a successful LOCK can return
-// MODIFICATION_SUPPORT=NoModification to signal that the object is
-// read-only via ADT for this user/system. Before the fix the caller
-// proceeded to PUT and got a confusing 423 InvalidLockHandle several
-// seconds later. The expected behaviour is to fail at the LOCK call
-// with a clear, actionable error message.
-func TestLockObject_RejectsNoModification(t *testing.T) {
+// TestLockObject_PreservesModificationSupport covers issue #141:
+// MODIFICATION_SUPPORT is Modification Assistant metadata, not an edit
+// permission. LockObject must preserve the value for callers without
+// converting a successful server lock into a client-side rejection.
+func TestLockObject_PreservesModificationSupport(t *testing.T) {
 	const noModLockXML = `<?xml version="1.0" encoding="UTF-8"?>
 <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
@@ -582,19 +635,19 @@ func TestLockObject_RejectsNoModification(t *testing.T) {
 	transport := NewTransportWithClient(cfg, mock)
 	client := NewClientWithTransport(cfg, transport)
 
-	_, err := client.LockObject(
+	result, err := client.LockObject(
 		context.Background(),
 		"/sap/bc/adt/oo/classes/ZREADONLY",
 		"MODIFY",
 	)
-	if err == nil {
-		t.Fatal("LockObject should have returned an error for NoModification, got nil")
+	if err != nil {
+		t.Fatalf("LockObject returned an error for valid metadata: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not modifiable") {
-		t.Errorf("error = %q, want to contain \"not modifiable\"", err.Error())
+	if result.LockHandle != "HANDLE-X" {
+		t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
 	}
-	if !strings.Contains(err.Error(), "NoModification") {
-		t.Errorf("error = %q, want to surface the raw modificationSupport value", err.Error())
+	if result.ModificationSupport != "NoModification" {
+		t.Errorf("ModificationSupport = %q, want NoModification", result.ModificationSupport)
 	}
 }
 
@@ -638,4 +691,206 @@ func TestLockObject_AllowsNoModificationOnReadLock(t *testing.T) {
 	if result.LockHandle != "HANDLE-X" {
 		t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
 	}
+}
+
+const syntheticTransportLockXML = `<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values><DATA>
+    <LOCK_HANDLE>SYNTHETIC-HANDLE</LOCK_HANDLE>
+    <CORRNR>REQ-SYN-001</CORRNR>
+    <MODIFICATION_SUPPORT>NoModification</MODIFICATION_SUPPORT>
+  </DATA></asx:values>
+</asx:abap>`
+
+const syntheticLocalLockXML = `<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values><DATA>
+    <LOCK_HANDLE>SYNTHETIC-HANDLE</LOCK_HANDLE>
+  </DATA></asx:values>
+</asx:abap>`
+
+func TestUpdateSource_UsesLockCorrelationTransport(t *testing.T) {
+	mock := &methodPathMock{routes: []routedResponse{
+		resp("", "discovery", http.StatusOK, ""),
+		resp(http.MethodPost, "/programs/programs/ZSYNTHETIC", http.StatusOK, syntheticTransportLockXML),
+		resp(http.MethodPut, "/source/main", http.StatusOK, ""),
+	}}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass",
+		WithAllowTransportableEdits(),
+		WithAllowedTransports("REQ-SYN-*"),
+	)
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+	lock, err := client.LockObject(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC", "MODIFY")
+	if err != nil {
+		t.Fatalf("LockObject failed: %v", err)
+	}
+	if err := client.UpdateSource(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC/source/main", "REPORT zsynthetic.", lock.LockHandle, ""); err != nil {
+		t.Fatalf("UpdateSource failed: %v", err)
+	}
+
+	for _, call := range mock.calls {
+		if call.method == http.MethodPut {
+			if got := call.query.Get("corrNr"); got != "REQ-SYN-001" {
+				t.Fatalf("PUT corrNr = %q, want REQ-SYN-001", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no PUT request was sent")
+}
+
+func TestUpdateSource_ExplicitTransportOverridesLockCorrelation(t *testing.T) {
+	mock := &methodPathMock{routes: []routedResponse{
+		resp("", "discovery", http.StatusOK, ""),
+		resp(http.MethodPost, "/programs/programs/ZSYNTHETIC", http.StatusOK, syntheticTransportLockXML),
+		resp(http.MethodPut, "/source/main", http.StatusOK, ""),
+	}}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass",
+		WithAllowTransportableEdits(),
+		WithAllowedTransports("REQ-EXPLICIT-*"),
+	)
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+	lock, err := client.LockObject(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC", "MODIFY")
+	if err != nil {
+		t.Fatalf("LockObject failed: %v", err)
+	}
+	if err := client.UpdateSource(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC/source/main", "REPORT zsynthetic.", lock.LockHandle, "REQ-EXPLICIT-001"); err != nil {
+		t.Fatalf("UpdateSource failed: %v", err)
+	}
+
+	foundPUT := false
+	for _, call := range mock.calls {
+		if call.method == http.MethodPut {
+			foundPUT = true
+			if call.query.Get("corrNr") != "REQ-EXPLICIT-001" {
+				t.Fatalf("PUT corrNr = %q, want explicit transport", call.query.Get("corrNr"))
+			}
+		}
+	}
+	if !foundPUT {
+		t.Fatal("no PUT request was sent")
+	}
+}
+
+func TestUpdateSource_LockCorrelationStillHonorsSafety(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []Option
+	}{
+		{name: "transportable edits disabled"},
+		{name: "transport not allowed", options: []Option{WithAllowTransportableEdits(), WithAllowedTransports("REQ-OTHER-*")}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &methodPathMock{routes: []routedResponse{
+				resp("", "discovery", http.StatusOK, ""),
+				resp(http.MethodPost, "/programs/programs/ZSYNTHETIC", http.StatusOK, syntheticTransportLockXML),
+			}}
+			cfg := NewConfig("https://sap.example.com:44300", "user", "pass", tt.options...)
+			client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+			lock, err := client.LockObject(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC", "MODIFY")
+			if err != nil {
+				t.Fatalf("LockObject failed: %v", err)
+			}
+			err = client.UpdateSource(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC/source/main", "REPORT zsynthetic.", lock.LockHandle, "")
+			if err == nil {
+				t.Fatal("UpdateSource should be blocked by transport safety")
+			}
+			for _, call := range mock.calls {
+				if call.method == http.MethodPut {
+					t.Fatal("blocked mutation sent a PUT request")
+				}
+			}
+		})
+	}
+}
+
+func TestUpdateSource_PropagatesWriteFailuresWithoutBlindRetry(t *testing.T) {
+	for _, status := range []int{http.StatusLocked, http.StatusConflict, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			mock := &methodPathMock{routes: []routedResponse{
+				resp("", "discovery", http.StatusOK, ""),
+				resp(http.MethodPut, "/source/main", status, "synthetic write failure"),
+			}}
+			cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+			client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+			err := client.UpdateSource(context.Background(), "/sap/bc/adt/programs/programs/ZSYNTHETIC/source/main", "REPORT zsynthetic.", "SYNTHETIC-HANDLE", "")
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != status {
+				t.Fatalf("error = %v, want API status %d", err, status)
+			}
+			putCount := 0
+			for _, call := range mock.calls {
+				if call.method == http.MethodPut {
+					putCount++
+				}
+			}
+			if putCount != 1 {
+				t.Fatalf("PUT count = %d, want 1", putCount)
+			}
+		})
+	}
+}
+
+func TestEditSource_NoPackageLookupBetweenLockAndWriteAndUnlocksOnFailure(t *testing.T) {
+	mock := &methodPathMock{routes: []routedResponse{
+		resp(http.MethodGet, "informationsystem/search", http.StatusOK, `<?xml version="1.0"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"><adtcore:objectReference adtcore:uri="/sap/bc/adt/programs/programs/zsynthetic" adtcore:type="PROG/P" adtcore:name="ZSYNTHETIC" adtcore:packageName="$TMP"/></adtcore:objectReferences>`),
+		resp(http.MethodGet, "/source/main", http.StatusOK, "REPORT zsynthetic."),
+		resp(http.MethodPost, "/programs/programs/ZSYNTHETIC", http.StatusOK, syntheticLocalLockXML),
+		resp(http.MethodPut, "/source/main", http.StatusLocked, "synthetic lock failure"),
+	}}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass", WithAllowedPackages("$TMP"))
+	client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+	result, err := client.EditSourceWithOptions(
+		context.Background(),
+		"/sap/bc/adt/programs/programs/ZSYNTHETIC",
+		"REPORT zsynthetic.",
+		"REPORT zsynthetic_changed.",
+		&EditSourceOptions{SyntaxCheck: false},
+	)
+	if err != nil {
+		t.Fatalf("EditSourceWithOptions returned error: %v", err)
+	}
+	if result == nil || !strings.Contains(result.Message, "Failed to update source") {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+
+	searches, lockIndex, putIndex, unlockIndex := 0, -1, -1, -1
+	for i, call := range mock.calls {
+		if strings.Contains(call.path, "informationsystem/search") {
+			searches++
+		}
+		if call.method == http.MethodPost && call.query.Get("_action") == "LOCK" {
+			lockIndex = i
+		}
+		if call.method == http.MethodPut {
+			putIndex = i
+		}
+		if call.method == http.MethodPost && call.query.Get("_action") == "UNLOCK" {
+			unlockIndex = i
+		}
+	}
+	if searches != 1 || lockIndex < 0 || putIndex != lockIndex+1 || unlockIndex <= putIndex {
+		t.Fatalf("unsafe request order: %#v", mock.calls)
+	}
+}
+
+func TestMutationPackageMarkerDoesNotBypassOperationOrTransportPolicy(t *testing.T) {
+	ctx := withMutationPackageChecked(context.Background())
+	t.Run("operation", func(t *testing.T) {
+		cfg := NewConfig("https://sap.example.com:44300", "user", "pass", WithSafety(SafetyConfig{DisallowedOps: "U"}))
+		client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, &methodPathMock{}))
+		if err := client.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "synthetic update"}); err == nil {
+			t.Fatal("marked context bypassed operation policy")
+		}
+	})
+	t.Run("transport", func(t *testing.T) {
+		cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+		client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, &methodPathMock{}))
+		if err := client.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "synthetic update", Transport: "REQ-SYN-001"}); err == nil {
+			t.Fatal("marked context bypassed transport policy")
+		}
+	})
 }

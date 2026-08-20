@@ -12,31 +12,38 @@ import (
 
 // DeployResult contains the result of a file deployment operation.
 type DeployResult struct {
-	ObjectURL     string   `json:"objectUrl"`
-	ObjectName    string   `json:"objectName"`
-	ObjectType    string   `json:"objectType"`
-	FilePath      string   `json:"filePath"`
-	Success       bool     `json:"success"`
-	Created       bool     `json:"created"` // true if created, false if updated
-	SyntaxErrors  []string `json:"syntaxErrors,omitempty"`
-	Errors        []string `json:"errors,omitempty"`
-	Message       string   `json:"message,omitempty"`
+	ObjectURL    string   `json:"objectUrl"`
+	ObjectName   string   `json:"objectName"`
+	ObjectType   string   `json:"objectType"`
+	FilePath     string   `json:"filePath"`
+	Success      bool     `json:"success"`
+	Created      bool     `json:"created"` // true if created, false if updated
+	SyntaxErrors []string `json:"syntaxErrors,omitempty"`
+	Errors       []string `json:"errors,omitempty"`
+	Message      string   `json:"message,omitempty"`
 }
 
 // CreateFromFile creates a new ABAP object from a file and activates it.
 //
-// Workflow: Parse → Create → Lock → SyntaxCheck → Write → Unlock → Activate
+// Workflow: Parse → Create → SyntaxCheck → Lock → Write → Unlock → Activate
 //
 // The function automatically detects the object type and name from the file extension
 // and content. Supported file extensions: .clas.abap, .prog.abap, .intf.abap
 //
 // Example:
-//   result, err := client.CreateFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
+//
+//	result, err := client.CreateFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
 func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
-	// Safety check
-	if err := c.checkSafety(OpCreate, "CreateFromFile"); err != nil {
+	// Validate the complete mutation policy before opening a stateful lock session.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "CreateFromFile",
+		Package:   strings.ToUpper(packageName),
+		Transport: transport,
+	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	// 1. Parse file to detect type and name
 	info, err := ParseABAPFile(filePath)
@@ -77,29 +84,8 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		return nil, err
 	}
 
-	// 5. Lock object
-	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
-			Message:    fmt.Sprintf("Object created but failed to lock: %v", err),
-		}, nil
-	}
-
-	// Ensure unlock on any error
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
-		}
-	}()
-
-	// 6. Syntax check (optional pre-check)
+	// 5. Syntax check (optional pre-check). Do this before locking so syntax
+	// failures cannot leave an avoidable stateful session behind.
 	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 	if err != nil {
 		return &DeployResult{
@@ -129,6 +115,28 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(syntaxErrors)),
 		}, nil
 	}
+
+	// 6. Lock object
+	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
+			Message:    fmt.Sprintf("Object created but failed to lock: %v", err),
+		}, nil
+	}
+
+	// Ensure unlock on any error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+		}
+	}()
 
 	// 7. Write source (need source URL, not object URL)
 	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
@@ -164,7 +172,10 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 	}
 
 	// 9. Activate
-	_, err = c.Activate(ctx, objectURL, info.ObjectName)
+	activation, err := c.Activate(ctx, objectURL, info.ObjectName)
+	if err == nil {
+		err = ActivationResultError(activation)
+	}
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -190,16 +201,12 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 
 // UpdateFromFile updates an existing ABAP object from a file.
 //
-// Workflow: Parse → Lock → SyntaxCheck → Write → Unlock → Activate
+// Workflow: Parse → SyntaxCheck → Lock → Write → Unlock → Activate
 //
 // Example:
-//   result, err := client.UpdateFromFile(ctx, "/path/to/zcl_test.clas.abap", "")
+//
+//	result, err := client.UpdateFromFile(ctx, "/path/to/zcl_test.clas.abap", "")
 func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string) (*DeployResult, error) {
-	// Safety check
-	if err := c.checkSafety(OpUpdate, "UpdateFromFile"); err != nil {
-		return nil, err
-	}
-
 	// 1. Parse file to detect type and name
 	info, err := ParseABAPFile(filePath)
 	if err != nil {
@@ -224,29 +231,20 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		return nil, err
 	}
 
-	// 4. Lock object
-	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
-			Message:    fmt.Sprintf("Failed to lock object: %v", err),
-		}, nil
+	// Validate package scope before locking. The context marker suppresses only
+	// the redundant package lookup in the low-level writer; operation and
+	// transport checks still run there.
+	if gateErr := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UpdateFromFile",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); gateErr != nil {
+		return nil, gateErr
 	}
+	ctx = withMutationPackageChecked(ctx)
 
-	// Ensure unlock on any error
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
-		}
-	}()
-
-	// 5. Syntax check (skip for class includes - will check after update)
+	// 4. Syntax check (skip for class includes - will check after update)
 	if !isClassInclude {
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 		if err != nil {
@@ -278,6 +276,28 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 			}, nil
 		}
 	}
+
+	// 5. Lock object
+	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
+			Message:    fmt.Sprintf("Failed to lock object: %v", err),
+		}, nil
+	}
+
+	// Ensure unlock on any error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+		}
+	}()
 
 	// 6. Write source
 	if isClassInclude {
@@ -341,7 +361,10 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 	}
 
 	// 8. Activate
-	_, err = c.Activate(ctx, objectURL, info.ObjectName)
+	activation, err := c.Activate(ctx, objectURL, info.ObjectName)
+	if err == nil {
+		err = ActivationResultError(activation)
+	}
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -382,8 +405,9 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 // For class includes, the parent class must already exist.
 //
 // Example:
-//   result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
-//   result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.testclasses.abap", "$TMP", "")
+//
+//	result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
+//	result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.testclasses.abap", "$TMP", "")
 func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
 	// 1. Parse file
 	info, err := ParseABAPFile(filePath)
@@ -433,8 +457,9 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 			// Regular object - create it
 			return c.CreateFromFile(ctx, filePath, packageName, transport)
 		}
-		// For other errors (session timeout, network issues, etc.), proceed with update
-		// The parent class might still exist - let UpdateFromFile handle it
+		// Authentication, network and server failures are inconclusive. Do not
+		// turn them into an update attempt; fail closed before locking or writing.
+		return nil, fmt.Errorf("checking whether %s %s exists: %w", info.ObjectType, info.ObjectName, err)
 	}
 
 	// Object exists - update it (handles both regular objects and class includes)

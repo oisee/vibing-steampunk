@@ -232,6 +232,8 @@ Transport analysis:
 
 Execute ABAP:
   SAP(action="analyze", params={"type": "execute_abap", "code": "WRITE 'Hello'."})
+  Runs under ABAP Unit transaction semantics; normal database changes are rolled back.
+  Do not use execute_abap as an API for persistent writes.
 
 Runtime errors:
   SAP(action="analyze", params={"type": "list_dumps"})

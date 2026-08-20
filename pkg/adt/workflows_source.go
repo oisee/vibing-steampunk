@@ -157,16 +157,16 @@ type WriteSourceOptions struct {
 
 // WriteSourceResult represents the result of WriteSource operation
 type WriteSourceResult struct {
-	Success       bool                       `json:"success"`
-	ObjectType    string                     `json:"objectType"`
-	ObjectName    string                     `json:"objectName"`
-	ObjectURL     string                     `json:"objectUrl"`
-	Mode          string                     `json:"mode"` // "created" or "updated"
-	Method        string                     `json:"method,omitempty"` // Method name if method-level update
-	SyntaxErrors  []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
-	Activation    *ActivationResult          `json:"activation,omitempty"`
-	TestResults   *UnitTestResult            `json:"testResults,omitempty"` // For CLAS with TestSource
-	Message       string                     `json:"message,omitempty"`
+	Success      bool                `json:"success"`
+	ObjectType   string              `json:"objectType"`
+	ObjectName   string              `json:"objectName"`
+	ObjectURL    string              `json:"objectUrl"`
+	Mode         string              `json:"mode"`             // "created" or "updated"
+	Method       string              `json:"method,omitempty"` // Method name if method-level update
+	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation   *ActivationResult   `json:"activation,omitempty"`
+	TestResults  *UnitTestResult     `json:"testResults,omitempty"` //nolint:misspell // CLAS is the SAP ADT object type.
+	Message      string              `json:"message,omitempty"`
 }
 
 // WriteSource is a unified tool for writing ABAP source code across different object types.
@@ -194,26 +194,16 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		opts.Mode = WriteModeUpsert
 	}
 
-	// Top-level mutation gate. The precise package check runs in the
-	// delegated create/update path (CreateAndActivate* / WriteProgram /
-	// WriteClass) because the target package is known there; here we
-	// enforce op-type and transportable-edit policy up front so the caller
-	// gets a clear early rejection.
-	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpWorkflow,
-		OpName:    "WriteSource",
-		Package:   opts.Package, // empty for update path, present for create
-		Transport: opts.Transport,
-	}); err != nil {
-		return nil, err
-	}
-
 	objectType = strings.ToUpper(objectType)
 	name = strings.ToUpper(name)
 
 	result := &WriteSourceResult{
 		ObjectType: objectType,
 		ObjectName: name,
+	}
+	if opts.Mode != WriteModeCreate && opts.Mode != WriteModeUpdate && opts.Mode != WriteModeUpsert {
+		result.Message = fmt.Sprintf("Invalid mode %q (supported: create, update, upsert)", opts.Mode)
+		return result, nil
 	}
 
 	// Validate object type
@@ -225,33 +215,12 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		return result, nil
 	}
 
-	// Determine if object exists (for upsert mode)
-	objectExists := false
-	if opts.Mode == WriteModeUpsert {
-		// Try to check if object exists
-		switch objectType {
-		case "PROG":
-			_, err := c.GetProgram(ctx, name)
-			objectExists = (err == nil)
-		case "CLAS":
-			_, err := c.GetClass(ctx, name)
-			objectExists = (err == nil)
-		case "INTF":
-			_, err := c.GetInterface(ctx, name)
-			objectExists = (err == nil)
-		case "DDLS":
-			_, err := c.GetDDLS(ctx, name)
-			objectExists = (err == nil)
-		case "BDEF":
-			_, err := c.GetBDEF(ctx, name)
-			objectExists = (err == nil)
-		case "SRVD":
-			_, err := c.GetSRVD(ctx, name)
-			objectExists = (err == nil)
-		case "SRVB":
-			_, err := c.GetSRVB(ctx, name)
-			objectExists = (err == nil)
-		}
+	// All three modes need an authoritative existence check. Treat only a
+	// definite 404 as absence; authentication, network and server failures must
+	// not be misclassified as a reason to create or overwrite an object.
+	objectExists, err := c.writeSourceObjectExists(ctx, objectType, name)
+	if err != nil {
+		return nil, err
 	}
 
 	// Determine actual operation mode
@@ -276,12 +245,59 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		return result, nil
 	}
 
+	mutation := MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "WriteSource",
+		Transport: opts.Transport,
+	}
+	if actualMode == WriteModeCreate {
+		mutation.Package = opts.Package
+	} else {
+		mutation.ObjectURL = writeSourceObjectURL(objectType, name)
+	}
+	if err := c.checkMutation(ctx, mutation); err != nil {
+		return nil, err
+	}
+	ctx = withMutationPackageChecked(ctx)
+
 	// Execute create or update workflow
 	if actualMode == WriteModeCreate {
 		return c.writeSourceCreate(ctx, objectType, name, source, opts)
 	} else {
 		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
 	}
+}
+
+func writeSourceObjectURL(objectType, name string) string {
+	var creatableType CreatableObjectType
+	switch objectType {
+	case "PROG":
+		creatableType = ObjectTypeProgram
+	case "CLAS": //nolint:misspell // CLAS is the SAP ADT object type.
+		creatableType = ObjectTypeClass
+	case "INTF":
+		creatableType = ObjectTypeInterface
+	case "DDLS":
+		creatableType = ObjectTypeDDLS
+	case "BDEF":
+		creatableType = ObjectTypeBDEF
+	case "SRVD":
+		creatableType = ObjectTypeSRVD
+	case "SRVB":
+		creatableType = ObjectTypeSRVB
+	}
+	return GetObjectURL(creatableType, name, "")
+}
+
+func (c *Client) writeSourceObjectExists(ctx context.Context, objectType, name string) (bool, error) {
+	_, err := c.GetSource(ctx, objectType, name, nil)
+	if err == nil {
+		return true, nil
+	}
+	if IsNotFoundError(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking whether %s %s exists: %w", objectType, name, err)
 }
 
 // writeSourceCreate handles creation workflow
@@ -590,9 +606,9 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		// SRVB (Service Binding) - source is JSON configuration
 		// Parse JSON to get binding parameters
 		var srvbConfig struct {
-			ServiceDefName string `json:"serviceDefName"`
-			BindingType    string `json:"bindingType"`    // ODATA
-			BindingVersion string `json:"bindingVersion"` // V2 or V4
+			ServiceDefName  string `json:"serviceDefName"`
+			BindingType     string `json:"bindingType"`     // ODATA
+			BindingVersion  string `json:"bindingVersion"`  // V2 or V4
 			BindingCategory string `json:"bindingCategory"` // 0=WebAPI, 1=UI
 		}
 		if err := json.Unmarshal([]byte(source), &srvbConfig); err != nil {
@@ -658,7 +674,6 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		return result, nil
 	}
 }
-
 
 // writeSourceUpdate handles update workflow
 func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source string, opts *WriteSourceOptions) (*WriteSourceResult, error) {
@@ -1034,12 +1049,12 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 
 // SourceDiff represents a diff between two sources.
 type SourceDiff struct {
-	Object1     string   `json:"object1"`
-	Object2     string   `json:"object2"`
-	Identical   bool     `json:"identical"`
-	AddedLines  int      `json:"addedLines"`
-	RemovedLines int     `json:"removedLines"`
-	Diff        string   `json:"diff"`
+	Object1      string `json:"object1"`
+	Object2      string `json:"object2"`
+	Identical    bool   `json:"identical"`
+	AddedLines   int    `json:"addedLines"`
+	RemovedLines int    `json:"removedLines"`
+	Diff         string `json:"diff"`
 }
 
 // CompareSource compares source code of two objects and returns a unified diff.
@@ -1184,8 +1199,12 @@ func generateUnifiedDiff(name1, name2 string, lines1, lines2 []string) string {
 				inHunk = true
 				hunkStart1 = line1 - len(contextBefore)
 				hunkStart2 = line2 - len(contextBefore)
-				if hunkStart1 < 1 { hunkStart1 = 1 }
-				if hunkStart2 < 1 { hunkStart2 = 1 }
+				if hunkStart1 < 1 {
+					hunkStart1 = 1
+				}
+				if hunkStart2 < 1 {
+					hunkStart2 = 1
+				}
 				// Add context before
 				for _, ctx := range contextBefore {
 					hunkContent.WriteString(fmt.Sprintf(" %s\n", ctx.text))
@@ -1213,12 +1232,12 @@ func generateUnifiedDiff(name1, name2 string, lines1, lines2 []string) string {
 
 // CloneObjectResult represents the result of cloning an object.
 type CloneObjectResult struct {
-	Success     bool   `json:"success"`
-	SourceName  string `json:"sourceName"`
-	TargetName  string `json:"targetName"`
-	ObjectType  string `json:"objectType"`
-	Package     string `json:"package"`
-	Message     string `json:"message"`
+	Success    bool   `json:"success"`
+	SourceName string `json:"sourceName"`
+	TargetName string `json:"targetName"`
+	ObjectType string `json:"objectType"`
+	Package    string `json:"package"`
+	Message    string `json:"message"`
 }
 
 // CloneObject copies an ABAP object to a new name.
@@ -1294,18 +1313,18 @@ func (c *Client) CloneObject(ctx context.Context, objectType, sourceName, target
 
 // ClassInfo contains metadata about an ABAP class.
 type ClassInfo struct {
-	Name          string   `json:"name"`
-	Description   string   `json:"description,omitempty"`
-	Package       string   `json:"package,omitempty"`
-	Category      string   `json:"category,omitempty"`      // Regular, Abstract, Final
-	Visibility    string   `json:"visibility,omitempty"`    // Public, Protected, Private
-	Superclass    string   `json:"superclass,omitempty"`
-	Interfaces    []string `json:"interfaces,omitempty"`
-	Methods       []string `json:"methods,omitempty"`
-	Attributes    []string `json:"attributes,omitempty"`
-	HasTestClass  bool     `json:"hasTestClass"`
-	IsAbstract    bool     `json:"isAbstract"`
-	IsFinal       bool     `json:"isFinal"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Package      string   `json:"package,omitempty"`
+	Category     string   `json:"category,omitempty"`   // Regular, Abstract, Final
+	Visibility   string   `json:"visibility,omitempty"` // Public, Protected, Private
+	Superclass   string   `json:"superclass,omitempty"`
+	Interfaces   []string `json:"interfaces,omitempty"`
+	Methods      []string `json:"methods,omitempty"`
+	Attributes   []string `json:"attributes,omitempty"`
+	HasTestClass bool     `json:"hasTestClass"`
+	IsAbstract   bool     `json:"isAbstract"`
+	IsFinal      bool     `json:"isFinal"`
 }
 
 // GetClassInfo retrieves class metadata without full source code.

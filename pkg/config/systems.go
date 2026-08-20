@@ -40,8 +40,15 @@ type SystemConfig struct {
 	RFCPassword string `json:"rfc_password,omitempty"`
 
 	// Optional safety settings per system
-	ReadOnly        bool     `json:"read_only,omitempty"`
-	AllowedPackages []string `json:"allowed_packages,omitempty"`
+	ReadOnly                bool     `json:"read_only,omitempty"`
+	BlockFreeSQL            bool     `json:"block_free_sql,omitempty"`
+	AllowedOps              string   `json:"allowed_ops,omitempty"`
+	DisallowedOps           string   `json:"disallowed_ops,omitempty"`
+	AllowedPackages         []string `json:"allowed_packages,omitempty"`
+	EnableTransports        bool     `json:"enable_transports,omitempty"`
+	TransportReadOnly       bool     `json:"transport_read_only,omitempty"`
+	AllowedTransports       []string `json:"allowed_transports,omitempty"`
+	AllowTransportableEdits bool     `json:"allow_transportable_edits,omitempty"`
 }
 
 // SystemsConfig is the root configuration containing all systems.

@@ -56,22 +56,8 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 	if err != nil {
 		return nil, err
 	}
-
-	// BTP / ABAP Cloud systems sometimes return a successful lock with
-	// MODIFICATION_SUPPORT="NoModification" — the lock acquired but the
-	// object is read-only via ADT (typical for SAP-delivered objects in
-	// hyperfocused mode, or systems where the user lacks the edit role).
-	// Without this guard the caller proceeds to PUT/POST and gets a
-	// confusing 423 InvalidLockHandle several seconds later. Surface it
-	// upfront so the user sees a clear, actionable error (issue #91).
-	if accessMode == "MODIFY" && strings.EqualFold(result.ModificationSupport, "NoModification") {
-		return nil, fmt.Errorf(
-			"object %s is not modifiable via ADT on this system "+
-				"(SAP returned modificationSupport=%q during LOCK). "+
-				"Common causes: read-only system class, missing developer/edit role, "+
-				"BTP ABAP Environment object outside the customer namespace, "+
-				"or hyperfocused mode locking the object as read-only",
-			objectURL, result.ModificationSupport)
+	if result.LockHandle != "" && result.CorrNr != "" {
+		c.lockTransports.Store(result.LockHandle, result.CorrNr)
 	}
 
 	return result, nil
@@ -125,8 +111,24 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 	if err != nil {
 		return fmt.Errorf("unlocking object: %w", err)
 	}
+	c.lockTransports.Delete(lockHandle)
 
 	return nil
+}
+
+// effectiveLockTransport preserves an explicit caller transport and otherwise
+// reuses the correlation number returned by SAP for this lock. The resulting
+// value is fed through the ordinary mutation safety gate before any write.
+func (c *Client) effectiveLockTransport(lockHandle, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if value, ok := c.lockTransports.Load(lockHandle); ok {
+		if corrNr, ok := value.(string); ok {
+			return corrNr
+		}
+	}
+	return ""
 }
 
 // --- Update Source Operations ---
@@ -136,6 +138,7 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, source string, lockHandle string, transport string) error {
+	transport = c.effectiveLockTransport(lockHandle, transport)
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpUpdate,
@@ -386,6 +389,13 @@ func (c *Client) objectExistsByURL(ctx context.Context, objectURL string) (bool,
 // returned PartialCreateError. Manual recovery hints are only added
 // when our best-effort attempt could not finish.
 func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOptions, createErr error) error {
+	// A resource-already-exists response proves the object predates this create
+	// attempt. It is not partial persistence owned by this request, so automatic
+	// cleanup must never lock or delete it.
+	if isAlreadyExistsError(createErr) {
+		return createErr
+	}
+
 	objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
 	if objectURL == "" {
 		// Object type we cannot URL-encode → no probe possible.
@@ -409,6 +419,20 @@ func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOpt
 	return pce
 }
 
+func isAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusConflict) {
+		return false
+	}
+	message := strings.ToLower(apiErr.Message)
+	return strings.Contains(message, "exceptionresourcealreadyexists") ||
+		strings.Contains(message, "already exists") ||
+		strings.Contains(message, "does already exist")
+}
+
 // cleanupPartialObject runs the best-effort compensating cleanup for a
 // zombie object: orphan-lock release, then acquire a fresh session-
 // scoped lock and delete. The result is a *PartialCreateError that
@@ -427,6 +451,26 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 		Package:   pkg,
 		Transport: transport,
 	}
+
+	// Resolve and enforce package scope before opening a stateful lock session.
+	// Once marked, DeleteObject skips only its redundant package lookup; it
+	// still enforces delete-operation and transport policy.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpDelete,
+		OpName:    "cleanupPartialObject",
+		ObjectURL: objectURL,
+		Package:   pkg,
+		Transport: transport,
+	}); err != nil {
+		pce.CleanupActions = append(pce.CleanupActions,
+			fmt.Sprintf("cleanup blocked by mutation policy: %v", err))
+		pce.ManualSteps = []string{
+			"verify that the target package and transport are permitted by the configured safety policy",
+			"run the explicit recovery workflow only after that policy is corrected",
+		}
+		return pce
+	}
+	ctx = withMutationPackageChecked(ctx)
 
 	// Step 1: orphan lock cleanup (cheap; reuses the existing helper).
 	c.tryCleanupOrphanLock(ctx, objectURL)
@@ -850,6 +894,7 @@ func escapeXML(s string) string {
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle string, transport string) error {
+	transport = c.effectiveLockTransport(lockHandle, transport)
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpDelete,
@@ -874,6 +919,7 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 	if err != nil {
 		return fmt.Errorf("deleting object: %w", err)
 	}
+	c.lockTransports.Delete(lockHandle)
 
 	return nil
 }
@@ -970,6 +1016,7 @@ func GetClassIncludeSourceURL(className string, includeType ClassIncludeType) st
 // Supports namespaced classes.
 func (c *Client) CreateTestInclude(ctx context.Context, className string, lockHandle string, transport string) error {
 	className = strings.ToUpper(className)
+	transport = c.effectiveLockTransport(lockHandle, transport)
 
 	// Unified mutation policy gate (op type + parent class package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
@@ -1026,6 +1073,7 @@ func (c *Client) GetClassInclude(ctx context.Context, className string, includeT
 // Requires a lock on the parent class.
 func (c *Client) UpdateClassInclude(ctx context.Context, className string, includeType ClassIncludeType, source string, lockHandle string, transport string) error {
 	sourceURL := GetClassIncludeSourceURL(className, includeType)
+	transport = c.effectiveLockTransport(lockHandle, transport)
 
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
@@ -1136,11 +1184,11 @@ func parsePublishResult(data []byte) (*PublishResult, error) {
 
 // CreateTableOptions defines options for creating a DDIC table.
 type CreateTableOptions struct {
-	Name          string       `json:"name"`          // Table name (uppercase, max 30 chars, must start with Z/Y)
-	Description   string       `json:"description"`   // Short description
-	Package       string       `json:"package"`       // Target package
-	Fields        []TableField `json:"fields"`        // Field definitions
-	Transport     string       `json:"transport,omitempty"` // Transport request (optional for $TMP)
+	Name          string       `json:"name"`                    // Table name (uppercase, max 30 chars, must start with Z/Y)
+	Description   string       `json:"description"`             // Short description
+	Package       string       `json:"package"`                 // Target package
+	Fields        []TableField `json:"fields"`                  // Field definitions
+	Transport     string       `json:"transport,omitempty"`     // Transport request (optional for $TMP)
 	DeliveryClass string       `json:"deliveryClass,omitempty"` // A=Application, C=Customizing, L=Temp, etc. (default: A)
 	TableCategory string       `json:"tableCategory,omitempty"` // TRANSPARENT (default), STRUCTURE, etc.
 }
@@ -1148,9 +1196,15 @@ type CreateTableOptions struct {
 // CreateTable creates a new DDIC transparent table from JSON-like options.
 // This is a high-level tool that handles the full workflow: create → set source → activate.
 func (c *Client) CreateTable(ctx context.Context, opts CreateTableOptions) error {
-	if err := c.checkSafety(OpCreate, "CreateTable"); err != nil {
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpCreate,
+		OpName:    "CreateTable",
+		Package:   strings.ToUpper(opts.Package),
+		Transport: opts.Transport,
+	}); err != nil {
 		return err
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	// Validate input
 	opts.Name = strings.ToUpper(opts.Name)
@@ -1208,28 +1262,25 @@ func (c *Client) CreateTable(ctx context.Context, opts CreateTableOptions) error
 		return fmt.Errorf("locking table: %w", err)
 	}
 
-	params = url.Values{}
-	params.Set("lockHandle", lock.LockHandle)
-	if opts.Transport != "" {
-		params.Set("corrNr", opts.Transport)
-	}
-
-	_, err = c.transport.Request(ctx, sourceURL, &RequestOptions{
-		Method:      http.MethodPut,
-		Query:       params,
-		Body:        []byte(ddlSource),
-		ContentType: "text/plain",
-	})
+	err = c.UpdateSource(ctx, sourceURL, ddlSource, lock.LockHandle, opts.Transport)
 	if err != nil {
 		c.UnlockObject(ctx, tableURL, lock.LockHandle)
 		return fmt.Errorf("updating table source: %w", err)
 	}
 
 	// Unlock BEFORE activation
-	c.UnlockObject(ctx, tableURL, lock.LockHandle)
+	err = c.UnlockObject(ctx, tableURL, lock.LockHandle)
+	if err != nil {
+		return fmt.Errorf("unlocking table before activation: %w", err)
+	}
 
 	// Step 3: Activate
-	if _, err := c.Activate(ctx, tableURL, opts.Name); err != nil {
+	activation, err := c.Activate(ctx, tableURL, opts.Name)
+	if err != nil {
+		return fmt.Errorf("activating table: %w", err)
+	}
+	err = ActivationResultError(activation)
+	if err != nil {
 		return fmt.Errorf("activating table: %w", err)
 	}
 

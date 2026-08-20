@@ -5,6 +5,22 @@ import (
 	"fmt"
 )
 
+type mutationPackageCheckedKey struct{}
+
+// withMutationPackageChecked marks that an outer workflow already resolved
+// and checked the target package before acquiring a stateful lock. Inner
+// mutators still enforce operation and transport policy, but skip the redundant
+// package lookup that would otherwise insert a stateless SearchObject request
+// between LOCK and PUT/DELETE.
+func withMutationPackageChecked(ctx context.Context) context.Context {
+	return context.WithValue(ctx, mutationPackageCheckedKey{}, true)
+}
+
+func mutationPackageAlreadyChecked(ctx context.Context) bool {
+	checked, _ := ctx.Value(mutationPackageCheckedKey{}).(bool)
+	return checked
+}
+
 // MutationSurface identifies the object surface a mutation targets. Different
 // surfaces require different metadata resolution strategies (ADT SearchObject,
 // UI5 BSP metadata, etc.). Use SurfaceADT for standard ABAP objects.
@@ -76,9 +92,12 @@ func (c *Client) checkMutation(ctx context.Context, m MutationContext) error {
 		return err
 	}
 
-	// 2. Package ownership check
-	if err := c.checkMutationPackage(ctx, m); err != nil {
-		return err
+	// 2. Package ownership check. Outer workflows may mark only this networked
+	// portion as complete; operation and transport checks are never bypassed.
+	if !mutationPackageAlreadyChecked(ctx) {
+		if err := c.checkMutationPackage(ctx, m); err != nil {
+			return err
+		}
 	}
 
 	// 3. Transportable-edit check

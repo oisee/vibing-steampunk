@@ -131,8 +131,8 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 		token := t.getCSRFToken()
 		if token == "" {
 			// Fetch CSRF token first
-			if err := t.fetchCSRFToken(ctx); err != nil {
-				return nil, fmt.Errorf("fetching CSRF token: %w", err)
+			if fetchErr := t.fetchCSRFToken(ctx, opts.Stateful); fetchErr != nil {
+				return nil, fmt.Errorf("fetching CSRF token: %w", fetchErr)
 			}
 			token = t.getCSRFToken()
 		}
@@ -155,8 +155,8 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	// Handle CSRF token refresh on 403
 	if resp.StatusCode == http.StatusForbidden && isModifyingMethod(opts.Method) {
 		// Try to refresh CSRF token and retry once
-		if err := t.fetchCSRFToken(ctx); err != nil {
-			return nil, fmt.Errorf("refreshing CSRF token: %w", err)
+		if fetchErr := t.fetchCSRFToken(ctx, opts.Stateful); fetchErr != nil {
+			return nil, fmt.Errorf("refreshing CSRF token: %w", fetchErr)
 		}
 
 		// Retry the request
@@ -187,8 +187,8 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 			t.setCSRFToken("")
 			t.setSessionID("")
 			// Fetch new CSRF token (this establishes a new session)
-			if err := t.fetchCSRFToken(ctx); err != nil {
-				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
+			if fetchErr := t.fetchCSRFToken(ctx, opts.Stateful); fetchErr != nil {
+				return nil, fmt.Errorf("refreshing session after timeout: %w", fetchErr)
 			}
 			// Retry the request
 			return t.retryRequest(ctx, path, opts)
@@ -203,13 +203,13 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 
 			if !t.config.HasBasicAuth() && t.config.ReauthFunc != nil {
 				// Cookie/SAML auth: re-run full auth dance to get fresh cookies.
-				if err := t.callReauthFunc(ctx); err != nil {
-					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, err, apiErr)
+				if reauthErr := t.callReauthFunc(ctx, opts.Stateful); reauthErr != nil {
+					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, reauthErr, apiErr)
 				}
 			} else {
 				// Basic auth: just refresh CSRF token.
-				if err := t.fetchCSRFToken(ctx); err != nil {
-					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, err, apiErr)
+				if fetchErr := t.fetchCSRFToken(ctx, opts.Stateful); fetchErr != nil {
+					return nil, fmt.Errorf("re-authenticating after 401 on %s: %w (original error: %v)", path, fetchErr, apiErr)
 				}
 			}
 			return t.retryRequest(ctx, path, opts)
@@ -281,60 +281,58 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	}, nil
 }
 
-// fetchCSRFToken retrieves a CSRF token from the server.
-// Uses /core/discovery with HEAD for optimal performance (~25ms vs ~56s for GET on /discovery)
-func (t *Transport) fetchCSRFToken(ctx context.Context) error {
+// fetchCSRFToken retrieves a CSRF token from the server. The fetch must use
+// the same session mode as the modifying request that triggered it; otherwise
+// SAP can bind the token/cookie to a stateless context and reject the following
+// stateful lock/write request.
+func (t *Transport) fetchCSRFToken(ctx context.Context, stateful bool) error {
 	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
 	if err != nil {
 		return fmt.Errorf("building URL: %w", err)
 	}
 
-	// Use HEAD instead of GET for faster CSRF token fetch (~5s vs ~56s on slow systems)
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, nil)
-	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
-	}
+	// HEAD is faster on most systems. Some proxies and older ADT stacks omit
+	// the token or reject HEAD, so retry once with GET in the same session.
+	for _, method := range []string{http.MethodHead, http.MethodGet} {
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, nil)
+		if err != nil {
+			return fmt.Errorf("creating request: %w", err)
+		}
+		if t.config.HasBasicAuth() {
+			req.SetBasicAuth(t.config.Username, t.config.Password)
+		}
+		t.addCookies(req)
+		req.Header.Set("X-CSRF-Token", "fetch")
+		req.Header.Set("Accept", "*/*")
+		if stateful || t.config.SessionType == SessionStateful {
+			req.Header.Set("X-sap-adt-sessiontype", "stateful")
+		} else {
+			req.Header.Set("X-sap-adt-sessiontype", "stateless")
+		}
 
-	// Set authentication
-	if t.config.HasBasicAuth() {
-		req.SetBasicAuth(t.config.Username, t.config.Password)
-	}
-	t.addCookies(req)
-	req.Header.Set("X-CSRF-Token", "fetch")
-	req.Header.Set("Accept", "*/*")
+		resp, err := t.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("executing request: %w", err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 
-	// Set session type header for stateful sessions
-	if t.config.SessionType == SessionStateful {
-		req.Header.Set("X-sap-adt-sessiontype", "stateful")
-	}
-
-	resp, err := t.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Drain body to allow connection reuse
-	_, _ = io.Copy(io.Discard, resp.Body)
-
-	// Note: HEAD may return 400 but still provides CSRF token in headers
-	// But 401/403 indicates auth failure and won't have a valid token
-
-	token := resp.Header.Get("X-CSRF-Token")
-	if token == "" || token == "Required" {
-		// Provide better error message based on status code
+		token := resp.Header.Get("X-CSRF-Token")
+		if token != "" && token != "Required" {
+			t.setCSRFToken(token)
+			return nil
+		}
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			return fmt.Errorf("authentication failed (401): check username/password")
 		case http.StatusForbidden:
 			return fmt.Errorf("access forbidden (403): check user authorizations")
-		default:
-			return fmt.Errorf("no CSRF token in response (HTTP %d)", resp.StatusCode)
+		}
+		if method == http.MethodGet {
+			return fmt.Errorf("no CSRF token in HEAD or GET response (last HTTP %d)", resp.StatusCode)
 		}
 	}
-
-	t.setCSRFToken(token)
-	return nil
+	return fmt.Errorf("no CSRF token returned")
 }
 
 // buildURL constructs the full URL for an API request.
@@ -511,7 +509,7 @@ func IsSessionExpiredError(err error) bool {
 // Ping sends a lightweight HEAD request to /sap/bc/adt/core/discovery to keep the session alive.
 // It refreshes the CSRF token as a side effect.
 func (t *Transport) Ping(ctx context.Context) error {
-	return t.fetchCSRFToken(ctx)
+	return t.fetchCSRFToken(ctx, false)
 }
 
 // reauthCooldown prevents concurrent 401 handlers from triggering simultaneous
@@ -526,7 +524,7 @@ const reauthTimeout = 30 * time.Second
 // callReauthFunc invokes config.ReauthFunc with stampede protection.
 // Multiple goroutines hitting 401 simultaneously will serialize through the mutex;
 // the first one performs the re-auth, subsequent ones within the cooldown window skip it.
-func (t *Transport) callReauthFunc(ctx context.Context) error {
+func (t *Transport) callReauthFunc(ctx context.Context, stateful bool) error {
 	t.reauthMu.Lock()
 	defer t.reauthMu.Unlock()
 
@@ -551,7 +549,7 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	// Fetch CSRF token with the new cookies.
 	// Set lastReauth only after CSRF succeeds — if it fails, the next
 	// goroutine should retry rather than hitting the cooldown skip.
-	if err := t.fetchCSRFToken(reauthCtx); err != nil {
+	if err := t.fetchCSRFToken(reauthCtx, stateful); err != nil {
 		return err
 	}
 	t.lastReauth = time.Now()

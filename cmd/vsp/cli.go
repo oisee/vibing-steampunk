@@ -45,6 +45,8 @@ type systemParams struct {
 
 	Cache     bool
 	CachePath string
+
+	Safety adt.SafetyConfig
 }
 
 // resolveSystemParams resolves system parameters from --system flag or env vars.
@@ -106,6 +108,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			TransportAttribute: sys.TransportAttribute,
 			Cache:              sys.Cache,
 			CachePath:          sys.CachePath,
+			Safety:             resolveCLISafety(cmd, sys),
 		}, nil
 	}
 
@@ -137,7 +140,65 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		TransportAttribute: resolveTransportAttributeFromEnv(),
 		Cache:              cacheEnabled,
 		CachePath:          cachePath,
+		Safety:             resolveCLISafety(cmd, nil),
 	}, nil
+}
+
+// resolveCLISafety merges a system profile with explicitly supplied root flags
+// and SAP_* environment variables. Explicit CLI/environment settings win over
+// .vsp.json; otherwise the per-system policy is retained.
+func resolveCLISafety(cmd *cobra.Command, sys *config.SystemConfig) adt.SafetyConfig {
+	safety := adt.UnrestrictedSafetyConfig()
+	if sys != nil {
+		safety.ReadOnly = sys.ReadOnly
+		safety.BlockFreeSQL = sys.BlockFreeSQL
+		safety.AllowedOps = sys.AllowedOps
+		safety.DisallowedOps = sys.DisallowedOps
+		safety.AllowedPackages = append([]string(nil), sys.AllowedPackages...)
+		safety.EnableTransports = sys.EnableTransports
+		safety.TransportReadOnly = sys.TransportReadOnly
+		safety.AllowedTransports = append([]string(nil), sys.AllowedTransports...)
+		safety.AllowTransportableEdits = sys.AllowTransportableEdits
+	}
+
+	applyAll := sys == nil
+	if applyAll || safetySettingExplicit(cmd, "read-only", "SAP_READ_ONLY") {
+		safety.ReadOnly = cfg.ReadOnly
+	}
+	if applyAll || safetySettingExplicit(cmd, "block-free-sql", "SAP_BLOCK_FREE_SQL") {
+		safety.BlockFreeSQL = cfg.BlockFreeSQL
+	}
+	if applyAll || safetySettingExplicit(cmd, "allowed-ops", "SAP_ALLOWED_OPS") {
+		safety.AllowedOps = cfg.AllowedOps
+	}
+	if applyAll || safetySettingExplicit(cmd, "disallowed-ops", "SAP_DISALLOWED_OPS") {
+		safety.DisallowedOps = cfg.DisallowedOps
+	}
+	if applyAll || safetySettingExplicit(cmd, "allowed-packages", "SAP_ALLOWED_PACKAGES") {
+		safety.AllowedPackages = append([]string(nil), cfg.AllowedPackages...)
+	}
+	if applyAll || safetySettingExplicit(cmd, "enable-transports", "SAP_ENABLE_TRANSPORTS") {
+		safety.EnableTransports = cfg.EnableTransports
+	}
+	if applyAll || safetySettingExplicit(cmd, "transport-read-only", "SAP_TRANSPORT_READ_ONLY") {
+		safety.TransportReadOnly = cfg.TransportReadOnly
+	}
+	if applyAll || safetySettingExplicit(cmd, "allowed-transports", "SAP_ALLOWED_TRANSPORTS") {
+		safety.AllowedTransports = append([]string(nil), cfg.AllowedTransports...)
+	}
+	if applyAll || safetySettingExplicit(cmd, "allow-transportable-edits", "SAP_ALLOW_TRANSPORTABLE_EDITS") {
+		safety.AllowTransportableEdits = cfg.AllowTransportableEdits
+	}
+	return safety
+}
+
+func safetySettingExplicit(cmd *cobra.Command, flagName, envName string) bool {
+	return cmd.Flags().Changed(flagName) || envIsSet(envName)
+}
+
+func envIsSet(name string) bool {
+	_, ok := os.LookupEnv(name)
+	return ok
 }
 
 func resolveTransportAttributeFromEnv() string {
@@ -152,6 +213,7 @@ func getClient(params *systemParams) (*adt.Client, error) {
 	opts := []adt.Option{
 		adt.WithClient(params.Client),
 		adt.WithLanguage(params.Language),
+		adt.WithSafety(params.Safety),
 	}
 	if params.Insecure {
 		opts = append(opts, adt.WithInsecureSkipVerify())

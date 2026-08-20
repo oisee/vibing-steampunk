@@ -203,16 +203,61 @@ func (e *LuaEngine) luaWriteSource(L *lua.LState) int {
 	objType := getString(L, 1)
 	name := getString(L, 2)
 	source := getString(L, 3)
+	var opts *adt.WriteSourceOptions
+	if L.GetTop() >= 4 && L.Get(4) != lua.LNil {
+		table, ok := L.Get(4).(*lua.LTable)
+		if !ok {
+			L.Push(lua.LBool(false))
+			L.Push(lua.LString("writeSource options must be a table"))
+			return 2
+		}
+		opts = &adt.WriteSourceOptions{
+			Mode:        adt.WriteSourceMode(strings.ToLower(luaTableString(table, "mode"))),
+			Description: luaTableString(table, "description"),
+			Package:     luaTableString(table, "package"),
+			TestSource:  luaTableString(table, "test_source"),
+			Transport:   luaTableString(table, "transport"),
+			Method:      luaTableString(table, "method"),
+		}
+	}
 
-	result, err := e.client.WriteSource(e.ctx, objType, name, source, nil)
+	if e.writeSource == nil {
+		L.Push(lua.LBool(false))
+		L.Push(lua.LString("writeSource is unavailable: ADT client is not configured"))
+		return 2
+	}
+
+	result, err := e.writeSource(e.ctx, objType, name, source, opts)
 	if err != nil {
 		L.Push(lua.LBool(false))
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
+	if result == nil {
+		L.Push(lua.LBool(false))
+		L.Push(lua.LString("writeSource failed: ADT returned no result"))
+		return 2
+	}
+	if !result.Success {
+		message := strings.TrimSpace(result.Message)
+		if message == "" {
+			message = "writeSource failed without a diagnostic message"
+		}
+		L.Push(lua.LBool(false))
+		L.Push(lua.LString(message))
+		return 2
+	}
 
-	L.Push(lua.LBool(result.Success))
+	L.Push(lua.LBool(true))
 	return 1
+}
+
+func luaTableString(table *lua.LTable, key string) string {
+	value := table.RawGetString(key)
+	if value == lua.LNil {
+		return ""
+	}
+	return lua.LVAsString(value)
 }
 
 func (e *LuaEngine) luaEditSource(L *lua.LState) int {
@@ -319,8 +364,8 @@ func (e *LuaEngine) luaSetExceptionBreakpoint(L *lua.LState) int {
 
 // setMessageBP(msgClass, msgNumber, [msgType]) - Break on message
 func (e *LuaEngine) luaSetMessageBreakpoint(L *lua.LState) int {
-	msgArea := getString(L, 1)   // Message class e.g. "00", "SY"
-	msgID := getString(L, 2)     // Message number e.g. "001"
+	msgArea := getString(L, 1)        // Message class e.g. "00", "SY"
+	msgID := getString(L, 2)          // Message number e.g. "001"
 	msgType := getOptString(L, 3, "") // Optional: E, W, I, S, A
 
 	req := &adt.BreakpointRequest{

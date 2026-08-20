@@ -24,6 +24,10 @@ type Client struct {
 	keepAliveCancel context.CancelFunc
 	keepAliveDone   chan struct{}
 	keepAliveMu     sync.Mutex
+
+	// Lock handles are session-bound and may carry the transport selected by
+	// SAP in the LOCK response. sync.Map keeps concurrent workflows isolated.
+	lockTransports sync.Map // map[lockHandle]corrNr
 }
 
 // NewClient creates a new ADT client with the given configuration.
@@ -810,6 +814,27 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 }
 
 // --- Package Operations ---
+
+// PackageExists checks package identity through the direct package resource.
+// Unlike the nodestructure endpoint used by GetPackage, this endpoint can
+// distinguish an empty existing package (200) from a missing package (404).
+// Other responses remain errors so callers do not create on an inconclusive
+// authentication, network, or server failure.
+func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, error) {
+	packageName = strings.ToUpper(packageName)
+	packagePath := fmt.Sprintf("/sap/bc/adt/packages/%s", url.PathEscape(packageName))
+	_, err := c.transport.Request(ctx, packagePath, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "application/*",
+	})
+	if err == nil {
+		return true, nil
+	}
+	if IsNotFoundError(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking package %s: %w", packageName, err)
+}
 
 // GetPackage retrieves the contents of a package using the nodestructure API.
 func (c *Client) GetPackage(ctx context.Context, packageName string) (*PackageContent, error) {

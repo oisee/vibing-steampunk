@@ -863,7 +863,7 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
 	// ExecuteABAP - execute arbitrary ABAP code via unit test wrapper (Expert mode only)
 	if shouldRegister("ExecuteABAP") {
 		s.mcpServer.AddTool(mcp.NewTool("ExecuteABAP",
-			mcp.WithDescription("Execute arbitrary ABAP code via unit test wrapper. Creates temp program, injects code into test method, runs via RunUnitTests, extracts results from assertion messages, cleans up. Use lv_result variable to return output. WARNING: Powerful tool - use responsibly."),
+			mcp.WithDescription("Execute ABAP code via a temporary ABAP Unit wrapper. Normal database changes are rolled back under test transactional semantics; this is not an API for persistent writes. Extracts lv_result from a completion assertion and fails on real test exceptions/assertions. WARNING: external side effects may not be reversible."),
 			mcp.WithString("code",
 				mcp.Required(),
 				mcp.Description("ABAP code to execute. Set lv_result variable to return output via assertion message."),

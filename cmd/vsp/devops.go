@@ -12,6 +12,7 @@ import (
 
 	embedded "github.com/oisee/vibing-steampunk/embedded/abap"
 	"github.com/oisee/vibing-steampunk/embedded/deps"
+	installer "github.com/oisee/vibing-steampunk/internal/install"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/ctxcomp"
 	"github.com/oisee/vibing-steampunk/pkg/graph"
@@ -1702,12 +1703,12 @@ type cliHealthSignal struct {
 }
 
 type cliHealthResult struct {
-	Scope            cliHealthScope              `json:"scope"`
-	Summary          cliHealthSummary            `json:"summary"`
-	Signals          map[string]cliHealthSignal  `json:"signals"`
-	TestDetails      *adt.UnitTestResult         `json:"testDetails,omitempty"`
-	ATCDetails       *adt.ATCWorklist            `json:"atcDetails,omitempty"`
-	CrossingDetails  *graph.CrossingReport       `json:"crossingDetails,omitempty"`
+	Scope           cliHealthScope             `json:"scope"`
+	Summary         cliHealthSummary           `json:"summary"`
+	Signals         map[string]cliHealthSignal `json:"signals"`
+	TestDetails     *adt.UnitTestResult        `json:"testDetails,omitempty"`
+	ATCDetails      *adt.ATCWorklist           `json:"atcDetails,omitempty"`
+	CrossingDetails *graph.CrossingReport      `json:"crossingDetails,omitempty"`
 }
 
 func runHealth(cmd *cobra.Command, args []string) error {
@@ -3059,10 +3060,11 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "Checking prerequisites...\n")
 
 	// Check if package exists
-	packageExists := false
-	pkg, err := client.GetPackage(ctx, packageName)
-	if err == nil && pkg.URI != "" {
-		packageExists = true
+	packageExists, err := client.PackageExists(ctx, packageName)
+	if err != nil {
+		return fmt.Errorf("failed to check package %s: %w", packageName, err)
+	}
+	if packageExists {
 		fmt.Fprintf(os.Stderr, "  Package %s exists\n", packageName)
 	} else {
 		fmt.Fprintf(os.Stderr, "  Package %s will be created\n", packageName)
@@ -3125,16 +3127,12 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	}
 
 	// Phase 2: Create package if needed
-	if !packageExists {
+	created, err := installer.EnsurePackage(ctx, client, packageName, "VSP WebSocket Handler")
+	if err != nil {
+		return fmt.Errorf("failed to ensure package %s: %w", packageName, err)
+	}
+	if created {
 		fmt.Fprintf(os.Stderr, "Creating package %s...\n", packageName)
-		err := client.CreateObject(ctx, adt.CreateObjectOptions{
-			ObjectType:  adt.ObjectTypePackage,
-			Name:        packageName,
-			Description: "VSP WebSocket Handler",
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create package %s: %w", packageName, err)
-		}
 		fmt.Fprintf(os.Stderr, "  Package created\n\n")
 	} else {
 		fmt.Fprintf(os.Stderr, "Using existing package %s\n\n", packageName)
@@ -3158,10 +3156,11 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  [%d/%d] %s ... ", i+1, len(objects), obj.Name)
 
 		opts := &adt.WriteSourceOptions{
-			Package: packageName,
-			Mode:    adt.WriteModeUpsert,
+			Package:     packageName,
+			Description: obj.Description,
+			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.Source, opts)
+		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.Source, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failed++
@@ -3181,6 +3180,9 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "DEPLOYMENT COMPLETE\n")
 		fmt.Fprintf(os.Stderr, "Deployed: %d, Skipped: %d\n\n", deployed, skipped)
 	}
+	if failed > 0 {
+		return fmt.Errorf("%d object(s) failed to deploy; post-deployment features were not declared ready", failed)
+	}
 
 	// Post-deployment instructions
 	fmt.Fprint(os.Stderr, embedded.PostDeploymentInstructions())
@@ -3196,9 +3198,6 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "  abapGit export NOT available (install abapGit first)\n")
 	}
 
-	if failed > 0 {
-		return fmt.Errorf("%d object(s) failed to deploy", failed)
-	}
 	return nil
 }
 
@@ -3303,17 +3302,12 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 
 	// Ensure package exists
 	fmt.Fprintf(os.Stderr, "Checking package %s...\n", packageName)
-	pkg, pkgErr := client.GetPackage(ctx, packageName)
-	if pkgErr != nil || pkg.URI == "" {
+	created, err := installer.EnsurePackage(ctx, client, packageName, fmt.Sprintf("abapGit %s edition", edition))
+	if err != nil {
+		return fmt.Errorf("failed to ensure package: %w", err)
+	}
+	if created {
 		fmt.Fprintf(os.Stderr, "Creating package %s...\n", packageName)
-		err = client.CreateObject(ctx, adt.CreateObjectOptions{
-			ObjectType:  adt.ObjectTypePackage,
-			Name:        packageName,
-			Description: fmt.Sprintf("abapGit %s edition", edition),
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create package: %w", err)
-		}
 		fmt.Fprintf(os.Stderr, "  Package created\n")
 	} else {
 		fmt.Fprintf(os.Stderr, "  Package exists\n")
@@ -3341,7 +3335,7 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 			Description: desc,
 			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := client.WriteSource(ctx, obj.Type, obj.Name, obj.MainSource, wopts)
+		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.MainSource, wopts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failCount++

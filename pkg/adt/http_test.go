@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -152,6 +153,118 @@ func TestTransport_Request_CSRFToken(t *testing.T) {
 	}
 }
 
+//nolint:bodyclose // Transport.Request owns and closes every synthetic response body.
+func TestTransport_Request_StatefulCSRFFetch(t *testing.T) {
+	mock := &mockHTTPClient{responses: []*http.Response{
+		newMockResponse(http.StatusOK, "", map[string]string{"X-CSRF-Token": "synthetic-token"}),
+		newMockResponse(http.StatusOK, "", nil),
+	}}
+	transport := NewTransportWithClient(
+		NewConfig("https://sap.example.com:44300", "user", "pass"),
+		mock,
+	)
+
+	_, err := transport.Request(context.Background(), "/sap/bc/adt/synthetic", &RequestOptions{
+		Method:   http.MethodPost,
+		Stateful: true,
+	})
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	if len(mock.requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(mock.requests))
+	}
+	for i, req := range mock.requests {
+		if got := req.Header.Get("X-sap-adt-sessiontype"); got != "stateful" {
+			t.Errorf("request %d session type = %q, want stateful", i, got)
+		}
+	}
+}
+
+//nolint:bodyclose // Transport.Request owns and closes every synthetic response body.
+func TestTransport_Request_CSRFHeadFallsBackToGET(t *testing.T) {
+	mock := &mockHTTPClient{responses: []*http.Response{
+		newMockResponse(http.StatusMethodNotAllowed, "", nil),
+		newMockResponse(http.StatusOK, "", map[string]string{"X-CSRF-Token": "synthetic-token"}),
+		newMockResponse(http.StatusOK, "", nil),
+	}}
+	transport := NewTransportWithClient(
+		NewConfig("https://sap.example.com:44300", "user", "pass"),
+		mock,
+	)
+
+	_, err := transport.Request(context.Background(), "/sap/bc/adt/synthetic", &RequestOptions{
+		Method:   http.MethodPut,
+		Stateful: true,
+	})
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	wantMethods := []string{http.MethodHead, http.MethodGet, http.MethodPut}
+	if len(mock.requests) != len(wantMethods) {
+		t.Fatalf("requests = %d, want %d", len(mock.requests), len(wantMethods))
+	}
+	for i, want := range wantMethods {
+		if got := mock.requests[i].Method; got != want {
+			t.Errorf("request %d method = %s, want %s", i, got, want)
+		}
+		if got := mock.requests[i].Header.Get("X-sap-adt-sessiontype"); got != "stateful" {
+			t.Errorf("request %d session type = %q, want stateful", i, got)
+		}
+	}
+}
+
+func TestTransport_StatefulSequenceKeepsDiscoveryCookie(t *testing.T) {
+	const sessionCookie = "SYNTHETIC-SESSION"
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.RequestURI())
+		if got := r.Header.Get("X-sap-adt-sessiontype"); got != "stateful" {
+			t.Errorf("%s session type = %q, want stateful", r.Method, got)
+		}
+
+		if r.URL.Path == "/sap/bc/adt/core/discovery" {
+			http.SetCookie(w, &http.Cookie{Name: "sap-contextid", Value: sessionCookie, Path: "/"})
+			w.Header().Set("X-CSRF-Token", "synthetic-token")
+			return
+		}
+		cookie, err := r.Cookie("sap-contextid")
+		if err != nil || cookie.Value != sessionCookie {
+			t.Errorf("%s missing discovery session cookie", r.Method)
+		}
+
+		switch r.URL.Query().Get("_action") {
+		case "LOCK":
+			_, _ = io.WriteString(w, `<?xml version="1.0"?><asx:abap xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><LOCK_HANDLE>SYNTHETIC-HANDLE</LOCK_HANDLE></DATA></asx:values></asx:abap>`)
+		case "UNLOCK":
+			w.WriteHeader(http.StatusOK)
+		default:
+			if r.Method != http.MethodPut {
+				t.Errorf("unexpected request: %s", r.URL.RequestURI())
+			}
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "user", "pass")
+	ctx := context.Background()
+	objectURL := "/sap/bc/adt/programs/programs/ZSYNTHETIC"
+	lock, err := client.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		t.Fatalf("LockObject failed: %v", err)
+	}
+	if err := client.UpdateSource(ctx, objectURL+"/source/main", "REPORT zsynthetic.", lock.LockHandle, ""); err != nil {
+		t.Fatalf("UpdateSource failed: %v", err)
+	}
+	if err := client.UnlockObject(ctx, objectURL, lock.LockHandle); err != nil {
+		t.Fatalf("UnlockObject failed: %v", err)
+	}
+	if len(seen) != 4 {
+		t.Fatalf("request sequence = %#v, want discovery+lock+write+unlock", seen)
+	}
+}
+
 func TestTransport_Request_CSRFRefreshOn403(t *testing.T) {
 	mock := &mockHTTPClient{
 		responses: []*http.Response{
@@ -170,7 +283,8 @@ func TestTransport_Request_CSRFRefreshOn403(t *testing.T) {
 	transport := NewTransportWithClient(cfg, mock)
 
 	resp, err := transport.Request(context.Background(), "/sap/bc/adt/test", &RequestOptions{
-		Method: http.MethodPost,
+		Method:   http.MethodPost,
+		Stateful: true,
 	})
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
@@ -183,6 +297,11 @@ func TestTransport_Request_CSRFRefreshOn403(t *testing.T) {
 	// Should have made 4 requests
 	if len(mock.requests) != 4 {
 		t.Fatalf("Expected 4 requests, got %d", len(mock.requests))
+	}
+	for i, req := range mock.requests {
+		if got := req.Header.Get("X-sap-adt-sessiontype"); got != "stateful" {
+			t.Errorf("request %d session type = %q, want stateful during CSRF renewal", i, got)
+		}
 	}
 }
 

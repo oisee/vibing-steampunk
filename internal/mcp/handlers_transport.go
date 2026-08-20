@@ -167,6 +167,12 @@ func (s *Server) handleExecuteABAP(ctx context.Context, request mcp.CallToolRequ
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("ExecuteABAP failed: %v", err)), nil
 	}
+	if result == nil {
+		return newToolResultError("ExecuteABAP failed: no result returned"), nil
+	}
+	if !result.Success {
+		return newToolResultError(fmt.Sprintf("ExecuteABAP failed: %s", result.Message)), nil
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Program: %s\n", result.ProgramName)

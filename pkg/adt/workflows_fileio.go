@@ -12,11 +12,11 @@ import (
 
 // RenameObjectResult contains the result of renaming an object.
 type RenameObjectResult struct {
-	OldName    string `json:"oldName"`
-	NewName    string `json:"newName"`
-	ObjectType string `json:"objectType"`
-	Success    bool   `json:"success"`
-	Message    string `json:"message,omitempty"`
+	OldName    string   `json:"oldName"`
+	NewName    string   `json:"newName"`
+	ObjectType string   `json:"objectType"`
+	Success    bool     `json:"success"`
+	Message    string   `json:"message,omitempty"`
 	Errors     []string `json:"errors,omitempty"`
 }
 
@@ -58,6 +58,7 @@ func (c *Client) RenameObject(ctx context.Context, objType CreatableObjectType, 
 			return nil, err
 		}
 	}
+	ctx = withMutationPackageChecked(ctx)
 
 	// 1. Get old object source
 	resp, err := c.transport.Request(ctx, oldURL+"/source/main", &RequestOptions{
@@ -88,27 +89,49 @@ func (c *Client) RenameObject(ctx context.Context, objType CreatableObjectType, 
 	}
 
 	// 4. Write source to new object
-	newURL, _ := c.buildObjectURL(objType, newName)
+	newURL, err := c.buildObjectURL(objType, newName)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("Failed to build new object URL: %v", err))
+		return result, nil
+	}
+	newSourceURL, err := c.buildSourceURL(objType, newName)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("Failed to build new source URL: %v", err))
+		return result, nil
+	}
 	lockResult, err := c.LockObject(ctx, newURL, "MODIFY")
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Failed to lock new object: %v", err))
 		return result, nil
 	}
 
+	newUnlocked := false
 	defer func() {
-		_ = c.UnlockObject(ctx, newURL, lockResult.LockHandle)
+		if !newUnlocked {
+			_ = c.UnlockObject(ctx, newURL, lockResult.LockHandle)
+		}
 	}()
 
-	err = c.UpdateSource(ctx, newURL, newSource, lockResult.LockHandle, transport)
+	err = c.UpdateSource(ctx, newSourceURL, newSource, lockResult.LockHandle, transport)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Failed to write source: %v", err))
 		return result, nil
 	}
 
-	_ = c.UnlockObject(ctx, newURL, lockResult.LockHandle)
+	err = c.UnlockObject(ctx, newURL, lockResult.LockHandle)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("Failed to unlock new object: %v", err))
+		return result, nil
+	}
+	newUnlocked = true
 
 	// 5. Activate new object
-	_, err = c.Activate(ctx, newURL, newName)
+	activation, err := c.Activate(ctx, newURL, newName)
+	if err != nil {
+		result.Errors = append(result.Errors, fmt.Sprintf("Failed to activate new object: %v", err))
+		return result, nil
+	}
+	err = ActivationResultError(activation)
 	if err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Failed to activate new object: %v", err))
 		return result, nil
@@ -118,14 +141,14 @@ func (c *Client) RenameObject(ctx context.Context, objType CreatableObjectType, 
 	oldLockResult, err := c.LockObject(ctx, oldURL, "MODIFY")
 	if err != nil {
 		result.Message = fmt.Sprintf("New object %s created successfully, but failed to lock old object %s for deletion: %v. Please delete manually.", newName, oldName, err)
-		result.Success = true
+		result.Errors = append(result.Errors, result.Message)
 		return result, nil
 	}
 
 	err = c.DeleteObject(ctx, oldURL, oldLockResult.LockHandle, transport)
 	if err != nil {
 		result.Message = fmt.Sprintf("New object %s created successfully, but failed to delete old object %s: %v. Please delete manually.", newName, oldName, err)
-		result.Success = true
+		result.Errors = append(result.Errors, result.Message)
 		return result, nil
 	}
 
