@@ -469,6 +469,11 @@ func resolveConfig(cmd *cobra.Command) {
 		}
 	}
 
+	// Session type: SAP_SESSION_TYPE env (stateful | stateless | keep)
+	if v := viper.GetString("SESSION_TYPE"); v != "" {
+		cfg.SessionType = v
+	}
+
 	// Keep-alive interval: flag > SAP_KEEPALIVE env
 	if !cmd.Flags().Changed("keepalive") {
 		if v := viper.GetString("KEEPALIVE"); v != "" {
