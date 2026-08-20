@@ -77,29 +77,9 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		return nil, err
 	}
 
-	// 5. Lock object
-	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
-			Message:    fmt.Sprintf("Object created but failed to lock: %v", err),
-		}, nil
-	}
-
-	// Ensure unlock on any error
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
-		}
-	}()
-
-	// 6. Syntax check (optional pre-check)
+	// 5. Syntax check BEFORE lock — SyntaxCheck runs stateless and would
+	// break stateful session affinity if placed between Lock and UpdateSource,
+	// causing ICMENOSESSION / CSRF errors.
 	syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 	if err != nil {
 		return &DeployResult{
@@ -129,6 +109,29 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(syntaxErrors)),
 		}, nil
 	}
+
+	// 6. Lock object — from here on, ALL requests must be stateful to
+	// maintain session affinity for the lock handle (issue #88).
+	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
+			Message:    fmt.Sprintf("Object created but failed to lock: %v", err),
+		}, nil
+	}
+
+	// Ensure unlock on any error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+		}
+	}()
 
 	// 7. Write source (need source URL, not object URL)
 	sourceURL, err := c.buildSourceURL(info.ObjectType, info.ObjectName)
@@ -224,29 +227,9 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		return nil, err
 	}
 
-	// 4. Lock object
-	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
-	if err != nil {
-		return &DeployResult{
-			FilePath:   filePath,
-			ObjectURL:  objectURL,
-			ObjectName: info.ObjectName,
-			ObjectType: string(info.ObjectType),
-			Success:    false,
-			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
-			Message:    fmt.Sprintf("Failed to lock object: %v", err),
-		}, nil
-	}
-
-	// Ensure unlock on any error
-	unlocked := false
-	defer func() {
-		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
-		}
-	}()
-
-	// 5. Syntax check (skip for class includes - will check after update)
+	// 4. Syntax check BEFORE lock (skip for class includes - will check after update).
+	// SyntaxCheck runs stateless and would break stateful session affinity if
+	// placed between Lock and UpdateSource, causing ICMENOSESSION / CSRF errors.
 	if !isClassInclude {
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 		if err != nil {
@@ -278,6 +261,29 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 			}, nil
 		}
 	}
+
+	// 5. Lock object — from here on, ALL requests must be stateful to
+	// maintain session affinity for the lock handle (issue #88).
+	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("lock failed: %v", err)},
+			Message:    fmt.Sprintf("Failed to lock object: %v", err),
+		}, nil
+	}
+
+	// Ensure unlock on any error
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+		}
+	}()
 
 	// 6. Write source
 	if isClassInclude {

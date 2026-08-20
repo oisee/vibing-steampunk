@@ -57,23 +57,27 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 		return nil, err
 	}
 
-	// BTP / ABAP Cloud systems sometimes return a successful lock with
-	// MODIFICATION_SUPPORT="NoModification" — the lock acquired but the
-	// object is read-only via ADT (typical for SAP-delivered objects in
-	// hyperfocused mode, or systems where the user lacks the edit role).
-	// Without this guard the caller proceeds to PUT/POST and gets a
-	// confusing 423 InvalidLockHandle several seconds later. Surface it
-	// upfront so the user sees a clear, actionable error (issue #91).
-	if accessMode == "MODIFY" && strings.EqualFold(result.ModificationSupport, "NoModification") {
-		return nil, fmt.Errorf(
-			"object %s is not modifiable via ADT on this system "+
-				"(SAP returned modificationSupport=%q during LOCK). "+
-				"Common causes: read-only system class, missing developer/edit role, "+
-				"BTP ABAP Environment object outside the customer namespace, "+
-				"or hyperfocused mode locking the object as read-only",
-			objectURL, result.ModificationSupport)
-	}
-
+	// MODIFICATION_SUPPORT carries SAP-side policy metadata about how the
+	// object's changes are tracked, not whether the caller may modify it.
+	// IF_ADT_LOCK_RESULT in SAP's standard ADT defines four values:
+	//
+	//   "ModifcationAssistant"  (CO_MOD_SUPPORT_MODASS)         — SAP/partner
+	//       object with Modification Assistant; changes are tracked.
+	//   "ModificationsLoggedOnly" (CO_MOD_SUPPORT_LOGGED_ONLY) — SAP/partner
+	//       object; changes are only logged (no Modification Assistant).
+	//   "NoModification" (CO_MOD_SUPPORT_NOT_NEEDED) — customer-namespace
+	//       object; tracking is not needed. This is the normal response
+	//       for Z*/Y* objects that customers edit freely.
+	//   "" (CO_MOD_SUPPORT_NOT_SPECIFIED) — not specified.
+	//
+	// A valid LOCK_HANDLE plus any of these values means the caller got the
+	// lock. The previous guard that rejected "NoModification" at LOCK time
+	// (issue #91 attempt) was a misreading of the string — the constant is
+	// *NOT_NEEDED*, not *NOT_PERMITTED*. Genuine read-only rejections
+	// surface at other layers (HTTP 403 on the LOCK itself, or 423 on the
+	// subsequent write if session affinity is broken); the correct place
+	// to handle those is where they originate. Here we just return the
+	// parsed result verbatim.
 	return result, nil
 }
 
