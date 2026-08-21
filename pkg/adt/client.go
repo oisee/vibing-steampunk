@@ -167,8 +167,14 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 func normalizeObjectURLForPackageCheck(objectURL string) string {
 	normalized := strings.TrimSuffix(objectURL, "/")
 
-	if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
-		return normalized[:idx]
+	// Strip the include segment ONLY for class includes, whose parent (the class)
+	// carries the package/transport assignment. A program include
+	// (/sap/bc/adt/programs/includes/<NAME>) is itself the repository object, so
+	// stripping at "/includes/" would wrongly collapse it to /sap/bc/adt/programs.
+	if strings.Contains(normalized, "/oo/classes/") {
+		if idx := strings.Index(normalized, "/includes/"); idx >= 0 {
+			return normalized[:idx]
+		}
 	}
 	if strings.HasSuffix(normalized, "/source/main") {
 		return strings.TrimSuffix(normalized, "/source/main")
