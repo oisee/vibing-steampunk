@@ -68,10 +68,19 @@ type ExecuteABAPOptions struct {
 //
 // Security: This is gated by OpWorkflow safety check.
 func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAPOptions) (*ExecuteABAPResult, error) {
-	// Safety check for workflow operations
-	if err := c.checkSafety(OpWorkflow, "ExecuteABAP"); err != nil {
+	// Unified mutation policy gate — temp programs always live in $TMP.
+	// Mark the context so the inner CreateObject + UpdateSource +
+	// DeleteObject (cleanup) skip their redundant gates and do not inject
+	// a stateless SearchObject hop between Lock and PUT/DELETE
+	// (mutationGateSkipKey).
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:      OpWorkflow,
+		OpName:  "ExecuteABAP",
+		Package: "$TMP",
+	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	if opts == nil {
 		opts = &ExecuteABAPOptions{}

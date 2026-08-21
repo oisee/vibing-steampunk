@@ -27,7 +27,10 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
 	sourceURL := objectURL + "/source/main"
 
-	// Unified mutation policy gate (op type + package + transport)
+	// Unified mutation policy gate (op type + package + transport).
+	// Marking the context skips the inner gate in UpdateSource so the
+	// stateful Lock → PUT block is not interrupted by a stateless
+	// SearchObject hop (see mutationGateSkipKey for full rationale).
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpWorkflow,
 		OpName:    "WriteProgram",
@@ -36,6 +39,7 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	result := &WriteProgramResult{
 		ProgramName: programName,
@@ -122,7 +126,9 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(className))
 	sourceURL := objectURL + "/source/main"
 
-	// Unified mutation policy gate (op type + package + transport)
+	// Unified mutation policy gate (op type + package + transport).
+	// Mark the context to skip the inner gate in UpdateSource — see
+	// mutationGateSkipKey for the session-affinity rationale.
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpWorkflow,
 		OpName:    "WriteClass",
@@ -131,6 +137,7 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	result := &WriteClassResult{
 		ClassName: className,
@@ -216,7 +223,10 @@ func (c *Client) CreateAndActivateProgram(ctx context.Context, programName strin
 	programName = strings.ToUpper(programName)
 	packageName = strings.ToUpper(packageName)
 
-	// Unified mutation policy gate (op type + package + transport)
+	// Unified mutation policy gate (op type + package + transport).
+	// Mark the context to skip the inner gate in CreateObject and
+	// UpdateSource — see mutationGateSkipKey for the session-affinity
+	// rationale.
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpWorkflow,
 		OpName:    "CreateAndActivateProgram",
@@ -225,6 +235,7 @@ func (c *Client) CreateAndActivateProgram(ctx context.Context, programName strin
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
 	sourceURL := objectURL + "/source/main"
@@ -309,7 +320,10 @@ func (c *Client) CreateClassWithTests(ctx context.Context, className string, des
 	className = strings.ToUpper(className)
 	packageName = strings.ToUpper(packageName)
 
-	// Unified mutation policy gate (op type + package + transport)
+	// Unified mutation policy gate (op type + package + transport).
+	// Mark the context to skip the inner gate in CreateObject,
+	// UpdateSource, CreateTestInclude and UpdateClassInclude — see
+	// mutationGateSkipKey for the session-affinity rationale.
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpWorkflow,
 		OpName:    "CreateClassWithTests",
@@ -318,6 +332,7 @@ func (c *Client) CreateClassWithTests(ctx context.Context, className string, des
 	}); err != nil {
 		return nil, err
 	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(className))
 	sourceURL := objectURL + "/source/main"

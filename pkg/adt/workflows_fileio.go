@@ -59,6 +59,12 @@ func (c *Client) RenameObject(ctx context.Context, objType CreatableObjectType, 
 		}
 	}
 
+	// Both gates have run; mark the context so inner CreateObject /
+	// UpdateSource / DeleteObject skip their redundant gates and do not
+	// inject a stateless SearchObject hop between Lock and PUT/DELETE
+	// (mutationGateSkipKey).
+	ctx = withMutationGateAlreadyRan(ctx)
+
 	// 1. Get old object source
 	resp, err := c.transport.Request(ctx, oldURL+"/source/main", &RequestOptions{
 		Method: "GET",

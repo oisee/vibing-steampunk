@@ -366,6 +366,21 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		objectURL := fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", url.PathEscape(name))
 		result.ObjectURL = objectURL
 
+		// Run the unified gate up front (with the explicit Package the caller
+		// supplied) and mark the context so the inner CreateObject and
+		// UpdateSource skip their redundant gates — preventing the
+		// SearchObject hop between Lock and PUT (mutationGateSkipKey).
+		if err := c.checkMutation(ctx, MutationContext{
+			Op:        OpCreate,
+			OpName:    "WriteSource(INTF,create)",
+			Package:   opts.Package,
+			Transport: opts.Transport,
+		}); err != nil {
+			result.Message = fmt.Sprintf("Failed mutation gate: %v", err)
+			return result, nil
+		}
+		ctx := withMutationGateAlreadyRan(ctx)
+
 		// Create object
 		err := c.CreateObject(ctx, CreateObjectOptions{
 			ObjectType:  ObjectTypeInterface,
@@ -461,6 +476,20 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 		result.ObjectURL = objectURL
 		sourceURL := objectURL + "/source/main"
+
+		// Run the unified gate up front and mark the context so the inner
+		// CreateObject + UpdateSource skip their redundant gates
+		// (mutationGateSkipKey).
+		if err := c.checkMutation(ctx, MutationContext{
+			Op:        OpCreate,
+			OpName:    fmt.Sprintf("WriteSource(%s,create)", objectType),
+			Package:   opts.Package,
+			Transport: opts.Transport,
+		}); err != nil {
+			result.Message = fmt.Sprintf("Failed mutation gate: %v", err)
+			return result, nil
+		}
+		ctx := withMutationGateAlreadyRan(ctx)
 
 		// Create object first
 		// For BDEF, include source in creation (ADT API requirement)
@@ -763,6 +792,22 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		sourceURL := objectURL + "/source/main"
 		result.ObjectURL = objectURL
 
+		// Resolve and check the package up front, then mark the context so
+		// the inner UpdateSource skips its redundant gate. Doing the
+		// SearchObject hop AFTER Lock would retire SAP's stateful session
+		// (ICMENOSESSION) and invalidate the lock handle. See
+		// mutationGateSkipKey for the full rationale.
+		if err := c.checkMutation(ctx, MutationContext{
+			Op:        OpUpdate,
+			OpName:    "WriteSource(INTF)",
+			ObjectURL: objectURL,
+			Transport: opts.Transport,
+		}); err != nil {
+			result.Message = fmt.Sprintf("Failed mutation gate: %v", err)
+			return result, nil
+		}
+		ctx := withMutationGateAlreadyRan(ctx)
+
 		// Syntax check
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 		if err != nil {
@@ -837,6 +882,20 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		}
 		result.ObjectURL = objectURL
 		sourceURL := objectURL + "/source/main"
+
+		// Resolve and check the package up front, then mark the context so
+		// the inner UpdateSource skips its redundant gate. See
+		// mutationGateSkipKey for rationale.
+		if err := c.checkMutation(ctx, MutationContext{
+			Op:        OpUpdate,
+			OpName:    fmt.Sprintf("WriteSource(%s)", objectType),
+			ObjectURL: objectURL,
+			Transport: opts.Transport,
+		}); err != nil {
+			result.Message = fmt.Sprintf("Failed mutation gate: %v", err)
+			return result, nil
+		}
+		ctx := withMutationGateAlreadyRan(ctx)
 
 		// Syntax check
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
@@ -919,6 +978,20 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 	methodName = strings.ToUpper(methodName)
 	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(strings.ToLower(className)))
 	result.ObjectURL = objectURL
+
+	// Resolve and check the package up front, then mark the context so
+	// the inner UpdateSource skips its redundant gate. See
+	// mutationGateSkipKey for rationale.
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpUpdate,
+		OpName:    "WriteClassMethod",
+		ObjectURL: objectURL,
+		Transport: transport,
+	}); err != nil {
+		result.Message = fmt.Sprintf("Failed mutation gate: %v", err)
+		return result, nil
+	}
+	ctx = withMutationGateAlreadyRan(ctx)
 
 	// Get method boundaries
 	methods, err := c.GetClassMethods(ctx, className)
