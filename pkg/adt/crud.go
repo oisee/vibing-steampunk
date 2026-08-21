@@ -217,7 +217,8 @@ type CreateObjectOptions struct {
 	BindingType string `json:"bindingType,omitempty"`
 	// For SRVB: binding version ("V2" or "V4")
 	BindingVersion string `json:"bindingVersion,omitempty"`
-	// For SRVB: category ("0" for Web API, "1" for UI)
+	// For SRVB: category per SAP domain SRVB_BND_CATEGORY:
+	// "0" = UI (User Interface), "1" = A2X (Application to X users, i.e. Web API)
 	BindingCategory string `json:"bindingCategory,omitempty"`
 
 	// For BDEF: source code (required for creation - ADT API embeds source in creation request)
@@ -765,7 +766,7 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 		}
 		bindingCategory := opts.BindingCategory
 		if bindingCategory == "" {
-			bindingCategory = "0" // Web API
+			bindingCategory = "0" // UI (SRVB_BND_CATEGORY: 0=UI, 1=A2X/Web API)
 		}
 		return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <%s %s xmlns:adtcore="http://www.sap.com/adt/core"
