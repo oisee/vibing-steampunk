@@ -557,12 +557,14 @@ func TestCreateTestInclude_UsesStatefulSession(t *testing.T) {
 // proceeded to PUT and got a confusing 423 InvalidLockHandle several
 // seconds later. The expected behaviour is to fail at the LOCK call
 // with a clear, actionable error message.
+// The guard is scoped to the case where NO usable handle came back —
+// see TestLockObject_AllowsNoModificationWithHandle for why.
 func TestLockObject_RejectsNoModification(t *testing.T) {
 	const noModLockXML = `<?xml version="1.0" encoding="UTF-8"?>
 <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
   <asx:values>
     <DATA>
-      <LOCK_HANDLE>HANDLE-X</LOCK_HANDLE>
+      <LOCK_HANDLE></LOCK_HANDLE>
       <CORRNR></CORRNR>
       <CORRUSER></CORRUSER>
       <CORRTEXT></CORRTEXT>
@@ -595,6 +597,59 @@ func TestLockObject_RejectsNoModification(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "NoModification") {
 		t.Errorf("error = %q, want to surface the raw modificationSupport value", err.Error())
+	}
+}
+
+// TestLockObject_AllowsNoModificationWithHandle pins the on-premise case
+// the guard must NOT reject. NetWeaver 7.50 answers a CLAS lock with
+// MODIFICATION_SUPPORT=NoModification on the class root and still hands
+// back a working lock handle — the write to the source include succeeds.
+// Verified on ZED 2026-08-04: every class lock reported NoModification
+// while a PROG in the same transportable package reported a modifiable
+// lock, which made every class on the system uneditable. A lock handle is
+// a lock: return it and let the write be the judge, while still surfacing
+// the raw value in the result.
+func TestLockObject_AllowsNoModificationWithHandle(t *testing.T) {
+	const noModLockXML = `<?xml version="1.0" encoding="UTF-8"?>
+<asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+  <asx:values>
+    <DATA>
+      <LOCK_HANDLE>HANDLE-X</LOCK_HANDLE>
+      <CORRNR>ZEDK900001</CORRNR>
+      <CORRUSER>TESTER</CORRUSER>
+      <CORRTEXT>test request</CORRTEXT>
+      <IS_LOCAL></IS_LOCAL>
+      <IS_LINK_UP></IS_LINK_UP>
+      <MODIFICATION_SUPPORT>NoModification</MODIFICATION_SUPPORT>
+    </DATA>
+  </asx:values>
+</asx:abap>`
+	mock := &methodPathMock{
+		routes: []routedResponse{
+			resp("", "discovery", 200, "ok"),
+			resp(http.MethodPost, "/oo/classes/ZCL_ONPREM", 200, noModLockXML),
+		},
+	}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	client := NewClientWithTransport(cfg, transport)
+
+	result, err := client.LockObject(
+		context.Background(),
+		"/sap/bc/adt/oo/classes/ZCL_ONPREM",
+		"MODIFY",
+	)
+	if err != nil {
+		t.Fatalf("LockObject returned %v, want success: a handle came back, so the object is lockable", err)
+	}
+	if result.LockHandle != "HANDLE-X" {
+		t.Errorf("LockHandle = %q, want %q", result.LockHandle, "HANDLE-X")
+	}
+	if result.ModificationSupport != "NoModification" {
+		t.Errorf("ModificationSupport = %q, want it surfaced to the caller", result.ModificationSupport)
+	}
+	if result.CorrNr != "ZEDK900001" {
+		t.Errorf("CorrNr = %q, want the transport preserved", result.CorrNr)
 	}
 }
 

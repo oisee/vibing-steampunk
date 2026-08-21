@@ -64,10 +64,22 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 	// Without this guard the caller proceeds to PUT/POST and gets a
 	// confusing 423 InvalidLockHandle several seconds later. Surface it
 	// upfront so the user sees a clear, actionable error (issue #91).
-	if accessMode == "MODIFY" && strings.EqualFold(result.ModificationSupport, "NoModification") {
+	//
+	// The signal is only decisive when NO usable handle came back. A lock
+	// handle IS a lock: NetWeaver on-premise reports NoModification on the
+	// CLAS *root* while the write to the source include succeeds, so failing
+	// here turns every class on those systems into a read-only object.
+	// Verified on ZED (NW 7.50, 2026-08-04): every CLAS lock returns
+	// NoModification while a PROG in the same transportable package returns a
+	// modifiable lock, and class edits had been succeeding for weeks under the
+	// pre-guard binary. So: hard-fail only without a handle; otherwise return
+	// the result and let the write be the judge. The raw value stays in
+	// LockResult.ModificationSupport, so callers can still see and report it.
+	if accessMode == "MODIFY" && strings.EqualFold(result.ModificationSupport, "NoModification") &&
+		result.LockHandle == "" {
 		return nil, fmt.Errorf(
 			"object %s is not modifiable via ADT on this system "+
-				"(SAP returned modificationSupport=%q during LOCK). "+
+				"(SAP returned modificationSupport=%q during LOCK, with no lock handle). "+
 				"Common causes: read-only system class, missing developer/edit role, "+
 				"BTP ABAP Environment object outside the customer namespace, "+
 				"or hyperfocused mode locking the object as read-only",
