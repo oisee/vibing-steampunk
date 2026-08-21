@@ -722,14 +722,24 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 				return result, nil
 			}
 
+			// Reuse the request the object is already bound to when the caller supplied no
+			// transport, so an already-captured object is not rejected with a spurious 409
+			// (issue #144). Re-checks transportable-edit policy on the resolved request.
+			testTransport, resolveErr := c.resolveWriteTransport(opts.Transport, lock.CorrNr, "WriteSource(testclasses)")
+			if resolveErr != nil {
+				c.UnlockObject(ctx, objectURL, lock.LockHandle)
+				result.Message += fmt.Sprintf(" (Warning: Transportable-edit check failed for test include: %v)", resolveErr)
+				return result, nil
+			}
+
 			// Update test include - try update first, create if it doesn't exist
-			err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, opts.Transport)
+			err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, testTransport)
 			if err != nil {
 				// Try to create the test include first (it may not exist)
-				createErr := c.CreateTestInclude(ctx, name, lock.LockHandle, opts.Transport)
+				createErr := c.CreateTestInclude(ctx, name, lock.LockHandle, testTransport)
 				if createErr == nil {
 					// Retry update after creating
-					err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, opts.Transport)
+					err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, testTransport)
 				}
 			}
 			unlockErr := c.UnlockObject(ctx, objectURL, lock.LockHandle)
@@ -792,8 +802,17 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			}
 		}()
 
+		// Reuse the request the object is already bound to when the caller supplied no
+		// transport, so an already-captured object is not rejected with a spurious 409
+		// (issue #144). Re-checks transportable-edit policy on the resolved request.
+		transport, err := c.resolveWriteTransport(opts.Transport, lock.CorrNr, "WriteSource(INTF)")
+		if err != nil {
+			result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
+			return result, nil
+		}
+
 		// Update
-		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to update source: %v", err)
 			return result, nil
@@ -867,8 +886,17 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			}
 		}()
 
+		// Reuse the request the object is already bound to when the caller supplied no
+		// transport, so an already-captured object is not rejected with a spurious 409
+		// (issue #144). Re-checks transportable-edit policy on the resolved request.
+		transport, err := c.resolveWriteTransport(opts.Transport, lock.CorrNr, fmt.Sprintf("WriteSource(%s)", objectType))
+		if err != nil {
+			result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
+			return result, nil
+		}
+
 		// Update
-		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
+		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to update source: %v", err)
 			return result, nil
@@ -995,6 +1023,15 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 			c.UnlockObject(ctx, objectURL, lock.LockHandle)
 		}
 	}()
+
+	// Reuse the request the object is already bound to when the caller supplied no
+	// transport, so an already-captured object is not rejected with a spurious 409
+	// (issue #144). Re-checks transportable-edit policy on the resolved request.
+	transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "WriteSource(method)")
+	if err != nil {
+		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
+		return result, nil
+	}
 
 	// Update
 	sourceURL := objectURL + "/source/main"

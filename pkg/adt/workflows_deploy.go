@@ -246,6 +246,22 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		}
 	}()
 
+	// Reuse the request the object is already bound to when the caller supplied no
+	// transport, so an already-captured object is not rejected with a spurious 409
+	// (issue #144). Re-checks transportable-edit policy on the resolved request.
+	transport, err = c.resolveWriteTransport(transport, lockResult.CorrNr, "UpdateFromFile")
+	if err != nil {
+		return &DeployResult{
+			FilePath:   filePath,
+			ObjectURL:  objectURL,
+			ObjectName: info.ObjectName,
+			ObjectType: string(info.ObjectType),
+			Success:    false,
+			Errors:     []string{fmt.Sprintf("transportable-edit check failed: %v", err)},
+			Message:    fmt.Sprintf("Transportable-edit check failed: %v", err),
+		}, nil
+	}
+
 	// 5. Syntax check (skip for class includes - will check after update)
 	if !isClassInclude {
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)

@@ -374,12 +374,21 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		}
 	}()
 
+	// Reuse the request the object is already bound to when the caller supplied no
+	// transport, so an already-captured object is not rejected with a spurious 409
+	// (issue #144). Re-checks transportable-edit policy on the resolved request.
+	tr, err := c.resolveWriteTransport(opts.Transport, lockResult.CorrNr, "EditSource")
+	if err != nil {
+		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
+		return result, nil
+	}
+
 	// 6. Update source
 	if isClassInclude && className != "" {
 		// Use UpdateClassInclude for class includes
-		err = c.UpdateClassInclude(ctx, className, includeType, newSource, lockResult.LockHandle, opts.Transport)
+		err = c.UpdateClassInclude(ctx, className, includeType, newSource, lockResult.LockHandle, tr)
 	} else {
-		err = c.UpdateSource(ctx, sourceURL, newSource, lockResult.LockHandle, opts.Transport)
+		err = c.UpdateSource(ctx, sourceURL, newSource, lockResult.LockHandle, tr)
 	}
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to update source: %v", err)
