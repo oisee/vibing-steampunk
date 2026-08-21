@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 // --- Transport Types ---
@@ -46,15 +47,15 @@ type UserTransports struct {
 
 // TransportInfo represents information about an object's transport status
 type TransportInfo struct {
-	PGMID          string             `json:"pgmid"`
-	Object         string             `json:"object"`
-	ObjectName     string             `json:"objectName"`
-	Operation      string             `json:"operation"`
-	DevClass       string             `json:"devClass"`
-	Recording      string             `json:"recording"`
-	Transports     []TransportRequest `json:"transports,omitempty"`
-	LockedByUser   string             `json:"lockedByUser,omitempty"`
-	LockedInTask   string             `json:"lockedInTask,omitempty"`
+	PGMID        string             `json:"pgmid"`
+	Object       string             `json:"object"`
+	ObjectName   string             `json:"objectName"`
+	Operation    string             `json:"operation"`
+	DevClass     string             `json:"devClass"`
+	Recording    string             `json:"recording"`
+	Transports   []TransportRequest `json:"transports,omitempty"`
+	LockedByUser string             `json:"lockedByUser,omitempty"`
+	LockedInTask string             `json:"lockedInTask,omitempty"`
 }
 
 const (
@@ -113,7 +114,7 @@ func parseUserTransports(data []byte) (*UserTransports, error) {
 		Tasks  []task `xml:"task"`
 	}
 	type target struct {
-		Name      string    `xml:"name,attr"`
+		Name       string `xml:"name,attr"`
 		Modifiable struct {
 			Requests []request `xml:"request"`
 		} `xml:"modifiable"`
@@ -271,7 +272,14 @@ func (c *Client) CreateTransport(ctx context.Context, objectURL string, descript
 		return "", err
 	}
 
-	owner := strings.ToUpper(c.config.Username)
+	// Not config.Username: it is empty on a browser-SSO connection, and an
+	// empty tm:owner makes ADT reject the whole request. See CurrentUser.
+	owner := c.CurrentUser(ctx)
+	if owner == "" {
+		return "", fmt.Errorf("cannot determine the transport owner: no username is " +
+			"configured and ADT did not report one. Transport creation needs an owner " +
+			"for tm:task.")
+	}
 
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:useraction="newrequest">
@@ -336,9 +344,9 @@ func parseReleaseResult(data []byte) ([]string, error) {
 		Text string `xml:"shortText,attr"`
 	}
 	type report struct {
-		Reporter  string    `xml:"reporter,attr"`
-		Status    string    `xml:"status,attr"`
-		Messages  []message `xml:"checkMessageList>checkMessage"`
+		Reporter string    `xml:"reporter,attr"`
+		Status   string    `xml:"status,attr"`
+		Messages []message `xml:"checkMessageList>checkMessage"`
 	}
 	type root struct {
 		Reports []report `xml:"releasereports>checkReport"`
@@ -368,8 +376,8 @@ type TransportSummary struct {
 	Number      string `json:"number"`
 	Owner       string `json:"owner"`
 	Description string `json:"description"`
-	Type        string `json:"type"`       // K=Workbench, W=Customizing, S=Task
-	Status      string `json:"status"`     // D=Modifiable, R=Released
+	Type        string `json:"type"`   // K=Workbench, W=Customizing, S=Task
+	Status      string `json:"status"` // D=Modifiable, R=Released
 	StatusText  string `json:"statusText"`
 	Target      string `json:"target"`
 	TargetDesc  string `json:"targetDesc"`
@@ -398,8 +406,8 @@ type TransportTaskV2 struct {
 
 // TransportObjectV2 represents an object in a transport (extended version)
 type TransportObjectV2 struct {
-	PgmID    string `json:"pgmid"`  // R3TR, LIMU, CORR
-	Type     string `json:"type"`   // PROG, CLAS, DEVC, etc.
+	PgmID    string `json:"pgmid"` // R3TR, LIMU, CORR
+	Type     string `json:"type"`  // PROG, CLAS, DEVC, etc.
 	Name     string `json:"name"`
 	WBType   string `json:"wbtype"` // PROG/P, CLAS/OC, etc.
 	Info     string `json:"info"`   // "Program", "Class", etc.
@@ -481,12 +489,12 @@ func (c *Client) listTransportsViaSQL(ctx context.Context, user string) ([]Trans
 	var transports []TransportSummary
 	for _, row := range result.Rows {
 		tr := TransportSummary{
-			Number:     getString(row, "TRKORR"),
-			Owner:      getString(row, "AS4USER"),
+			Number:      getString(row, "TRKORR"),
+			Owner:       getString(row, "AS4USER"),
 			Description: getString(row, "AS4TEXT"),
-			Type:       getString(row, "TRFUNCTION"),
-			Status:     getString(row, "TRSTATUS"),
-			Target:     getString(row, "TARSYSTEM"),
+			Type:        getString(row, "TRFUNCTION"),
+			Status:      getString(row, "TRSTATUS"),
+			Target:      getString(row, "TARSYSTEM"),
 		}
 
 		// Map status code to text
@@ -742,7 +750,12 @@ func (c *Client) CreateTransportV2(ctx context.Context, opts CreateTransportOpti
 		reqType = "W"
 	}
 
-	owner := strings.ToUpper(c.config.Username)
+	// Same reason as CreateTransport: config.Username is empty under browser SSO.
+	owner := c.CurrentUser(ctx)
+	if owner == "" {
+		return "", fmt.Errorf("cannot determine the transport owner: no username is " +
+			"configured and ADT did not report one")
+	}
 
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:useraction="newrequest">
@@ -872,3 +885,73 @@ func (c *Client) DeleteTransport(ctx context.Context, number string) error {
 }
 
 // escapeXMLAttr is defined in ui5.go
+
+// resolvedUser caches the username ADT reports per base URL, so the lookup
+// happens once per process rather than on every transport operation.
+var (
+	resolvedUserMu sync.RWMutex
+	resolvedUser   = map[string]string{}
+)
+
+// CurrentUser returns the user ADT sees for this session.
+//
+// Config.Username is empty on a browser-SSO connection: the session is a
+// cookie, and nobody ever typed a user name. Transport creation puts the user
+// in tm:task@tm:owner, so an empty value reaches ADT and it answers
+//
+//	400 ExceptionInvalidData "Check of condition failed"
+//	XML_PATH tm:root(1)tm:request(1)tm:task(1)
+//
+// which names the task element but not the reason, and reads as a malformed
+// request rather than a missing user.
+//
+// GET /sap/bc/adt/cts/transportrequests answers with a tm:root whose
+// adtcore:name is the caller. That is the same resource transport creation
+// posts to, so it needs no extra authorization and cannot disagree about who
+// the session belongs to. Verified on a live S/4HANA Cloud tenant, 2026-08-13:
+//
+//	<tm:root adtcore:name="DEVELOPER" adtcore:createdBy="DEVELOPER" .../>
+//
+// Returns "" when the user cannot be determined; callers should treat that as
+// "carry on with what the config had" rather than as a hard failure.
+func (c *Client) CurrentUser(ctx context.Context) string {
+	if u := strings.ToUpper(strings.TrimSpace(c.config.Username)); u != "" {
+		return u
+	}
+
+	key := c.config.BaseURL
+	resolvedUserMu.RLock()
+	cached, ok := resolvedUser[key]
+	resolvedUserMu.RUnlock()
+	if ok {
+		return cached
+	}
+
+	user := ""
+	if resp, err := c.RawGet(ctx, "/sap/bc/adt/cts/transportrequests", "*/*"); err == nil &&
+		resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		user = strings.ToUpper(firstXMLAttr(string(resp.Body), "adtcore:name"))
+	}
+
+	resolvedUserMu.Lock()
+	resolvedUser[key] = user
+	resolvedUserMu.Unlock()
+	return user
+}
+
+// firstXMLAttr returns the value of the first occurrence of an attribute.
+// Deliberately not a full parse: the CTS root element carries several
+// namespaces and only one value is wanted.
+func firstXMLAttr(doc, attr string) string {
+	needle := attr + `="`
+	i := strings.Index(doc, needle)
+	if i < 0 {
+		return ""
+	}
+	rest := doc[i+len(needle):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
