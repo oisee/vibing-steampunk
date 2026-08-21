@@ -285,17 +285,25 @@ func runSearch(cmd *cobra.Command, args []string) error {
 	query := args[0]
 	ctx := context.Background()
 
-	results, err := client.SearchObject(ctx, query, maxResults)
+	adtType := adt.CanonicalObjectType(objectType)
+	if v, _ := cmd.Flags().GetBool("verbose"); v {
+		fmt.Fprintf(os.Stderr, "[DEBUG] search: query=%q objectType=%q maxResults=%d\n",
+			query, adtType, maxResults)
+	}
+
+	results, err := client.SearchObjectByType(ctx, query, adtType, maxResults)
 	if err != nil {
 		return fmt.Errorf("search failed: %w", err)
 	}
 
-	// Filter by type if specified
+	// Filter by type if specified. Compare against the canonical type, since
+	// the server returns canonical codes (e.g. FUNC -> FUGR/FF, INCL -> PROG/I)
+	// where the short form is not a prefix of the result type.
 	filtered := results
-	if objectType != "" {
+	if adtType != "" {
 		filtered = make([]adt.SearchResult, 0)
 		for _, r := range results {
-			if strings.EqualFold(r.Type, objectType) || strings.HasPrefix(r.Type, objectType+"/") {
+			if strings.EqualFold(r.Type, adtType) || strings.HasPrefix(r.Type, adtType+"/") {
 				filtered = append(filtered, r)
 			}
 		}
