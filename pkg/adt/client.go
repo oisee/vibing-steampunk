@@ -268,6 +268,34 @@ func (c *Client) SearchObject(ctx context.Context, query string, maxResults int)
 	return ParseSearchResults(resp.Body)
 }
 
+// ResolveObjectRef converts a "TYPE NAME" shorthand (e.g. "INCL ZREP_F01", "PROG ZREPORT")
+// into the (objectURL, objectName) pair needed for activation or other ADT operations.
+// The name is returned in UPPERCASE; the URL uses lowercase path encoding.
+func (c *Client) ResolveObjectRef(typeAndName string) (objectURL, objectName string, err error) {
+	parts := strings.Fields(strings.ToUpper(strings.TrimSpace(typeAndName)))
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("expected \"TYPE NAME\", got %q", typeAndName)
+	}
+	objType, name := parts[0], parts[1]
+	encoded := url.PathEscape(strings.ToLower(name))
+	switch objType {
+	case "PROG":
+		return "/sap/bc/adt/programs/programs/" + encoded, name, nil
+	case "INCL":
+		return "/sap/bc/adt/programs/includes/" + encoded, name, nil
+	case "CLAS":
+		return "/sap/bc/adt/oo/classes/" + encoded, name, nil
+	case "INTF":
+		return "/sap/bc/adt/oo/interfaces/" + encoded, name, nil
+	case "FUGR":
+		return "/sap/bc/adt/function/groups/" + encoded, name, nil
+	case "DDLS":
+		return "/sap/bc/adt/ddic/ddl/sources/" + encoded, name, nil
+	default:
+		return "", "", fmt.Errorf("unsupported object type %q (supported: PROG, INCL, CLAS, INTF, FUGR, DDLS)", objType)
+	}
+}
+
 // --- Program Operations ---
 
 // GetProgram retrieves the source code of an ABAP program.

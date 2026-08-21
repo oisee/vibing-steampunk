@@ -355,6 +355,47 @@ func parseInactiveObjects(data []byte) ([]InactiveObjectRecord, error) {
 
 // --- Batch Activation ---
 
+// ObjectRef is a URI + name pair used to reference an ADT object in activation requests.
+type ObjectRef struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
+// ActivateMultiple activates multiple objects in a single ADT request, allowing SAP to
+// resolve mutual dependencies between them (e.g., a program and all its includes).
+// This is the correct approach when objects reference symbols defined in each other —
+// activating them one by one fails because the first object can't see the others.
+func (c *Client) ActivateMultiple(ctx context.Context, objects []ObjectRef) (*ActivationResult, error) {
+	if err := c.checkSafety(OpActivate, "ActivateMultiple"); err != nil {
+		return nil, err
+	}
+	if len(objects) == 0 {
+		return &ActivationResult{Success: true, Messages: []ActivationResultMessage{}, Inactive: []InactiveObject{}}, nil
+	}
+	if len(objects) == 1 {
+		return c.Activate(ctx, objects[0].URI, objects[0].Name)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	sb.WriteString("<adtcore:objectReferences xmlns:adtcore=\"http://www.sap.com/adt/core\">\n")
+	for _, obj := range objects {
+		sb.WriteString(fmt.Sprintf("  <adtcore:objectReference adtcore:uri=\"%s\" adtcore:name=\"%s\"/>\n",
+			obj.URI, obj.Name))
+	}
+	sb.WriteString("</adtcore:objectReferences>")
+
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/activation?method=activate&preauditRequested=true", &RequestOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(sb.String()),
+		ContentType: "application/xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch activation failed: %w", err)
+	}
+	return parseActivationResult(resp.Body)
+}
+
 // ActivatePackageResult represents the result of batch activation.
 type ActivatePackageResult struct {
 	Activated []ActivatedObject  `json:"activated"`
@@ -442,24 +483,61 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 		Failed:    []ActivationFailed{},
 	}
 
-	// Activate each object
+	if len(toActivate) == 0 {
+		result.Summary = "No inactive objects to activate"
+		return result, nil
+	}
+
+	// Build ObjectRef list and activate all in a single request so SAP can resolve
+	// mutual dependencies between objects (same behaviour as Eclipse ADT).
+	refs := make([]ObjectRef, 0, len(toActivate))
+	refMeta := make(map[string]InactiveObject, len(toActivate)) // URI → meta
 	for _, rec := range toActivate {
 		if rec.Object == nil {
 			continue
 		}
-		obj := rec.Object
-		_, err := c.Activate(ctx, obj.URI, obj.Name)
-		if err != nil {
+		refs = append(refs, ObjectRef{URI: rec.Object.URI, Name: rec.Object.Name})
+		refMeta[rec.Object.URI] = *rec.Object
+	}
+
+	activation, err := c.ActivateMultiple(ctx, refs)
+	if err != nil {
+		return nil, fmt.Errorf("batch activation failed: %w", err)
+	}
+
+	// Build per-object reason strings from activation messages (keyed by ObjDescr/name).
+	reasons := make(map[string]string)
+	for _, msg := range activation.Messages {
+		if strings.ContainsAny(msg.Type, "EAX") && msg.ObjDescr != "" {
+			if reasons[msg.ObjDescr] == "" {
+				reasons[msg.ObjDescr] = msg.ShortText
+			}
+		}
+	}
+
+	// Objects still inactive after the request → Failed; the rest → Activated.
+	stillInactive := make(map[string]bool, len(activation.Inactive))
+	for _, obj := range activation.Inactive {
+		stillInactive[obj.URI] = true
+	}
+
+	for _, ref := range refs {
+		meta := refMeta[ref.URI]
+		if stillInactive[ref.URI] {
+			reason := reasons[ref.Name]
+			if reason == "" {
+				reason = "still inactive after activation attempt"
+			}
 			result.Failed = append(result.Failed, ActivationFailed{
-				Name:   obj.Name,
-				Type:   obj.Type,
-				Reason: err.Error(),
+				Name:   ref.Name,
+				Type:   meta.Type,
+				Reason: reason,
 			})
 		} else {
 			result.Activated = append(result.Activated, ActivatedObject{
-				Name: obj.Name,
-				Type: obj.Type,
-				URI:  obj.URI,
+				Name: ref.Name,
+				Type: meta.Type,
+				URI:  ref.URI,
 			})
 		}
 	}

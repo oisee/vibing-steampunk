@@ -46,6 +46,8 @@ func (s *Server) routeDevToolsAction(ctx context.Context, action, objectType, ob
 		switch objectType {
 		case "ACTIVATE":
 			return s.callHandler(ctx, s.handleActivate, params)
+		case "ACTIVATE_MULTI":
+			return s.callHandler(ctx, s.handleActivateMultiple, params)
 		case "ACTIVATE_PACKAGE":
 			return s.callHandler(ctx, s.handleActivatePackage, params)
 		}
@@ -88,6 +90,51 @@ func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	result, err := s.adtClient.Activate(ctx, objectURL, objectName)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("Activation failed: %v", err)), nil
+	}
+
+	output, _ := json.MarshalIndent(result, "", "  ")
+	return mcp.NewToolResultText(string(output)), nil
+}
+
+// handleActivateMultiple activates multiple objects in a single ADT request.
+// params.objects: array of {"url": "...", "name": "..."} pairs, or
+//                 array of strings in "TYPE NAME" format (e.g. "INCL ZREP_F01").
+func (s *Server) handleActivateMultiple(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, ok := request.GetArguments()["objects"]
+	if !ok {
+		return newToolResultError("objects is required (array of {url, name} or [\"TYPE NAME\", ...])"), nil
+	}
+
+	items, ok := raw.([]any)
+	if !ok || len(items) == 0 {
+		return newToolResultError("objects must be a non-empty array"), nil
+	}
+
+	refs := make([]adt.ObjectRef, 0, len(items))
+	for i, item := range items {
+		switch v := item.(type) {
+		case map[string]any:
+			u, _ := v["url"].(string)
+			n, _ := v["name"].(string)
+			if u == "" || n == "" {
+				return newToolResultError(fmt.Sprintf("objects[%d]: both 'url' and 'name' are required", i)), nil
+			}
+			refs = append(refs, adt.ObjectRef{URI: u, Name: n})
+		case string:
+			// "TYPE NAME" shorthand → resolve to ADT URL
+			u, n, err := s.adtClient.ResolveObjectRef(v)
+			if err != nil {
+				return newToolResultError(fmt.Sprintf("objects[%d]: cannot resolve %q: %v", i, v, err)), nil
+			}
+			refs = append(refs, adt.ObjectRef{URI: u, Name: n})
+		default:
+			return newToolResultError(fmt.Sprintf("objects[%d]: unsupported type %T", i, item)), nil
+		}
+	}
+
+	result, err := s.adtClient.ActivateMultiple(ctx, refs)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Activation failed: %v", err)), nil
 	}
