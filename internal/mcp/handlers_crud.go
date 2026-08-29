@@ -274,9 +274,19 @@ func (s *Server) handleCreatePackage(ctx context.Context, request mcp.CallToolRe
 		softwareComponent = strings.ToUpper(sc)
 	}
 
-	// Transportable packages require transport parameter
-	if !strings.HasPrefix(name, "$") && transport == "" {
-		return newToolResultError("transport is required for creating transportable packages (non-$ packages). Use --enable-transports flag."), nil
+	// A non-$ package usually needs a transport, but not always: a software
+	// component with change recording off (ZLOCAL on S/4HANA Cloud, and the
+	// equivalent elsewhere) takes packages that produce no transport at all,
+	// and on a browser-auth connection CreateTransport cannot even mint one.
+	//
+	// The name alone cannot tell the two apart, so only guess when the caller
+	// gave us nothing to go on. If a software component was named, defer to ADT:
+	// it is the authority on whether a transport is required, and it returns a
+	// specific error when one is.
+	if !strings.HasPrefix(name, "$") && transport == "" && softwareComponent == "" {
+		return newToolResultError("transport is required for a transportable package. " +
+			"If the package belongs to a software component with change recording off " +
+			"(for example ZLOCAL), pass software_component instead and no transport is needed."), nil
 	}
 
 	opts := adt.CreateObjectOptions{
