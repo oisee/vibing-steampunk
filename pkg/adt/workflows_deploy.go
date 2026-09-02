@@ -511,8 +511,9 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 			// Regular object - create it
 			return c.CreateFromFile(ctx, filePath, packageName, transport)
 		}
-		// For other errors (session timeout, network issues, etc.), proceed with update
-		// The parent class might still exist - let UpdateFromFile handle it
+		// Authentication, network and server failures are inconclusive. Do not
+		// turn them into an update attempt; fail closed before locking or writing.
+		return nil, fmt.Errorf("checking whether %s %s exists: %w", info.ObjectType, info.ObjectName, err)
 	}
 
 	// Object exists - update it (handles both regular objects and class includes)

@@ -429,6 +429,13 @@ func (c *Client) objectExistsByURL(ctx context.Context, objectURL string) (bool,
 // returned PartialCreateError. Manual recovery hints are only added
 // when our best-effort attempt could not finish.
 func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOptions, createErr error) error {
+	// An already-exists response proves the object predates this create attempt.
+	// It is not partial persistence owned by this request, so reconciliation
+	// must never lock or delete it.
+	if isAlreadyExistsError(createErr) {
+		return createErr
+	}
+
 	objectURL := GetObjectURL(opts.ObjectType, opts.Name, opts.ParentName)
 	if objectURL == "" {
 		// Object type we cannot URL-encode → no probe possible.
@@ -450,6 +457,20 @@ func (c *Client) reconcileFailedCreate(ctx context.Context, opts CreateObjectOpt
 	pce := c.cleanupPartialObject(ctx, objectURL, opts.PackageName, opts.Transport)
 	pce.OriginalErr = createErr
 	return pce
+}
+
+func isAlreadyExistsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || (apiErr.StatusCode != http.StatusBadRequest && apiErr.StatusCode != http.StatusConflict) {
+		return false
+	}
+	message := strings.ToLower(apiErr.Message)
+	return strings.Contains(message, "exceptionresourcealreadyexists") ||
+		strings.Contains(message, "already exists") ||
+		strings.Contains(message, "does already exist")
 }
 
 // cleanupPartialObject runs the best-effort compensating cleanup for a

@@ -123,6 +123,19 @@ func TestParseActivationResultActivationExecutedTrueIsNotAFailure(t *testing.T) 
 	}
 }
 
+func TestActivationResultError(t *testing.T) {
+	if err := ActivationResultError(&ActivationResult{Success: true}); err != nil {
+		t.Fatalf("success returned error: %v", err)
+	}
+	if err := ActivationResultError(nil); err == nil || !strings.Contains(err.Error(), "no result") {
+		t.Fatalf("nil result error = %v", err)
+	}
+	refused := &ActivationResult{Messages: []ActivationResultMessage{{Type: "E", ShortText: "synthetic activation failure"}}}
+	if err := ActivationResultError(refused); err == nil || !strings.Contains(err.Error(), "synthetic activation failure") {
+		t.Fatalf("logical failure error = %v", err)
+	}
+}
+
 // The wrapped shape still has to work. PR #148 fixes the root form by declaring
 // <msg> directly on the response struct and nothing else, which stops matching
 // the wrapper — this is the test that catches that.

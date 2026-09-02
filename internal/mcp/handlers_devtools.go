@@ -91,6 +91,12 @@ func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Activation failed: %v", err)), nil
 	}
+	if err := adt.ActivationResultError(result); err != nil {
+		// Same reasoning as the WriteSource boundary: the activation messages
+		// are the diagnosis, and a verdict without them is not actionable.
+		payload, _ := json.MarshalIndent(result, "", "  ")
+		return newToolResultError(fmt.Sprintf("%v\n\n%s", err, payload)), nil
+	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil

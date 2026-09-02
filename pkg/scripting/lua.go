@@ -18,10 +18,11 @@ import (
 
 // LuaEngine wraps a Lua VM with vsp bindings.
 type LuaEngine struct {
-	L      *lua.LState
-	client *adt.Client
-	ctx    context.Context
-	output io.Writer
+	L           *lua.LState
+	client      *adt.Client
+	writeSource func(context.Context, string, string, string, *adt.WriteSourceOptions) (*adt.WriteSourceResult, error)
+	ctx         context.Context
+	output      io.Writer
 
 	// Checkpoints (for Force Replay)
 	checkpoints map[string]map[string]interface{}
@@ -53,6 +54,9 @@ func NewLuaEngine(client *adt.Client) *LuaEngine {
 		ctx:         context.Background(),
 		output:      os.Stdout,
 		checkpoints: make(map[string]map[string]interface{}),
+	}
+	if client != nil {
+		engine.writeSource = client.WriteSource
 	}
 
 	engine.registerBuiltins()
@@ -138,7 +142,7 @@ Search & Source:
   searchObject(query, [type])     Search for ABAP objects
   grepObjects(pattern, [type])    Grep in object sources
   getSource(type, name)           Get source code
-  writeSource(type, name, src)    Write source code
+  writeSource(type, name, src, [options]) Write source (mode, transport, package, description)
   editSource(type, name, old, new) Edit source code
 
 Debugging - Breakpoints:

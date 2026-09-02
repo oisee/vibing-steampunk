@@ -156,6 +156,27 @@ func TestCreateObject_CleanFailureBeforePersistence(t *testing.T) {
 	}
 }
 
+func TestReconcileFailedCreateDoesNotDeletePreExistingObject(t *testing.T) {
+	mock := &methodPathMock{}
+	client := newReconcileClient(t, mock)
+	createErr := &APIError{
+		StatusCode: http.StatusBadRequest,
+		Message:    "ExceptionResourceAlreadyExists: synthetic object already exists",
+	}
+
+	err := client.reconcileFailedCreate(context.Background(), CreateObjectOptions{
+		ObjectType:  ObjectTypePackage,
+		Name:        "$SYNTHETIC",
+		PackageName: "$SYNTHETIC",
+	}, createErr)
+	if !errors.Is(err, createErr) {
+		t.Fatalf("error = %v, want original already-exists error", err)
+	}
+	if len(mock.calls) != 0 {
+		t.Fatalf("reconciliation touched a pre-existing object: %#v", mock.calls)
+	}
+}
+
 // TestCreateObject_PartialPersistenceCleanupOK covers the prod-incident
 // scenario: CreateObject POST returns 500 but SAP already persisted the
 // object. The existence probe returns 200, lock acquisition succeeds,

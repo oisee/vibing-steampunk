@@ -1,6 +1,7 @@
 package adt
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -28,6 +29,18 @@ import (
 // activate: SAP's E (error), A (abort) and X (short dump). W and I are produced
 // by activations that succeed, so they prove nothing on their own.
 const activationErrorTypes = "EAX"
+
+// ActivationResultError converts SAP's HTTP-200 activation refusal into an
+// error for callers that must not continue after a logical failure.
+func ActivationResultError(result *ActivationResult) error {
+	if result == nil {
+		return fmt.Errorf("activation returned no result")
+	}
+	if result.Success {
+		return nil
+	}
+	return fmt.Errorf("activation failed: %s", strings.Join(result.ProblemLines(), "; "))
+}
 
 // ErrorMessages returns the messages that say the object did not activate, in
 // the order SAP listed them — the first is the one to lead with.

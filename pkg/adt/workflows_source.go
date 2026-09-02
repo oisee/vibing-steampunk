@@ -173,6 +173,22 @@ type WriteSourceResult struct {
 	Message      string              `json:"message,omitempty"`
 }
 
+// WriteSourceResultError converts a logical WriteSource failure into an error
+// for callers that must not report success after an HTTP-level success.
+func WriteSourceResultError(result *WriteSourceResult) error {
+	if result == nil {
+		return fmt.Errorf("WriteSource failed: no result returned")
+	}
+	if result.Success {
+		return nil
+	}
+	message := strings.TrimSpace(result.Message)
+	if message == "" {
+		message = "operation returned success=false without a diagnostic"
+	}
+	return fmt.Errorf("WriteSource failed: %s", message)
+}
+
 // WriteSource is a unified tool for writing ABAP source code across different object types.
 // Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests.
 //
@@ -218,6 +234,10 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	result := &WriteSourceResult{
 		ObjectType: objectType,
 		ObjectName: name,
+	}
+	if opts.Mode != WriteModeCreate && opts.Mode != WriteModeUpdate && opts.Mode != WriteModeUpsert {
+		result.Message = fmt.Sprintf("Invalid mode %q (supported: create, update, upsert)", opts.Mode)
+		return result, nil
 	}
 
 	// Function modules take their own path: they are addressed through their

@@ -463,7 +463,7 @@ func handleSyntaxCheck(ctx *ExecutionContext, params map[string]interface{}) (in
 		results = append(results, map[string]interface{}{
 			"object":    obj.Name,
 			"success":   !hasErrors,
-			"messages":  checkResults,
+			"messages": checkResults,
 		})
 	}
 
@@ -514,6 +514,9 @@ func handleActivate(ctx *ExecutionContext, params map[string]interface{}) (inter
 		result, err := ctx.Client().Activate(ctx.Context(), objectURL, obj.Name)
 		if err != nil {
 			return nil, err
+		}
+		if err := adt.ActivationResultError(result); err != nil {
+			return nil, fmt.Errorf("activating %s: %w", obj.Name, err)
 		}
 		results = append(results, map[string]interface{}{
 			"object":  obj.Name,
