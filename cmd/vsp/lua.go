@@ -6,9 +6,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 	"github.com/oisee/vibing-steampunk/pkg/scripting"
-	"github.com/spf13/cobra"
 )
 
 var luaCmd = &cobra.Command{
@@ -65,18 +66,20 @@ func runLua(cmd *cobra.Command, args []string) error {
 	// Resolve configuration (same as MCP server)
 	resolveConfig(cmd.Parent())
 
-	// Validate we have auth
-	if err := validateConfig(); err != nil {
-		return err
-	}
+	// No validateConfig() here on purpose: it checks the global cfg.BaseURL,
+	// which a named system (-s / .vsp.json) never populates, so it rejected
+	// `-s a4h` before the resolver ever ran. createADTClientFor resolves the
+	// system and reports a real error if none can be found.
 
-	// Process cookie auth
-	if err := processCookieAuth(cmd.Parent()); err != nil {
-		return err
-	}
+	// No processCookieAuth here either: it reads the same global cfg. A named
+	// system carries its own credentials through resolveSystemParams, which is
+	// how deploy, deps and every other -s-aware command already work.
 
 	// Create ADT client
-	client := createADTClient()
+	client, err := createADTClientFor(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Create Lua engine
 	engine := scripting.NewLuaEngine(client)
