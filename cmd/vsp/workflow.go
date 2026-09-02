@@ -7,9 +7,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/dsl"
-	"github.com/spf13/cobra"
 )
 
 var workflowCmd = &cobra.Command{
@@ -89,10 +90,10 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 	// Resolve configuration (same as MCP server)
 	resolveConfig(cmd.Parent().Parent())
 
-	// Validate we have auth
-	if err := validateConfig(); err != nil {
-		return err
-	}
+	// No validateConfig() here on purpose: it checks the global cfg.BaseURL,
+	// which a named system (-s / .vsp.json) never populates, so it rejected
+	// `-s a4h` before the resolver ever ran. createADTClientFor resolves the
+	// system and reports a real error if none can be found.
 
 	// Process cookie auth
 	if err := processCookieAuth(cmd.Parent().Parent()); err != nil {
@@ -100,7 +101,10 @@ func runWorkflow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create ADT client
-	client := createADTClient()
+	client, err := createADTClientFor(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Create workflow engine
 	engine := dsl.NewWorkflowEngine(client)
@@ -150,16 +154,15 @@ func runTestWorkflow(cmd *cobra.Command, args []string) error {
 	// Resolve configuration
 	resolveConfig(cmd.Parent().Parent())
 
-	if err := validateConfig(); err != nil {
-		return err
-	}
-
 	if err := processCookieAuth(cmd.Parent().Parent()); err != nil {
 		return err
 	}
 
 	// Create ADT client
-	client := createADTClient()
+	client, err := createADTClientFor(cmd)
+	if err != nil {
+		return err
+	}
 
 	fmt.Fprintf(os.Stderr, "Discovering tests in: %s\n", packagePattern)
 
@@ -238,6 +241,43 @@ func runTestWorkflow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// createADTClientFor resolves the target system the way every other command
+// does — -s, .vsp.json, then the environment — and routes through getClient so
+// the system's declared safety reaches the client.
+//
+// createADTClient below reads the global cfg, which a named system never
+// populates. So `vsp debug -s a4h` failed with "SAP URL is required" while
+// `vsp deploy -s a4h` worked, and the five commands built this way applied no
+// safety configuration at all: a read_only system was not read-only for them.
+func createADTClientFor(cmd *cobra.Command) (*adt.Client, error) {
+	params, err := resolveSystemParams(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	// Backfill the global cfg from the resolved system. This is not elegant,
+	// and it is deliberate: the debugger, the LSP and the Lua engine read
+	// cfg.BaseURL, cfg.Username and friends directly in a dozen places each —
+	// the WebSocket URL for ZADT_VSP among them, which is why `vsp debug -s a4h`
+	// reported "dial tcp :80" and an empty user. Threading params through all of
+	// that is a larger change than this one function; leaving them reading an
+	// empty cfg is what made -s silently useless for five commands.
+	cfg.BaseURL = params.URL
+	cfg.Username = params.User
+	cfg.Password = params.Password
+	if params.Client != "" {
+		cfg.Client = params.Client
+	}
+	if params.Language != "" {
+		cfg.Language = params.Language
+	}
+	cfg.InsecureSkipVerify = cfg.InsecureSkipVerify || params.Insecure
+
+	return getClient(params)
+}
+
+// Deprecated: use createADTClientFor. Kept for the LSP path, which builds its
+// client opportunistically after its own auth step and has no command to hand.
 func createADTClient() *adt.Client {
 	opts := []adt.Option{
 		adt.WithClient(cfg.Client),

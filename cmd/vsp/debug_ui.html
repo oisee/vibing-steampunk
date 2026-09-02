@@ -25,6 +25,14 @@ header{display:flex;align-items:center;gap:14px;padding:9px 14px;background:var(
 .dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(87,191,146,.15)}
 .dot.stop{background:var(--stop);box-shadow:0 0 0 3px rgba(238,133,120,.15)}
 .spacer{flex:1}
+.bar{display:flex;align-items:center;gap:10px;padding:7px 14px;background:var(--sunk);border-bottom:1px solid var(--rule);flex-shrink:0;flex-wrap:wrap}
+.fld{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.fld input{font-family:var(--mono);font-size:12px;background:var(--panel);color:var(--ink);border:1px solid var(--rule-2);
+  border-radius:3px;padding:4px 8px;letter-spacing:0;text-transform:none}
+.fld input:focus{outline:none;border-color:var(--accent)}
+#target{width:210px} #line{width:74px;text-align:right}
+.chk{display:flex;align-items:center;gap:6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);cursor:pointer}
+.chk input{accent-color:var(--brass)}
 button{font-family:var(--ui);font-size:12px;font-weight:500;padding:5px 11px;background:var(--panel-2);color:var(--ink-2);
   border:1px solid var(--rule-2);border-radius:3px;cursor:pointer}
 button:hover:not(:disabled){border-color:var(--accent);color:var(--ink)}
@@ -86,13 +94,22 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
   <span class="brand">vsp <span>debugger</span></span>
   <span class="status"><span class="dot" id="dot"></span><span id="who">detached</span></span>
   <span class="spacer"></span>
-  <button id="listen" class="primary">Listen</button>
-  <button id="into" disabled>Step into <kbd>F11</kbd></button>
+  <button id="into" disabled>Into <kbd>F11</kbd></button>
   <button id="over" disabled>Over <kbd>F10</kbd></button>
   <button id="out" disabled>Out</button>
   <button id="cont" disabled>Continue <kbd>F8</kbd></button>
   <button id="detach" disabled>Detach</button>
 </header>
+
+<div class="bar">
+  <label class="fld">object <input id="target" placeholder="RFC_SYSTEM_INFO" spellcheck="false"></label>
+  <label class="fld">line <input id="line" type="number" min="1" value="1"></label>
+  <button id="setbp">Set breakpoint</button>
+  <label class="chk"><input type="checkbox" id="sys"> system code</label>
+  <span class="spacer"></span>
+  <button id="run">Run</button>
+  <button id="listen" class="primary">Listen</button>
+</div>
 
 <main>
   <div class="left">
@@ -112,36 +129,40 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
 
 <script>
 const $ = id => document.getElementById(id);
-let state = {attached:false}, srcCache = new Map(), currentFrame = null, busy = false;
+let state = {}, srcCache = new Map(), busy = false;
 
 async function call(path){
   if (busy) return;
-  busy = true;
-  document.body.style.cursor = 'progress';
+  busy = true; document.body.style.cursor = 'progress';
+  for (const b of ['setbp','run','listen','into','over','out','cont','detach']) $(b).disabled = true;
   try {
     const r = await fetch(path, {method:'POST'});
-    const j = await r.json();
-    if (j.error) { note(j.error); }
-    else { state = j; await render(); }
+    state = await r.json();
+    await render();
   } catch (e) { note(String(e)); }
-  finally { busy = false; document.body.style.cursor = ''; }
+  finally { busy = false; document.body.style.cursor = ''; await buttons(); }
 }
 function note(t){ $('note').textContent = t || ''; }
+
+async function buttons(){
+  const on = !!state.attached;
+  for (const b of ['into','over','out','cont','detach']) $(b).disabled = !on;
+  for (const b of ['setbp','run','listen']) $(b).disabled = false;
+}
 
 function frameLabel(f){ return f.includeName && f.includeName !== f.programName ? f.includeName : f.programName; }
 
 async function render(){
   const on = !!state.attached;
   $('dot').className = 'dot ' + (on ? 'stop' : '');
-  $('who').textContent = on
-    ? `${state.debuggee?.debuggeeUser || '?'} · ${state.debuggee?.program || ''} · stopped`
-    : 'detached';
-  for (const b of ['into','over','out','cont','detach']) $(b).disabled = !on;
-  $('listen').disabled = on;
+  $('who').textContent = on ? (state.where || 'stopped') : 'detached';
+  if (document.activeElement !== $('target') && state.target) $('target').value = state.target;
+  if (document.activeElement !== $('line') && state.line) $('line').value = state.line;
+  $('sys').checked = !!state.systemDebugging;
   note(state.note);
 
   const frames = state.stack?.stack || [];
-  $('stackn').textContent = frames.length ? frames.length : '';
+  $('stackn').textContent = frames.length || '';
   const cur = state.stack?.debugCursorStackIndex ?? 0;
   $('stack').innerHTML = frames.length ? '' : '<div class="empty">—</div>';
   frames.forEach((f, i) => {
@@ -149,14 +170,13 @@ async function render(){
     el.className = 'frame' + (i === cur ? ' cur' : '') + (f.systemProgram ? ' sys' : '');
     el.innerHTML = `<span class="i">${f.stackPosition ?? i}</span><span>
         <span class="nm">${esc(frameLabel(f) || '?')}</span>
-        <div class="meta">line ${f.line ?? '?'}${f.eventName ? ' · ' + esc(f.eventName) : ''}${f.stackType && f.stackType !== 'ABAP' ? ' · ' + esc(f.stackType) : ''}</div>
+        <div class="meta">line ${f.line ?? '?'}${f.eventName ? ' · ' + esc(f.eventName) : ''}</div>
       </span>`;
-    el.onclick = () => { if (f.stackUri) call('/api/goto?uri=' + encodeURIComponent(f.stackUri)); };
     $('stack').appendChild(el);
   });
 
   const vars = state.variables || [];
-  $('varn').textContent = vars.length ? vars.length : '';
+  $('varn').textContent = vars.length || '';
   $('vars').innerHTML = vars.length ? '' : '<div class="empty">—</div>';
   vars.forEach(v => {
     const el = document.createElement('div');
@@ -169,38 +189,47 @@ async function render(){
   });
 
   const f = frames[cur];
-  if (f) await showSource(f);
+  if (f) await showSource(frameLabel(f), f.line);
+  else if (state.target) await showSource(state.target, state.line);
 }
 
-async function showSource(f){
-  const key = (f.programName || '') + '|' + (f.includeName || '');
-  let src = srcCache.get(key);
+async function showSource(object, hilite){
+  if (!object) return;
+  let src = srcCache.get(object);
   if (src === undefined) {
-    const r = await fetch(`/api/source?program=${encodeURIComponent(f.programName||'')}&include=${encodeURIComponent(f.includeName||'')}`);
+    const r = await fetch('/api/source?object=' + encodeURIComponent(object));
     const j = await r.json();
     src = j.source || '';
     if (j.error) note(`source for ${j.name}: ${j.error}`);
-    srcCache.set(key, src);
+    srcCache.set(object, src);
   }
-  $('srcname').textContent = frameLabel(f) || '';
-  if (!src) { $('source').innerHTML = '<div class="empty">Source not available for this frame.</div>'; return; }
-
+  $('srcname').textContent = object;
+  if (!src) { $('source').innerHTML = '<div class="empty">Source not available.</div>'; return; }
   const lines = src.split('\n');
   $('source').innerHTML = lines.map((t, i) => {
     const n = i + 1;
-    return `<div class="ln${n === f.line ? ' cur' : ''}"><span class="n">${n}</span><span class="t">${esc(t)}</span></div>`;
+    return `<div class="ln${n === hilite ? ' cur' : ''}" data-n="${n}"><span class="n">${n}</span><span class="t">${esc(t)}</span></div>`;
   }).join('');
   const el = $('source').querySelector('.ln.cur');
   if (el) el.scrollIntoView({block:'center'});
+  // Clicking a line picks it as the breakpoint line — reading a number off the
+  // gutter and retyping it is the kind of friction that makes a tool unused.
+  $('source').querySelectorAll('.ln').forEach(row => {
+    row.onclick = () => { $('line').value = row.dataset.n; };
+  });
 }
 
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const q = () => `object=${encodeURIComponent($('target').value.trim())}&line=${encodeURIComponent($('line').value)}`;
 
-$('listen').onclick = () => { note('listening for up to 60s — trigger the breakpoint now'); call('/api/listen'); };
-$('into').onclick   = () => call('/api/step?type=stepInto');
-$('over').onclick   = () => call('/api/step?type=stepOver');
-$('out').onclick    = () => call('/api/step?type=stepReturn');
-$('cont').onclick   = () => call('/api/step?type=stepContinue');
+$('setbp').onclick  = () => { srcCache.delete($('target').value.trim().toUpperCase()); call('/api/bp?' + q()); };
+$('sys').onchange   = () => call('/api/sys?on=' + ($('sys').checked ? 'true' : 'false'));
+$('run').onclick    = () => call('/api/run?' + q());
+$('listen').onclick = () => { note('listening — trigger it now if you have not'); call('/api/listen?seconds=60'); };
+$('into').onclick   = () => call('/api/step?type=into');
+$('over').onclick   = () => call('/api/step?type=over');
+$('out').onclick    = () => call('/api/step?type=out');
+$('cont').onclick   = () => call('/api/step?type=continue');
 $('detach').onclick = () => { srcCache.clear(); call('/api/detach'); };
 
 document.addEventListener('keydown', e => {

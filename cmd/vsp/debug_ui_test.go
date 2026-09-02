@@ -20,7 +20,7 @@ func TestDebugUIServesItsPage(t *testing.T) {
 		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"<title>vsp debugger</title>", "/api/listen", "stepInto", "Call stack"} {
+	for _, want := range []string{"<title>vsp debugger</title>", "/api/listen", "/api/step?type=into", "/api/bp", "Call stack"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the served page is missing %q — is the embed resolving?", want)
 		}

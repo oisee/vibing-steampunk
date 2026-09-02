@@ -230,6 +230,15 @@ func (d *Debugger) ResolveSourceURI(ctx context.Context, name string) (string, e
 	if err != nil {
 		return "", err
 	}
+	// A name is not unique across object types, and the first match is not
+	// necessarily the one with source in it. RFC_SYSTEM_INFO, for instance, is
+	// both a DDIC structure and a function module; resolving to the structure
+	// yields a URI a breakpoint cannot be placed on, and SAP reports that far
+	// away as "Parameter I_MAIN_PROGRAM ... is initial, and therefore invalid".
+	//
+	// So prefer a result that can actually carry a line breakpoint, and only
+	// fall back to a non-source match when there is nothing better.
+	var fallback string
 	for _, r := range results {
 		if !strings.EqualFold(strings.TrimSpace(r.Name), name) {
 			continue
@@ -241,7 +250,15 @@ func (d *Debugger) ResolveSourceURI(ctx context.Context, name string) (string, e
 		if !strings.Contains(uri, "/source/main") {
 			uri = strings.TrimSuffix(uri, "/") + "/source/main"
 		}
-		return uri, nil
+		if sourceBearingURI(uri) {
+			return uri, nil
+		}
+		if fallback == "" {
+			fallback = uri
+		}
+	}
+	if fallback != "" {
+		return fallback, nil
 	}
 	return "", fmt.Errorf("no object named %s in the repository", name)
 }
@@ -286,4 +303,25 @@ func FormatBreakpoints(bps []adt.Breakpoint) string {
 		fmt.Fprintf(&sb, "%-10s %-28s %s\n", bp.Kind, where, bp.ID)
 	}
 	return sb.String()
+}
+
+// sourceBearingURI reports whether an ADT URI names something a line
+// breakpoint can sit in. The list is the set of source-bearing resources this
+// client already knows how to read; anything else — a DDIC type, a domain, a
+// table — has no line to stop on.
+func sourceBearingURI(uri string) bool {
+	lower := strings.ToLower(uri)
+	for _, path := range []string{
+		"/functions/groups/",
+		"/programs/programs/",
+		"/programs/includes/",
+		"/oo/classes/",
+		"/oo/interfaces/",
+		"/behaviordefinitions/",
+	} {
+		if strings.Contains(lower, path) {
+			return true
+		}
+	}
+	return false
 }
