@@ -27,21 +27,36 @@ pending for a week after both shipped on 2026-08-25. Corrected 2026-09-02.
   `cli_deps.go` still carries its own extraction.
 - Design: [002](reports/2026-04-05-002-graph-engine-design.md), [003](reports/2026-04-05-003-graph-engine-alignment-for-claude.md)
 
-### 2. GUI Debugger (Issue #2) — Strategic
-Plan: MCP debug sessions → DAP → Web UI. ADT REST API mapped from `CL_TPDA_ADT_RES_APP`. Design: [001](reports/2026-04-05-001-gui-debugger-design.md)
+### 2. Debugger — Phase 1 shipped, #2 closed 2026-09-02
+This line advertised "MCP debug sessions → DAP → Web UI" and pointed at #2 after
+that issue was closed, so it promised two phases nobody was tracking.
+- Built: `pkg/adt/debugger.go` (1833 lines), a session that survives across MCP
+  tool calls (`internal/mcp/handlers_debug_session.go`), six registered tools,
+  and ADT-native AMDP routing whose breakpoints actually fire.
+- Not built: the DAP shim and the Web UI. No `DebugAdapter` code, no `web/`.
+  Now tracked as #184, together with the question of whether vsp should ship a
+  UI at all or stop at DAP and let editors be the front end.
+- Design: [001](reports/2026-04-05-001-gui-debugger-design.md)
 
 ### 3. Open Issues
 - **#91** The 423 lock-handle class — the live one, and this entry was wrong
   twice. `22517d4` did not close it: a third-party release bisect names that
   commit as the start of a regression, and its `ModificationSupport` guard was
   itself removed by `9b98997`. #88, #92, #98, #110 are closed as duplicates of
-  #91 (2026-09-01); #132 stays open for its transport-reuse leg.
+  #91 (2026-09-01), and #132 with them once PR #145 landed the transport reuse
+  its second leg needed. Confirmed fixed on a live S/4HANA 758 on 2026-09-02
+  with a control: `main` creates and activates in `$TMP` where v2.54.0 fails
+  the identical operation on the same host minutes apart.
   Cause: `SessionType` defaults to stateless (`config.go:198`, `d84db03`) and
   `http.go:502` stamps every unflagged request `stateless`, so any hop between
   LOCK and the write retires the ICM context and kills the handle. The fix on
   `fix/91-session-affinity` closes the package-lookup hop, the CSRF probe, and
-  two mutations that were themselves stateless. Still open after it: the
-  keep-alive ticker (on by default, 5m) and the MCP cross-tool-call window.
+  two mutations that were themselves stateless. The keep-alive ticker is fixed
+  too (#168: default 0, and a tick inside a lock window is skipped). What is
+  left is the MCP cross-tool-call window — #169, and #181 is its deterministic
+  face: with `--allowed-packages` set every write failed this way in every
+  release since v2.42.0. PR #183 makes the lock handle optional so the window
+  cannot span a model turn.
 - **#166** A failed mutation strands the SAP-side ENQUEUE — split out of #92
   so it survives that closure. Users clear these by hand in SM12.
 - **#55** RunReport in APC — *not* an architectural limit, which this line
