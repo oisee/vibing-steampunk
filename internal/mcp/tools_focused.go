@@ -56,9 +56,12 @@ func focusedToolSet() map[string]bool {
 		"CloneObject":        true, // Copy object to new name
 		"GetClassInfo":       true, // Quick class metadata
 
-		// Advanced/Edge cases (2)
-		"LockObject":   true,
-		"UnlockObject": true,
+		// LockObject and UnlockObject used to sit here, and focused mode had
+		// nothing that accepts a lock handle — no UpdateSource, no
+		// DeleteObject, no include writers. So an agent in this mode could
+		// take a lock and had no way to spend it: the only reachable outcome
+		// was a stranded ENQUEUE somebody clears by hand in SM12. Writing is
+		// covered by WriteSource and EditSource, which lock internally (#169).
 
 		// File-based operations (2)
 		"ImportFromFile": true, // File → SAP (replaces DeployFromFile)

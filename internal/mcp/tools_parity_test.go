@@ -16,7 +16,7 @@ import (
 // cmd/vsp/main.go (the --mode flag help and the long usage) and README.md.
 const (
 	wantHyperfocusedTools = 1
-	wantFocusedTools      = 102
+	wantFocusedTools      = 100
 	wantExpertTools       = 147
 )
 
