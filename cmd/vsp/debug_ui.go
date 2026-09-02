@@ -9,97 +9,139 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/oisee/open-rfc-go/rfc"
+
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
 
 //go:embed debug_ui.html
 var debugUIAssets embed.FS
 
-// The debugger has had a working session layer since Phase 1 of #2 — a session
-// that survives across tool calls, a stack, variables, stepping. What it never
-// had was something to look at, and #2 was closed with two thirds of its design
-// unbuilt (now #184).
+// A local face for the debugger.
 //
-// This is the smallest honest answer to "show me": a local page, served by vsp
-// itself, driving the same pkg/adt debugger client the MCP tools drive. No DAP
-// layer, no framework, no build step. It is a prototype for the Phase 3
-// question — should vsp ship a UI at all, or stop at DAP and let editors be the
-// front end — and it exists so that question can be answered by looking rather
-// than by imagining.
+// It rides on the same pinned RFC conversation `vsp rfc debug` uses, and that
+// is not an implementation detail: a breakpoint registered by one process does
+// not survive it, and a listener registered through the Z facade never receives
+// a debuggee whose breakpoint was registered through ADT. Both were learned the
+// hard way. One session sets the breakpoint, listens, attaches and steps, which
+// is the only arrangement that actually stops.
+//
+// Phase 1 of #2 built the session layer; this is the "show me" for #184, where
+// the open question is whether vsp should ship a UI at all or stop at a DAP
+// shim and let editors be the front end.
 var debugUICmd = &cobra.Command{
-	Use:   "ui",
+	Use:   "ui [OBJECT]",
 	Short: "Serve a local debugger UI on localhost",
+	Args:  cobra.MaximumNArgs(1),
 	Long: `Serve a local web UI for the ABAP debugger.
 
-It binds to localhost only, drives the same debugger client the MCP tools use,
-and holds one session. Nothing is written to the SAP system: it listens,
-attaches, steps, and reads the stack, variables and source.
+Name an object and the page opens ready to debug it — a report, or a function
+module, which is resolved to its function group's include for you.
 
-  vsp debug ui                 # http://127.0.0.1:7799
-  vsp debug ui --port 8080
-  vsp debug ui --user DEVELOPER   # listen for that user's processes
+  vsp -s a4h debug ui                     # http://127.0.0.1:7799
+  vsp -s a4h debug ui RFC_SYSTEM_INFO     # opens on that function module
+  vsp -s a4h debug ui ZVSP_DEBUG_PLAY --http-port 8080
 
-Set a breakpoint in ADT or with 'vsp debug', run the ABAP, and the page picks
-the session up.`,
+Set the line, press Set breakpoint, then Run — for a function module the page
+calls it over a second RFC connection, so the breakpoint fires in a session it
+started itself. Standard SAP code needs "system code" switched on; SAP accepts
+a breakpoint there and silently never stops without it.`,
 	RunE: runDebugUI,
 }
 
 var (
-	debugUIPort int
-	debugUIUser string
+	debugUIPort    int
+	debugUIUser    string
+	debugUITimeout int
 )
 
 func init() {
-	debugUICmd.Flags().IntVar(&debugUIPort, "port", 7799, "Port to bind on localhost")
-	debugUICmd.Flags().StringVar(&debugUIUser, "user", "", "Listen for this user's debuggees (defaults to the configured user)")
+	// Not "port": rfcDestinationFor reads a --port flag as the RFC gateway port
+	// (rfc.go:468, declared on rfcCmd as a persistent flag). Naming the HTTP
+	// port that way made this command dial the SAP gateway on 7799 and hang
+	// before it ever printed a line.
+	debugUICmd.Flags().IntVar(&debugUIPort, "http-port", 7799, "Port to bind the UI on localhost")
+	debugUICmd.Flags().StringVar(&debugUIUser, "user", "", "Whose debuggees to listen for (default: the logon user)")
+	debugUICmd.Flags().IntVar(&debugUITimeout, "timeout", 600, "Seconds a single RFC call may take; must exceed the listen timeout")
 	debugCmd.AddCommand(debugUICmd)
 }
 
-// debugUIServer holds the one session the page talks to. A debug session is
-// single-threaded on the SAP side, so this is deliberately one session and a
-// mutex, not a pool.
+// debugUIServer owns the one pinned debug session. A pinned RFC conversation is
+// single-threaded, so every handler takes the same lock — the page can fire
+// concurrent fetches and the session must not see two calls at once.
 type debugUIServer struct {
-	client   *adt.Client
+	mu     sync.Mutex
+	dbg    *saprfc.Debugger
+	dest   saprfc.Params
+	user   string
+	target string
+	line   int
+	sysDbg bool
+
 	attached bool
-	debuggee *adt.Debuggee
+	debuggee *saprfc.ADTDebuggee
 }
 
 type uiState struct {
+	Target    string              `json:"target"`
+	Line      int                 `json:"line"`
+	SystemDbg bool                `json:"systemDebugging"`
 	Attached  bool                `json:"attached"`
-	Debuggee  *adt.Debuggee       `json:"debuggee,omitempty"`
+	Where     string              `json:"where,omitempty"`
 	Stack     *adt.DebugStackInfo `json:"stack,omitempty"`
 	Variables []adt.DebugVariable `json:"variables,omitempty"`
 	Note      string              `json:"note,omitempty"`
 }
 
 func runDebugUI(cmd *cobra.Command, args []string) error {
-	client := createADTClient()
-	srv := &debugUIServer{client: client}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", srv.handleIndex)
-	mux.HandleFunc("/api/state", srv.handleState)
-	mux.HandleFunc("/api/listen", srv.handleListen)
-	mux.HandleFunc("/api/step", srv.handleStep)
-	mux.HandleFunc("/api/goto", srv.handleGoTo)
-	mux.HandleFunc("/api/source", srv.handleSource)
-	mux.HandleFunc("/api/detach", srv.handleDetach)
-
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(debugUIPort))
-	lc := &net.ListenConfig{}
-	ln, err := lc.Listen(cmd.Context(), "tcp", addr)
-	if err != nil {
-		return fmt.Errorf("binding %s: %w", addr, err)
+	target := ""
+	if len(args) == 1 {
+		target = strings.ToUpper(strings.TrimSpace(args[0]))
 	}
 
-	fmt.Fprintf(os.Stderr, "debugger UI on http://%s\n", addr)
-	fmt.Fprintf(os.Stderr, "set a breakpoint, run the ABAP, then press Listen on the page\n")
+	return withRFCDestTimeout(cmd, time.Duration(debugUITimeout)*time.Second, func(ctx context.Context, c *rfc.Client, dest saprfc.Params) error {
+		user := debugUIUser
+		if user == "" {
+			user = dest.User
+		}
+		dbg, err := saprfc.NewDebugger(ctx, c, user)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = dbg.Close(ctx) }()
 
-	return (&http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}).Serve(ln)
+		srv := &debugUIServer{dbg: dbg, dest: dest, user: user, target: target, line: 1}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", srv.handleIndex)
+		mux.HandleFunc("/api/state", srv.handleState)
+		mux.HandleFunc("/api/bp", srv.handleBreakpoint)
+		mux.HandleFunc("/api/sys", srv.handleSystemDebugging)
+		mux.HandleFunc("/api/listen", srv.handleListen)
+		mux.HandleFunc("/api/run", srv.handleRun)
+		mux.HandleFunc("/api/step", srv.handleStep)
+		mux.HandleFunc("/api/source", srv.handleSource)
+		mux.HandleFunc("/api/detach", srv.handleDetach)
+
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(debugUIPort))
+		lc := &net.ListenConfig{}
+		ln, err := lc.Listen(ctx, "tcp", addr)
+		if err != nil {
+			return fmt.Errorf("binding %s: %w", addr, err)
+		}
+		fmt.Fprintf(os.Stderr, "debugger UI on http://%s (user %s)\n", addr, user)
+		if target != "" {
+			fmt.Fprintf(os.Stderr, "target: %s\n", target)
+		}
+		return (&http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}).Serve(ln)
+	})
 }
 
 func (s *debugUIServer) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -121,136 +163,199 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeErr(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadGateway)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-}
-
-// collect returns the whole picture in one response. The page is a view of a
-// stopped process, so a partial answer is worse than a slow one.
-func (s *debugUIServer) collect(ctx context.Context) *uiState {
-	st := &uiState{Attached: s.attached, Debuggee: s.debuggee}
+// snapshot builds the whole picture. Callers hold the lock.
+func (s *debugUIServer) snapshot(ctx context.Context, note string) *uiState {
+	st := &uiState{Target: s.target, Line: s.line, SystemDbg: s.sysDbg, Attached: s.attached, Note: note}
+	if s.debuggee != nil {
+		st.Where = fmt.Sprintf("%s/%s:%d", s.debuggee.Program, s.debuggee.Include, s.debuggee.Line)
+	}
 	if !s.attached {
-		st.Note = "not attached — press Listen, then trigger the breakpoint"
+		if st.Note == "" {
+			st.Note = "not attached — set a breakpoint, press Run, then Listen"
+		}
 		return st
 	}
 
-	stack, err := s.client.DebuggerGetStack(ctx, true)
-	if err != nil {
-		st.Note = fmt.Sprintf("stack unavailable: %v", err)
-		return st
+	if res, err := s.dbg.ADTStack(ctx); err == nil {
+		if info, perr := adt.ParseStackXML(res.Body); perr == nil {
+			st.Stack = info
+		}
 	}
-	st.Stack = stack
-
-	vars, err := s.client.DebuggerGetVariables(ctx, nil)
-	if err != nil {
-		// A missing stack is fatal to the view; missing variables are not.
-		st.Note = fmt.Sprintf("variables unavailable: %v", err)
-		return st
+	if vars, err := s.dbg.Locals(ctx); err == nil {
+		st.Variables = vars
 	}
-	st.Variables = vars
 	return st
 }
 
 func (s *debugUIServer) handleState(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, s.collect(r.Context()))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	writeJSON(w, s.snapshot(r.Context(), ""))
+}
+
+func (s *debugUIServer) handleSystemDebugging(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sysDbg = r.URL.Query().Get("on") == "true"
+	s.dbg.SystemDebugging(s.sysDbg)
+	note := "breakpoints in SAP standard code: off"
+	if s.sysDbg {
+		note = "breakpoints in SAP standard code: on"
+	}
+	writeJSON(w, s.snapshot(r.Context(), note))
+}
+
+func (s *debugUIServer) handleBreakpoint(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if obj := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("object"))); obj != "" {
+		s.target = obj
+	}
+	if n, err := strconv.Atoi(r.URL.Query().Get("line")); err == nil && n > 0 {
+		s.line = n
+	}
+	if s.target == "" {
+		writeJSON(w, s.snapshot(r.Context(), "name an object first"))
+		return
+	}
+
+	bps, err := s.dbg.ADTAddBreakpoint(r.Context(), s.target, s.line, "")
+	if err != nil {
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("breakpoint refused: %v", err)))
+		return
+	}
+	// SAP accepts the request and reports per-breakpoint refusals separately;
+	// a caller that only checks err believes it set something it did not.
+	for _, rej := range s.dbg.Rejected() {
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("not placed at %s:%d — %s", s.target, s.line, rej.ErrorMessage)))
+		return
+	}
+	where := fmt.Sprintf("%s:%d", s.target, s.line)
+	if len(bps) > 0 && bps[0].URI != "" {
+		where = bps[0].URI
+	}
+	writeJSON(w, s.snapshot(r.Context(), "breakpoint set at "+where))
 }
 
 func (s *debugUIServer) handleListen(w http.ResponseWriter, r *http.Request) {
-	user := debugUIUser
-	if user == "" {
-		user = cfg.Username
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	seconds := 60
+	if n, err := strconv.Atoi(r.URL.Query().Get("seconds")); err == nil && n > 0 {
+		seconds = n
 	}
 
-	res, err := s.client.DebuggerListen(r.Context(), &adt.ListenOptions{
-		DebuggingMode:  adt.DebuggingModeUser,
-		User:           user,
-		TimeoutSeconds: 60,
-	})
-	if err != nil {
-		writeErr(w, err)
+	who, _, err := s.dbg.ADTCatch(r.Context(), s.user, "vsp", adtTerminalID, seconds)
+	if err != nil && who == nil {
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("listen failed: %v", err)))
 		return
 	}
-	if res.TimedOut || res.Debuggee == nil {
-		writeJSON(w, &uiState{Note: "no debuggee within 60s — is the breakpoint set, and did the ABAP run?"})
-		return
-	}
-
-	if _, err := s.client.DebuggerAttach(r.Context(), res.Debuggee.ID, user); err != nil {
-		writeErr(w, err)
+	if who == nil {
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("nobody stopped within %ds — is the breakpoint on an executable line?", seconds)))
 		return
 	}
 	s.attached = true
-	s.debuggee = res.Debuggee
-	writeJSON(w, s.collect(r.Context()))
+	s.debuggee = who
+	note := ""
+	if err != nil {
+		note = fmt.Sprintf("attached, but the stack could not be read: %v", err)
+	}
+	writeJSON(w, s.snapshot(r.Context(), note))
+}
+
+// handleRun triggers the target over a SECOND RFC connection. It has to be a
+// second one: this process's own conversation is pinned to the debug session,
+// and calling through it would deadlock against the breakpoint it is waiting on.
+func (s *debugUIServer) handleRun(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	target := s.target
+	dest := s.dest
+	s.mu.Unlock()
+
+	if target == "" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		writeJSON(w, s.snapshot(r.Context(), "name an object first"))
+		return
+	}
+
+	go func() {
+		ctx := context.WithoutCancel(r.Context())
+		c, err := saprfc.OpenWithTimeout(ctx, dest, 120*time.Second)
+		if err != nil {
+			return
+		}
+		defer c.Close(ctx)
+		// The result is deliberately discarded: this call exists to make the
+		// breakpoint fire, and while it is stopped it will not return anyway.
+		_, _ = c.Call(ctx, target, rfc.Params{})
+	}()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	writeJSON(w, s.snapshot(r.Context(), "called "+target+" on a second connection — press Listen"))
 }
 
 func (s *debugUIServer) handleStep(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if !s.attached {
-		writeJSON(w, s.collect(r.Context()))
+		writeJSON(w, s.snapshot(r.Context(), "not attached"))
 		return
 	}
-	stepType := adt.DebugStepType(r.URL.Query().Get("type"))
-	switch stepType {
-	case adt.DebugStepInto, adt.DebugStepOver, adt.DebugStepReturn, adt.DebugStepContinue:
-	default:
-		http.Error(w, "unsupported step type", http.StatusBadRequest)
+	kind := map[string]string{
+		"into": "stepInto", "over": "stepOver",
+		"out": "stepReturn", "continue": "stepContinue",
+	}[strings.ToLower(r.URL.Query().Get("type"))]
+	if kind == "" {
+		http.Error(w, "step kinds: into, over, out, continue", http.StatusBadRequest)
 		return
 	}
 
-	if _, err := s.client.DebuggerStep(r.Context(), stepType, ""); err != nil {
-		// Continue ends the session when nothing else is hit, and that is a
-		// normal outcome rather than a failure.
+	if _, err := s.dbg.ADTStep(r.Context(), kind); err != nil {
 		s.attached = false
-		writeJSON(w, &uiState{Note: fmt.Sprintf("session ended after %s: %v", stepType, err)})
+		s.debuggee = nil
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("session ended after %s: %v", kind, err)))
 		return
 	}
-	writeJSON(w, s.collect(r.Context()))
+	writeJSON(w, s.snapshot(r.Context(), ""))
 }
 
-func (s *debugUIServer) handleGoTo(w http.ResponseWriter, r *http.Request) {
-	uri := r.URL.Query().Get("uri")
-	if uri == "" || !s.attached {
-		writeJSON(w, s.collect(r.Context()))
-		return
-	}
-	if err := s.client.DebuggerGoToStack(r.Context(), uri); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, s.collect(r.Context()))
-}
-
-// handleSource fetches the source of the frame being shown. An include is
-// fetched as an include; anything else is read as a program, which is what the
-// debugger's own stack entries name.
+// handleSource reads a frame's source through the same pinned session, so no
+// second HTTP client and no second logon are needed.
 func (s *debugUIServer) handleSource(w http.ResponseWriter, r *http.Request) {
-	program := r.URL.Query().Get("program")
-	include := r.URL.Query().Get("include")
-
-	name, src, err := program, "", error(nil)
-	if include != "" && include != program {
-		name = include
-		src, err = s.client.GetInclude(r.Context(), include)
-	} else if program != "" {
-		src, err = s.client.GetProgram(r.Context(), program)
-	} else {
+	object := strings.TrimSpace(r.URL.Query().Get("object"))
+	if object == "" {
 		writeJSON(w, map[string]string{"source": "", "name": ""})
 		return
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	uri, err := s.dbg.ResolveSourceURI(r.Context(), object)
 	if err != nil {
-		writeJSON(w, map[string]string{"source": "", "name": name, "error": err.Error()})
+		writeJSON(w, map[string]string{"source": "", "name": object, "error": err.Error()})
 		return
 	}
-	writeJSON(w, map[string]string{"source": src, "name": name})
+	res, err := s.dbg.ADT(r.Context(), "GET", uri, []saprfc.ADTHeader{{Name: "Accept", Value: "text/plain"}}, nil)
+	if err != nil {
+		writeJSON(w, map[string]string{"source": "", "name": object, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]string{"source": string(res.Body), "name": object})
 }
 
 func (s *debugUIServer) handleDetach(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.attached {
-		_ = s.client.DebuggerDetach(r.Context())
+		_ = s.dbg.ADTDetach(r.Context())
 	}
 	s.attached = false
 	s.debuggee = nil
-	writeJSON(w, s.collect(r.Context()))
+	writeJSON(w, s.snapshot(r.Context(), "detached"))
 }
