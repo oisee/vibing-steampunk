@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vsp debugger</title>
+<style>
+:root{
+  --ground:#0E1514; --panel:#151E1D; --panel-2:#1B2625; --sunk:#101817;
+  --ink:#E7EEEC; --ink-2:#A2B2AF; --ink-3:#768885;
+  --rule:#26332F; --rule-2:#33423F;
+  --accent:#5AC6B4; --brass:#D2A44E; --stop:#EE8578; --good:#57BF92;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --ui:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--ui);font-size:13px;display:flex;flex-direction:column;overflow:hidden}
+
+header{display:flex;align-items:center;gap:14px;padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--rule);flex-shrink:0}
+.brand{font-weight:650;letter-spacing:-.01em}
+.brand span{color:var(--accent)}
+.status{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);display:flex;align-items:center;gap:7px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3);flex-shrink:0}
+.dot.on{background:var(--good);box-shadow:0 0 0 3px rgba(87,191,146,.15)}
+.dot.stop{background:var(--stop);box-shadow:0 0 0 3px rgba(238,133,120,.15)}
+.spacer{flex:1}
+button{font-family:var(--ui);font-size:12px;font-weight:500;padding:5px 11px;background:var(--panel-2);color:var(--ink-2);
+  border:1px solid var(--rule-2);border-radius:3px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--ink)}
+button:disabled{opacity:.38;cursor:default}
+button.primary{background:var(--accent);color:#08201C;border-color:var(--accent);font-weight:600}
+button kbd{font-family:var(--mono);font-size:10px;opacity:.65;margin-left:5px}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
+.left{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--rule)}
+.right{display:flex;flex-direction:column;min-height:0}
+.pane-h{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
+  padding:8px 13px;background:var(--sunk);border-bottom:1px solid var(--rule);flex-shrink:0;
+  display:flex;align-items:center;gap:8px}
+.pane-h .count{font-family:var(--mono);letter-spacing:0;color:var(--rule-2)}
+
+#source{flex:1;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--ground)}
+.ln{display:flex;white-space:pre}
+.ln:hover{background:var(--panel)}
+.ln .n{width:52px;flex-shrink:0;text-align:right;padding-right:13px;color:var(--rule-2);user-select:none}
+.ln .t{padding-right:20px}
+.ln.cur{background:rgba(210,164,78,.13)}
+.ln.cur .n{color:var(--brass);font-weight:600}
+.ln.cur .t{color:#FFF0D4}
+.ln.cur .n::after{content:"▸";margin-left:5px}
+
+#stack{max-height:34%;overflow:auto;border-bottom:1px solid var(--rule);flex-shrink:0}
+.frame{padding:7px 13px;border-bottom:1px solid var(--rule);cursor:pointer;display:flex;gap:9px;align-items:baseline}
+.frame:last-child{border-bottom:none}
+.frame:hover{background:var(--panel)}
+.frame.cur{background:var(--panel-2);box-shadow:inset 2px 0 0 var(--brass)}
+.frame .i{font-family:var(--mono);font-size:10.5px;color:var(--rule-2);width:18px;flex-shrink:0}
+.frame .nm{font-family:var(--mono);font-size:12px;color:var(--ink);word-break:break-all}
+.frame .meta{font-size:10.5px;color:var(--ink-3);margin-top:2px}
+.frame.sys .nm{color:var(--ink-3)}
+
+#vars{flex:1;overflow:auto}
+.var{padding:6px 13px;border-bottom:1px solid var(--rule);display:grid;grid-template-columns:1fr auto;gap:2px 10px}
+.var:hover{background:var(--panel)}
+.var .n{font-family:var(--mono);font-size:12px;color:var(--accent);word-break:break-all}
+.var .ty{font-family:var(--mono);font-size:10px;color:var(--ink-3);text-align:right;white-space:nowrap}
+.var .v{grid-column:1/-1;font-family:var(--mono);font-size:11.5px;color:var(--ink-2);word-break:break-all;white-space:pre-wrap}
+.var.exc .n{color:var(--stop)}
+.var .badge{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--brass);border:1px solid var(--rule-2);
+  border-radius:2px;padding:0 4px;margin-left:6px}
+
+.empty{padding:26px 16px;color:var(--ink-3);font-size:12px;line-height:1.6;text-align:center}
+.empty code{font-family:var(--mono);color:var(--ink-2);background:var(--panel-2);padding:1px 5px;border-radius:2px}
+#note{padding:7px 14px;background:var(--panel-2);border-top:1px solid var(--rule);color:var(--brass);
+  font-family:var(--mono);font-size:11.5px;flex-shrink:0}
+#note:empty{display:none}
+.proto{font-size:10.5px;color:var(--ink-3);padding:5px 14px;background:var(--sunk);border-top:1px solid var(--rule);flex-shrink:0}
+@media (max-width:860px){main{grid-template-columns:1fr}.right{display:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">vsp <span>debugger</span></span>
+  <span class="status"><span class="dot" id="dot"></span><span id="who">detached</span></span>
+  <span class="spacer"></span>
+  <button id="listen" class="primary">Listen</button>
+  <button id="into" disabled>Step into <kbd>F11</kbd></button>
+  <button id="over" disabled>Over <kbd>F10</kbd></button>
+  <button id="out" disabled>Out</button>
+  <button id="cont" disabled>Continue <kbd>F8</kbd></button>
+  <button id="detach" disabled>Detach</button>
+</header>
+
+<main>
+  <div class="left">
+    <div class="pane-h">Source <span class="count" id="srcname"></span></div>
+    <div id="source"><div class="empty">Nothing to show yet.<br>Set a breakpoint, run the ABAP, then press <code>Listen</code>.</div></div>
+  </div>
+  <div class="right">
+    <div class="pane-h">Call stack <span class="count" id="stackn"></span></div>
+    <div id="stack"><div class="empty">—</div></div>
+    <div class="pane-h">Variables <span class="count" id="varn"></span></div>
+    <div id="vars"><div class="empty">—</div></div>
+  </div>
+</main>
+
+<div id="note"></div>
+<div class="proto">Prototype for #184 — Phase 3 of the debugger design. Drives the same <code>pkg/adt</code> client the MCP tools use. Read-only: it listens, attaches, steps and inspects; it writes nothing.</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = {attached:false}, srcCache = new Map(), currentFrame = null, busy = false;
+
+async function call(path){
+  if (busy) return;
+  busy = true;
+  document.body.style.cursor = 'progress';
+  try {
+    const r = await fetch(path, {method:'POST'});
+    const j = await r.json();
+    if (j.error) { note(j.error); }
+    else { state = j; await render(); }
+  } catch (e) { note(String(e)); }
+  finally { busy = false; document.body.style.cursor = ''; }
+}
+function note(t){ $('note').textContent = t || ''; }
+
+function frameLabel(f){ return f.includeName && f.includeName !== f.programName ? f.includeName : f.programName; }
+
+async function render(){
+  const on = !!state.attached;
+  $('dot').className = 'dot ' + (on ? 'stop' : '');
+  $('who').textContent = on
+    ? `${state.debuggee?.debuggeeUser || '?'} · ${state.debuggee?.program || ''} · stopped`
+    : 'detached';
+  for (const b of ['into','over','out','cont','detach']) $(b).disabled = !on;
+  $('listen').disabled = on;
+  note(state.note);
+
+  const frames = state.stack?.stack || [];
+  $('stackn').textContent = frames.length ? frames.length : '';
+  const cur = state.stack?.debugCursorStackIndex ?? 0;
+  $('stack').innerHTML = frames.length ? '' : '<div class="empty">—</div>';
+  frames.forEach((f, i) => {
+    const el = document.createElement('div');
+    el.className = 'frame' + (i === cur ? ' cur' : '') + (f.systemProgram ? ' sys' : '');
+    el.innerHTML = `<span class="i">${f.stackPosition ?? i}</span><span>
+        <span class="nm">${esc(frameLabel(f) || '?')}</span>
+        <div class="meta">line ${f.line ?? '?'}${f.eventName ? ' · ' + esc(f.eventName) : ''}${f.stackType && f.stackType !== 'ABAP' ? ' · ' + esc(f.stackType) : ''}</div>
+      </span>`;
+    el.onclick = () => { if (f.stackUri) call('/api/goto?uri=' + encodeURIComponent(f.stackUri)); };
+    $('stack').appendChild(el);
+  });
+
+  const vars = state.variables || [];
+  $('varn').textContent = vars.length ? vars.length : '';
+  $('vars').innerHTML = vars.length ? '' : '<div class="empty">—</div>';
+  vars.forEach(v => {
+    const el = document.createElement('div');
+    el.className = 'var' + (v.isException ? ' exc' : '');
+    const badge = v.metaType === 'table' && v.tableLines != null ? `<span class="badge">${v.tableLines} rows</span>` : '';
+    el.innerHTML = `<div class="n">${esc(v.name)}${badge}</div>
+      <div class="ty">${esc(v.actualTypeName || v.declaredTypeName || v.metaType || '')}</div>
+      <div class="v">${esc(v.value ?? '')}</div>`;
+    $('vars').appendChild(el);
+  });
+
+  const f = frames[cur];
+  if (f) await showSource(f);
+}
+
+async function showSource(f){
+  const key = (f.programName || '') + '|' + (f.includeName || '');
+  let src = srcCache.get(key);
+  if (src === undefined) {
+    const r = await fetch(`/api/source?program=${encodeURIComponent(f.programName||'')}&include=${encodeURIComponent(f.includeName||'')}`);
+    const j = await r.json();
+    src = j.source || '';
+    if (j.error) note(`source for ${j.name}: ${j.error}`);
+    srcCache.set(key, src);
+  }
+  $('srcname').textContent = frameLabel(f) || '';
+  if (!src) { $('source').innerHTML = '<div class="empty">Source not available for this frame.</div>'; return; }
+
+  const lines = src.split('\n');
+  $('source').innerHTML = lines.map((t, i) => {
+    const n = i + 1;
+    return `<div class="ln${n === f.line ? ' cur' : ''}"><span class="n">${n}</span><span class="t">${esc(t)}</span></div>`;
+  }).join('');
+  const el = $('source').querySelector('.ln.cur');
+  if (el) el.scrollIntoView({block:'center'});
+}
+
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+$('listen').onclick = () => { note('listening for up to 60s — trigger the breakpoint now'); call('/api/listen'); };
+$('into').onclick   = () => call('/api/step?type=stepInto');
+$('over').onclick   = () => call('/api/step?type=stepOver');
+$('out').onclick    = () => call('/api/step?type=stepReturn');
+$('cont').onclick   = () => call('/api/step?type=stepContinue');
+$('detach').onclick = () => { srcCache.clear(); call('/api/detach'); };
+
+document.addEventListener('keydown', e => {
+  if (!state.attached) return;
+  if (e.key === 'F11') { e.preventDefault(); $('into').click(); }
+  if (e.key === 'F10') { e.preventDefault(); $('over').click(); }
+  if (e.key === 'F8')  { e.preventDefault(); $('cont').click(); }
+});
+
+call('/api/state');
+</script>
+</body>
+</html>
