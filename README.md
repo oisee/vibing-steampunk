@@ -504,7 +504,7 @@ SAP(action="create", target="DEVC", params={"name": "$ZOZIK", "description": "Ne
 SAP(action="help",   target="debug")
 ```
 
-| Metric | Focused (102 tools) | Expert (147 tools) | Hyperfocused (1 tool) |
+| Metric | Focused (100 tools) | Expert (147 tools) | Hyperfocused (1 tool) |
 |--------|-------------------:|-------------------:|----------------------:|
 | MCP schema tokens | ~14,000 | ~40,000 | **~200** |
 | Reduction | — | — | **99.5%** |
@@ -1212,7 +1212,7 @@ One axis, three values — `--mode` or `SAP_MODE`:
 
 ```mermaid
 graph LR
-    F["focused<br/>102 tools<br/>~14K tokens"] --> E["expert<br/>147 tools<br/>~40K tokens"]
+    F["focused<br/>100 tools<br/>~14K tokens"] --> E["expert<br/>147 tools<br/>~40K tokens"]
     E --> H["hyperfocused<br/>1 tool<br/>~200 tokens<br/><i>recommended</i>"]
     style H fill:#2d6a4f,color:#fff,stroke:#4ade80,stroke-width:2px
     style F fill:#264653,color:#fff
@@ -1221,7 +1221,7 @@ graph LR
 
 | Aspect | Focused | Expert | Hyperfocused (recommended) |
 |--------|:-:|:-:|:-:|
-| **Tools** | 102 essential | 147 complete | 1 universal `SAP()` |
+| **Tools** | 100 essential | 147 complete | 1 universal `SAP()` |
 | **Schema tokens** | ~14K | ~40K | **~200** |
 | **How AI calls it** | `GetSource(type, name)` | Same, + granular tools | `SAP(action, target, params)` |
 | **Documentation** | In tool schemas | In tool schemas | `SAP(action="help")` |
@@ -1230,7 +1230,7 @@ graph LR
 
 ```bash
 vsp --mode hyperfocused  # recommended — single SAP(action, target, params) tool
-vsp --mode focused       # 102 curated tools (individual tool names)
+vsp --mode focused       # 100 curated tools (individual tool names)
 vsp --mode expert        # all 147 tools individually
 ```
 
@@ -1447,7 +1447,7 @@ See [AI-Powered RCA Workflows](reports/2025-12-05-013-ai-powered-rca-workflows.m
 
 ## Tools Reference
 
-**Focused Mode Tools (102):**
+**Focused Mode Tools (100):**
 - **Search:** SearchObject, GrepObjects, GrepPackages
 - **Read:** GetSource, GetTable, GetTableContents, RunQuery, GetPackage, GetFunctionGroup, GetCDSDependencies
 - **Debugger:** DebuggerListen, DebuggerAttach, DebuggerDetach, DebuggerStep, DebuggerGetStack, DebuggerGetVariables, SetBreakpoint, GetBreakpoints, DeleteBreakpoint
@@ -1607,7 +1607,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 147 expert, 102 focused, 1 universal |
+| **Tools** | 147 expert, 100 focused, 1 universal |
 | **Unit Tests** | 1203 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
