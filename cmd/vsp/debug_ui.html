@@ -42,14 +42,18 @@ button kbd{font-family:var(--mono);font-size:10px;opacity:.65;margin-left:5px}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
-.left{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--rule)}
+/* min-height:0 is load-bearing. A flex item defaults to min-height:auto, so
+   without it #source cannot shrink below its own content: the column grows to
+   the full height of the source, body{overflow:hidden} clips the rest, and the
+   controls below simply vanish while the code cannot be scrolled to its end. */
+.left{display:flex;flex-direction:column;min-width:0;min-height:0;border-right:1px solid var(--rule)}
 .right{display:flex;flex-direction:column;min-height:0}
 .pane-h{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);
   padding:8px 13px;background:var(--sunk);border-bottom:1px solid var(--rule);flex-shrink:0;
   display:flex;align-items:center;gap:8px}
 .pane-h .count{font-family:var(--mono);letter-spacing:0;color:var(--rule-2)}
 
-#source{flex:1;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--ground)}
+#source{flex:1;min-height:0;overflow:auto;font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--ground)}
 .ln{display:flex;white-space:pre}
 .ln:hover{background:var(--panel)}
 .ln .n{width:52px;flex-shrink:0;text-align:right;padding-right:13px;color:var(--rule-2);user-select:none}
@@ -58,6 +62,11 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
 .ln.cur .n{color:var(--brass);font-weight:600}
 .ln.cur .t{color:#FFF0D4}
 .ln.cur .n::after{content:"▸";margin-left:5px}
+.ln .n{cursor:pointer}
+.ln.bp .n{color:var(--stop)}
+.ln.bp .n::before{content:"●";margin-right:5px;font-size:9px;vertical-align:middle}
+.ln.bp{background:rgba(238,133,120,.10)}
+.ln.bp.cur{background:rgba(210,164,78,.16)}
 
 #stack{max-height:34%;overflow:auto;border-bottom:1px solid var(--rule);flex-shrink:0}
 .frame{padding:7px 13px;border-bottom:1px solid var(--rule);cursor:pointer;display:flex;gap:9px;align-items:baseline}
@@ -69,7 +78,7 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
 .frame .meta{font-size:10.5px;color:var(--ink-3);margin-top:2px}
 .frame.sys .nm{color:var(--ink-3)}
 
-#vars{flex:1;overflow:auto}
+#vars{flex:1;min-height:0;overflow:auto}
 .var{padding:6px 13px;border-bottom:1px solid var(--rule);display:grid;grid-template-columns:1fr auto;gap:2px 10px}
 .var:hover{background:var(--panel)}
 .var .n{font-family:var(--mono);font-size:12px;color:var(--accent);word-break:break-all}
@@ -113,7 +122,7 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
 
 <main>
   <div class="left">
-    <div class="pane-h">Source <span class="count" id="srcname"></span></div>
+    <div class="pane-h">Source <span class="count" id="srcname"></span><span class="spacer"></span><span class="count">double-click a line to break there</span></div>
     <div id="source"><div class="empty">Nothing to show yet.<br>Set a breakpoint, run the ABAP, then press <code>Listen</code>.</div></div>
   </div>
   <div class="right">
@@ -212,10 +221,23 @@ async function showSource(object, hilite){
   }).join('');
   const el = $('source').querySelector('.ln.cur');
   if (el) el.scrollIntoView({block:'center'});
-  // Clicking a line picks it as the breakpoint line — reading a number off the
-  // gutter and retyping it is the kind of friction that makes a tool unused.
+  // Single click picks the line; double click sets the breakpoint there.
+  // Reading a number off the gutter and retyping it into a field is the kind of
+  // friction that makes a tool go unused.
   $('source').querySelectorAll('.ln').forEach(row => {
-    row.onclick = () => { $('line').value = row.dataset.n; };
+    row.onclick = () => { $('line').value = row.dataset.n; markBp(+row.dataset.n); };
+    row.ondblclick = () => {
+      $('line').value = row.dataset.n;
+      srcCache.delete($('target').value.trim().toUpperCase());
+      call('/api/bp?' + q());
+    };
+  });
+  markBp(+$('line').value);
+}
+
+function markBp(n){
+  $('source').querySelectorAll('.ln').forEach(row => {
+    row.classList.toggle('bp', +row.dataset.n === n);
   });
 }
 
