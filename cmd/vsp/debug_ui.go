@@ -246,43 +246,75 @@ func (s *debugUIServer) handleListen(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("seconds")); err == nil && n > 0 {
 		seconds = n
 	}
+	// Listen stays a button of its own because the trigger is not always ours:
+	// a colleague in SE38, a scheduled job, an agent on another machine.
+	s.catchLocked(w, r, seconds, "")
+}
 
+// catchLocked waits for a debuggee and attaches. Callers hold the lock.
+func (s *debugUIServer) catchLocked(w http.ResponseWriter, r *http.Request, seconds int, prefix string) {
 	who, _, err := s.dbg.ADTCatch(r.Context(), s.user, "vsp", adtTerminalID, seconds)
 	if err != nil && who == nil {
-		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("listen failed: %v", err)))
+		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("%slisten failed: %v", prefix, err)))
 		return
 	}
 	if who == nil {
-		writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("nobody stopped within %ds — is the breakpoint on an executable line?", seconds)))
+		writeJSON(w, s.snapshot(r.Context(),
+			fmt.Sprintf("%snobody stopped within %ds — is the line executable, and is system code switched on if it is SAP's own?", prefix, seconds)))
 		return
 	}
 	s.attached = true
 	s.debuggee = who
-	note := ""
+	note := prefix + "stopped"
 	if err != nil {
-		note = fmt.Sprintf("attached, but the stack could not be read: %v", err)
+		note = fmt.Sprintf("%sattached, but the stack could not be read: %v", prefix, err)
 	}
 	writeJSON(w, s.snapshot(r.Context(), note))
 }
 
-// handleRun triggers the target over a SECOND RFC connection. It has to be a
-// second one: this process's own conversation is pinned to the debug session,
-// and calling through it would deadlock against the breakpoint it is waiting on.
+// handleRun is the one button: make sure a breakpoint exists, call the target
+// on a SECOND RFC connection, then listen — all in one request.
+//
+// It has to be a second connection: this process's own conversation is pinned
+// to the debug session, and calling through it would deadlock against the
+// breakpoint it is about to wait on.
+//
+// The order matters and is not obvious. Listening first and calling second
+// cannot work, because the listen blocks. Calling first and listening second
+// looks like a race and is not: the debuggee parks at the breakpoint and waits
+// to be collected, so a listener arriving a moment later still finds it.
 func (s *debugUIServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	target := s.target
-	dest := s.dest
-	s.mu.Unlock()
+	defer s.mu.Unlock()
 
-	if target == "" {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+	if obj := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("object"))); obj != "" {
+		s.target = obj
+	}
+	if n, err := strconv.Atoi(r.URL.Query().Get("line")); err == nil && n > 0 {
+		s.line = n
+	}
+	if s.target == "" {
 		writeJSON(w, s.snapshot(r.Context(), "name an object first"))
 		return
 	}
 
+	// Nothing stops without a breakpoint, and making someone press two buttons
+	// in a fixed order to learn that is a poor way to teach it. If this session
+	// has registered none, set one where the fields point.
+	if existing, err := s.dbg.ADTBreakpoints(r.Context()); err == nil && len(existing) == 0 {
+		if _, err := s.dbg.ADTAddBreakpoint(r.Context(), s.target, s.line, ""); err != nil {
+			writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("breakpoint refused: %v", err)))
+			return
+		}
+		for _, rej := range s.dbg.Rejected() {
+			writeJSON(w, s.snapshot(r.Context(), fmt.Sprintf("not placed at %s:%d — %s", s.target, s.line, rej.ErrorMessage)))
+			return
+		}
+	}
+
+	target, dest := s.target, s.dest
 	go func() {
-		ctx := context.WithoutCancel(r.Context())
+		ctx := context.WithoutCancel(context.Background())
 		c, err := saprfc.OpenWithTimeout(ctx, dest, 120*time.Second)
 		if err != nil {
 			return
@@ -293,9 +325,11 @@ func (s *debugUIServer) handleRun(w http.ResponseWriter, r *http.Request) {
 		_, _ = c.Call(ctx, target, rfc.Params{})
 	}()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	writeJSON(w, s.snapshot(r.Context(), "called "+target+" on a second connection — press Listen"))
+	seconds := 60
+	if n, err := strconv.Atoi(r.URL.Query().Get("seconds")); err == nil && n > 0 {
+		seconds = n
+	}
+	s.catchLocked(w, r, seconds, "called "+target+" — ")
 }
 
 func (s *debugUIServer) handleStep(w http.ResponseWriter, r *http.Request) {
