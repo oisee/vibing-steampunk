@@ -11,25 +11,31 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Value represents a JS value.
 type Value struct {
-	Type   int // 0=undefined, 1=number, 2=string, 3=bool, 4=function, 5=null, 6=object, 7=array
-	Num    float64
-	Str    string
-	Fn     *Function
-	Obj    map[string]Value
-	Arr    *[]Value // pointer so mutations are shared
+	Type int // 0=undefined, 1=number, 2=string, 3=bool, 4=function, 5=null, 6=object, 7=array
+	Num  float64
+	Str  string
+	Fn   *Function
+	Obj  map[string]Value
+	Arr  *[]Value // pointer so mutations are shared
 }
 
 var Undefined = Value{Type: 0}
 var Null = Value{Type: 5}
 
-func NumberVal(n float64) Value  { return Value{Type: 1, Num: n} }
-func StringVal(s string) Value   { return Value{Type: 2, Str: s} }
-func BoolVal(b bool) Value       { if b { return Value{Type: 3, Num: 1} }; return Value{Type: 3, Num: 0} }
-func ObjectVal() Value           { return Value{Type: 6, Obj: make(map[string]Value)} }
+func NumberVal(n float64) Value { return Value{Type: 1, Num: n} }
+func StringVal(s string) Value  { return Value{Type: 2, Str: s} }
+func BoolVal(b bool) Value {
+	if b {
+		return Value{Type: 3, Num: 1}
+	}
+	return Value{Type: 3, Num: 0}
+}
+func ObjectVal() Value { return Value{Type: 6, Obj: make(map[string]Value)} }
 func ArrayVal(elems []Value) Value {
 	a := make([]Value, len(elems))
 	copy(a, elems)
@@ -38,34 +44,56 @@ func ArrayVal(elems []Value) Value {
 
 func (v Value) IsTrue() bool {
 	switch v.Type {
-	case 0, 5: return false
-	case 1: return v.Num != 0
-	case 2: return v.Str != ""
-	case 3: return v.Num != 0
+	case 0, 5:
+		return false
+	case 1:
+		return v.Num != 0
+	case 2:
+		return v.Str != ""
+	case 3:
+		return v.Num != 0
 	}
 	return true
 }
 
 func (v Value) ToNumber() float64 {
 	switch v.Type {
-	case 1: return v.Num
-	case 2: n, err := strconv.ParseFloat(v.Str, 64); if err == nil { return n }; return 0
-	case 3: return v.Num
+	case 1:
+		return v.Num
+	case 2:
+		n, err := strconv.ParseFloat(v.Str, 64)
+		if err == nil {
+			return n
+		}
+		return 0
+	case 3:
+		return v.Num
 	}
 	return 0
 }
 
 func (v Value) ToString() string {
 	switch v.Type {
-	case 0: return "undefined"
+	case 0:
+		return "undefined"
 	case 1:
-		if v.Num == float64(int64(v.Num)) { return fmt.Sprintf("%d", int64(v.Num)) }
+		if v.Num == float64(int64(v.Num)) {
+			return fmt.Sprintf("%d", int64(v.Num))
+		}
 		return fmt.Sprintf("%g", v.Num)
-	case 2: return v.Str
-	case 3: if v.Num != 0 { return "true" }; return "false"
-	case 5: return "null"
-	case 6: return "[object Object]"
-	case 7: return fmt.Sprintf("[array %d]", len(*v.Arr))
+	case 2:
+		return v.Str
+	case 3:
+		if v.Num != 0 {
+			return "true"
+		}
+		return "false"
+	case 5:
+		return "null"
+	case 6:
+		return "[object Object]"
+	case 7:
+		return fmt.Sprintf("[array %d]", len(*v.Arr))
 	}
 	return "undefined"
 }
@@ -108,35 +136,35 @@ const (
 
 // Node is an AST node.
 type Node struct {
-	Kind     int
-	Num      float64
-	Str      string
-	Op       string
-	Left     *Node
-	Right    *Node
-	Args     []*Node
-	Body     []*Node
-	Params   []string
-	Cond     *Node
-	Else     []*Node
+	Kind   int
+	Num    float64
+	Str    string
+	Op     string
+	Left   *Node
+	Right  *Node
+	Args   []*Node
+	Body   []*Node
+	Params []string
+	Cond   *Node
+	Else   []*Node
 	// For loop
-	Init     *Node
-	Update   *Node
+	Init   *Node
+	Update *Node
 	// Member access
-	Object   *Node   // the object expression
-	Property string  // static property name
-	PropExpr *Node   // dynamic property expression (bracket access)
+	Object   *Node  // the object expression
+	Property string // static property name
+	PropExpr *Node  // dynamic property expression (bracket access)
 	// Switch
-	Cases    []SwitchCase
+	Cases []SwitchCase
 	// Class
-	Methods  []ClassMethod
+	Methods []ClassMethod
 	// Try/catch
-	Catch    []*Node  // catch body
-	CatchVar string   // catch variable name
+	Catch    []*Node // catch body
+	CatchVar string  // catch variable name
 }
 
 type SwitchCase struct {
-	Expr *Node   // nil = default
+	Expr *Node // nil = default
 	Body []*Node
 }
 
@@ -158,9 +186,9 @@ type Function struct {
 
 // Env is a variable environment (scope).
 type Env struct {
-	vars      map[string]Value
-	parent    *Env
-	output    *strings.Builder // for console.log
+	vars       map[string]Value
+	parent     *Env
+	output     *strings.Builder // for console.log
 	returning  bool
 	retVal     Value
 	breaking   bool
@@ -178,8 +206,12 @@ func NewEnv(parent *Env) *Env {
 }
 
 func (e *Env) Get(name string) Value {
-	if v, ok := e.vars[name]; ok { return v }
-	if e.parent != nil { return e.parent.Get(name) }
+	if v, ok := e.vars[name]; ok {
+		return v
+	}
+	if e.parent != nil {
+		return e.parent.Get(name)
+	}
 	return Undefined
 }
 
@@ -270,8 +302,12 @@ func callFunction(fn *Function, args []Value, env *Env, thisVal *Value) Value {
 }
 
 func evalNode(n *Node, env *Env) Value {
-	if n == nil { return Undefined }
-	if env.returning || env.breaking { return Undefined }
+	if n == nil {
+		return Undefined
+	}
+	if env.returning || env.breaking {
+		return Undefined
+	}
 
 	switch n.Kind {
 	case NodeNumber:
@@ -314,7 +350,9 @@ func evalNode(n *Node, env *Env) Value {
 						}
 						for _, s := range n.Catch {
 							evalNode(s, catchEnv)
-							if catchEnv.returning || catchEnv.breaking { break }
+							if catchEnv.returning || catchEnv.breaking {
+								break
+							}
 						}
 						if catchEnv.returning {
 							env.returning = true
@@ -325,15 +363,19 @@ func evalNode(n *Node, env *Env) Value {
 			}()
 			for _, s := range n.Body {
 				evalNode(s, env)
-				if env.returning || env.breaking { break }
+				if env.returning || env.breaking {
+					break
+				}
 			}
 		}()
 
 	case NodeUnaryOp:
 		val := evalNode(n.Left, env)
 		switch n.Op {
-		case "-": return NumberVal(-val.ToNumber())
-		case "!": return BoolVal(!val.IsTrue())
+		case "-":
+			return NumberVal(-val.ToNumber())
+		case "!":
+			return BoolVal(!val.IsTrue())
 		}
 
 	case NodeAssign:
@@ -355,7 +397,9 @@ func evalNode(n *Node, env *Env) Value {
 
 	case NodeVar:
 		val := Undefined
-		if n.Right != nil { val = evalNode(n.Right, env) }
+		if n.Right != nil {
+			val = evalNode(n.Right, env)
+		}
 		env.Define(n.Str, val)
 		return val
 
@@ -364,48 +408,76 @@ func evalNode(n *Node, env *Env) Value {
 		if cond.IsTrue() {
 			for _, s := range n.Body {
 				evalNode(s, env)
-				if env.returning || env.breaking { break }
+				if env.returning || env.breaking {
+					break
+				}
 			}
 		} else if n.Else != nil {
 			for _, s := range n.Else {
 				evalNode(s, env)
-				if env.returning || env.breaking { break }
+				if env.returning || env.breaking {
+					break
+				}
 			}
 		}
 
 	case NodeWhile:
 		for {
 			cond := evalNode(n.Cond, env)
-			if !cond.IsTrue() || env.returning || env.breaking { break }
+			if !cond.IsTrue() || env.returning || env.breaking {
+				break
+			}
 			for _, s := range n.Body {
 				evalNode(s, env)
-				if env.returning || env.breaking || env.continuing { break }
+				if env.returning || env.breaking || env.continuing {
+					break
+				}
 			}
-			if env.continuing { env.continuing = false; continue }
+			if env.continuing {
+				env.continuing = false
+				continue
+			}
 		}
-		if env.breaking { env.breaking = false }
+		if env.breaking {
+			env.breaking = false
+		}
 
 	case NodeFor:
 		// Init
 		forEnv := NewEnv(env)
-		if n.Init != nil { evalNode(n.Init, forEnv) }
+		if n.Init != nil {
+			evalNode(n.Init, forEnv)
+		}
 		for {
-			if forEnv.returning || forEnv.breaking { break }
+			if forEnv.returning || forEnv.breaking {
+				break
+			}
 			cond := evalNode(n.Cond, forEnv)
-			if !cond.IsTrue() { break }
+			if !cond.IsTrue() {
+				break
+			}
 			for _, s := range n.Body {
 				evalNode(s, forEnv)
-				if forEnv.returning || forEnv.breaking || forEnv.continuing { break }
+				if forEnv.returning || forEnv.breaking || forEnv.continuing {
+					break
+				}
 			}
-			if forEnv.continuing { forEnv.continuing = false }
-			if forEnv.returning || forEnv.breaking { break }
-			if n.Update != nil { evalNode(n.Update, forEnv) }
+			if forEnv.continuing {
+				forEnv.continuing = false
+			}
+			if forEnv.returning || forEnv.breaking {
+				break
+			}
+			if n.Update != nil {
+				evalNode(n.Update, forEnv)
+			}
 		}
 		if forEnv.returning {
 			env.returning = true
 			env.retVal = forEnv.retVal
 		}
-		if forEnv.breaking { /* consumed */ }
+		if forEnv.breaking { /* consumed */
+		}
 
 	case NodeForOf:
 		iter := evalNode(n.Right, env)
@@ -416,20 +488,34 @@ func evalNode(n *Node, env *Env) Value {
 				forEnv.Define(n.Str, elem)
 				for _, s := range n.Body {
 					evalNode(s, forEnv)
-					if forEnv.returning || forEnv.breaking || forEnv.continuing { break }
+					if forEnv.returning || forEnv.breaking || forEnv.continuing {
+						break
+					}
 				}
-				if forEnv.continuing { forEnv.continuing = false; continue }
-				if forEnv.returning || forEnv.breaking { break }
+				if forEnv.continuing {
+					forEnv.continuing = false
+					continue
+				}
+				if forEnv.returning || forEnv.breaking {
+					break
+				}
 			}
 		} else if iter.Type == 6 && iter.Obj != nil { // object — for...in
 			for k := range iter.Obj {
 				forEnv.Define(n.Str, StringVal(k))
 				for _, s := range n.Body {
 					evalNode(s, forEnv)
-					if forEnv.returning || forEnv.breaking || forEnv.continuing { break }
+					if forEnv.returning || forEnv.breaking || forEnv.continuing {
+						break
+					}
 				}
-				if forEnv.continuing { forEnv.continuing = false; continue }
-				if forEnv.returning || forEnv.breaking { break }
+				if forEnv.continuing {
+					forEnv.continuing = false
+					continue
+				}
+				if forEnv.returning || forEnv.breaking {
+					break
+				}
 			}
 		}
 		if forEnv.returning {
@@ -441,7 +527,9 @@ func evalNode(n *Node, env *Env) Value {
 		var last Value
 		for _, s := range n.Body {
 			last = evalNode(s, env)
-			if env.returning || env.breaking { break }
+			if env.returning || env.breaking {
+				break
+			}
 		}
 		return last
 
@@ -525,7 +613,9 @@ func evalNode(n *Node, env *Env) Value {
 
 	case NodeMemberAccess:
 		obj := evalNode(n.Object, env)
-		if obj.Type == 0 || obj.Type == 5 { return Undefined } // null/undefined?.prop
+		if obj.Type == 0 || obj.Type == 5 {
+			return Undefined
+		} // null/undefined?.prop
 		prop := n.Property
 		if n.PropExpr != nil {
 			prop = evalNode(n.PropExpr, env).ToString()
@@ -535,14 +625,22 @@ func evalNode(n *Node, env *Env) Value {
 	case NodeTypeof:
 		val := evalNode(n.Left, env)
 		switch val.Type {
-		case 0: return StringVal("undefined")
-		case 1: return StringVal("number")
-		case 2: return StringVal("string")
-		case 3: return StringVal("boolean")
-		case 4: return StringVal("function")
-		case 5: return StringVal("object")
-		case 6: return StringVal("object")
-		case 7: return StringVal("object")
+		case 0:
+			return StringVal("undefined")
+		case 1:
+			return StringVal("number")
+		case 2:
+			return StringVal("string")
+		case 3:
+			return StringVal("boolean")
+		case 4:
+			return StringVal("function")
+		case 5:
+			return StringVal("object")
+		case 6:
+			return StringVal("object")
+		case 7:
+			return StringVal("object")
 		}
 		return StringVal("undefined")
 
@@ -550,10 +648,14 @@ func evalNode(n *Node, env *Env) Value {
 		// Built-in: new Error(msg)
 		if n.Str == "Error" || n.Str == "TypeError" || n.Str == "RangeError" {
 			var args []Value
-			for _, a := range n.Args { args = append(args, evalNode(a, env)) }
+			for _, a := range n.Args {
+				args = append(args, evalNode(a, env))
+			}
 			errObj := ObjectVal()
 			msg := ""
-			if len(args) > 0 { msg = args[0].ToString() }
+			if len(args) > 0 {
+				msg = args[0].ToString()
+			}
 			errObj.Obj["message"] = StringVal(msg)
 			errObj.Obj["name"] = StringVal(n.Str)
 			return errObj
@@ -564,7 +666,9 @@ func evalNode(n *Node, env *Env) Value {
 		if cls.Type == 4 && cls.Fn != nil {
 			instance := ObjectVal()
 			var args []Value
-			for _, a := range n.Args { args = append(args, evalNode(a, env)) }
+			for _, a := range n.Args {
+				args = append(args, evalNode(a, env))
+			}
 			result := callFunction(cls.Fn, args, env, &instance)
 			// JS: if constructor returns an object, use it instead of this
 			if result.Type == 6 {
@@ -625,13 +729,17 @@ func evalNode(n *Node, env *Env) Value {
 			if matched {
 				for _, s := range c.Body {
 					evalNode(s, env)
-					if env.breaking || env.returning { break }
+					if env.breaking || env.returning {
+						break
+					}
 				}
 				if env.breaking {
 					env.breaking = false
 					break
 				}
-				if env.returning { break }
+				if env.returning {
+					break
+				}
 			}
 		}
 	}
@@ -642,7 +750,9 @@ func evalNode(n *Node, env *Env) Value {
 func evalPropertyAccess(obj Value, prop string) Value {
 	switch obj.Type {
 	case 6: // object
-		if v, ok := obj.Obj[prop]; ok { return v }
+		if v, ok := obj.Obj[prop]; ok {
+			return v
+		}
 		return Undefined
 	case 7: // array
 		if prop == "length" {
@@ -697,11 +807,21 @@ func evalMethodCall(obj Value, method string, args []Value, env *Env, objNode *N
 			if len(args) >= 2 {
 				start := int(args[0].ToNumber())
 				end := int(args[1].ToNumber())
-				if start < 0 { start = 0 }
-				if start > len(obj.Str) { start = len(obj.Str) }
-				if end < 0 { end = 0 }
-				if end > len(obj.Str) { end = len(obj.Str) }
-				if start > end { start, end = end, start }
+				if start < 0 {
+					start = 0
+				}
+				if start > len(obj.Str) {
+					start = len(obj.Str)
+				}
+				if end < 0 {
+					end = 0
+				}
+				if end > len(obj.Str) {
+					end = len(obj.Str)
+				}
+				if start > end {
+					start, end = end, start
+				}
 				return StringVal(obj.Str[start:end])
 			}
 		case "charCodeAt":
@@ -725,28 +845,60 @@ func evalBinOp(op string, l, r Value) Value {
 	// Equality — compare by type+value, not just numeric
 	switch op {
 	case "==", "===":
-		if l.Type != r.Type { return BoolVal(false) }
-		if l.Type == 2 { return BoolVal(l.Str == r.Str) }
+		if l.Type != r.Type {
+			return BoolVal(false)
+		}
+		if l.Type == 2 {
+			return BoolVal(l.Str == r.Str)
+		}
 		return BoolVal(l.ToNumber() == r.ToNumber())
 	case "!=", "!==":
-		if l.Type != r.Type { return BoolVal(true) }
-		if l.Type == 2 { return BoolVal(l.Str != r.Str) }
+		if l.Type != r.Type {
+			return BoolVal(true)
+		}
+		if l.Type == 2 {
+			return BoolVal(l.Str != r.Str)
+		}
 		return BoolVal(l.ToNumber() != r.ToNumber())
 	}
 	a, b := l.ToNumber(), r.ToNumber()
 	switch op {
-	case "+": return NumberVal(a + b)
-	case "-": return NumberVal(a - b)
-	case "*": return NumberVal(a * b)
-	case "/": if b != 0 { return NumberVal(a / b) }; return NumberVal(0)
-	case "%": if b != 0 { return NumberVal(float64(int64(a) % int64(b))) }; return NumberVal(0)
-	case "<": return BoolVal(a < b)
-	case ">": return BoolVal(a > b)
-	case "<=": return BoolVal(a <= b)
-	case ">=": return BoolVal(a >= b)
-	case "&&": return BoolVal(l.IsTrue() && r.IsTrue())
-	case "||": if l.IsTrue() { return l }; return r
-	case "??": if l.Type != 0 && l.Type != 5 { return l }; return r
+	case "+":
+		return NumberVal(a + b)
+	case "-":
+		return NumberVal(a - b)
+	case "*":
+		return NumberVal(a * b)
+	case "/":
+		if b != 0 {
+			return NumberVal(a / b)
+		}
+		return NumberVal(0)
+	case "%":
+		if b != 0 {
+			return NumberVal(float64(int64(a) % int64(b)))
+		}
+		return NumberVal(0)
+	case "<":
+		return BoolVal(a < b)
+	case ">":
+		return BoolVal(a > b)
+	case "<=":
+		return BoolVal(a <= b)
+	case ">=":
+		return BoolVal(a >= b)
+	case "&&":
+		return BoolVal(l.IsTrue() && r.IsTrue())
+	case "||":
+		if l.IsTrue() {
+			return l
+		}
+		return r
+	case "??":
+		if l.Type != 0 && l.Type != 5 {
+			return l
+		}
+		return r
 	}
 	return Undefined
 }
@@ -765,19 +917,25 @@ func tokenize(src string) []Token {
 		ch := src[i]
 		// Skip whitespace
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-			i++; continue
+			i++
+			continue
 		}
 		// Skip comments
 		if i+1 < len(src) && ch == '/' && src[i+1] == '/' {
-			for i < len(src) && src[i] != '\n' { i++ }
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
 			continue
 		}
 		// Number
 		if ch >= '0' && ch <= '9' {
 			j := i
-			for j < len(src) && (src[j] >= '0' && src[j] <= '9' || src[j] == '.') { j++ }
+			for j < len(src) && (src[j] >= '0' && src[j] <= '9' || src[j] == '.') {
+				j++
+			}
 			tokens = append(tokens, Token{0, src[i:j]})
-			i = j; continue
+			i = j
+			continue
 		}
 		// String
 		if ch == '\'' || ch == '"' {
@@ -787,12 +945,18 @@ func tokenize(src string) []Token {
 				if src[j] == '\\' && j+1 < len(src) {
 					j++
 					switch src[j] {
-					case 'n': sb.WriteByte('\n')
-					case 't': sb.WriteByte('\t')
-					case '\\': sb.WriteByte('\\')
-					case '\'': sb.WriteByte('\'')
-					case '"': sb.WriteByte('"')
-					default: sb.WriteByte(src[j])
+					case 'n':
+						sb.WriteByte('\n')
+					case 't':
+						sb.WriteByte('\t')
+					case '\\':
+						sb.WriteByte('\\')
+					case '\'':
+						sb.WriteByte('\'')
+					case '"':
+						sb.WriteByte('"')
+					default:
+						sb.WriteByte(src[j])
 					}
 				} else {
 					sb.WriteByte(src[j])
@@ -800,7 +964,8 @@ func tokenize(src string) []Token {
 				j++
 			}
 			tokens = append(tokens, Token{1, sb.String()})
-			i = j + 1; continue
+			i = j + 1
+			continue
 		}
 		// Template literal: `text${expr}text`
 		if ch == '`' {
@@ -818,9 +983,15 @@ func tokenize(src string) []Token {
 					depth := 1
 					exprStart := i
 					for i < len(src) && depth > 0 {
-						if src[i] == '{' { depth++ }
-						if src[i] == '}' { depth-- }
-						if depth > 0 { i++ }
+						if src[i] == '{' {
+							depth++
+						}
+						if src[i] == '}' {
+							depth--
+						}
+						if depth > 0 {
+							i++
+						}
 					}
 					// Recursively tokenize the inner expression
 					innerTokens := tokenize(src[exprStart:i])
@@ -838,11 +1009,16 @@ func tokenize(src string) []Token {
 						if src[i] == '\\' && i+1 < len(src) {
 							i++
 							switch src[i] {
-							case 'n': tb.WriteByte('\n')
-							case 't': tb.WriteByte('\t')
-							case '\\': tb.WriteByte('\\')
-							case '`': tb.WriteByte('`')
-							default: tb.WriteByte(src[i])
+							case 'n':
+								tb.WriteByte('\n')
+							case 't':
+								tb.WriteByte('\t')
+							case '\\':
+								tb.WriteByte('\\')
+							case '`':
+								tb.WriteByte('`')
+							default:
+								tb.WriteByte(src[i])
 							}
 						} else {
 							tb.WriteByte(src[i])
@@ -853,21 +1029,40 @@ func tokenize(src string) []Token {
 					tokens = append(tokens, Token{1, tb.String()})
 				}
 			}
-			if i < len(src) { i++ } // skip closing `
+			if i < len(src) {
+				i++
+			} // skip closing `
 			tokens = append(tokens, Token{3, ")"})
 			continue
 		}
 		// Identifier / keyword (no longer include '.' in identifiers)
-		if ch == '_' || unicode.IsLetter(rune(ch)) {
-			j := i
-			for j < len(src) && (src[j] == '_' || unicode.IsLetter(rune(src[j])) || unicode.IsDigit(rune(src[j]))) { j++ }
+		//
+		// Decoded as runes, not bytes. `unicode.IsLetter(rune(src[j]))` asks
+		// whether one BYTE is a letter, which for anything outside ASCII is a
+		// question about Latin-1: the first byte of "á" is 0xC3, which is 'Ã'
+		// and a letter, so the scan started — and its second byte 0xA1 is '¡',
+		// which is not, so the scan stopped one byte in. `var ábc = 1` came out
+		// as two identifiers, "\xc3" and "bc", the first of them not valid
+		// UTF-8. Every non-ASCII identifier was mangled this way, not only the
+		// exotic ones.
+		if r, size := utf8.DecodeRuneInString(src[i:]); r == '_' || unicode.IsLetter(r) {
+			j := i + size
+			for j < len(src) {
+				r2, s2 := utf8.DecodeRuneInString(src[j:])
+				if r2 != '_' && !unicode.IsLetter(r2) && !unicode.IsDigit(r2) {
+					break
+				}
+				j += s2
+			}
 			tokens = append(tokens, Token{2, src[i:j]})
-			i = j; continue
+			i = j
+			continue
 		}
 		// Spread/rest: ...
 		if i+2 < len(src) && src[i] == '.' && src[i+1] == '.' && src[i+2] == '.' {
 			tokens = append(tokens, Token{3, "..."})
-			i += 3; continue
+			i += 3
+			continue
 		}
 		// Operators (multi-char)
 		if i+1 < len(src) {
@@ -875,16 +1070,19 @@ func tokenize(src string) []Token {
 			if two == "==" || two == "!=" || two == "<=" || two == ">=" || two == "&&" || two == "||" || two == "=>" || two == "?." || two == "??" {
 				if i+2 < len(src) && src[i+2] == '=' {
 					tokens = append(tokens, Token{3, src[i : i+3]})
-					i += 3; continue
+					i += 3
+					continue
 				}
 				tokens = append(tokens, Token{3, two})
-				i += 2; continue
+				i += 2
+				continue
 			}
 		}
 		// Single char op/punc
 		if strings.ContainsRune("+-*/%=<>!(),{};:.[]?", rune(ch)) {
 			tokens = append(tokens, Token{3, string(ch)})
-			i++; continue
+			i++
+			continue
 		}
 		i++ // skip unknown
 	}
@@ -900,7 +1098,9 @@ type Parser struct {
 }
 
 func (p *Parser) peek() Token {
-	if p.pos >= len(p.tokens) { return Token{5, ""} }
+	if p.pos >= len(p.tokens) {
+		return Token{5, ""}
+	}
 	return p.tokens[p.pos]
 }
 
@@ -918,7 +1118,9 @@ func (p *Parser) parseProgram() []*Node {
 	var stmts []*Node
 	for p.peek().Kind != 5 {
 		s := p.parseStatement()
-		if s != nil { stmts = append(stmts, s) }
+		if s != nil {
+			stmts = append(stmts, s)
+		}
 	}
 	return stmts
 }
@@ -941,16 +1143,22 @@ func (p *Parser) parseStatement() *Node {
 		return p.parseReturn()
 	case "break":
 		p.next()
-		if p.peek().Val == ";" { p.next() }
+		if p.peek().Val == ";" {
+			p.next()
+		}
 		return &Node{Kind: NodeBreak}
 	case "continue":
 		p.next()
-		if p.peek().Val == ";" { p.next() }
+		if p.peek().Val == ";" {
+			p.next()
+		}
 		return &Node{Kind: NodeContinue}
 	case "throw":
 		p.next()
 		expr := p.parseExpr()
-		if p.peek().Val == ";" { p.next() }
+		if p.peek().Val == ";" {
+			p.next()
+		}
 		return &Node{Kind: NodeThrow, Left: expr}
 	case "try":
 		return p.parseTryCatch()
@@ -962,12 +1170,15 @@ func (p *Parser) parseStatement() *Node {
 		stmts := p.parseBlock()
 		return &Node{Kind: NodeBlock, Body: stmts}
 	case ";":
-		p.next(); return nil
+		p.next()
+		return nil
 	}
 
 	// Expression statement
 	expr := p.parseExpr()
-	if p.peek().Val == ";" { p.next() }
+	if p.peek().Val == ";" {
+		p.next()
+	}
 	return expr
 }
 
@@ -979,7 +1190,9 @@ func (p *Parser) parseVar() *Node {
 		p.next()
 		init = p.parseExpr()
 	}
-	if p.peek().Val == ";" { p.next() }
+	if p.peek().Val == ";" {
+		p.next()
+	}
 	return &Node{Kind: NodeVar, Str: name, Right: init}
 }
 
@@ -1034,7 +1247,9 @@ func (p *Parser) parseFor() *Node {
 		init = p.parseVar()
 	} else if p.peek().Val != ";" {
 		init = p.parseExpr()
-		if p.peek().Val == ";" { p.next() }
+		if p.peek().Val == ";" {
+			p.next()
+		}
 	} else {
 		p.next() // skip ;
 	}
@@ -1042,7 +1257,9 @@ func (p *Parser) parseFor() *Node {
 	if p.peek().Val != ";" {
 		cond = p.parseExpr()
 	}
-	if p.peek().Val == ";" { p.next() }
+	if p.peek().Val == ";" {
+		p.next()
+	}
 	var update *Node
 	if p.peek().Val != ")" {
 		update = p.parseExpr()
@@ -1089,7 +1306,9 @@ func (p *Parser) parseSwitch() *Node {
 			var body []*Node
 			for p.peek().Val != "case" && p.peek().Val != "default" && p.peek().Val != "}" && p.peek().Kind != 5 {
 				s := p.parseStatement()
-				if s != nil { body = append(body, s) }
+				if s != nil {
+					body = append(body, s)
+				}
 			}
 			cases = append(cases, SwitchCase{Expr: caseExpr, Body: body})
 		} else if p.peek().Val == "default" {
@@ -1098,7 +1317,9 @@ func (p *Parser) parseSwitch() *Node {
 			var body []*Node
 			for p.peek().Val != "case" && p.peek().Val != "}" && p.peek().Kind != 5 {
 				s := p.parseStatement()
-				if s != nil { body = append(body, s) }
+				if s != nil {
+					body = append(body, s)
+				}
 			}
 			cases = append(cases, SwitchCase{Expr: nil, Body: body})
 		} else {
@@ -1129,16 +1350,23 @@ func (p *Parser) parseClass() *Node {
 		p.expect("(")
 		var params []string
 		for p.peek().Val != ")" && p.peek().Kind != 5 {
-			if p.peek().Val == "..." { p.next(); params = append(params, "..." + p.next().Val) } else { params = append(params, p.next().Val) }
-			if p.peek().Val == "," { p.next() }
+			if p.peek().Val == "..." {
+				p.next()
+				params = append(params, "..."+p.next().Val)
+			} else {
+				params = append(params, p.next().Val)
+			}
+			if p.peek().Val == "," {
+				p.next()
+			}
 		}
 		p.expect(")")
 		body := p.parseBlock()
 		methods = append(methods, ClassMethod{
-			Name:   mName,
-			Params: params,
-			Body:   body,
-			IsCtor: mName == "constructor",
+			Name:     mName,
+			Params:   params,
+			Body:     body,
+			IsCtor:   mName == "constructor",
 			IsStatic: isStatic,
 		})
 	}
@@ -1154,8 +1382,15 @@ func (p *Parser) parseFunc() *Node {
 	p.expect("(")
 	var params []string
 	for p.peek().Val != ")" && p.peek().Kind != 5 {
-		if p.peek().Val == "..." { p.next(); params = append(params, "..." + p.next().Val) } else { params = append(params, p.next().Val) }
-		if p.peek().Val == "," { p.next() }
+		if p.peek().Val == "..." {
+			p.next()
+			params = append(params, "..."+p.next().Val)
+		} else {
+			params = append(params, p.next().Val)
+		}
+		if p.peek().Val == "," {
+			p.next()
+		}
 	}
 	p.expect(")")
 	body := p.parseBody()
@@ -1168,7 +1403,9 @@ func (p *Parser) parseReturn() *Node {
 	if p.peek().Val != ";" && p.peek().Val != "}" && p.peek().Kind != 5 {
 		val = p.parseExpr()
 	}
-	if p.peek().Val == ";" { p.next() }
+	if p.peek().Val == ";" {
+		p.next()
+	}
 	return &Node{Kind: NodeReturn, Left: val}
 }
 
@@ -1177,7 +1414,9 @@ func (p *Parser) parseBlock() []*Node {
 	var stmts []*Node
 	for p.peek().Val != "}" && p.peek().Kind != 5 {
 		s := p.parseStatement()
-		if s != nil { stmts = append(stmts, s) }
+		if s != nil {
+			stmts = append(stmts, s)
+		}
 	}
 	p.expect("}")
 	return stmts
@@ -1188,7 +1427,9 @@ func (p *Parser) parseBody() []*Node {
 		return p.parseBlock()
 	}
 	s := p.parseStatement()
-	if s != nil { return []*Node{s} }
+	if s != nil {
+		return []*Node{s}
+	}
 	return nil
 }
 
@@ -1320,7 +1561,9 @@ func (p *Parser) parseUnary() *Node {
 		var args []*Node
 		for p.peek().Val != ")" && p.peek().Kind != 5 {
 			args = append(args, p.parseExpr())
-			if p.peek().Val == "," { p.next() }
+			if p.peek().Val == "," {
+				p.next()
+			}
 		}
 		p.expect(")")
 		// Store ctor expression in Left, keep Str for simple case
@@ -1341,7 +1584,9 @@ func (p *Parser) parsePostfix() *Node {
 				var args []*Node
 				for p.peek().Val != ")" && p.peek().Kind != 5 {
 					args = append(args, p.parseExpr())
-					if p.peek().Val == "," { p.next() }
+					if p.peek().Val == "," {
+						p.next()
+					}
 				}
 				p.expect(")")
 				left = &Node{Kind: NodeMethodCall, Object: left, Property: prop, Args: args}
@@ -1360,7 +1605,9 @@ func (p *Parser) parsePostfix() *Node {
 				var args []*Node
 				for p.peek().Val != ")" && p.peek().Kind != 5 {
 					args = append(args, p.parseExpr())
-					if p.peek().Val == "," { p.next() }
+					if p.peek().Val == "," {
+						p.next()
+					}
 				}
 				p.expect(")")
 				left = &Node{Kind: NodeCall, Str: left.Str, Args: args}
@@ -1370,7 +1617,9 @@ func (p *Parser) parsePostfix() *Node {
 				var args []*Node
 				for p.peek().Val != ")" && p.peek().Kind != 5 {
 					args = append(args, p.parseExpr())
-					if p.peek().Val == "," { p.next() }
+					if p.peek().Val == "," {
+						p.next()
+					}
 				}
 				p.expect(")")
 				left = &Node{Kind: NodeMethodCall, Object: left, Property: "__call__", Args: args}
@@ -1405,8 +1654,15 @@ func (p *Parser) parsePrimary() *Node {
 		p.expect("(")
 		var params []string
 		for p.peek().Val != ")" && p.peek().Kind != 5 {
-			if p.peek().Val == "..." { p.next(); params = append(params, "..." + p.next().Val) } else { params = append(params, p.next().Val) }
-			if p.peek().Val == "," { p.next() }
+			if p.peek().Val == "..." {
+				p.next()
+				params = append(params, "..."+p.next().Val)
+			} else {
+				params = append(params, p.next().Val)
+			}
+			if p.peek().Val == "," {
+				p.next()
+			}
 		}
 		p.expect(")")
 		body := p.parseBlock()
@@ -1424,7 +1680,9 @@ func (p *Parser) parsePrimary() *Node {
 				break
 			}
 			arrowParams = append(arrowParams, p.next().Val)
-			if p.peek().Val == "," { p.next() }
+			if p.peek().Val == "," {
+				p.next()
+			}
 		}
 		if isArrow && p.peek().Val == ")" {
 			p.next() // consume )
@@ -1465,7 +1723,7 @@ func (p *Parser) parsePrimary() *Node {
 		name := t.Val
 		// console.log handled specially - check if "console" followed by ".log"
 		if name == "console" && p.peek().Val == "." {
-			p.next() // consume .
+			p.next()            // consume .
 			sub := p.next().Val // "log"
 			fullName := name + "." + sub
 			if p.peek().Val == "(" {
@@ -1473,7 +1731,9 @@ func (p *Parser) parsePrimary() *Node {
 				var args []*Node
 				for p.peek().Val != ")" && p.peek().Kind != 5 {
 					args = append(args, p.parseExpr())
-					if p.peek().Val == "," { p.next() }
+					if p.peek().Val == "," {
+						p.next()
+					}
 				}
 				p.expect(")")
 				return &Node{Kind: NodeCall, Str: fullName, Args: args}
@@ -1497,7 +1757,9 @@ func (p *Parser) parseArrayLiteral() *Node {
 		} else {
 			elems = append(elems, p.parseExpr())
 		}
-		if p.peek().Val == "," { p.next() }
+		if p.peek().Val == "," {
+			p.next()
+		}
 	}
 	p.expect("]")
 	return &Node{Kind: NodeArray, Args: elems}
@@ -1511,7 +1773,9 @@ func (p *Parser) parseObjectLiteral() *Node {
 		p.expect(":") // colon
 		val := p.parseExpr()
 		pairs = append(pairs, &Node{Kind: NodeString, Str: key}, val)
-		if p.peek().Val == "," { p.next() }
+		if p.peek().Val == "," {
+			p.next()
+		}
 	}
 	p.expect("}")
 	return &Node{Kind: NodeObject, Args: pairs}
