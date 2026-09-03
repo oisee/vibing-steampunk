@@ -107,8 +107,8 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) 320px;min-height:0}
   <button id="setbp">Set breakpoint</button>
   <label class="chk"><input type="checkbox" id="sys"> system code</label>
   <span class="spacer"></span>
-  <button id="run">Run</button>
-  <button id="listen" class="primary">Listen</button>
+  <button id="run" class="primary">Run &amp; catch</button>
+  <button id="listen" title="Wait for a debuggee someone else triggers — SE38, a job, another machine">Listen only</button>
 </div>
 
 <main>
@@ -224,8 +224,8 @@ const q = () => `object=${encodeURIComponent($('target').value.trim())}&line=${e
 
 $('setbp').onclick  = () => { srcCache.delete($('target').value.trim().toUpperCase()); call('/api/bp?' + q()); };
 $('sys').onchange   = () => call('/api/sys?on=' + ($('sys').checked ? 'true' : 'false'));
-$('run').onclick    = () => call('/api/run?' + q());
-$('listen').onclick = () => { note('listening — trigger it now if you have not'); call('/api/listen?seconds=60'); };
+$('run').onclick    = () => { note('setting the breakpoint, calling it, waiting — up to 60s'); call('/api/run?' + q()); };
+$('listen').onclick = () => { note('waiting up to 60s for someone else to trigger it'); call('/api/listen?seconds=60'); };
 $('into').onclick   = () => call('/api/step?type=into');
 $('over').onclick   = () => call('/api/step?type=over');
 $('out').onclick    = () => call('/api/step?type=out');
