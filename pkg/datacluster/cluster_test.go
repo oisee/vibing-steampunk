@@ -318,3 +318,47 @@ func TestPacked(t *testing.T) {
 		}
 	}
 }
+
+// The EUFUNC fixtures are version 5 clusters — written by a pre-Unicode
+// kernel in code page 1100 and still on disk after the conversion — from the
+// Function Builder's test data: the directory record of a standard function
+// module (its interface and one elementary), and a saved test run of
+// STRING_CONCATENATE with its inputs, result, runtime and return code.
+func TestParseLegacy(t *testing.T) {
+	c, err := Parse(loadHex(t, "eufunc_v5.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Version != 5 || c.Codepage != "1100" || !c.Compressed || len(c.Objects) != 3 {
+		t.Fatalf("cluster: %+v", *c)
+	}
+	dir := c.Object("TE_DATADIR")
+	if dir == nil || dir.Kind != Table || len(dir.Rows) != 0 || len(dir.Fields) != 6 || dir.Fields[5].Length != 40 {
+		t.Errorf("TE_DATADIR: %+v", dir)
+	}
+	iface := c.Object("FDESC_COPY")
+	if iface == nil || len(iface.Rows) != 8 || len(iface.Fields) != 8 {
+		t.Fatalf("FDESC_COPY: %+v", iface)
+	}
+	if row := iface.Rows[0]; row[0] != "EVENTID" || row[1] != "TBTCM-EVENTID" || row[2] != "C" || row[5] != "32" || row[7] != int64(0) {
+		t.Errorf("interface row: %v", row)
+	}
+	if el := c.Object("D102_FNAME"); el == nil || el.Kind != Elementary || el.Rows[0][0] != "GET_JOB_RUNTIME_INFO" {
+		t.Errorf("D102_FNAME: %+v", el)
+	}
+
+	c, err = Parse(loadHex(t, "eufunc_v5_plain.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"%_ISTRING1": "ABC", "%_ISTRING2": "XYZ", "TIME1": "900", "V_RC": int64(0), "VEXCEPTION": "", "%_VSTRING": "ABCXYZ"}
+	if len(c.Objects) != len(want) {
+		t.Fatalf("%d objects", len(c.Objects))
+	}
+	for name, v := range want {
+		o := c.Object(name)
+		if o == nil || o.Kind != Elementary || len(o.Rows) != 1 || o.Rows[0][0] != v {
+			t.Errorf("%s: %+v", name, o)
+		}
+	}
+}

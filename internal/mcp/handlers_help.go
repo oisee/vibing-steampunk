@@ -380,6 +380,7 @@ Cluster tables (BALDAT, INDX, STXL, ... — EXPORT data clusters decoded here, n
       without a layout they are numbered; a DDIC structure (read from DD03L, includes resolved) names
       them, per object as OBJECT=STRUCTURE, and is refused when it does not fit rather than guessed.
       stxl (the default on STXL) renders SAPscript text; applog prints BALDAT messages.
+      Version 5 clusters (pre-Unicode rows, e.g. EUFUNC test data, AQLDB) are read as well.
       max_results caps database rows (fragments), 200 by default.
 
 Profiler traces:

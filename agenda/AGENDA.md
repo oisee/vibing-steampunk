@@ -70,12 +70,22 @@ elementary type, plus BALDAT) and is `pkg/datacluster`. So:
   hashed tables are written like standard ones (the kind is not stored).
   `indx_deep.hex` is the fixture. Table components take their line type
   from DD40L (and DD04L for an elementary line) in `--layout`.
-- Found on the way, not done: the data preview clips XSTRING columns to 128
-  bytes and refuses SUBSTRING on them, so REPOSRC (CS-compressed source,
-  one 0xFF byte before the 1F 9D header) cannot be read whole over free
-  SQL. Sources come from ADT anyway. Cluster tables worth a layout next:
-  VARI (variant contents — a job's selection without RS_VARIANT_CONTENTS),
-  SOC3 (SAPoffice documents), COVRES/SCI results, PCL1/PCL2 on HR systems.
+- Version 5, the morning after: EUFUNC (SE37 test data) and AQLDB on A4H
+  are clusters a pre-Unicode kernel wrote — `FF 05`, code page 1100,
+  two-byte lengths, four-byte descriptor entries with no decimals, rows
+  each introduced by `BB` with no count and no framing. `legacy.go` reads
+  them; `eufunc_v5*.hex` are the fixtures. Any system that went through a
+  Unicode conversion has such rows in every INDX-like table it did not
+  rewrite. Not seen yet: a version 5 cluster with strings or nested tables
+  (it refuses rather than guesses), and code pages other than 1100 (read
+  as Latin-1).
+- Found on the way: the data preview clips XSTRING columns to 128 bytes
+  and refuses SUBSTRING on them, so REPOSRC (CS-compressed source, one
+  0xFF byte before the 1F 9D header) cannot be read whole over free SQL.
+  `vsp cluster decompress --skip 1 --text` takes a dump of it made by
+  ABAP. Cluster tables worth a layout next: VARI (variant contents — a
+  job's selection without RS_VARIANT_CONTENTS), SOC3 (SAPoffice
+  documents), COVRES/SCI results, PCL1/PCL2 on HR systems.
 - The BAPI path is still worth a `vsp rfc call` when a system blocks free
   SQL; it needs no code.
 

@@ -302,9 +302,17 @@ on your machine. On the MCP side it is `analyze type=cluster_read`, and
 Verified against clusters written by a 7.58 kernel: every elementary type,
 compressed and not; DDIC-typed structures and tables; tables inside
 structures, tables inside table rows, sorted and hashed tables, tables of
-strings, bare strings — and against BALDAT from a 7.5x system. The same
+strings, bare strings — and against BALDAT from a 7.5x system. Version 5
+clusters — what a pre-Unicode kernel wrote, and what old rows still are
+after a Unicode conversion — are read too, from EUFUNC and AQLDB. The same
 reader opens VARI (report variants, one object per parameter), LTDX (ALV
-layouts), MONI (workload statistics) and STXL on sight.
+layouts), MONI (workload statistics), SOC3 (SAPoffice documents), EUDB and
+STXL on sight, and EUFUNC gives the Function Builder's saved test data:
+every parameter by name, the result, the runtime, the return code.
+
+`vsp cluster decompress` is the compression alone, for streams that are
+not clusters — REPOSRC's source column, dumped to a file by a few lines of
+ABAP, decompresses with `--skip 1 --text`.
 
 Checked on 7.50, 7.57 and 7.58. 7.50 serves the dump feed but not the detail
 resource, so there is no call stack to read there — the correlation drops that
