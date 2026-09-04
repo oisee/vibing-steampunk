@@ -254,13 +254,7 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 			}
 			fmt.Println()
 			if schema {
-				for _, f := range obj.Fields {
-					desc := fmt.Sprintf("%s(%d)", f.Type, f.Length)
-					if f.Decimals > 0 {
-						desc = fmt.Sprintf("%s(%d,%d)", f.Type, f.Length, f.Decimals)
-					}
-					fmt.Printf("     %-8s %-24s %s\n", f.Path, f.Name, desc)
-				}
+				printSchema(obj.Fields, "     ")
 			}
 			for n, row := range obj.Rows {
 				parts := make([]string, len(row))
@@ -293,4 +287,19 @@ func init() {
 	clusterDecodeCmd.Flags().StringSlice("ignore", nil, "Export columns that are not part of the cluster key (e.g. AEDAT,USERA)")
 	clusterCmd.AddCommand(clusterReadCmd, clusterDecodeCmd)
 	rootCmd.AddCommand(clusterCmd)
+}
+
+// printSchema lists fields with their DDIC names when a layout gave them,
+// the line of a table component indented under it.
+func printSchema(fields []datacluster.Field, indent string) {
+	for _, f := range fields {
+		desc := fmt.Sprintf("%s(%d)", f.Type, f.Length)
+		if f.Decimals > 0 {
+			desc = fmt.Sprintf("%s(%d,%d)", f.Type, f.Length, f.Decimals)
+		}
+		fmt.Printf("%s%-8s %-24s %s\n", indent, f.Path, f.Name, desc)
+		if len(f.Fields) > 0 {
+			printSchema(f.Fields, indent+"  ")
+		}
+	}
 }

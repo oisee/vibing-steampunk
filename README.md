@@ -274,9 +274,10 @@ into data: it is an SAP-compressed data cluster, and only `IMPORT` reads it.
 eight-byte header and a two-bit prefix, so the standard library inflates it;
 "LZC" is compress(1) and is ~100 lines. The cluster itself carries a type
 descriptor for every exported object — kind, length and decimals of every
-field, nested for structures — so the values come back typed: packed numbers
-as decimals, time stamps with their microseconds, strings from their
-out-of-line segments. What it does not carry is field names. `--layout`
+field, nested for structures, a line type for a table inside a structure —
+so the values come back typed: packed numbers as decimals, time stamps with
+their microseconds, strings from their out-of-line segments, a table-typed
+component as its rows. What it does not carry is field names. `--layout`
 supplies them: a DDIC structure is read from DD03L, includes resolved, and
 laid over the descriptor field by field — type family, byte length and
 decimals checked at every leaf, so a structure that does not fit is refused
@@ -298,8 +299,12 @@ BALHDR to find the log handles, export the matching BALDAT rows, decode them
 on your machine. On the MCP side it is `analyze type=cluster_read`, and
 `application_log` takes `messages: true`.
 
-Verified against clusters written by a 7.58 kernel with every elementary type
-in them, compressed and not, and against BALDAT from a 7.5x system.
+Verified against clusters written by a 7.58 kernel: every elementary type,
+compressed and not; DDIC-typed structures and tables; tables inside
+structures, tables inside table rows, sorted and hashed tables, tables of
+strings, bare strings — and against BALDAT from a 7.5x system. The same
+reader opens VARI (report variants, one object per parameter), LTDX (ALV
+layouts), MONI (workload statistics) and STXL on sight.
 
 Checked on 7.50, 7.57 and 7.58. 7.50 serves the dump feed but not the detail
 resource, so there is no call stack to read there — the correlation drops that

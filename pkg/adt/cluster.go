@@ -3,7 +3,6 @@ package adt
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -28,20 +27,28 @@ type ClusterTableInfo struct {
 	Keys []string
 }
 
-var ddlFieldLine = regexp.MustCompile(`(?im)^\s*(key\s+)?([a-z0-9_/]+)\s*:\s*([a-z0-9_/]+)`)
-
-// ClusterTable reads a table's definition and checks that it is a cluster
-// table: keyed with SRTF2 last and carrying CLUSTR and CLUSTD.
+// ClusterTable reads a table's field list from DD03L and checks that it is a
+// cluster table: keyed with SRTF2, carrying CLUSTR and CLUSTD. DD03L rather
+// than the DDL source, because a key that lives in an include — LTDX keeps
+// its whole key in one — is a line `include ltdxkey;` in the DDL and a row
+// per field in DD03L.
 func (c *Client) ClusterTable(ctx context.Context, table string) (*ClusterTableInfo, error) {
 	table = strings.ToUpper(strings.TrimSpace(table))
-	ddl, err := c.GetTable(ctx, table)
+	query := fmt.Sprintf("SELECT position, fieldname, keyflag, rollname, datatype FROM dd03l WHERE tabname = '%s' AND as4local = 'A' ORDER BY position", sqlQuote(table))
+	res, err := c.RunQuery(ctx, query, 1000)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading the fields of %s: %w", table, err)
+	}
+	if res == nil || len(res.Rows) == 0 {
+		return nil, fmt.Errorf("%s is not an active table in DDIC", table)
 	}
 	info := &ClusterTableInfo{Name: table}
 	hasSeq, hasLen, hasData := false, false, false
-	for _, m := range ddlFieldLine.FindAllStringSubmatch(ddl, -1) {
-		isKey, name, typ := m[1] != "", strings.ToUpper(m[2]), strings.ToUpper(m[3])
+	for _, row := range res.Rows {
+		name := cell(row, "FIELDNAME")
+		if strings.HasPrefix(name, ".") {
+			continue // .INCLUDE / .APPEND markers; their fields follow
+		}
 		switch name {
 		case "SRTF2":
 			hasSeq = true
@@ -53,10 +60,10 @@ func (c *Client) ClusterTable(ctx context.Context, table string) (*ClusterTableI
 			hasData = true
 			continue
 		}
-		if !isKey {
+		if cell(row, "KEYFLAG") != "X" {
 			continue
 		}
-		if typ == "MANDT" || name == "MANDT" || name == "MANDANT" || name == "CLIENT" {
+		if cell(row, "DATATYPE") == "CLNT" || name == "MANDT" || name == "MANDANT" || name == "CLIENT" {
 			info.Client = name
 			continue
 		}

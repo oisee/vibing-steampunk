@@ -63,6 +63,19 @@ elementary type, plus BALDAT) and is `pkg/datacluster`. So:
   next reader: DD03L's `INTLEN` is not to be trusted — it is characters on
   some rows and bytes on others of the same system — so lengths come from
   `LENG` and `DATATYPE`.
+- Deep data, same night: a table-typed component is an eight-byte slot in
+  the row with its line type as a nested `AD…AE` descriptor and its rows as
+  a `BE…BF` block inline in the row stream; a bare string is object kind 07;
+  an elementary packed carries its decimals in header byte 2; sorted and
+  hashed tables are written like standard ones (the kind is not stored).
+  `indx_deep.hex` is the fixture. Table components take their line type
+  from DD40L (and DD04L for an elementary line) in `--layout`.
+- Found on the way, not done: the data preview clips XSTRING columns to 128
+  bytes and refuses SUBSTRING on them, so REPOSRC (CS-compressed source,
+  one 0xFF byte before the 1F 9D header) cannot be read whole over free
+  SQL. Sources come from ADT anyway. Cluster tables worth a layout next:
+  VARI (variant contents — a job's selection without RS_VARIANT_CONTENTS),
+  SOC3 (SAPoffice documents), COVRES/SCI results, PCL1/PCL2 on HR systems.
 - The BAPI path is still worth a `vsp rfc call` when a system blocks free
   SQL; it needs no code.
 

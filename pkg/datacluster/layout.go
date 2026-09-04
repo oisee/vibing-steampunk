@@ -76,10 +76,15 @@ func (o *Object) Apply(l *Layout) error {
 	if i != len(nodes) {
 		return fmt.Errorf("%s does not fit %s: the cluster has %d more field(s) than the layout", l.Name, o.Name, len(nodes)-i)
 	}
-	for k := range o.Fields {
-		o.Fields[k].Name = names[o.Fields[k].Path]
-	}
+	nameFields(o.Fields, names)
 	return nil
+}
+
+func nameFields(fields []Field, names map[string]string) {
+	for k := range fields {
+		fields[k].Name = names[fields[k].Path]
+		nameFields(fields[k].Fields, names)
+	}
 }
 
 // unicode reports whether character fields are two bytes per character,
@@ -100,7 +105,27 @@ func walkLayout(nodes []*Node, i *int, comps []Component, prefix string, names m
 	for _, c := range comps {
 		switch c.Kind {
 		case TableField:
-			return fmt.Errorf("component %s%s is a table type, which this reader does not lay out", prefix, c.Name)
+			if *i >= len(nodes) {
+				return fmt.Errorf("layout has %s%s but the cluster has no field left for it", prefix, c.Name)
+			}
+			n := nodes[*i]
+			if !n.Table {
+				return fmt.Errorf("layout has table %s%s where the cluster has a %s field", prefix, c.Name, TypeName(n.TypeCode))
+			}
+			names[n.Path] = prefix + c.Name
+			*i++
+			if c.Sub == nil {
+				continue // the line type stays numbered
+			}
+			// The line type's own descriptor children, structures and all.
+			lineNodes := valueNodes(n)
+			j := 0
+			if err := walkLayout(lineNodes, &j, c.Sub.Components, prefix+c.Name+"[].", names, unicode); err != nil {
+				return err
+			}
+			if j != len(lineNodes) {
+				return fmt.Errorf("table %s%s: the line has %d more field(s) than %s", prefix, c.Name, len(lineNodes)-j, c.Sub.Name)
+			}
 		case SubstructureField:
 			if *i >= len(nodes) {
 				return fmt.Errorf("layout has %s%s but the cluster has no field left for it", prefix, c.Name)
@@ -232,15 +257,30 @@ func ddicToCluster(c Component, unicode bool) (code byte, bytes int, ok bool) {
 }
 
 // Records renders the rows as maps once the fields are named; unnamed fields
-// keep their path as the key.
+// keep their path as the key. A table component's rows become maps too when
+// its line is named, and stay slices otherwise.
 func (o *Object) Records() []map[string]any {
-	out := make([]map[string]any, len(o.Rows))
-	for r, row := range o.Rows {
+	return records(o.Fields, o.Rows)
+}
+
+func records(fields []Field, rows [][]any) []map[string]any {
+	out := make([]map[string]any, len(rows))
+	for r, row := range rows {
 		m := make(map[string]any, len(row))
 		for i, v := range row {
-			key := o.Fields[i].Path
-			if o.Fields[i].Name != "" {
-				key = o.Fields[i].Name
+			f := fields[i]
+			key := f.Path
+			if f.Name != "" {
+				// Inside a table's rows the name is local to the line: the
+				// enclosing path is the map they sit in.
+				key = f.Name
+				if at := strings.LastIndex(key, "[]."); at >= 0 {
+					key = key[at+3:]
+				}
+			}
+			if nested, ok := v.([][]any); ok && len(f.Fields) > 0 && f.Fields[0].Name != "" {
+				m[key] = records(f.Fields, nested)
+				continue
 			}
 			m[key] = v
 		}
