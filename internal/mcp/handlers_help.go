@@ -380,6 +380,22 @@ Spool and background jobs (SP01/SM37 over free SQL; the job log and file-stored 
       each job with its steps: program, variant, user, the spool number each step wrote
   SAP(action="analyze", params={"type": "job_log", "job": "ZDEMO_NIGHTLY", "count": "22554500"})
 
+What the system is set up to do — variants, test data, documentation, the IMG (free SQL):
+  SAP(action="analyze", params={"type": "variants", "report": "ZDEMO_NIGHTLY_RUN"})
+  SAP(action="analyze", params={"type": "variants", "report": "ZDEMO_NIGHTLY_RUN", "variant": "MONTH_END"})
+      every field with its label, kind (P/S), type and value or ranges — what the job selects
+  SAP(action="analyze", params={"type": "fm_test_data", "function": "ZDEMO_CALCULATE_TAX"})
+      SE37's saved test sets: inputs, outputs, runtime, return code, and the interface as saved
+  SAP(action="analyze", params={"type": "documentation", "class": "DE", "object": "BALLEVEL"})
+  SAP(action="analyze", params={"type": "documentation", "object": "BAL_LOG_CREATE"})
+      SE61 text as Markdown, includes resolved; without class, the index of what exists.
+      classes: DE data element, DT domain, TB table, RE report, FU function module, CL class,
+      IF interface, NA message, TX general text, HY IMG activity
+  SAP(action="analyze", params={"type": "img_search", "text": "delta link"})
+      IMG nodes whose title matches, the path to each, and the activity or document it opens
+  SAP(action="analyze", params={"type": "img_activity", "activity": "/IWBEP/CP_DELETE_JOB"})
+      transaction, paths, and the activity's documentation
+
 Cluster tables (BALDAT, INDX, STXL, ... — EXPORT data clusters decoded here, no IMPORT needed):
   SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZV'"})
   SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZD'", "layout": "ZDEMO_S_HEADER"})

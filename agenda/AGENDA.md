@@ -37,6 +37,25 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
+## Done — 2026-09-05 — variants, test data, documentation, the IMG
+
+`vsp variants`, `vsp fmtest`, `vsp docs read|index|img|activity`; MCP
+`variants`, `fm_test_data`, `documentation`, `img_search`, `img_activity`.
+Facts that took finding: a variant is VARI under two RELIDs — VA the values
+(one object per field, a table for a select-option), VB the screen's shape
+(`%_VARI40C`); SE37 test data is EUFUNC with `%_I`/`%_V` objects and a 999
+directory record; an IMG activity's text is DOKIL `HY` with object
+`SIMG`+activity, its title is CUS_IMGACT (not TNODEIMGT, which has the
+folders), and TNODEIMGR ties a node to it as `COBJ`/`ACTI`. `pkg/itf`
+renders ITF — chapter markers, paragraph continuation, `<ex>/<zh>/<ds>`,
+INCLUDE commands — as Markdown; formats seen but rendered only as plain
+paragraphs: T1..T6, M1..M5, K1..K6, E1..E3, `>0`/`>1` tables.
+
+Open: select-option storage in VARI was never observed on A4H (no variant
+there has one) and is read by shape — a table object with four columns;
+verify on a system that has them. `?...` in a text pool means "no selection
+text", and `D…` means "DDIC label", read from DD04T.
+
 ## Done — 2026-09-05 — jobs and spool as tables
 
 `vsp jobs list|log`, `vsp spool list|read|export`, MCP `job_list`,

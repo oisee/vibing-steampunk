@@ -37,6 +37,11 @@ func (s *Server) dumpAnalysisTypes() map[string]func(context.Context, mcp.CallTo
 		"spool_read":      s.handleSpoolRead,
 		"job_list":        s.handleJobList,
 		"job_log":         s.handleJobLog,
+		"variants":        s.handleVariants,
+		"fm_test_data":    s.handleFunctionTestData,
+		"documentation":   s.handleDocumentation,
+		"img_search":      s.handleIMGSearch,
+		"img_activity":    s.handleIMGActivity,
 	}
 }
 
