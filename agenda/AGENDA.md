@@ -23,6 +23,20 @@ two worktrees, which is why it says so.
 > — the v2.55.0 sprint. Four defects that are one defect: the tool could not
 > answer, so it answered anyway. Ordered, with the test that proves each.
 
+## Landed — 2026-09-04 — v2.55.0
+
+Released through the workflow this time (`gh workflow run release.yml -f
+version=v2.55.0`), so the "Commit CHANGELOG.md" step that had skipped twelve
+releases ran and landed as `3bbec88`. The section is long — 26 merged PRs,
+88 commits — because branches merged after v2.54.0 had never been in a tag;
+every entry in it is first-released now, checked with `git merge-base
+--is-ancestor` against v2.54.0. Release title and notes were set by hand
+afterwards, the way the previous releases did theirs.
+
+Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
+program, which itself was deleted after the fixtures were captured. Its
+source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
+
 ## Done — 2026-09-04 — `vsp applog --messages`, and cluster tables in general
 
 Filed in the morning as "call `BAPI_APPLICATIONLOG_GETDETAIL` over RFC";
