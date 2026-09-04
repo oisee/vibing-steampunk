@@ -1215,7 +1215,7 @@ func (c *Client) RunQuery(ctx context.Context, sqlQuery string, maxRows int) (*T
 		Method:      http.MethodPost,
 		Query:       params,
 		Accept:      "application/*",
-		Body:        []byte(sqlQuery),
+		Body:        []byte(wrapSQL(sqlQuery)),
 		ContentType: "text/plain",
 	})
 	if err != nil {
@@ -1223,6 +1223,51 @@ func (c *Client) RunQuery(ctx context.Context, sqlQuery string, maxRows int) (*T
 	}
 
 	return parseTableContents(resp.Body)
+}
+
+// wrapSQL keeps every line of a statement under the data preview's limit.
+// The service puts the text into ABAP source lines of 255 characters, and a
+// token cut by that wrap — a literal, a column name — is a syntax error that
+// names half a word. Lines are broken at blanks outside quotes only, so the
+// statement means the same thing.
+func wrapSQL(query string) string {
+	const limit = 200
+	var out strings.Builder
+	lineLen := 0
+	inQuote := false
+	start := 0
+	emit := func(word string) {
+		if word == "" {
+			return
+		}
+		if lineLen > 0 && lineLen+1+len(word) > limit {
+			out.WriteByte('\n')
+			lineLen = 0
+		} else if lineLen > 0 {
+			out.WriteByte(' ')
+			lineLen++
+		}
+		out.WriteString(word)
+		lineLen += len(word)
+	}
+	for i := 0; i < len(query); i++ {
+		switch query[i] {
+		case '\'':
+			inQuote = !inQuote
+		case ' ', '\n':
+			if inQuote {
+				continue
+			}
+			emit(query[start:i])
+			start = i + 1
+			if query[i] == '\n' {
+				out.WriteByte('\n')
+				lineLen = 0
+			}
+		}
+	}
+	emit(query[start:])
+	return out.String()
 }
 
 // parseTableContents parses the XML response for table contents.

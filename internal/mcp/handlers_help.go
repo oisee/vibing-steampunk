@@ -370,6 +370,16 @@ Application log (SLG1, read with free SQL — no RFC, no gateway, no Z code):
       headers by default; messages=true decodes the BALDAT cluster too: class, number, variables,
       text from T100, context, detail level
 
+Spool and background jobs (SP01/SM37 over free SQL; the job log and file-stored spool over XBP/RFC):
+  SAP(action="analyze", params={"type": "spool_list", "since": "2026-09-01", "user": "TESTUSER", "max_results": 20})
+  SAP(action="analyze", params={"type": "spool_list", "job": "ZDEMO_NIGHTLY"})
+  SAP(action="analyze", params={"type": "spool_read", "number": 27302})
+      the decoded list: pages, lines, the format commands; via="rfc" for spool kept in files
+  SAP(action="analyze", params={"type": "job_list", "since": "2026-09-01", "status": "A"})
+  SAP(action="analyze", params={"type": "job_list", "program": "ZDEMO_NIGHTLY_RUN"})
+      each job with its steps: program, variant, user, the spool number each step wrote
+  SAP(action="analyze", params={"type": "job_log", "job": "ZDEMO_NIGHTLY", "count": "22554500"})
+
 Cluster tables (BALDAT, INDX, STXL, ... — EXPORT data clusters decoded here, no IMPORT needed):
   SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZV'"})
   SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZD'", "layout": "ZDEMO_S_HEADER"})

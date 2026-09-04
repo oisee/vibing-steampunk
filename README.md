@@ -262,6 +262,27 @@ vsp -s a4h applog --object ZDEMO_LOG --since 2026-09-01 --messages
            context ZDEMO_ORDER_KEY: 0000004711
 ```
 
+### Jobs and spool — SM37 and SP01 as tables
+
+A night job failed. `vsp jobs list --since` shows it with its status, its
+steps — program, variant, user — and the spool number each step wrote;
+`vsp spool read` prints that spool, and `vsp spool export` writes every
+matching request to a directory with an index of who wrote what, when, from
+which job. All of it from TBTCO, TBTCP, TSP01 and TST03 over free SQL: the
+spool content is the TemSe object decoded here — records, print controls,
+the list format's escapes — checked line for line against what XBP returns.
+
+Two things are not tables. The job log is a TemSe object most systems keep
+in files, and so is spool on a system configured that way; both come over
+RFC through XBP, which `vsp jobs log` and `--via rfc` do. On the MCP side:
+`job_list`, `job_log`, `spool_list`, `spool_read`.
+
+```bash
+vsp -s a4h jobs list --program ZDEMO_NIGHTLY_RUN     # every job with a step running it
+vsp -s a4h spool list --job ZDEMO_NIGHTLY --top 20
+vsp -s a4h spool export --user TESTUSER --since 2026-09-01 --out ./spool
+```
+
 ### Cluster tables, decoded — BALDAT, INDX, STXL over plain ADT
 
 BALDAT is one of a family: INDX, STXL, and every table an `EXPORT ... TO
@@ -931,6 +952,11 @@ vsp -s a4h dumps --explain latest --tolerance 10m  # stack + ranked log around i
 vsp -s a4h applog --program ZCL_ORDER_POST --top 20
 vsp -s a4h applog --user TESTUSER --since 2026-08-01
 vsp -s a4h applog --object ZDEMO_LOG --messages    # the messages too, decoded from BALDAT
+vsp -s a4h jobs list --since 2026-09-01 --status A  # what was cancelled, with steps and spools
+vsp -s a4h jobs log ZDEMO_NIGHTLY 22554500          # the job log, over XBP
+vsp -s a4h spool list --job ZDEMO_NIGHTLY           # what the job's steps printed
+vsp -s a4h spool read 27302                         # the list, decoded from TemSe
+vsp -s a4h spool export --since 2026-09-01 --out ./spool
 
 # Cluster tables — what only IMPORT could read, decoded here
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema
