@@ -187,6 +187,12 @@ func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, sourc
 	}); err != nil {
 		return err
 	}
+	// The caller may have read this object before preparing its replacement.
+	// Read it again after taking the stateful MODIFY lock, so another editor
+	// cannot be silently overwritten between that read and this PUT.
+	if err := c.verifyExpectedSourceHash(ctx, objectSourceURL); err != nil {
+		return err
+	}
 
 	params := url.Values{}
 	params.Set("lockHandle", lockHandle)
@@ -1131,6 +1137,9 @@ func (c *Client) UpdateClassInclude(ctx context.Context, className string, inclu
 		ObjectURL: sourceURL,
 		Transport: transport,
 	}); err != nil {
+		return err
+	}
+	if err := c.verifyExpectedSourceHash(ctx, sourceURL); err != nil {
 		return err
 	}
 

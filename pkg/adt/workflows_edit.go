@@ -10,17 +10,20 @@ import (
 
 // EditSourceResult represents the result of editing source code.
 type EditSourceResult struct {
-	Success        bool              `json:"success"`
-	ObjectURL      string            `json:"objectUrl"`
-	ObjectName     string            `json:"objectName"`
-	MatchCount     int               `json:"matchCount"`
-	OldString      string            `json:"oldString,omitempty"`
-	NewString      string            `json:"newString,omitempty"`
-	SyntaxErrors   []string          `json:"syntaxErrors,omitempty"`
-	SyntaxWarnings []string          `json:"syntaxWarnings,omitempty"`
-	Activation     *ActivationResult `json:"activation,omitempty"`
-	Message        string            `json:"message,omitempty"`
-	Method         string            `json:"method,omitempty"` // Method name if method-level edit
+	Success            bool              `json:"success"`
+	ObjectURL          string            `json:"objectUrl"`
+	ObjectName         string            `json:"objectName"`
+	MatchCount         int               `json:"matchCount"`
+	OldString          string            `json:"oldString,omitempty"`
+	NewString          string            `json:"newString,omitempty"`
+	SyntaxErrors       []string          `json:"syntaxErrors,omitempty"`
+	SyntaxWarnings     []string          `json:"syntaxWarnings,omitempty"`
+	Activation         *ActivationResult `json:"activation,omitempty"`
+	ExpectedSourceHash string            `json:"expectedSourceHash,omitempty"`
+	TargetSourceHash   string            `json:"targetSourceHash,omitempty"`
+	VerifiedSourceHash string            `json:"verifiedSourceHash,omitempty"`
+	Message            string            `json:"message,omitempty"`
+	Method             string            `json:"method,omitempty"` // Method name if method-level edit
 }
 
 // EditSourceOptions provides optional parameters for EditSource.
@@ -31,10 +34,11 @@ type EditSourceOptions struct {
 	// Kept so existing callers keep compiling and existing MCP arguments keep
 	// being accepted rather than rejected as unknown. Warnings are reported in
 	// EditSourceResult.SyntaxWarnings and named in the result message.
-	IgnoreWarnings  bool
-	CaseInsensitive bool   // If true, ignore case when matching
-	Method          string // For CLAS only: constrain search/replace to this method only
-	Transport       string // Transport request number (required for non-$TMP packages)
+	IgnoreWarnings     bool
+	CaseInsensitive    bool   // If true, ignore case when matching
+	Method             string // For CLAS only: constrain search/replace to this method only
+	Transport          string // Transport request number (required for non-$TMP packages)
+	ExpectedSourceHash string // Optional SourceHash returned by GetSource
 }
 
 // normalizeLineEndings converts CRLF to LF for consistent matching
@@ -154,6 +158,7 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	if opts == nil {
 		opts = &EditSourceOptions{SyntaxCheck: true}
 	}
+	ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
 
 	// Unified mutation policy gate (op type + package + transport). The mark
 	// on the returned context stops the identical package resolve running a
@@ -174,9 +179,10 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	// Note: caller should explicitly set SyntaxCheck=false if they don't want it
 
 	result := &EditSourceResult{
-		ObjectURL: objectURL,
-		OldString: oldString,
-		NewString: newString,
+		ObjectURL:          objectURL,
+		OldString:          oldString,
+		NewString:          newString,
+		ExpectedSourceHash: opts.ExpectedSourceHash,
 	}
 
 	// Extract object name from URL for error messages
@@ -436,6 +442,21 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		return result, nil
 	}
 	result.Activation = activation
+	if opts.ExpectedSourceHash != "" {
+		result.TargetSourceHash = SourceHash(newSource)
+		resp, verifyErr := c.transport.Request(ctx, sourceURL, &RequestOptions{
+			Method: "GET", Accept: "text/plain",
+		})
+		if verifyErr != nil {
+			result.Message = fmt.Sprintf("Source was written and activated, but post-write verification could not read it: %v. Do not retry blindly.", verifyErr)
+			return result, nil
+		}
+		result.VerifiedSourceHash = SourceHash(string(resp.Body))
+		if result.VerifiedSourceHash != result.TargetSourceHash {
+			result.Message = fmt.Sprintf("Source was written and activated, but post-write verification differs (target %s, actual %s). Do not retry blindly.", result.TargetSourceHash, result.VerifiedSourceHash)
+			return result, nil
+		}
+	}
 
 	result.Success = true
 	// Warnings no longer stop the write, so the message has to carry them —
