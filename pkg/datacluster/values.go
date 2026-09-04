@@ -76,7 +76,14 @@ func (d *decoder) text(raw []byte) string {
 			return s
 		}
 	}
-	return string(raw)
+	// A single-byte page, read as Latin-1: right for 1100, and for the
+	// others the ASCII range is right and the rest is at least one rune per
+	// byte rather than an invalid UTF-8 sequence.
+	runes := make([]rune, len(raw))
+	for i, b := range raw {
+		runes[i] = rune(b)
+	}
+	return string(runes)
 }
 
 func decodeUTF16(raw []byte, bigEndian bool) (string, error) {
@@ -176,4 +183,10 @@ func placeDecimal(digits string, decimals int) string {
 		trimmed = "0" + trimmed
 	}
 	return trimmed
+}
+
+// UTF16Text decodes a whole buffer as UTF-16LE, which is how a Unicode
+// system stores text it compresses on its own, source code included.
+func UTF16Text(raw []byte) (string, error) {
+	return decodeUTF16(raw, false)
 }

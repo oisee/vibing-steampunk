@@ -12,6 +12,7 @@ import (
 
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/datacluster"
+	"github.com/oisee/vibing-steampunk/pkg/sapcompress"
 )
 
 var clusterCmd = &cobra.Command{
@@ -111,6 +112,53 @@ taken as one whole cluster.`,
 			}
 		}
 		return emitClusters(cmd, strings.ToUpper(strings.TrimSuffix(filepath.Base(args[0]), filepath.Ext(args[0]))), records, client)
+	},
+}
+
+var clusterDecompressCmd = &cobra.Command{
+	Use:   "decompress <FILE>",
+	Short: "Undo SAP LZH/LZC compression on a raw stream (REPOSRC, DYNPSOURCE, ...) — not a cluster",
+	Long: `Decompress a bare SAP-compressed stream: the eight-byte header with the
+1F 9D signature and what follows it, as REPOSRC's DATA column or a SAPCAR
+member holds it. This is the compression alone, no cluster around it — the
+output is whatever the writer compressed, written to --out or printed.
+
+  vsp cluster decompress reposrc.bin --skip 1 --text > saplsbal_db.abap
+
+REPOSRC puts one 0xFF byte before the header, hence --skip 1. The file may be
+binary or hex. --text prints the result as UTF-16LE text, which is what a
+Unicode system's source is.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		raw, err := os.ReadFile(args[0])
+		if err != nil {
+			return err
+		}
+		data := raw
+		if b, herr := datacluster.DecodeHex(string(raw)); herr == nil && len(b) > 0 {
+			data = b
+		}
+		skip, _ := cmd.Flags().GetInt("skip")
+		if skip < 0 || skip > len(data) {
+			return fmt.Errorf("--skip %d is outside the %d-byte file", skip, len(data))
+		}
+		out, err := sapcompress.Decompress(data[skip:])
+		if err != nil {
+			return err
+		}
+		if path, _ := cmd.Flags().GetString("out"); path != "" {
+			return os.WriteFile(path, out, 0o644)
+		}
+		if asText, _ := cmd.Flags().GetBool("text"); asText {
+			text, err := datacluster.UTF16Text(out)
+			if err != nil {
+				return err
+			}
+			fmt.Print(text)
+			return nil
+		}
+		_, err = os.Stdout.Write(out)
+		return err
 	},
 }
 
@@ -285,7 +333,10 @@ func init() {
 	clusterReadCmd.Flags().String("where", "", "WHERE clause on the table's own columns, e.g. \"relid = 'AL' AND log_handle = '...'\"")
 	clusterReadCmd.Flags().Int("top", 500, "Maximum fragments (database rows) to read")
 	clusterDecodeCmd.Flags().StringSlice("ignore", nil, "Export columns that are not part of the cluster key (e.g. AEDAT,USERA)")
-	clusterCmd.AddCommand(clusterReadCmd, clusterDecodeCmd)
+	clusterDecompressCmd.Flags().Int("skip", 0, "Bytes to skip before the compression header (REPOSRC: 1)")
+	clusterDecompressCmd.Flags().String("out", "", "Write the decompressed bytes to this file instead of stdout")
+	clusterDecompressCmd.Flags().Bool("text", false, "Print the result as UTF-16LE text")
+	clusterCmd.AddCommand(clusterReadCmd, clusterDecodeCmd, clusterDecompressCmd)
 	rootCmd.AddCommand(clusterCmd)
 }
 

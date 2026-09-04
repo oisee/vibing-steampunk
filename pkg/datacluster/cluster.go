@@ -56,8 +56,8 @@ func (k Kind) String() string {
 
 // Cluster is one parsed data cluster.
 type Cluster struct {
-	// Version is the format version byte after the FF marker; 6 on every
-	// system seen so far.
+	// Version is the format version byte after the FF marker: 6 from Unicode
+	// kernels, 5 from the ones before, which is what old rows still are.
 	Version byte
 	// Codepage is the SAP code page the character data is in: 4103 is
 	// UTF-16 little-endian, 4102 big-endian, anything else a single-byte page.
@@ -177,7 +177,15 @@ func Parse(blob []byte) (*Cluster, error) {
 		if p.data[p.pos] == markEnd {
 			break
 		}
-		obj, err := p.object()
+		var obj *Object
+		switch c.Version {
+		case 5:
+			obj, err = p.legacyObject()
+		case 6:
+			obj, err = p.object()
+		default:
+			return nil, fmt.Errorf("datacluster: cluster format version %d is not one this reader knows (5 and 6 are)", c.Version)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("datacluster: object %d at offset %d: %w", len(c.Objects)+1, p.pos, err)
 		}
