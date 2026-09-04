@@ -37,6 +37,24 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
+## Done — 2026-09-05 — jobs and spool as tables
+
+`vsp jobs list|log`, `vsp spool list|read|export`, MCP `job_list`,
+`job_log`, `spool_list`, `spool_read`. TBTCO/TBTCP/TSP01/TST01/TST03 over
+free SQL; the TemSe list format (`pkg/temse`) read off a 7.58 spool and
+checked against XBP's rendering. Job logs are file-stored TemSe on this
+system (and most), so they come over RFC through `BAPI_XBP_JOB_JOBLOG_READ`;
+`BAPI_XBP_GET_SPOOL_AS_DAT` covers file-stored spool. `BP_JOBLOG_READ` and
+`RSPO_RETURN_ABAP_SPOOLJOB` are not remote-enabled — checked, not assumed.
+
+Two data-preview facts learned the hard way and now handled in `RunQuery`
+for every caller: the statement is wrapped into 255-character ABAP lines, so
+`wrapSQL` breaks it at blanks outside literals first; and a closing paren
+needs a blank before it.
+
+Open: OTF/PDF spool (none on A4H to test against; `--raw` gives the bytes,
+`BAPI_XBP_GET_SPOOL_AS_PDF` would render), and non-Unicode list spools.
+
 ## Done — 2026-09-04 — `vsp applog --messages`, and cluster tables in general
 
 Filed in the morning as "call `BAPI_APPLICATIONLOG_GETDETAIL` over RFC";

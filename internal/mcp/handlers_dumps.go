@@ -33,6 +33,10 @@ func (s *Server) dumpAnalysisTypes() map[string]func(context.Context, mcp.CallTo
 		"dump_impact":     s.handleDumpImpact,
 		"application_log": s.handleApplicationLog,
 		"cluster_read":    s.handleClusterRead,
+		"spool_list":      s.handleSpoolList,
+		"spool_read":      s.handleSpoolRead,
+		"job_list":        s.handleJobList,
+		"job_log":         s.handleJobLog,
 	}
 }
 
