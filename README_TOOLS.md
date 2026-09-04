@@ -267,10 +267,11 @@ SAP(action="analyze", params={"type": "group_dumps"})       what keeps failing, 
 SAP(action="analyze", params={"type": "explain_dump"})      the stack, plus the application log ranked by argument
 SAP(action="analyze", params={"type": "similar_dumps"})     is this new, and how often
 SAP(action="analyze", params={"type": "dump_impact"})       who else reaches the code that failed
-SAP(action="analyze", params={"type": "application_log"})   SLG1 headers by program, user, log object
+SAP(action="analyze", params={"type": "application_log"})   SLG1 headers by program, user, log object; messages=true decodes BALDAT
+SAP(action="analyze", params={"type": "cluster_read"})      any cluster table (BALDAT, INDX, STXL) decoded: objects, typed fields, rows
 ```
 
-The same ground the CLI covers with `vsp dumps` and `vsp applog`.
+The same ground the CLI covers with `vsp dumps`, `vsp applog` and `vsp cluster`.
 
 ---
 

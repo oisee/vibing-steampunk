@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,13 +22,16 @@ SAP's own way in is the BAL_* function group, which cannot be called remotely by
 any transport. The header table is an ordinary table, so this reads it with free
 SQL instead — no RFC, no gateway, no Z code.
 
-Message bodies are not here: they live in a cluster table that ADT's data
-preview refuses. What is here is enough to answer which program logged what,
-for which log object, and when — the part that connects a log to a dump.
+The headers are enough to answer which program logged what, for which log
+object, and when — the part that connects a log to a dump. The messages live
+in BALDAT as a compressed data cluster; --messages reads that with the same
+free SQL and decodes it here, class and number and variables, with the text
+from T100 in the system's language.
 
   vsp applog --program ZCL_ORDER_POST --top 20
   vsp applog --user TESTUSER --since 2026-08-01
-  vsp applog --object ZDEMO_LOG --json`,
+  vsp applog --object ZDEMO_LOG --json
+  vsp applog --object ZDEMO_LOG --since 2026-09-01 --messages`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		params, err := resolveSystemParams(cmd)
@@ -61,9 +65,16 @@ for which log object, and when — the part that connects a log to a dump.
 			*spec.into = when
 		}
 
-		entries, err := client.ApplicationLog(context.Background(), filter)
+		ctx := context.Background()
+		entries, err := client.ApplicationLog(ctx, filter)
 		if err != nil {
 			return err
+		}
+		withMessages, _ := cmd.Flags().GetBool("messages")
+		if withMessages {
+			if err := client.AttachAppLogMessages(ctx, params.Language, entries); err != nil {
+				return err
+			}
 		}
 
 		if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
@@ -79,16 +90,39 @@ for which log object, and when — the part that connects a log to a dump.
 			fmt.Fprintln(os.Stderr, "no log entries match")
 			return nil
 		}
-		fmt.Printf("%-19s %-20s %-20s %-14s %s\n", "WHEN", "OBJECT", "SUBOBJECT", "USER", "PROGRAM")
-		fmt.Println(strings.Repeat("-", 100))
+		if !withMessages {
+			fmt.Printf("%-19s %-20s %-20s %-14s %s\n", "WHEN", "OBJECT", "SUBOBJECT", "USER", "PROGRAM")
+			fmt.Println(strings.Repeat("-", 100))
+		}
+		messages := 0
 		for _, e := range entries {
 			when := "-"
 			if !e.At.IsZero() {
 				when = e.At.Format("2006-01-02 15:04:05")
 			}
-			fmt.Printf("%-19s %-20s %-20s %-14s %s\n", when, e.Object, e.SubObject, e.User, e.Program)
+			if !withMessages {
+				fmt.Printf("%-19s %-20s %-20s %-14s %s\n", when, e.Object, e.SubObject, e.User, e.Program)
+				continue
+			}
+			fmt.Printf("%s  %s/%s  log %s  %s  %s", when, e.Object, e.SubObject, strings.TrimLeft(e.LogNumber, "0"), e.User, e.Program)
+			if e.External != "" {
+				fmt.Printf("  ext=%s", e.External)
+			}
+			fmt.Println()
+			if len(e.Messages) == 0 {
+				fmt.Printf("    (no messages stored; header counts %d)\n", e.MessageCount)
+				continue
+			}
+			for _, m := range e.Messages {
+				messages++
+				printAppLogMessage(m)
+			}
 		}
-		fmt.Fprintf(os.Stderr, "\n%d entries\n", len(entries))
+		if withMessages {
+			fmt.Fprintf(os.Stderr, "\n%d entries, %d messages\n", len(entries), messages)
+		} else {
+			fmt.Fprintf(os.Stderr, "\n%d entries\n", len(entries))
+		}
 		return nil
 	},
 }
@@ -101,6 +135,29 @@ func init() {
 	appLogCmd.Flags().String("since", "", "Earliest date, YYYY-MM-DD")
 	appLogCmd.Flags().String("until", "", "Latest date, YYYY-MM-DD")
 	appLogCmd.Flags().Int("top", 100, "Maximum entries to read")
+	appLogCmd.Flags().Bool("messages", false, "Read the messages too (BALDAT, decoded here)")
 	appLogCmd.Flags().Bool("json", false, "Emit JSON")
 	rootCmd.AddCommand(appLogCmd)
+}
+
+// printAppLogMessage prints one message the way SLG1 shows it: type, class
+// and number, then the text or, when T100 has none, the variables.
+func printAppLogMessage(m adt.AppLogMessage) {
+	indent := "    "
+	if level := strings.TrimSpace(m.DetailLevel); level != "" && level != "1" {
+		if n, err := strconv.Atoi(level); err == nil && n > 1 {
+			indent += strings.Repeat("  ", n-1)
+		}
+	}
+	text := m.Text
+	if text == "" {
+		text = strings.TrimSpace(strings.Join([]string{m.V1, m.V2, m.V3, m.V4}, " "))
+	}
+	fmt.Printf("%s%s %s %-20s %s  %s\n", indent, m.Number, m.Type, m.ID+" "+m.No, m.Timestamp, text)
+	if m.Context != nil && (m.Context.Table != "" || m.Context.Value != "") {
+		fmt.Printf("%s       context %s: %s\n", indent, m.Context.Table, m.Context.Value)
+	}
+	for _, p := range m.Params {
+		fmt.Printf("%s       %s = %s\n", indent, p.Name, p.Value)
+	}
 }

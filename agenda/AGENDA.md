@@ -23,6 +23,30 @@ two worktrees, which is why it says so.
 > — the v2.55.0 sprint. Four defects that are one defect: the tool could not
 > answer, so it answered anyway. Ordered, with the test that proves each.
 
+## Done — 2026-09-04 — `vsp applog --messages`, and cluster tables in general
+
+Filed in the morning as "call `BAPI_APPLICATIONLOG_GETDETAIL` over RFC";
+shipped in the evening as something better, on `feat/cluster-tables`. The
+same day's finding: `BALDAT.CLUSTD` reads fine over free SQL, and the
+"SAP LZH" it is compressed with is raw DEFLATE behind an eight-byte header and
+a two-bit prefix — `compress/flate` inflates it after a bit shift. The data
+cluster format was read off real clusters (a 7.58 INDX fixture with every
+elementary type, plus BALDAT) and is `pkg/datacluster`. So:
+
+- `vsp applog --messages` and MCP `application_log` with `messages: true`
+  read the messages over ADT alone: class, number, variables, T100 text,
+  context, `DETLEVEL`, `PROBCLASS`, time stamp — more than the BAPI returns,
+  and no gateway needed.
+- `vsp cluster read TABLE --where ...` and MCP `cluster_read` decode any
+  INDX-like table; `vsp cluster decode FILE` does it offline from an SE16H
+  export, which is the path for a system where SE16H is all there is.
+- Still open: field *names*. The cluster carries types only. `--layout applog`
+  knows `BAL_S_MSG`; a general `--layout STRUCTNAME` that reads the DDIC
+  structure over ADT and lays it over the fields is the obvious next step,
+  and STXL (SAPscript text lines, `TLINE`) the obvious second layout.
+- The BAPI path is still worth a `vsp rfc call` when a system blocks free
+  SQL; it needs no code.
+
 ## Raised — 2026-08-29 — from outside this repo
 
 Two bug reports and one feature request arrived from a session working in

@@ -248,8 +248,50 @@ missing; where-used over CROSS would supply it.
 
 All of it over plain ADT — no RFC, no gateway, no Z code. SAP's own way into the
 application log is the `BAL_*` function group, which cannot be called remotely
-by any transport; the header table is an ordinary table, so free SQL reads it
-instead.
+by any transport; the log's tables are ordinary tables, so free SQL reads them
+instead — the headers from BALHDR, and with `--messages` the messages from
+BALDAT, which is a cluster table and needs one more step:
+
+```bash
+vsp -s a4h applog --object ZDEMO_LOG --since 2026-09-01 --messages
+```
+
+```
+2026-09-04 12:00:01  ZDEMO_LOG/POST  log 22274  TESTUSER  ZCL_DEMO_POST=================CP
+    000001 E ZDEMO_MSG 017       20260904100001.5909840  Order 4711 has no delivery block
+           context ZDEMO_ORDER_KEY: 0000004711
+```
+
+### Cluster tables, decoded — BALDAT, INDX, STXL over plain ADT
+
+BALDAT is one of a family: INDX, STXL, and every table an `EXPORT ... TO
+DATABASE` writes to. The rows are ordinary — a key, a sequence number, a byte
+count and a RAW column — and ADT's data preview returns all of them. What
+nothing on the SAP side does for a remote caller is turn the RAW column back
+into data: it is an SAP-compressed data cluster, and only `IMPORT` reads it.
+
+`vsp cluster` does it here. SAP's "LZH" turned out to be DEFLATE behind an
+eight-byte header and a two-bit prefix, so the standard library inflates it;
+"LZC" is compress(1) and is ~100 lines. The cluster itself carries a type
+descriptor for every exported object — kind, length and decimals of every
+field, nested for structures — so the values come back typed: packed numbers
+as decimals, time stamps with their microseconds, strings from their
+out-of-line segments. What it does not carry is field names; fields are
+numbered, and `--layout applog` lays `BAL_S_MSG` over a BALDAT cluster.
+
+```bash
+vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema   # every object, every field typed
+vsp -s a4h cluster read BALDAT --where "relid = 'AL' AND log_handle = '...'" --layout applog
+vsp cluster decode baldat.txt --layout applog                  # from an SE16H download, no system
+```
+
+The offline form is the one for a system where SE16H is all you have: export
+BALHDR to find the log handles, export the matching BALDAT rows, decode them
+on your machine. On the MCP side it is `analyze type=cluster_read`, and
+`application_log` takes `messages: true`.
+
+Verified against clusters written by a 7.58 kernel with every elementary type
+in them, compressed and not, and against BALDAT from a 7.5x system.
 
 Checked on 7.50, 7.57 and 7.58. 7.50 serves the dump feed but not the detail
 resource, so there is no call stack to read there — the correlation drops that
@@ -867,6 +909,12 @@ vsp -s a4h dumps --similar latest                  # the same bug, its siblings,
 vsp -s a4h dumps --explain latest --tolerance 10m  # stack + ranked log around it
 vsp -s a4h applog --program ZCL_ORDER_POST --top 20
 vsp -s a4h applog --user TESTUSER --since 2026-08-01
+vsp -s a4h applog --object ZDEMO_LOG --messages    # the messages too, decoded from BALDAT
+
+# Cluster tables — what only IMPORT could read, decoded here
+vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema
+vsp -s a4h cluster read STXL --where "tdname = 'ZDEMO_TEXT'" --json
+vsp cluster decode baldat.txt --layout applog     # an SE16H export, offline
 
 # Testing & code quality
 vsp -s a4h test CLAS ZCL_MY_CLASS                 # run unit tests

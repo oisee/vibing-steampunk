@@ -32,6 +32,7 @@ func (s *Server) dumpAnalysisTypes() map[string]func(context.Context, mcp.CallTo
 		"similar_dumps":   s.handleSimilarDumps,
 		"dump_impact":     s.handleDumpImpact,
 		"application_log": s.handleApplicationLog,
+		"cluster_read":    s.handleClusterRead,
 	}
 }
 
@@ -57,7 +58,8 @@ const (
 	noteRungIsNotAVerdict     = "A rung is an argument, not a verdict. Rung 4 is the same class of failure; it is not the same bug."
 	noteImpactIsNotBlame      = "Who can reach the bug, not who caused it. Object level: the where-used list resolves a method to its class, so a caller here reaches the class and not necessarily the failing method."
 	noteImpactUnanswerable    = "No unit of this dump has a where-used list that can answer. This is not a finding of zero callers."
-	noteNoLogBodies           = "Message bodies are not here: they live in a cluster table that ADT's data preview refuses. The headers are the part that connects a log to a dump."
+	noteNoLogBodies           = "Headers only. The messages live in the BALDAT cluster and are decoded on request: pass messages=true, or read one log with type=cluster_read, table=BALDAT, layout=applog."
+	noteLogTextsMissing       = "Message texts could not be read from T100; class, number and variables are still here."
 )
 
 // --- Listing and grouping ---
@@ -346,10 +348,20 @@ func (s *Server) handleApplicationLog(ctx context.Context, request mcp.CallToolR
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to read the application log: %v", err)), nil
 	}
+	notes := []string{noteNoLogBodies}
+	if withMessages, _ := getBoolParam(request.GetArguments(), "messages"); withMessages {
+		notes = nil
+		if err := s.adtClient.AttachAppLogMessages(ctx, s.adtClient.Language(), entries); err != nil {
+			if !strings.Contains(err.Error(), "message texts") {
+				return newToolResultError(fmt.Sprintf("Failed to read the log messages: %v", err)), nil
+			}
+			notes = append(notes, noteLogTextsMissing)
+		}
+	}
 	return newToolResultJSON(appLogResult{
 		Entries: entries,
 		Count:   len(entries),
-		Notes:   []string{noteNoLogBodies},
+		Notes:   notes,
 	}), nil
 }
 

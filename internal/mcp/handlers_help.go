@@ -363,11 +363,19 @@ Runtime errors (ST22) — a listing, and a post-mortem around one dump:
   dump_id takes "latest", any part of an id from list_dumps, or a whole id.
   filters shared by all six: program, error_type, user, since, until (YYYY-MM-DD), max_results
 
-Application log (SLG1 headers, read with free SQL — no RFC, no gateway, no Z code):
+Application log (SLG1, read with free SQL — no RFC, no gateway, no Z code):
   SAP(action="analyze", params={"type": "application_log", "program": "ZDEMO_POST", "max_results": 20})
   SAP(action="analyze", params={"type": "application_log", "user": "TESTUSER", "since": "2026-08-01"})
-  SAP(action="analyze", params={"type": "application_log", "object": "ZDEMO_LOG", "subobject": "POST"})
-      headers only: message bodies live in a cluster table ADT will not read
+  SAP(action="analyze", params={"type": "application_log", "object": "ZDEMO_LOG", "subobject": "POST", "messages": true})
+      headers by default; messages=true decodes the BALDAT cluster too: class, number, variables,
+      text from T100, context, detail level
+
+Cluster tables (BALDAT, INDX, STXL, ... — EXPORT data clusters decoded here, no IMPORT needed):
+  SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZV'"})
+  SAP(action="analyze", params={"type": "cluster_read", "table": "STXL", "where": "tdname = 'Z...'", "schema_only": true})
+  SAP(action="analyze", params={"type": "cluster_read", "table": "BALDAT", "where": "relid = 'AL' AND log_handle = '...'", "layout": "applog"})
+      every exported object with its fields typed and decoded; fields are numbered, the cluster
+      holds no names. max_results caps database rows (fragments), 200 by default.
 
 Profiler traces:
   SAP(action="analyze", params={"type": "list_traces"})
