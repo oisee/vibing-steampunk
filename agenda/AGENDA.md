@@ -54,10 +54,15 @@ elementary type, plus BALDAT) and is `pkg/datacluster`. So:
 - `vsp cluster read TABLE --where ...` and MCP `cluster_read` decode any
   INDX-like table; `vsp cluster decode FILE` does it offline from an SE16H
   export, which is the path for a system where SE16H is all there is.
-- Still open: field *names*. The cluster carries types only. `--layout applog`
-  knows `BAL_S_MSG`; a general `--layout STRUCTNAME` that reads the DDIC
-  structure over ADT and lays it over the fields is the obvious next step,
-  and STXL (SAPscript text lines, `TLINE`) the obvious second layout.
+- Field *names*, closed the same evening: `--layout STRUCTNAME` reads DD03L
+  (DEPTH nests structured components; an include's rows follow its `.INCLUDE`
+  row at the same depth, as many as the include has itself) and lays the
+  structure over the descriptor, checking type family, byte length and
+  decimals at every leaf. `OBJECT=STRUCTURE` pairs for clusters with several
+  objects. `stxl` renders SAPscript text and is STXL's default. Note for the
+  next reader: DD03L's `INTLEN` is not to be trusted — it is characters on
+  some rows and bytes on others of the same system — so lengths come from
+  `LENG` and `DATATYPE`.
 - The BAPI path is still worth a `vsp rfc call` when a system blocks free
   SQL; it needs no code.
 

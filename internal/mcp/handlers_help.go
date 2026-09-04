@@ -372,10 +372,15 @@ Application log (SLG1, read with free SQL — no RFC, no gateway, no Z code):
 
 Cluster tables (BALDAT, INDX, STXL, ... — EXPORT data clusters decoded here, no IMPORT needed):
   SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZV'"})
-  SAP(action="analyze", params={"type": "cluster_read", "table": "STXL", "where": "tdname = 'Z...'", "schema_only": true})
+  SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "relid = 'ZD'", "layout": "ZDEMO_S_HEADER"})
+  SAP(action="analyze", params={"type": "cluster_read", "table": "INDX", "where": "...", "layout": "HDR=ZDEMO_S_HEADER,ITEMS=ZDEMO_S_ITEM"})
+  SAP(action="analyze", params={"type": "cluster_read", "table": "STXL", "where": "tdname = 'Z...'"})
   SAP(action="analyze", params={"type": "cluster_read", "table": "BALDAT", "where": "relid = 'AL' AND log_handle = '...'", "layout": "applog"})
-      every exported object with its fields typed and decoded; fields are numbered, the cluster
-      holds no names. max_results caps database rows (fragments), 200 by default.
+      every exported object with its fields typed and decoded. The cluster holds no field names:
+      without a layout they are numbered; a DDIC structure (read from DD03L, includes resolved) names
+      them, per object as OBJECT=STRUCTURE, and is refused when it does not fit rather than guessed.
+      stxl (the default on STXL) renders SAPscript text; applog prints BALDAT messages.
+      max_results caps database rows (fragments), 200 by default.
 
 Profiler traces:
   SAP(action="analyze", params={"type": "list_traces"})

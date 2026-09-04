@@ -91,6 +91,8 @@ type Object struct {
 	// Rows are the decoded values: one row for elementary and structure
 	// objects, one per line for tables.
 	Rows [][]any
+
+	charBytes int // bytes per character in this cluster's code page
 }
 
 // Node is one entry of an object's type descriptor.
@@ -112,7 +114,9 @@ type Node struct {
 
 // Field is one leaf of the type descriptor: something that has a value.
 type Field struct {
-	Path     string `json:"path"`
+	Path string `json:"path"`
+	// Name is the DDIC field name once a Layout has been applied.
+	Name     string `json:"name,omitempty"`
 	Type     string `json:"type"`
 	TypeCode byte   `json:"typeCode"`
 	Length   int    `json:"length"`
@@ -158,6 +162,10 @@ func Parse(blob []byte) (*Cluster, error) {
 		obj, err := p.object()
 		if err != nil {
 			return nil, fmt.Errorf("datacluster: object %d at offset %d: %w", len(c.Objects)+1, p.pos, err)
+		}
+		obj.charBytes = 1
+		if dec.utf16 {
+			obj.charBytes = 2
 		}
 		c.Objects = append(c.Objects, *obj)
 	}
@@ -224,7 +232,7 @@ func (p *parser) u32() (int, error) {
 //
 // Header layout, 32 bytes plus the name:
 //
-//	0     object kind: 01 elementary, 05 structure, 03 or 06 table
+//	0     object kind: 01 elementary, 02 flat / 05 deep structure, 03 flat / 06 deep table
 //	1     type code of the element or of the (line) structure
 //	2     0
 //	3-6   row length, big-endian
@@ -238,7 +246,13 @@ func (p *parser) object() (*Object, error) {
 	}
 	h := p.data[p.pos:]
 	obj := &Object{Kind: Kind(h[0]), TypeCode: h[1]}
-	if obj.Kind == 3 {
+	// The kernel tells flat from deep in the kind byte too: 02/03 are a flat
+	// structure and table, 05/06 the same with strings or nesting inside.
+	// Nothing downstream needs the distinction; the descriptor carries it.
+	switch h[0] {
+	case 2:
+		obj.Kind = Structure
+	case 3:
 		obj.Kind = Table
 	}
 	obj.RowLength = int(binary.BigEndian.Uint32(h[3:]))
