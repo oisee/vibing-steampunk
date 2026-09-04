@@ -21,6 +21,8 @@ These tools replace 11 granular read/write operations with intelligent parameter
 
 **RAP Support (NEW):** WriteSource now supports creating and updating CDS views (DDLS), behavior definitions (BDEF), and service definitions (SRVD).
 
+**Guarded updates:** Call `GetSource(include_hash=true)` to receive `{source, sourceHash}`. Supply that hash as `expected_source_hash` to `WriteSource`, `EditSource`, `ImportFromFile`, or `DeployFromFile`; VSP checks it again after acquiring the write lock and rejects `SOURCE_DRIFT` rather than overwriting another editor's work. Guarded successes include the requested target and verified read-back hashes.
+
 ---
 
 ## Search & Grep Tools (4 tools)

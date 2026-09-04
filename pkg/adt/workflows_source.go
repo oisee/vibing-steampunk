@@ -157,20 +157,27 @@ type WriteSourceOptions struct {
 	Transport   string          // Transport request number
 	Method      string          // For CLAS only: update only this method (source must be METHOD...ENDMETHOD block)
 	Parent      string          // For FUNC only: function group. Empty resolves it from the module name.
+	// ExpectedSourceHash is the SourceHash returned by GetSource. When supplied
+	// for an update, VSP re-reads the source after taking the write lock and
+	// refuses to overwrite a version changed since that read.
+	ExpectedSourceHash string
 }
 
 // WriteSourceResult represents the result of WriteSource operation
 type WriteSourceResult struct {
-	Success      bool                `json:"success"`
-	ObjectType   string              `json:"objectType"`
-	ObjectName   string              `json:"objectName"`
-	ObjectURL    string              `json:"objectUrl"`
-	Mode         string              `json:"mode"`             // "created" or "updated"
-	Method       string              `json:"method,omitempty"` // Method name if method-level update
-	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult   `json:"activation,omitempty"`
-	TestResults  *UnitTestResult     `json:"testResults,omitempty"` // For CLAS with TestSource
-	Message      string              `json:"message,omitempty"`
+	Success            bool                `json:"success"`
+	ObjectType         string              `json:"objectType"`
+	ObjectName         string              `json:"objectName"`
+	ObjectURL          string              `json:"objectUrl"`
+	Mode               string              `json:"mode"`             // "created" or "updated"
+	Method             string              `json:"method,omitempty"` // Method name if method-level update
+	SyntaxErrors       []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation         *ActivationResult   `json:"activation,omitempty"`
+	TestResults        *UnitTestResult     `json:"testResults,omitempty"` // For CLAS with TestSource
+	ExpectedSourceHash string              `json:"expectedSourceHash,omitempty"`
+	TargetSourceHash   string              `json:"targetSourceHash,omitempty"`
+	VerifiedSourceHash string              `json:"verifiedSourceHash,omitempty"`
+	Message            string              `json:"message,omitempty"`
 }
 
 // WriteSourceResultError converts a logical WriteSource failure into an error
@@ -244,6 +251,10 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	// group, and creating one needs an interface rather than just source, which
 	// is what the create action is for.
 	if objectType == "FUNC" {
+		if opts.ExpectedSourceHash != "" {
+			result.Message = "expected_source_hash is not supported for function-module WriteSource; read and update the complete module through its dedicated workflow"
+			return result, nil
+		}
 		return c.writeSourceFunctionModule(ctx, name, source, opts)
 	}
 
@@ -334,7 +345,18 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		result.Message = fmt.Sprintf("Object %s already exists (use mode=update or mode=upsert)", name)
 		return result, nil
 	}
-	if actualMode == WriteModeUpdate && !objectExists {
+	if opts.ExpectedSourceHash != "" {
+		if actualMode != WriteModeUpdate {
+			result.Message = "expected_source_hash is only valid when updating an existing object"
+			return result, nil
+		}
+		if opts.Method != "" {
+			result.Message = "expected_source_hash is not supported for method-level WriteSource; use a full-class read and update"
+			return result, nil
+		}
+		ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
+	}
+	if actualMode == WriteModeUpdate && opts.Mode == WriteModeUpsert && !objectExists {
 		result.Message = fmt.Sprintf("Object %s does not exist (use mode=create or mode=upsert)", name)
 		return result, nil
 	}
@@ -343,8 +365,45 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	if actualMode == WriteModeCreate {
 		return c.writeSourceCreate(ctx, objectType, name, source, opts)
 	} else {
-		return c.writeSourceUpdate(ctx, objectType, name, source, opts)
+		updated, err := c.writeSourceUpdate(ctx, objectType, name, source, opts)
+		if err != nil || opts.ExpectedSourceHash == "" || !updated.Success {
+			return updated, err
+		}
+		return c.verifyWriteSourceResult(ctx, updated, source, opts)
 	}
+}
+
+// verifyWriteSourceResult performs the post-activation half of an explicit
+// versioned update. A successful PUT is not enough: SAP can materialise source
+// differently or activation can leave a different active version behind.
+func (c *Client) verifyWriteSourceResult(
+	ctx context.Context,
+	result *WriteSourceResult,
+	targetSource string,
+	opts *WriteSourceOptions,
+) (*WriteSourceResult, error) {
+	result.ExpectedSourceHash = opts.ExpectedSourceHash
+	result.TargetSourceHash = SourceHash(targetSource)
+	if result.ObjectURL == "" {
+		result.Success = false
+		result.Message = "Source was written and activated, but post-write verification has no object URL. Do not retry blindly."
+		return result, nil
+	}
+	resp, err := c.transport.Request(ctx, result.ObjectURL+"/source/main", &RequestOptions{
+		Method: "GET", Accept: "text/plain",
+	})
+	if err != nil {
+		result.Success = false
+		result.Message = fmt.Sprintf("Source was written and activated, but post-write verification could not read it: %v. Do not retry blindly.", err)
+		return result, nil
+	}
+	result.VerifiedSourceHash = SourceHash(string(resp.Body))
+	if result.VerifiedSourceHash != result.TargetSourceHash {
+		result.Success = false
+		result.Message = fmt.Sprintf("Source was written and activated, but post-write verification differs (target %s, actual %s). Do not retry blindly.", result.TargetSourceHash, result.VerifiedSourceHash)
+		return result, nil
+	}
+	return result, nil
 }
 
 // writeSourceCreate handles creation workflow

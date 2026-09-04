@@ -1411,6 +1411,9 @@ func (s *Server) registerFileTools(shouldRegister func(string) bool) {
 			mcp.WithString("transport",
 				mcp.Description("Transport request number (optional for local packages)"),
 			),
+			mcp.WithString("expected_source_hash",
+				mcp.Description("Optional sourceHash returned by GetSource(include_hash=true). Refuse an existing-object deployment if SAP source has changed."),
+			),
 		), s.handleDeployFromFile)
 	}
 
@@ -1496,6 +1499,9 @@ func (s *Server) registerEditTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("transport",
 				mcp.Description("Transport request number (required for objects not in $TMP package)"),
+			),
+			mcp.WithString("expected_source_hash",
+				mcp.Description("Optional sourceHash returned by GetSource(include_hash=true). After locking, refuse the edit if SAP source has changed."),
 			),
 		), s.handleEditSource)
 	}

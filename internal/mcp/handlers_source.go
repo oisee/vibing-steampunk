@@ -35,6 +35,9 @@ func (s *Server) routeSourceAction(ctx context.Context, action, objectType, obje
 			if v, ok := getBoolParam(params, "include_context"); ok {
 				args["include_context"] = v
 			}
+			if v, ok := getBoolParam(params, "include_hash"); ok {
+				args["include_hash"] = v
+			}
 			if v, ok := getFloatParam(params, "max_deps"); ok {
 				args["max_deps"] = v
 			}
@@ -69,6 +72,9 @@ func (s *Server) routeSourceAction(ctx context.Context, action, objectType, obje
 				}
 				if v := getStringParam(params, "method"); v != "" {
 					args["method"] = v
+				}
+				if v := getStringParam(params, "expected_source_hash"); v != "" {
+					args["expected_source_hash"] = v
 				}
 				// FUNC only: the group, when the caller happens to know it.
 				if v := getStringParam(params, "parent"); v != "" {
@@ -116,6 +122,9 @@ func (s *Server) registerGetSource() {
 		mcp.WithNumber("max_deps",
 			mcp.Description("Maximum dependencies to resolve when include_context=true (default: 20)"),
 		),
+		mcp.WithBoolean("include_hash",
+			mcp.Description("Return JSON with the raw source and its sourceHash for a guarded later write. Default false preserves the text response."),
+		),
 	), s.handleGetSource)
 }
 
@@ -153,6 +162,9 @@ func (s *Server) registerWriteSource() {
 		mcp.WithString("method",
 			mcp.Description("For CLAS only: update only this method (source must be METHOD...ENDMETHOD block). Method must already exist in the class."),
 		),
+		mcp.WithString("expected_source_hash",
+			mcp.Description("Optional sourceHash returned by GetSource(include_hash=true). After locking, refuse the write if SAP source has changed."),
+		),
 	), s.handleWriteSource)
 }
 
@@ -178,10 +190,12 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		Method:  method,
 	}
 
-	source, err := s.adtClient.GetSource(ctx, objectType, name, opts)
+	rawSource, err := s.adtClient.GetSource(ctx, objectType, name, opts)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
 	}
+	source := rawSource
+	contextPrologue := ""
 
 	// Append dependency context (default: true, set include_context=false to disable)
 	includeContext := true
@@ -196,12 +210,25 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 
 		provider := ctxcomp.NewMultiSourceProvider("", &adtSourceAdapter{server: s})
 		compressor := ctxcomp.NewCompressor(provider, maxDeps)
-		result, err := compressor.Compress(ctx, source, name, objectType)
+		result, err := compressor.Compress(ctx, rawSource, name, objectType)
 		if err == nil && result.Prologue != "" {
-			source = source + "\n\n" + result.Prologue +
+			contextPrologue = result.Prologue +
 				fmt.Sprintf("\n* Context stats: %d deps found, %d resolved, %d failed",
 					result.Stats.DepsFound, result.Stats.DepsResolved, result.Stats.DepsFailed)
+			source = rawSource + "\n\n" + contextPrologue
 		}
+	}
+
+	if includeHash, _ := request.GetArguments()["include_hash"].(bool); includeHash {
+		payload := map[string]string{
+			"source":     rawSource,
+			"sourceHash": adt.SourceHash(rawSource),
+		}
+		if contextPrologue != "" {
+			payload["context"] = contextPrologue
+		}
+		output, _ := json.MarshalIndent(payload, "", "  ")
+		return mcp.NewToolResultText(string(output)), nil
 	}
 
 	return mcp.NewToolResultText(source), nil
@@ -231,14 +258,16 @@ func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequ
 	transport, _ := request.GetArguments()["transport"].(string)
 	method, _ := request.GetArguments()["method"].(string)
 	parent, _ := request.GetArguments()["parent"].(string)
+	expectedSourceHash, _ := request.GetArguments()["expected_source_hash"].(string)
 
 	opts := &adt.WriteSourceOptions{
-		Description: description,
-		Package:     packageName,
-		Parent:      parent,
-		TestSource:  testSource,
-		Transport:   transport,
-		Method:      method,
+		Description:        description,
+		Package:            packageName,
+		Parent:             parent,
+		TestSource:         testSource,
+		Transport:          transport,
+		Method:             method,
+		ExpectedSourceHash: expectedSourceHash,
 	}
 
 	if mode != "" {
@@ -327,6 +356,9 @@ func (s *Server) registerImportFromFile() {
 		),
 		mcp.WithString("transport",
 			mcp.Description("Transport request number"),
+		),
+		mcp.WithString("expected_source_hash",
+			mcp.Description("Optional sourceHash returned by GetSource(include_hash=true). Refuse an existing-object import if SAP source has changed."),
 		),
 	), s.handleDeployFromFile) // Reuse existing handler
 }

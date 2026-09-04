@@ -193,6 +193,30 @@ flowchart LR
 | Update existing | `WriteSource(mode=update)` | Explicit update |
 | Deploy large file | `ImportFromFile` | Bypasses token limits |
 
+### Guarded updates with source hashes
+
+For a write that must not overwrite another editor's change, first request a
+structured read with `include_hash=true`. Pass its `sourceHash` back as
+`expected_source_hash` to `WriteSource`, `EditSource`, `ImportFromFile`, or
+`DeployFromFile`. VSP takes the MODIFY lock, re-reads the locked source, and
+refuses the write with `SOURCE_DRIFT` if it differs. After a guarded write is
+activated it returns `targetSourceHash` and `verifiedSourceHash`; a failed
+read-back is an uncertain outcome, so inspect SAP rather than retry blindly.
+
+```json
+// Read: returns { source, sourceHash, context? }
+{ "object_type": "CLAS", "name": "ZCL_ORDER", "include_hash": true }
+
+// Write only the version just read
+{
+  "object_type": "CLAS",
+  "name": "ZCL_ORDER",
+  "source": "CLASS zcl_order IMPLEMENTATION.\nENDCLASS.",
+  "mode": "update",
+  "expected_source_hash": "sha256:..."
+}
+```
+
 ### Searching
 
 | Task | Tool | Parameters |
