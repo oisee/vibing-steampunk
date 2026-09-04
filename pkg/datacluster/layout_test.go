@@ -1,6 +1,7 @@
 package datacluster
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -211,5 +212,107 @@ func TestApplyDDICLayouts(t *testing.T) {
 	}
 	if cont.Records()[0]["TABNAME"] != "ZDEMO_ORDER_KEY" {
 		t.Errorf("BAL_S_CONT: %v", cont.Records()[0])
+	}
+}
+
+// indx_deep.hex holds what a program exported to probe the deep cases: a
+// BAL_S_MSG with two parameter rows in its T_PAR table, a table whose rows
+// each hold a table, sorted and hashed tables of a structure with a string,
+// a table of strings, a bare string, a bare xstring, an INT8 and a packed
+// number with two decimals.
+func TestParseDeep(t *testing.T) {
+	c, err := Parse(loadHex(t, "indx_deep.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Objects) != 9 {
+		t.Fatalf("%d objects", len(c.Objects))
+	}
+	msg := c.Object("MSG")
+	if len(msg.Fields) != 23 || msg.Fields[18].Type != "TABLE" || len(msg.Fields[18].Fields) != 2 || msg.Fields[18].Fields[1].Length != 150 {
+		t.Fatalf("MSG fields: %+v", msg.Fields)
+	}
+	if got := fmt.Sprint(msg.Rows[0][18]); got != "[[COMP TM] [SUB ]]" {
+		t.Errorf("T_PAR rows: %s", got)
+	}
+	orders := c.Object("ORDERS")
+	if len(orders.Rows) != 2 || fmt.Sprint(orders.Rows[0]) != "[O1 [[1 first] [2 second]] two]" || fmt.Sprint(orders.Rows[1]) != "[O2 [] none]" {
+		t.Errorf("ORDERS: %v", orders.Rows)
+	}
+	if s := c.Object("SORTED"); fmt.Sprint(s.Rows) != "[[1 a] [3 c]]" {
+		t.Errorf("SORTED: %v", s.Rows)
+	}
+	if h := c.Object("HASHED"); fmt.Sprint(h.Rows) != "[[9 z]]" {
+		t.Errorf("HASHED: %v", h.Rows)
+	}
+	if st := c.Object("STRINGS"); fmt.Sprint(st.Rows) != "[[alpha] [] [gamma]]" || st.Fields[0].Type != "STRING" {
+		t.Errorf("STRINGS: %v", st.Rows)
+	}
+	if o := c.Object("STR"); o.Kind != Elementary || o.Rows[0][0] != "a bare string" {
+		t.Errorf("STR: %+v", o)
+	}
+	if o := c.Object("XSTR"); o.Rows[0][0] != "CAFEBABE" {
+		t.Errorf("XSTR: %v", o.Rows)
+	}
+	if o := c.Object("I8"); o.Rows[0][0] != int64(42) {
+		t.Errorf("I8: %v", o.Rows)
+	}
+	if o := c.Object("PK"); o.Rows[0][0] != "-1.50" || o.Fields[0].Decimals != 2 {
+		t.Errorf("PK: %v %+v", o.Rows, o.Fields[0])
+	}
+}
+
+func TestApplyLayoutTables(t *testing.T) {
+	c, err := Parse(loadHex(t, "indx_deep.hex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := func(n string, l int) Component { return Component{Name: n, Type: "CHAR", Chars: l} }
+	balSPar := &Layout{Name: "BAL_S_PAR", Components: []Component{ch("PARNAME", 10), ch("PARVALUE", 75)}}
+	balSMsg := &Layout{Name: "BAL_S_MSG", Components: []Component{
+		ch("MSGTY", 1), ch("MSGID", 20), {Name: "MSGNO", Type: "NUMC", Chars: 3},
+		ch("MSGV1", 50), ch("MSGV2", 50), ch("MSGV3", 50), ch("MSGV4", 50),
+		ch("MSGV1_SRC", 15), ch("MSGV2_SRC", 15), ch("MSGV3_SRC", 15), ch("MSGV4_SRC", 15),
+		ch("DETLEVEL", 1), ch("PROBCLASS", 1), ch("ALSORT", 3),
+		{Name: "TIME_STMP", Type: "DEC", Chars: 21, Decimals: 7}, {Name: "MSG_COUNT", Type: "INT4", Chars: 10},
+		{Name: "CONTEXT", Kind: SubstructureField, Sub: &Layout{Components: []Component{ch("TABNAME", 30), ch("VALUE", 256)}}},
+		{Name: "PARAMS", Kind: SubstructureField, Sub: &Layout{Components: []Component{
+			{Name: "T_PAR", Kind: TableField, Type: "BAL_T_PAR", Sub: balSPar},
+			{Name: "CALLBACK", Kind: SubstructureField, Sub: &Layout{Components: []Component{ch("USEREXITP", 40), ch("USEREXITF", 30), ch("USEREXITT", 1)}}},
+			ch("ALTEXT", 28),
+		}}},
+	}}
+	msg := c.Object("MSG")
+	if err := msg.Apply(balSMsg); err != nil {
+		t.Fatal(err)
+	}
+	rec := msg.Records()[0]
+	if rec["MSGID"] != "ZDEMO" || rec["PARAMS.ALTEXT"] != "ALTEXT" {
+		t.Errorf("record: %v", rec)
+	}
+	pars, ok := rec["PARAMS.T_PAR"].([]map[string]any)
+	if !ok || len(pars) != 2 || pars[0]["PARNAME"] != "COMP" || pars[1]["PARVALUE"] != "" {
+		t.Errorf("T_PAR records: %#v", rec["PARAMS.T_PAR"])
+	}
+	if f := msg.Fields[18]; f.Name != "PARAMS.T_PAR" || f.Fields[0].Name != "PARAMS.T_PAR[].PARNAME" {
+		t.Errorf("table field names: %+v", f)
+	}
+
+	orders := c.Object("ORDERS")
+	items := &Layout{Name: "TY_ITEMS", Components: []Component{{Name: "NO", Type: "INT4", Chars: 10}, {Name: "NAME", Type: "STRG"}}}
+	order := &Layout{Name: "TY_ORDER", Components: []Component{ch("ID", 10), {Name: "ITEMS", Kind: TableField, Sub: items}, ch("NOTE", 5)}}
+	if err := orders.Apply(order); err != nil {
+		t.Fatal(err)
+	}
+	recs := orders.Records()
+	if fmt.Sprint(recs[0]["ITEMS"]) != "[map[NAME:first NO:1] map[NAME:second NO:2]]" || fmt.Sprint(recs[1]["ITEMS"]) != "[]" {
+		t.Errorf("nested records: %v", recs)
+	}
+	// A table where the layout has a field, and a field where it has a table.
+	if err := orders.Apply(&Layout{Components: []Component{ch("ID", 10), ch("ITEMS", 4), ch("NOTE", 5)}}); err == nil {
+		t.Error("field over a table accepted")
+	}
+	if err := orders.Apply(&Layout{Components: []Component{{Name: "ID", Kind: TableField}, {Name: "ITEMS", Kind: TableField}, ch("NOTE", 5)}}); err == nil {
+		t.Error("table over a field accepted")
 	}
 }

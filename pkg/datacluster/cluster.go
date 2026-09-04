@@ -33,7 +33,8 @@ const HeaderSize = 16
 type Kind byte
 
 const (
-	// Elementary is a single field: a variable of an elementary type.
+	// Elementary is a single field: a variable of an elementary type. The
+	// kernel uses 01 for a fixed-length one and 07 for a string.
 	Elementary Kind = 1
 	// Structure is a flat or nested structure.
 	Structure Kind = 5
@@ -108,8 +109,22 @@ type Node struct {
 	Filler bool
 	// Include marks a structure that was written as an include rather than a
 	// substructure; the distinction is the kernel's, not this package's.
-	Include  bool
+	Include bool
+	// Table marks a table-typed component: Children describe its line type
+	// and Length is the line length, while the component itself takes eight
+	// bytes in the enclosing row (a reference) and its rows follow in the
+	// data stream as a nested table block.
+	Table    bool
 	Children []*Node
+}
+
+// slot is the bytes a node takes in its enclosing row: strings and tables
+// are eight-byte references there, whatever they hold.
+func (n *Node) slot() int {
+	if n.Table || isStringType(n.TypeCode) {
+		return 8
+	}
+	return n.Length
 }
 
 // Field is one leaf of the type descriptor: something that has a value.
@@ -121,6 +136,9 @@ type Field struct {
 	TypeCode byte   `json:"typeCode"`
 	Length   int    `json:"length"`
 	Decimals int    `json:"decimals,omitempty"`
+	// Fields describes the line of a table-typed component; its value in a
+	// row is then a slice of rows over these.
+	Fields []Field `json:"fields,omitempty"`
 }
 
 // Parse decodes a whole cluster, decompressing the body when it is compressed.
@@ -232,9 +250,10 @@ func (p *parser) u32() (int, error) {
 //
 // Header layout, 32 bytes plus the name:
 //
-//	0     object kind: 01 elementary, 02 flat / 05 deep structure, 03 flat / 06 deep table
+//	0     object kind: 01 elementary, 07 elementary string, 02 flat / 05 deep
+//	      structure, 03 flat / 06 deep table
 //	1     type code of the element or of the (line) structure
-//	2     0
+//	2     decimals of an elementary packed number, else 0
 //	3-6   row length, big-endian
 //	7-10  object length in the plain body, big-endian; 0 when compressed
 //	11    name length in characters
@@ -254,6 +273,8 @@ func (p *parser) object() (*Object, error) {
 		obj.Kind = Structure
 	case 3:
 		obj.Kind = Table
+	case 7:
+		obj.Kind = Elementary
 	}
 	obj.RowLength = int(binary.BigEndian.Uint32(h[3:]))
 	obj.Size = int(binary.BigEndian.Uint32(h[7:]))
@@ -271,9 +292,7 @@ func (p *parser) object() (*Object, error) {
 
 	switch obj.Kind {
 	case Elementary:
-		// An elementary packed object carries no decimals anywhere; the
-		// caller who exported it knows. It comes back as a digit string.
-		obj.Type = &Node{Path: "1", TypeCode: obj.TypeCode, Length: obj.RowLength}
+		obj.Type = &Node{Path: "1", TypeCode: obj.TypeCode, Length: obj.RowLength, Decimals: int(h[2])}
 	case Structure, Table:
 		root, err := p.descriptor(obj.Kind)
 		if err != nil {
@@ -296,36 +315,22 @@ func (p *parser) object() (*Object, error) {
 		if n.Filler {
 			continue
 		}
-		obj.Fields = append(obj.Fields, Field{Path: n.Path, Type: TypeName(n.TypeCode), TypeCode: n.TypeCode, Length: n.Length, Decimals: n.Decimals})
+		obj.Fields = append(obj.Fields, fieldOf(n))
 	}
 
 	if obj.Kind == Table {
-		if err := p.need(9); err != nil {
+		if err := p.need(1); err != nil {
 			return nil, err
 		}
 		if p.data[p.pos] != markTable {
 			return nil, fmt.Errorf("expected table data marker at offset %d, found %#02x", p.pos, p.data[p.pos])
 		}
 		p.pos++
-		rowLen, _ := p.u32()
-		count, _ := p.u32()
-		if rowLen != obj.RowLength {
-			return nil, fmt.Errorf("table data row length %d, descriptor %d", rowLen, obj.RowLength)
-		}
-		for i := 0; i < count; i++ {
-			row, err := p.row(leaves)
-			if err != nil {
-				return nil, fmt.Errorf("row %d: %w", i+1, err)
-			}
-			obj.Rows = append(obj.Rows, row)
-		}
-		if err := p.need(1); err != nil {
+		rows, err := p.tableRows(&Node{Length: obj.RowLength, Table: true, Children: obj.Type.Children})
+		if err != nil {
 			return nil, err
 		}
-		if p.data[p.pos] != markTableEnd {
-			return nil, fmt.Errorf("expected end of table at offset %d, found %#02x", p.pos, p.data[p.pos])
-		}
-		p.pos++
+		obj.Rows = rows
 		return obj, nil
 	}
 	row, err := p.row(leaves)
@@ -387,6 +392,14 @@ func (p *parser) children(parent *Node, close byte, prefix string) error {
 				return err
 			}
 			parent.Children = append(parent.Children, child)
+		case markObjTableBegin:
+			// A table-typed component: the nested descriptor is its line
+			// type, and the length here is the line's, not the slot's.
+			child := &Node{Path: path, TypeCode: code, Decimals: dec, Length: length, Table: true}
+			if err := p.children(child, markObjTableEnd, path+"."); err != nil {
+				return err
+			}
+			parent.Children = append(parent.Children, child)
 		default:
 			return fmt.Errorf("unknown descriptor marker %#02x at offset %d", marker, p.pos-descriptorEntrySize)
 		}
@@ -403,8 +416,11 @@ func countValues(n *Node) int {
 	return c
 }
 
+// collect flattens a descriptor into the leaves a row supplies values for:
+// elementary fields, fillers, and table components, which are leaves of the
+// enclosing row even though they have a line type of their own.
 func collect(n *Node, out *[]*Node) {
-	if len(n.Children) == 0 {
+	if len(n.Children) == 0 || n.Table {
 		*out = append(*out, n)
 		return
 	}
@@ -416,9 +432,31 @@ func collect(n *Node, out *[]*Node) {
 func sumLeaves(leaves []*Node) int {
 	s := 0
 	for _, n := range leaves {
-		s += n.Length
+		s += n.slot()
 	}
 	return s
+}
+
+func fieldOf(n *Node) Field {
+	f := Field{Path: n.Path, Type: TypeName(n.TypeCode), TypeCode: n.TypeCode, Length: n.Length, Decimals: n.Decimals}
+	if n.Table {
+		f.Type = "TABLE"
+		for _, l := range lineLeaves(n) {
+			if !l.Filler {
+				f.Fields = append(f.Fields, fieldOf(l))
+			}
+		}
+	}
+	return f
+}
+
+// lineLeaves flattens a table component's line type.
+func lineLeaves(n *Node) []*Node {
+	var out []*Node
+	for _, ch := range n.Children {
+		collect(ch, &out)
+	}
+	return out
 }
 
 // row reads one row's data. The fixed-length fields come in runs framed by
@@ -455,8 +493,8 @@ func (p *parser) row(leaves []*Node) ([]any, error) {
 					return nil, fmt.Errorf("%d bytes of row data left after the last field", len(run))
 				}
 				leaf := leaves[i]
-				if isStringType(leaf.TypeCode) {
-					return nil, fmt.Errorf("field %s is a string but the row supplies fixed bytes for it", leaf.Path)
+				if isStringType(leaf.TypeCode) || leaf.Table {
+					return nil, fmt.Errorf("field %s is a %s but the row supplies fixed bytes for it", leaf.Path, TypeName(leaf.TypeCode))
 				}
 				if len(run) < leaf.Length {
 					return nil, fmt.Errorf("field %s needs %d bytes, run has %d", leaf.Path, leaf.Length, len(run))
@@ -489,9 +527,52 @@ func (p *parser) row(leaves []*Node) ([]any, error) {
 			}
 			values = append(values, p.dec.stringValue(leaves[i], raw))
 			i++
+		case markTable:
+			for i < len(leaves) && leaves[i].Filler {
+				i++
+			}
+			if i >= len(leaves) || !leaves[i].Table {
+				return nil, fmt.Errorf("table data at offset %d has no table field to land in", p.pos-1)
+			}
+			rows, err := p.tableRows(leaves[i])
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", leaves[i].Path, err)
+			}
+			values = append(values, rows)
+			i++
 		default:
 			return nil, fmt.Errorf("unexpected marker %#02x in row data at offset %d", marker, p.pos-1)
 		}
 	}
 	return values, nil
+}
+
+// tableRows reads a nested table block, the BE marker already consumed:
+// line length, row count, the rows, and the closing BF.
+func (p *parser) tableRows(table *Node) ([][]any, error) {
+	if err := p.need(8); err != nil {
+		return nil, err
+	}
+	lineLen, _ := p.u32()
+	count, _ := p.u32()
+	if lineLen != table.Length {
+		return nil, fmt.Errorf("nested table data has line length %d, its descriptor %d", lineLen, table.Length)
+	}
+	leaves := lineLeaves(table)
+	rows := make([][]any, 0, count)
+	for r := 0; r < count; r++ {
+		row, err := p.row(leaves)
+		if err != nil {
+			return nil, fmt.Errorf("row %d: %w", r+1, err)
+		}
+		rows = append(rows, row)
+	}
+	if err := p.need(1); err != nil {
+		return nil, err
+	}
+	if p.data[p.pos] != markTableEnd {
+		return nil, fmt.Errorf("nested table not closed at offset %d (found %#02x)", p.pos, p.data[p.pos])
+	}
+	p.pos++
+	return rows, nil
 }

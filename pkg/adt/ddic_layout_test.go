@@ -46,10 +46,27 @@ func dd03lFixture() map[string][]dd03lRow {
 	}
 }
 
+func fixtureSource() *ddicSource {
+	fx := dd03lFixture()
+	fx["BAL_S_PAR"] = []dd03lRow{
+		{Position: 1, Field: "PARNAME", Comptype: "E", Datatype: "CHAR", Leng: 10},
+		{Position: 2, Field: "PARVALUE", Comptype: "E", Datatype: "CHAR", Leng: 75},
+	}
+	return &ddicSource{
+		rows: func(n string) ([]dd03lRow, error) { return fx[n], nil },
+		lineType: func(t string) (*lineType, error) {
+			if t == "BAL_T_PAR" {
+				return &lineType{Structure: "BAL_S_PAR"}, nil
+			}
+			return &lineType{Element: &dd03lRow{Datatype: "STRG"}}, nil
+		},
+	}
+}
+
 func TestBuildLayout(t *testing.T) {
 	fx := dd03lFixture()
-	resolve := func(n string) ([]dd03lRow, error) { return fx[n], nil }
-	l, err := buildLayout("BAL_S_MSGR", fx["BAL_S_MSGR"], resolve, 0)
+	src := fixtureSource()
+	l, err := buildLayout("BAL_S_MSGR", fx["BAL_S_MSGR"], src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,27 +89,31 @@ func TestBuildLayout(t *testing.T) {
 		params.Sub.Components[1].Kind != datacluster.SubstructureField || len(params.Sub.Components[1].Sub.Components) != 3 || params.Sub.Components[2].Name != "ALTEXT" {
 		t.Errorf("PARAMS: %+v", params)
 	}
+	tpar := params.Sub.Components[0]
+	if tpar.Sub == nil || tpar.Sub.Name != "BAL_S_PAR" || len(tpar.Sub.Components) != 2 || tpar.Sub.Components[1].Name != "PARVALUE" {
+		t.Errorf("T_PAR line type: %+v", tpar)
+	}
 	if ts := inc.Sub.Components[10]; ts.Name != "TIME_STMP" || ts.Type != "DEC" || ts.Chars != 21 || ts.Decimals != 7 {
 		t.Errorf("TIME_STMP: %+v", ts)
 	}
 }
 
 func TestBuildLayoutRefuses(t *testing.T) {
-	fx := dd03lFixture()
-	resolve := func(n string) ([]dd03lRow, error) { return fx[n], nil }
+	src := fixtureSource()
 	// A row one level too deep with no structure above it.
 	bad := []dd03lRow{{Position: 1, Field: "A", Comptype: "E", Datatype: "CHAR", Leng: 1}, {Position: 2, Depth: 1, Field: "B", Comptype: "E", Datatype: "CHAR", Leng: 1}}
-	if _, err := buildLayout("BAD", bad, resolve, 0); err == nil || !strings.Contains(err.Error(), "depth") {
+	if _, err := buildLayout("BAD", bad, src, 0); err == nil || !strings.Contains(err.Error(), "depth") {
 		t.Errorf("orphan depth: %v", err)
 	}
 	// An include cycle.
 	cyc := []dd03lRow{{Position: 1, Field: ".INCLUDE", Comptype: "S", Precfield: "CYC"}}
-	if _, err := buildLayout("CYC", cyc, func(string) ([]dd03lRow, error) { return cyc, nil }, 0); err == nil || !strings.Contains(err.Error(), "cycle") {
+	cycSrc := &ddicSource{rows: func(string) ([]dd03lRow, error) { return cyc, nil }}
+	if _, err := buildLayout("CYC", cyc, cycSrc, 0); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Errorf("cycle: %v", err)
 	}
 	// A reference component.
 	ref := []dd03lRow{{Position: 1, Field: "R", Comptype: "R", Rollname: "REF"}}
-	if _, err := buildLayout("REF", ref, resolve, 0); err == nil {
+	if _, err := buildLayout("REF", ref, src, 0); err == nil {
 		t.Error("reference component accepted")
 	}
 }

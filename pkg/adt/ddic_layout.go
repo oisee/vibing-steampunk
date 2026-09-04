@@ -29,12 +29,28 @@ type dd03lRow struct {
 	Decimals  int
 }
 
-// StructureLayout reads a DDIC structure or table type's components from
-// DD03L, includes resolved, and returns them as a Layout.
+// ddicSource is where buildLayout gets the rows of a structure and the line
+// of a table type; the client reads DD03L, DD40L and DD04L, a test supplies
+// them.
+type ddicSource struct {
+	rows     func(structure string) ([]dd03lRow, error)
+	lineType func(tableType string) (*lineType, error)
+}
+
+// lineType is what DD40L says a table type's line is: a structure by name,
+// or an elementary type.
+type lineType struct {
+	Structure string
+	Element   *dd03lRow
+}
+
+// StructureLayout reads a DDIC structure's components from DD03L, includes
+// resolved and table-typed components followed into their line types, and
+// returns them as a Layout.
 func (c *Client) StructureLayout(ctx context.Context, name string) (*datacluster.Layout, error) {
 	cache := map[string][]dd03lRow{}
-	var read func(string) ([]dd03lRow, error)
-	read = func(n string) ([]dd03lRow, error) {
+	src := &ddicSource{}
+	src.rows = func(n string) ([]dd03lRow, error) {
 		n = strings.ToUpper(strings.TrimSpace(n))
 		if rows, ok := cache[n]; ok {
 			return rows, nil
@@ -49,11 +65,49 @@ func (c *Client) StructureLayout(ctx context.Context, name string) (*datacluster
 		cache[n] = rows
 		return rows, nil
 	}
-	rows, err := read(name)
+	src.lineType = func(t string) (*lineType, error) { return c.dd40lLine(ctx, t) }
+	rows, err := src.rows(name)
 	if err != nil {
 		return nil, err
 	}
-	return buildLayout(strings.ToUpper(strings.TrimSpace(name)), rows, read, 0)
+	return buildLayout(strings.ToUpper(strings.TrimSpace(name)), rows, src, 0)
+}
+
+// dd40lLine reads a table type's line from DD40L: a structure (ROWKIND S),
+// a data element (E with ROWTYPE), or a built-in type given right there.
+func (c *Client) dd40lLine(ctx context.Context, tableType string) (*lineType, error) {
+	query := fmt.Sprintf("SELECT rowkind, rowtype, datatype, leng, decimals FROM dd40l WHERE typename = '%s' AND as4local = 'A'", sqlQuote(strings.ToUpper(tableType)))
+	res, err := c.RunQuery(ctx, query, 1)
+	if err != nil {
+		return nil, fmt.Errorf("reading DD40L for %s: %w", tableType, err)
+	}
+	if res == nil || len(res.Rows) == 0 {
+		return nil, fmt.Errorf("DDIC has no active table type %s", tableType)
+	}
+	row := res.Rows[0]
+	kind, rowType := cell(row, "ROWKIND"), cell(row, "ROWTYPE")
+	switch kind {
+	case "S":
+		return &lineType{Structure: rowType}, nil
+	case "E":
+		el := &dd03lRow{Datatype: cell(row, "DATATYPE")}
+		el.Leng, _ = strconv.Atoi(cell(row, "LENG"))
+		el.Decimals, _ = strconv.Atoi(cell(row, "DECIMALS"))
+		if rowType != "" {
+			q := fmt.Sprintf("SELECT datatype, leng, decimals FROM dd04l WHERE rollname = '%s' AND as4local = 'A'", sqlQuote(rowType))
+			r, err := c.RunQuery(ctx, q, 1)
+			if err != nil {
+				return nil, fmt.Errorf("reading DD04L for %s: %w", rowType, err)
+			}
+			if r != nil && len(r.Rows) > 0 {
+				el.Datatype = cell(r.Rows[0], "DATATYPE")
+				el.Leng, _ = strconv.Atoi(cell(r.Rows[0], "LENG"))
+				el.Decimals, _ = strconv.Atoi(cell(r.Rows[0], "DECIMALS"))
+			}
+		}
+		return &lineType{Element: el}, nil
+	}
+	return nil, fmt.Errorf("table type %s has a line of kind %q, which this reader does not lay out", tableType, kind)
 }
 
 func (c *Client) dd03lRows(ctx context.Context, name string) ([]dd03lRow, error) {
@@ -84,14 +138,15 @@ func isIncludeRow(r dd03lRow) bool {
 	return strings.HasPrefix(r.Field, ".INCLU") || strings.HasPrefix(r.Field, ".APPEND")
 }
 
-// buildLayout turns DD03L rows into a Layout. resolve reads the rows of an
-// included structure; nesting deeper than twenty is taken as a cycle.
-func buildLayout(name string, rows []dd03lRow, resolve func(string) ([]dd03lRow, error), nesting int) (*datacluster.Layout, error) {
+// buildLayout turns DD03L rows into a Layout. src reads the rows of an
+// included structure and the line of a table type; nesting deeper than
+// twenty is taken as a cycle.
+func buildLayout(name string, rows []dd03lRow, src *ddicSource, nesting int) (*datacluster.Layout, error) {
 	if nesting > 20 {
 		return nil, fmt.Errorf("structure %s nests deeper than twenty levels; probably an include cycle", name)
 	}
 	i := 0
-	comps, err := parseComponents(name, rows, &i, 0, resolve, nesting)
+	comps, err := parseComponents(name, rows, &i, 0, src, nesting)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +156,7 @@ func buildLayout(name string, rows []dd03lRow, resolve func(string) ([]dd03lRow,
 	return &datacluster.Layout{Name: name, Components: comps}, nil
 }
 
-func parseComponents(name string, rows []dd03lRow, i *int, depth int, resolve func(string) ([]dd03lRow, error), nesting int) ([]datacluster.Component, error) {
+func parseComponents(name string, rows []dd03lRow, i *int, depth int, src *ddicSource, nesting int) ([]datacluster.Component, error) {
 	var comps []datacluster.Component
 	for *i < len(rows) {
 		r := rows[*i]
@@ -113,11 +168,11 @@ func parseComponents(name string, rows []dd03lRow, i *int, depth int, resolve fu
 		}
 		switch {
 		case isIncludeRow(r):
-			incRows, err := resolve(r.Precfield)
+			incRows, err := src.rows(r.Precfield)
 			if err != nil {
 				return nil, err
 			}
-			sub, err := buildLayout(strings.ToUpper(r.Precfield), incRows, resolve, nesting+1)
+			sub, err := buildLayout(strings.ToUpper(r.Precfield), incRows, src, nesting+1)
 			if err != nil {
 				return nil, err
 			}
@@ -127,14 +182,35 @@ func parseComponents(name string, rows []dd03lRow, i *int, depth int, resolve fu
 			comps = append(comps, datacluster.Component{Name: r.Field, Kind: datacluster.IncludeField, Type: strings.ToUpper(r.Precfield), Sub: sub})
 		case r.Comptype == "S":
 			*i++
-			subComps, err := parseComponents(name+"-"+r.Field, rows, i, depth+1, resolve, nesting)
+			subComps, err := parseComponents(name+"-"+r.Field, rows, i, depth+1, src, nesting)
 			if err != nil {
 				return nil, err
 			}
 			comps = append(comps, datacluster.Component{Name: r.Field, Kind: datacluster.SubstructureField, Type: r.Rollname, Sub: &datacluster.Layout{Name: r.Rollname, Components: subComps}})
 		case r.Comptype == "L":
 			*i++
-			comps = append(comps, datacluster.Component{Name: r.Field, Kind: datacluster.TableField, Type: r.Rollname})
+			comp := datacluster.Component{Name: r.Field, Kind: datacluster.TableField, Type: r.Rollname}
+			if src.lineType != nil {
+				line, err := src.lineType(r.Rollname)
+				if err != nil {
+					return nil, err
+				}
+				switch {
+				case line.Structure != "":
+					lineRows, err := src.rows(line.Structure)
+					if err != nil {
+						return nil, err
+					}
+					if comp.Sub, err = buildLayout(strings.ToUpper(line.Structure), lineRows, src, nesting+1); err != nil {
+						return nil, err
+					}
+				case line.Element != nil:
+					comp.Sub = &datacluster.Layout{Name: r.Rollname, Components: []datacluster.Component{
+						{Name: "LINE", Kind: datacluster.ElementaryField, Type: line.Element.Datatype, Chars: line.Element.Leng, Decimals: line.Element.Decimals},
+					}}
+				}
+			}
+			comps = append(comps, comp)
 		case r.Comptype == "R":
 			return nil, fmt.Errorf("structure %s: component %s is a reference, which a cluster does not carry", name, r.Field)
 		default:

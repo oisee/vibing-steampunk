@@ -136,9 +136,11 @@ func str(v any) string {
 }
 
 // AppLogMessages reads the messages of the given logs from BALDAT, keyed by
-// log handle. Logs whose cluster is missing are absent from the map; a
-// cluster that fails to decode is an error, because a wrong reading is worse
-// than none.
+// log handle. A long log is stored as several blocks — BLOCK is part of the
+// key, each block its own cluster — and they are joined here in message
+// order. Logs whose cluster is missing are absent from the map; a cluster
+// that fails to decode is an error, because a wrong reading is worse than
+// none.
 func (c *Client) AppLogMessages(ctx context.Context, handles []string) (map[string][]AppLogMessage, error) {
 	out := map[string][]AppLogMessage{}
 	const batch = 40
@@ -157,12 +159,20 @@ func (c *Client) AppLogMessages(ctx context.Context, handles []string) (map[stri
 		if len(quoted) == 0 {
 			continue
 		}
-		where := "relid = 'AL' AND log_handle IN (" + strings.Join(quoted, ", ") + ")"
-		// A log rarely spans more than a handful of 512-byte fragments; forty
-		// logs at two hundred fragments each is far beyond any real log.
-		res, err := c.ReadClusterRecords(ctx, "BALDAT", where, len(quoted)*200)
+		// One literal per line: the data preview wraps the statement into
+		// 255-character ABAP lines, and a literal cut by the wrap is an error.
+		where := "relid = 'AL' AND log_handle IN (\n" + strings.Join(quoted, ",\n") + " )"
+		// A log of a few messages is three 512-byte fragments; one of several
+		// thousand is blocks of 150 messages at some fifteen fragments each.
+		// The limit is a guard against a runaway, not a budget, and hitting
+		// it is reported rather than returning part of a log as the whole.
+		const fragmentsPerLog = 4000
+		res, err := c.ReadClusterRecords(ctx, "BALDAT", where, len(quoted)*fragmentsPerLog)
 		if err != nil {
 			return nil, err
+		}
+		if res.Truncated {
+			return nil, fmt.Errorf("the messages of %d logs span more than %d BALDAT rows; ask for fewer logs at a time", len(quoted), len(quoted)*fragmentsPerLog)
 		}
 		for _, rec := range res.Records {
 			handle := ""
@@ -175,8 +185,11 @@ func (c *Client) AppLogMessages(ctx context.Context, handles []string) (map[stri
 			if err != nil {
 				return nil, fmt.Errorf("log %s: %w", handle, err)
 			}
-			out[handle] = msgs
+			out[handle] = append(out[handle], msgs...)
 		}
+	}
+	for handle := range out {
+		sort.SliceStable(out[handle], func(i, j int) bool { return out[handle][i].Number < out[handle][j].Number })
 	}
 	return out, nil
 }
@@ -225,8 +238,8 @@ func (c *Client) AppLogTexts(ctx context.Context, lang string, msgs []AppLogMess
 			list = append(list, "'"+sqlQuote(n)+"'")
 		}
 		sort.Strings(list)
-		query := fmt.Sprintf("SELECT msgnr, text FROM t100 WHERE sprsl = '%s' AND arbgb = '%s' AND msgnr IN (%s)",
-			sqlQuote(lang), sqlQuote(class), strings.Join(list, ", "))
+		query := fmt.Sprintf("SELECT msgnr, text FROM t100 WHERE sprsl = '%s' AND arbgb = '%s' AND msgnr IN (\n%s )",
+			sqlQuote(lang), sqlQuote(class), strings.Join(list, ",\n"))
 		res, err := c.RunQuery(ctx, query, len(list))
 		if err != nil {
 			return fmt.Errorf("reading message texts for %s: %w", class, err)
