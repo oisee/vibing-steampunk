@@ -80,9 +80,17 @@ then, and each set's inputs (%_I), what came back (%_V), the runtime, the
 return code and the exception.
 
   vsp fmtest ZDEMO_CALCULATE_TAX
-  vsp fmtest ZDEMO_CALCULATE_TAX --json`,
-	Args: cobra.ExactArgs(1),
+  vsp fmtest ZDEMO_CALCULATE_TAX --json
+
+A leading FM or FUNC, as the other commands take a type first, is accepted.`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[len(args)-1]
+		if len(args) == 2 {
+			if t := strings.ToUpper(args[0]); t != "FM" && t != "FUNC" && t != "FUGR/FF" {
+				return fmt.Errorf("fmtest takes a function module name; %q is not a type it knows (FM, FUNC)", args[0])
+			}
+		}
 		params, err := resolveSystemParams(cmd)
 		if err != nil {
 			return err
@@ -91,7 +99,7 @@ return code and the exception.
 		if err != nil {
 			return err
 		}
-		data, err := client.FunctionTestData(context.Background(), args[0])
+		data, err := client.FunctionTestData(context.Background(), name)
 		if err != nil {
 			return err
 		}
