@@ -283,6 +283,28 @@ vsp -s a4h spool list --job ZDEMO_NIGHTLY --top 20
 vsp -s a4h spool export --user TESTUSER --since 2026-09-01 --out ./spool
 ```
 
+### What is it set up to do — variants, test data, documentation, the IMG
+
+The other half of a root cause is configuration, and it sits in tables too.
+`vsp variants` reads a report variant as a table of fields with their labels,
+kinds, types and values, from VARI and the program's selection texts; that is
+what a job's step selected, without `RS_VARIANT_CONTENTS`. `vsp fmtest` reads
+the Function Builder's saved test data from EUFUNC: every set's inputs, what
+came back, the runtime, the interface as it was. `vsp docs` renders SE61
+documentation as Markdown, includes resolved — data elements, reports,
+function modules, classes, messages — and walks the IMG: `docs img` finds
+activities and folders by their titles and gives the path to each, `docs
+activity` gives the transaction and the activity's own text. MCP: `variants`,
+`fm_test_data`, `documentation`, `img_search`, `img_activity`.
+
+```bash
+vsp -s a4h variants ZDEMO_NIGHTLY_RUN                # the variants, who made them, when
+vsp -s a4h variants ZDEMO_NIGHTLY_RUN MONTH_END --json
+vsp -s a4h fmtest STRING_CONCATENATE
+vsp -s a4h docs read DE BALLEVEL
+vsp -s a4h docs activity /IWBEP/CP_DELETE_JOB
+```
+
 ### Cluster tables, decoded — BALDAT, INDX, STXL over plain ADT
 
 BALDAT is one of a family: INDX, STXL, and every table an `EXPORT ... TO
@@ -957,6 +979,10 @@ vsp -s a4h jobs log ZDEMO_NIGHTLY 22554500          # the job log, over XBP
 vsp -s a4h spool list --job ZDEMO_NIGHTLY           # what the job's steps printed
 vsp -s a4h spool read 27302                         # the list, decoded from TemSe
 vsp -s a4h spool export --since 2026-09-01 --out ./spool
+vsp -s a4h variants ZDEMO_NIGHTLY_RUN MONTH_END      # every field, its label, its value
+vsp -s a4h fmtest ZDEMO_CALCULATE_TAX                # SE37's saved test data
+vsp -s a4h docs read FU BAL_LOG_CREATE               # SE61 documentation as Markdown
+vsp -s a4h docs img "cleanup job"                    # where in the IMG, and which activity
 
 # Cluster tables — what only IMPORT could read, decoded here
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema

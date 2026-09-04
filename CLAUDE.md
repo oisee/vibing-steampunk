@@ -100,6 +100,8 @@ pkg/
   graph/              Dependency graph engine (in progress)
   datacluster/        EXPORT data cluster parser (BALDAT, INDX, STXL): descriptors, rows, typed values
   sapcompress/        SAP LZH (= DEFLATE + prefix, via compress/flate) and LZC (compress(1)) decoders
+  temse/              TemSe list spool format (TST03) → lines
+  itf/                SAPscript ITF (DOKTL documentation) → Markdown
   ctxcomp/            Context compression (dep resolution for read)
   abaplint/           ABAP lexer + parser (95 statement patterns; 13 lint rules, 8 on by default)
   dsl/                Fluent API, YAML workflows, batch ops
