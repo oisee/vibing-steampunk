@@ -37,8 +37,8 @@ func decodeDecfloat(raw []byte) (string, bool) {
 	sign := bit(0)
 	comb := field(1, 5)
 	var msd, expHigh int
-	switch {
-	case comb>>3 == 0b11:
+	switch comb >> 3 {
+	case 0b11:
 		if comb == 0b11110 {
 			return signed(sign, "Inf"), true
 		}

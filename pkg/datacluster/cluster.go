@@ -248,9 +248,9 @@ func (p *parser) object() (*Object, error) {
 	if err := p.need(nameLen * 2); err != nil {
 		return nil, err
 	}
-	name, err := decodeUTF16(p.data[p.pos:p.pos+nameLen*2], false)
-	if err != nil {
-		return nil, fmt.Errorf("object name: %w", err)
+	name, nameErr := decodeUTF16(p.data[p.pos:p.pos+nameLen*2], false)
+	if nameErr != nil {
+		return nil, fmt.Errorf("object name: %w", nameErr)
 	}
 	obj.Name = name
 	p.pos += nameLen * 2
