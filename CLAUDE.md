@@ -98,6 +98,8 @@ internal/mcp/
 pkg/
   adt/                ADT client (HTTP, CSRF, sessions, all SAP ops)
   graph/              Dependency graph engine (in progress)
+  datacluster/        EXPORT data cluster parser (BALDAT, INDX, STXL): descriptors, rows, typed values
+  sapcompress/        SAP LZH (= DEFLATE + prefix, via compress/flate) and LZC (compress(1)) decoders
   ctxcomp/            Context compression (dep resolution for read)
   abaplint/           ABAP lexer + parser (95 statement patterns; 13 lint rules, 8 on by default)
   dsl/                Fluent API, YAML workflows, batch ops
@@ -265,4 +267,5 @@ successors; do not add more.
 | `pkg/llvm2abap/`, `pkg/wasmcomp/` | Research | Not production; don't treat as stable |
 | `pkg/adt/debugger.go` (REST) | Types and parsers only | Its *client* methods still assume a stateless session; the request builders and parsers are shared and exported via `debugger_parse.go` |
 | `docs/cli-agents/*` | Config drift | Codex TOML format may differ from Claude/Gemini JSON docs |
+| `pkg/datacluster/` | Reverse-engineered format | Object header, descriptor markers and type codes were read off real clusters (fixtures in `testdata/`: a 7.58 INDX with every type, a BALDAT). A kernel that writes a marker or type code not seen there fails loudly rather than misreading; add the fixture, then the code |
 | `pkg/adt/sso*.go` | Host-dependent | Browser step must be a Windows process under WSL (PRT/WAM); needs `vsp-sso.exe` from `make sso-helper` |

@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,9 +14,10 @@ import (
 //
 // SAP's own way in is the BAL_* function group, which cannot be called
 // remotely: not over a gateway, not over SOAP-RFC, not over a WebSocket tunnel.
-// The blocker is not the transport. But the log's header table is an ordinary
-// table, and ADT's free SQL reads it, so the useful part is available over
-// plain HTTPS with no Z code anywhere.
+// The blocker is not the transport. But the log's tables are ordinary tables,
+// and ADT's free SQL reads them, so the whole log is available over plain
+// HTTPS with no Z code anywhere: the headers from BALHDR here, and the
+// messages from the BALDAT data cluster in applog_messages.go.
 //
 // This exists so that nobody has to remember that. "Which program logged
 // something around the time this dumped" is the question; BALHDR and the column
@@ -25,17 +27,27 @@ import (
 // AppLogEntry is one application log header: who logged, from where, when, and
 // under which log object.
 //
-// The message bodies are deliberately absent. They live in a cluster table that
-// data preview refuses, so reading them needs the BAL API and therefore Z code.
-// Everything needed to correlate a log with a dump is in the header.
+// The messages are not read with the header. For four months this comment
+// said they could not be read at all, because BALDAT is a cluster table; they
+// can, and Client.AppLogMessages does. Everything needed to correlate a log
+// with a dump is in the header, so the messages stay optional and cost a
+// second query only when asked for.
 type AppLogEntry struct {
-	LogNumber string    `json:"logNumber"`
+	LogNumber string `json:"logNumber"`
+	// LogHandle is the key of the log's messages in BALDAT.
+	LogHandle string    `json:"logHandle,omitempty"`
 	Object    string    `json:"object"`
 	SubObject string    `json:"subObject,omitempty"`
+	External  string    `json:"externalId,omitempty"`
 	Program   string    `json:"program,omitempty"`
 	User      string    `json:"user,omitempty"`
 	Mode      string    `json:"mode,omitempty"`
 	At        time.Time `json:"at"`
+	// MessageCount is what the header says the log holds, which is known
+	// before the messages are read.
+	MessageCount int `json:"messageCount,omitempty"`
+	// Messages is filled by AppLogMessages when the caller asks for them.
+	Messages []AppLogMessage `json:"messages,omitempty"`
 }
 
 // AppLogFilter narrows the search. Everything is optional, but a search with no
@@ -65,7 +77,7 @@ func (c *Client) ApplicationLog(ctx context.Context, filter AppLogFilter) ([]App
 	}
 
 	where := appLogWhere(filter)
-	query := "SELECT lognumber, object, subobject, aldate, altime, aluser, alprog, almode FROM balhdr"
+	query := "SELECT lognumber, log_handle, object, subobject, extnumber, aldate, altime, aluser, alprog, almode, msg_cnt_al FROM balhdr"
 	if where != "" {
 		query += " WHERE " + where
 	}
@@ -81,14 +93,18 @@ func (c *Client) ApplicationLog(ctx context.Context, filter AppLogFilter) ([]App
 
 	entries := make([]AppLogEntry, 0, len(res.Rows))
 	for _, row := range res.Rows {
+		count, _ := strconv.Atoi(cell(row, "MSG_CNT_AL"))
 		entries = append(entries, AppLogEntry{
-			LogNumber: cell(row, "LOGNUMBER"),
-			Object:    cell(row, "OBJECT"),
-			SubObject: cell(row, "SUBOBJECT"),
-			Program:   cell(row, "ALPROG"),
-			User:      cell(row, "ALUSER"),
-			Mode:      cell(row, "ALMODE"),
-			At:        parseSAPStamp(cell(row, "ALDATE"), cell(row, "ALTIME")),
+			LogNumber:    cell(row, "LOGNUMBER"),
+			LogHandle:    cell(row, "LOG_HANDLE"),
+			Object:       cell(row, "OBJECT"),
+			SubObject:    cell(row, "SUBOBJECT"),
+			External:     cell(row, "EXTNUMBER"),
+			Program:      cell(row, "ALPROG"),
+			User:         cell(row, "ALUSER"),
+			Mode:         cell(row, "ALMODE"),
+			At:           parseSAPStamp(cell(row, "ALDATE"), cell(row, "ALTIME")),
+			MessageCount: count,
 		})
 	}
 	return entries, nil
@@ -161,4 +177,41 @@ func cell(row map[string]interface{}, column string) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(v))
 	}
+}
+
+// AttachAppLogMessages reads the messages of every entry and stores them on
+// it, with texts in the given language. Entries whose log has no cluster —
+// deleted bodies, or a header written without messages — are left as they
+// are.
+func (c *Client) AttachAppLogMessages(ctx context.Context, lang string, entries []AppLogEntry) error {
+	handles := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.LogHandle != "" {
+			handles = append(handles, e.LogHandle)
+		}
+	}
+	byHandle, err := c.AppLogMessages(ctx, handles)
+	if err != nil {
+		return err
+	}
+	var all []AppLogMessage
+	for i := range entries {
+		entries[i].Messages = byHandle[entries[i].LogHandle]
+		all = append(all, entries[i].Messages...)
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	if err := c.AppLogTexts(ctx, lang, all); err != nil {
+		return err
+	}
+	// AppLogTexts wrote into the flat copy; carry the texts back.
+	n := 0
+	for i := range entries {
+		for j := range entries[i].Messages {
+			entries[i].Messages[j].Text = all[n].Text
+			n++
+		}
+	}
+	return nil
 }

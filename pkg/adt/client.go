@@ -1083,6 +1083,15 @@ func parsePackageNodeStructure(data []byte, packageName string) (*PackageContent
 	return pkg, nil
 }
 
+// Language is the logon language the client was configured with, as an ISO
+// code ("EN") or a SAP key; empty when none was set.
+func (c *Client) Language() string {
+	if c.config == nil {
+		return ""
+	}
+	return c.config.Language
+}
+
 // --- Table Operations ---
 
 // GetTable retrieves the source/definition of a database table.
