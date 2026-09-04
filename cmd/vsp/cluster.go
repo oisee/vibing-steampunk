@@ -30,11 +30,17 @@ Field names are not in the cluster; the kernel writes types, not DDIC.
 
   vsp cluster read BALDAT --where "relid = 'AL' AND log_handle = '...'"
   vsp cluster read INDX --where "relid = 'ZV'" --schema
-  vsp cluster read STXL --where "tdobject = 'TEXT' AND tdname = 'Z...'" --json
+  vsp cluster read INDX --where "relid = 'ZD'" --layout ZDEMO_S_HEADER
+  vsp cluster read INDX --where "relid = 'ZD'" --layout "HDR=ZDEMO_S_HEADER,ITEMS=ZDEMO_S_ITEM"
+  vsp cluster read STXL --where "tdobject = 'TEXT' AND tdname = 'Z...'"   # SAPscript text
   vsp cluster decode baldat.txt --layout applog     # an SE16H export, offline
 
---layout applog lays BAL_S_MSG over BALDAT clusters and prints the messages;
-'vsp applog --messages' does the same joined to the headers.`,
+--layout names what to lay over the fields. A DDIC structure name is read from
+DD03L (includes resolved) and applied to every object, or per object as
+OBJECT=STRUCTURE; it is refused when it does not fit, field by field, rather
+than guessed. Two layouts are built in: applog (BAL_S_MSG over BALDAT buckets,
+printing the messages — 'vsp applog --messages' joins them to the headers) and
+stxl (TLINE over STXL, rendered as the text; the default when the table is STXL).`,
 }
 
 var clusterReadCmd = &cobra.Command{
@@ -59,7 +65,7 @@ var clusterReadCmd = &cobra.Command{
 		if res.Truncated {
 			fmt.Fprintf(os.Stderr, "row limit %d reached: the last cluster was dropped rather than shown incomplete; narrow --where or raise --top\n", top)
 		}
-		return emitClusters(cmd, res.Table.Name, res.Records)
+		return emitClusters(cmd, res.Table.Name, res.Records, client)
 	},
 }
 
@@ -86,7 +92,25 @@ taken as one whole cluster.`,
 		} else if records, err = datacluster.ReadExport(strings.NewReader(string(raw)), ignore...); err != nil {
 			return err
 		}
-		return emitClusters(cmd, strings.ToUpper(strings.TrimSuffix(filepath.Base(args[0]), filepath.Ext(args[0]))), records)
+		// A DDIC layout needs a system; the built-in ones do not, so the
+		// client is only made when a name asks for it.
+		var client *adt.Client
+		if layout, _ := cmd.Flags().GetString("layout"); layout != "" {
+			spec, err := adt.ParseLayoutSpec(layout)
+			if err != nil {
+				return err
+			}
+			if spec.Mode() == "" {
+				params, perr := resolveSystemParams(cmd)
+				if perr != nil {
+					return fmt.Errorf("--layout %s needs a system to read DD03L from: %w", layout, perr)
+				}
+				if client, err = getClient(params); err != nil {
+					return err
+				}
+			}
+		}
+		return emitClusters(cmd, strings.ToUpper(strings.TrimSuffix(filepath.Base(args[0]), filepath.Ext(args[0]))), records, client)
 	},
 }
 
@@ -101,25 +125,37 @@ type clusterOut struct {
 	Codepage   string                 `json:"codepage"`
 	Objects    []clusterObjectOut     `json:"objects,omitempty"`
 	Messages   []adt.AppLogMessage    `json:"messages,omitempty"`
+	Lines      []datacluster.TextLine `json:"lines,omitempty"`
+	Text       string                 `json:"text,omitempty"`
+	Notes      []string               `json:"notes,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 }
 
 type clusterObjectOut struct {
 	Name      string              `json:"name"`
 	Kind      string              `json:"kind"`
+	Layout    string              `json:"layout,omitempty"`
 	RowLength int                 `json:"rowLength"`
 	Fields    []datacluster.Field `json:"fields"`
 	Rows      [][]any             `json:"rows"`
+	Records   []map[string]any    `json:"records,omitempty"`
 }
 
-func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record) error {
+func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record, client *adt.Client) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	schema, _ := cmd.Flags().GetBool("schema")
-	layout, _ := cmd.Flags().GetString("layout")
+	layoutArg, _ := cmd.Flags().GetString("layout")
 	rawDir, _ := cmd.Flags().GetString("raw-dir")
-	if layout != "" && layout != "applog" {
-		return fmt.Errorf("--layout %q: only \"applog\" is known", layout)
+	spec, err := adt.ParseLayoutSpec(layoutArg)
+	if err != nil {
+		return err
 	}
+	if spec.Empty() && strings.EqualFold(table, "STXL") {
+		spec.Default = adt.LayoutSTXL
+	}
+	mode := spec.Mode()
+	resolver := adt.NewLayoutResolver(client)
+	ctx := context.Background()
 	if rawDir != "" {
 		if err := os.MkdirAll(rawDir, 0o755); err != nil {
 			return err
@@ -142,16 +178,27 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 			failed++
 		} else {
 			out.Compressed, out.Algorithm, out.Codepage = c.Compressed, c.Algorithm, c.Codepage
-			if layout == "applog" {
+			switch mode {
+			case adt.LayoutAppLog:
 				if out.Messages, err = adt.DecodeAppLogMessages(rec.Blob); err != nil {
 					out.Error = err.Error()
 					failed++
 				}
-			} else {
+			case adt.LayoutSTXL:
+				if out.Lines, out.Text, err = c.SAPscriptText(); err != nil {
+					out.Error = err.Error()
+					failed++
+				}
+			default:
+				out.Notes = resolver.Apply(ctx, c, spec)
 				for _, obj := range c.Objects {
 					o := clusterObjectOut{Name: obj.Name, Kind: obj.Kind.String(), RowLength: obj.RowLength, Fields: obj.Fields, Rows: obj.Rows}
 					if o.Rows == nil {
 						o.Rows = [][]any{}
+					}
+					if len(obj.Fields) > 0 && obj.Fields[0].Name != "" {
+						o.Layout = spec.For(obj.Name)
+						o.Records = obj.Records()
 					}
 					out.Objects = append(out.Objects, o)
 				}
@@ -182,7 +229,8 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 			fmt.Printf("   cannot decode: %s\n", out.Error)
 			continue
 		}
-		if layout == "applog" {
+		switch mode {
+		case adt.LayoutAppLog:
 			if len(out.Messages) == 0 {
 				fmt.Println("   no messages")
 			}
@@ -190,22 +238,38 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 				printAppLogMessage(m)
 			}
 			continue
+		case adt.LayoutSTXL:
+			for _, l := range out.Lines {
+				fmt.Printf("   %-3s %s\n", l.Format, l.Line)
+			}
+			continue
+		}
+		for _, note := range out.Notes {
+			fmt.Printf("   layout: %s\n", note)
 		}
 		for _, obj := range out.Objects {
-			fmt.Printf("-- %s  %s, %d row(s), %d field(s), %d bytes/row\n", obj.Name, obj.Kind, len(obj.Rows), len(obj.Fields), obj.RowLength)
+			fmt.Printf("-- %s  %s, %d row(s), %d field(s), %d bytes/row", obj.Name, obj.Kind, len(obj.Rows), len(obj.Fields), obj.RowLength)
+			if obj.Layout != "" {
+				fmt.Printf(", laid out as %s", obj.Layout)
+			}
+			fmt.Println()
 			if schema {
 				for _, f := range obj.Fields {
 					desc := fmt.Sprintf("%s(%d)", f.Type, f.Length)
 					if f.Decimals > 0 {
 						desc = fmt.Sprintf("%s(%d,%d)", f.Type, f.Length, f.Decimals)
 					}
-					fmt.Printf("     %-8s %s\n", f.Path, desc)
+					fmt.Printf("     %-8s %-24s %s\n", f.Path, f.Name, desc)
 				}
 			}
 			for n, row := range obj.Rows {
 				parts := make([]string, len(row))
 				for i, v := range row {
-					parts[i] = fmt.Sprint(v)
+					if obj.Layout != "" {
+						parts[i] = obj.Fields[i].Name + "=" + fmt.Sprint(v)
+					} else {
+						parts[i] = fmt.Sprint(v)
+					}
 				}
 				fmt.Printf("   [%d] %s\n", n+1, strings.Join(parts, " | "))
 			}
@@ -221,7 +285,7 @@ func init() {
 	for _, c := range []*cobra.Command{clusterReadCmd, clusterDecodeCmd} {
 		c.Flags().Bool("json", false, "Emit JSON")
 		c.Flags().Bool("schema", false, "List every field's type, length and decimals before the rows")
-		c.Flags().String("layout", "", "Lay a known structure over the cluster: applog (BALDAT messages)")
+		c.Flags().String("layout", "", "What to lay over the fields: a DDIC structure, OBJECT=STRUCTURE pairs, applog, or stxl")
 		c.Flags().String("raw-dir", "", "Also write each joined cluster, still compressed, as a .bin file into this directory")
 	}
 	clusterReadCmd.Flags().String("where", "", "WHERE clause on the table's own columns, e.g. \"relid = 'AL' AND log_handle = '...'\"")

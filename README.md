@@ -276,11 +276,19 @@ eight-byte header and a two-bit prefix, so the standard library inflates it;
 descriptor for every exported object — kind, length and decimals of every
 field, nested for structures — so the values come back typed: packed numbers
 as decimals, time stamps with their microseconds, strings from their
-out-of-line segments. What it does not carry is field names; fields are
-numbered, and `--layout applog` lays `BAL_S_MSG` over a BALDAT cluster.
+out-of-line segments. What it does not carry is field names. `--layout`
+supplies them: a DDIC structure is read from DD03L, includes resolved, and
+laid over the descriptor field by field — type family, byte length and
+decimals checked at every leaf, so a structure that does not fit is refused
+with the field named rather than guessed at. Two layouts are built in:
+`applog` for BALDAT, and `stxl` for SAPscript text, which STXL gets by
+default.
 
 ```bash
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema   # every object, every field typed
+vsp -s a4h cluster read INDX --where "relid = 'ZD'" --layout ZDEMO_S_HEADER
+vsp -s a4h cluster read INDX --where "relid = 'ZD'" --layout "HDR=ZDEMO_S_HEADER,ITEMS=ZDEMO_S_ITEM"
+vsp -s a4h cluster read STXL --where "tdname = 'ZDEMO_TEXT'"   # the text, lines and formats
 vsp -s a4h cluster read BALDAT --where "relid = 'AL' AND log_handle = '...'" --layout applog
 vsp cluster decode baldat.txt --layout applog                  # from an SE16H download, no system
 ```
@@ -913,7 +921,8 @@ vsp -s a4h applog --object ZDEMO_LOG --messages    # the messages too, decoded f
 
 # Cluster tables — what only IMPORT could read, decoded here
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema
-vsp -s a4h cluster read STXL --where "tdname = 'ZDEMO_TEXT'" --json
+vsp -s a4h cluster read INDX --where "relid = 'ZD'" --layout ZDEMO_S_HEADER   # names from DD03L
+vsp -s a4h cluster read STXL --where "tdname = 'ZDEMO_TEXT'"                 # SAPscript text
 vsp cluster decode baldat.txt --layout applog     # an SE16H export, offline
 
 # Testing & code quality

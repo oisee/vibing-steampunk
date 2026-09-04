@@ -40,21 +40,27 @@ type clusterRecord struct {
 	Codepage   string                 `json:"codepage,omitempty"`
 	Objects    []clusterObject        `json:"objects,omitempty"`
 	Messages   []adt.AppLogMessage    `json:"messages,omitempty"`
+	Lines      []datacluster.TextLine `json:"lines,omitempty"`
+	Text       string                 `json:"text,omitempty"`
+	Notes      []string               `json:"notes,omitempty"`
 	Error      string                 `json:"error,omitempty"`
 }
 
 type clusterObject struct {
 	Name      string              `json:"name"`
 	Kind      string              `json:"kind"`
+	Layout    string              `json:"layout,omitempty"`
 	RowLength int                 `json:"rowLength"`
 	RowCount  int                 `json:"rowCount"`
 	Fields    []datacluster.Field `json:"fields"`
 	Rows      [][]any             `json:"rows,omitempty"`
+	Records   []map[string]any    `json:"records,omitempty"`
 }
 
 // handleClusterRead answers analyze type=cluster_read: table, where,
-// max_results (fragments), layout ("applog" lays BAL_S_MSG over BALDAT),
-// schema_only (types and counts without the rows).
+// max_results (fragments), layout (a DDIC structure for every object,
+// OBJECT=STRUCTURE pairs, "applog" for BALDAT messages, "stxl" for SAPscript
+// text — the default on STXL), schema_only (types and counts without rows).
 func (s *Server) handleClusterRead(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	table := strings.ToUpper(strings.TrimSpace(firstString(args, "table", "name", "object_name")))
@@ -62,10 +68,15 @@ func (s *Server) handleClusterRead(ctx context.Context, request mcp.CallToolRequ
 		return newToolResultError("cluster_read needs table: the cluster table to read (BALDAT, INDX, STXL, ...)"), nil
 	}
 	where := firstString(args, "where", "filter")
-	layout := strings.ToLower(firstString(args, "layout"))
-	if layout != "" && layout != "applog" {
-		return newToolResultError(fmt.Sprintf("layout %q: only \"applog\" is known", layout)), nil
+	spec, err := adt.ParseLayoutSpec(firstString(args, "layout", "structure"))
+	if err != nil {
+		return newToolResultError(err.Error()), nil
 	}
+	if spec.Empty() && table == "STXL" {
+		spec.Default = adt.LayoutSTXL
+	}
+	mode := spec.Mode()
+	resolver := adt.NewLayoutResolver(s.adtClient)
 	schemaOnly, _ := getBoolParam(args, "schema_only")
 	maxRows := 200
 	if n, ok := firstNumber(args, "max_results", "top", "limit"); ok && n > 0 {
@@ -80,7 +91,7 @@ func (s *Server) handleClusterRead(ctx context.Context, request mcp.CallToolRequ
 	if res.Truncated {
 		out.Notes = append(out.Notes, noteClusterCut)
 	}
-	if layout == "" && !schemaOnly {
+	if spec.Empty() && !schemaOnly {
 		out.Notes = append(out.Notes, noteClusterNoNames)
 	}
 	for _, rec := range res.Records {
@@ -92,7 +103,8 @@ func (s *Server) handleClusterRead(ctx context.Context, request mcp.CallToolRequ
 			continue
 		}
 		r.Compressed, r.Algorithm, r.Codepage = c.Compressed, c.Algorithm, c.Codepage
-		if layout == "applog" {
+		switch mode {
+		case adt.LayoutAppLog:
 			if r.Messages, err = adt.DecodeAppLogMessages(rec.Blob); err != nil {
 				r.Error = err.Error()
 			} else if len(r.Messages) > 0 {
@@ -100,10 +112,20 @@ func (s *Server) handleClusterRead(ctx context.Context, request mcp.CallToolRequ
 					out.Notes = appendUnique(out.Notes, "Message texts could not be read from T100: "+terr.Error())
 				}
 			}
-		} else {
+		case adt.LayoutSTXL:
+			if r.Lines, r.Text, err = c.SAPscriptText(); err != nil {
+				r.Error = err.Error()
+			}
+		default:
+			r.Notes = resolver.Apply(ctx, c, spec)
 			for _, obj := range c.Objects {
 				o := clusterObject{Name: obj.Name, Kind: obj.Kind.String(), RowLength: obj.RowLength, RowCount: len(obj.Rows), Fields: obj.Fields}
-				if !schemaOnly {
+				if len(obj.Fields) > 0 && obj.Fields[0].Name != "" {
+					o.Layout = spec.For(obj.Name)
+					if !schemaOnly {
+						o.Records = obj.Records()
+					}
+				} else if !schemaOnly {
 					o.Rows = obj.Rows
 				}
 				r.Objects = append(r.Objects, o)
