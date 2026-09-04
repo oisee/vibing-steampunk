@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"time"
+	"sync"
 )
 
 // SessionType defines how the client manages server sessions.
@@ -60,6 +61,64 @@ type Config struct {
 	// stop to ask a human something — a browser sign-in with a second factor
 	// takes far longer than any machine-to-machine handshake.
 	ReauthTimeout time.Duration
+
+	// ClientCert, when set, is presented for TLS mutual authentication (mTLS)
+	// instead of a password. On macOS it is loaded from the keychain
+	// (LoadKeychainClientCert) so the private key never leaves the keystore.
+	ClientCert *tls.Certificate
+
+	// ClientCertProvider, when set, resolves the client certificate lazily at
+	// each TLS handshake (takes precedence over ClientCert). This keeps the
+	// server alive when no cert is available yet (SLC not logged in) and picks
+	// up a fresh cert after an SLC re-login without a restart.
+	ClientCertProvider func() (*tls.Certificate, error)
+}
+
+// tlsClientConfig builds the TLS config for outbound connections, adding the
+// client certificate for mTLS when configured. When a client cert is present
+// the max TLS version is pinned to 1.2 — the NetWeaver 7.50 ICM drops TLS 1.3
+// client-certificate handshakes.
+func (c *Config) tlsClientConfig() *tls.Config {
+	t := &tls.Config{InsecureSkipVerify: c.InsecureSkipVerify}
+	if c.ClientCertProvider != nil {
+		provider := c.ClientCertProvider
+		t.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return provider()
+		}
+		t.MaxVersion = tls.VersionTLS12
+	} else if c.ClientCert != nil {
+		t.Certificates = []tls.Certificate{*c.ClientCert}
+		t.MaxVersion = tls.VersionTLS12
+	}
+	return t
+}
+
+// HasClientCert reports whether TLS client-certificate auth is configured.
+func (c *Config) HasClientCert() bool {
+	return c.ClientCert != nil || c.ClientCertProvider != nil
+}
+
+// NewCachingCertProvider wraps a certificate loader with caching: the loaded
+// cert is reused until shortly before its NotAfter, then re-resolved. Failed
+// loads are retried on every call (so an SLC login mid-session heals the next
+// handshake without a restart).
+func NewCachingCertProvider(load func() (*tls.Certificate, error)) func() (*tls.Certificate, error) {
+	var mu sync.Mutex
+	var cached *tls.Certificate
+	return func() (*tls.Certificate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cached != nil && cached.Leaf != nil &&
+			time.Now().Add(5*time.Minute).Before(cached.Leaf.NotAfter) {
+			return cached, nil
+		}
+		cert, err := load()
+		if err != nil {
+			return nil, err
+		}
+		cached = cert
+		return cached, nil
+	}
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -104,6 +163,21 @@ func WithTimeout(d time.Duration) Option {
 func WithCookies(cookies map[string]string) Option {
 	return func(c *Config) {
 		c.Cookies = cookies
+	}
+}
+
+// WithClientCert sets a TLS client certificate for mutual-auth (mTLS) login.
+func WithClientCert(cert *tls.Certificate) Option {
+	return func(c *Config) {
+		c.ClientCert = cert
+	}
+}
+
+// WithClientCertProvider sets a lazy per-handshake certificate resolver for
+// mutual-auth (mTLS) login. Takes precedence over WithClientCert.
+func WithClientCertProvider(p func() (*tls.Certificate, error)) Option {
+	return func(c *Config) {
+		c.ClientCertProvider = p
 	}
 }
 
@@ -245,10 +319,8 @@ func (c *Config) NewHTTPClient() *http.Client {
 	jar, _ := cookiejar.New(nil)
 
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
-		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: c.InsecureSkipVerify,
-		},
+		Proxy:           http.ProxyFromEnvironment, // Honor HTTP_PROXY/HTTPS_PROXY env vars
+		TLSClientConfig: c.tlsClientConfig(),
 	}
 
 	client := &http.Client{

@@ -14,6 +14,7 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"crypto/tls"
 )
 
 var (
@@ -24,6 +25,15 @@ var (
 )
 
 var cfg = &mcp.Config{}
+
+// clientCertCN / clientCertIssuer select a macOS keychain identity to present
+// for TLS client-certificate (mTLS) auth. CN pins one user's cert; issuer picks
+// the freshest valid cert from a given CA (e.g. the shared SLC/IAS login CA), so
+// a single shared config works for every user. CN wins if both are set.
+var (
+	clientCertCN     string
+	clientCertIssuer string
+)
 
 var rootCmd = &cobra.Command{
 	Use:   "vsp",
@@ -101,6 +111,8 @@ func init() {
 	rootCmd.Flags().StringVar(&cfg.Client, "client", "001", "SAP client number")
 	rootCmd.Flags().StringVar(&cfg.Language, "language", "EN", "SAP language")
 	rootCmd.Flags().BoolVar(&cfg.InsecureSkipVerify, "insecure", false, "Skip TLS certificate verification")
+	rootCmd.Flags().StringVar(&clientCertCN, "client-cert-cn", "", "macOS keychain identity CN to present for TLS client-cert (mTLS) auth instead of a password")
+	rootCmd.Flags().StringVar(&clientCertIssuer, "client-cert-issuer", "", "select the macOS keychain client cert by issuer CN (freshest valid); alternative to --client-cert-cn for a shared config")
 
 	// Cookie authentication
 	rootCmd.Flags().String("cookie-file", "", "Path to cookie file in Netscape format")
@@ -215,9 +227,57 @@ func init() {
 	viper.SetEnvPrefix("SAP")
 }
 
+
+// splitTrim splits a comma-separated list, trimming whitespace and dropping
+// empty entries.
+func splitTrim(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
+
+	// Client-certificate (mTLS) auth: resolve a macOS keychain identity LAZILY
+	// per TLS handshake. A missing cert at startup must not kill the server —
+	// the desktop app would only show "connection failed" while the real error
+	// ("open SLC and log in") dies in a log. With lazy resolution the server
+	// stays up, every tool call returns the real error, and an SLC (re)login
+	// mid-session heals the next handshake without a restart.
+	var certLoader func() (*tls.Certificate, error)
+	var certDesc string
+	if clientCertCN != "" {
+		cn := clientCertCN
+		certDesc = "CN=" + cn
+		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCert(cn) }
+	} else if clientCertIssuer != "" {
+		// comma-separated issuer CNs: fleets often have more than one SLS/CA
+		issuers := splitTrim(clientCertIssuer)
+		certDesc = "issuer=" + strings.Join(issuers, " | ")
+		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCertByIssuers(issuers) }
+	}
+	if certLoader != nil {
+		provider := adt.NewCachingCertProvider(certLoader)
+		cfg.ClientCertProvider = provider
+		// Eager best-effort resolve: derives the effective username (cert CN)
+		// and gives immediate feedback — but failure is a warning, not an exit.
+		if cert, err := provider(); err == nil {
+			if cfg.Username == "" && cert.Leaf != nil {
+				cfg.Username = cert.Leaf.Subject.CommonName // effective SAP user = cert CN
+			}
+			if cfg.Verbose {
+				fmt.Fprintf(os.Stderr, "[vsp] mTLS: keychain certificate (user=%s), no password\n", cfg.Username)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[vsp] WARNING: client cert (%s) not available yet: %v\n[vsp] serving anyway — tool calls will fail with this error until SLC is logged in\n", certDesc, err)
+		}
+	}
 
 	// Validate configuration
 	if err := validateConfig(); err != nil {
@@ -390,6 +450,14 @@ func resolveConfig(cmd *cobra.Command) {
 	// Insecure: flag > SAP_INSECURE env
 	if !cmd.Flags().Changed("insecure") {
 		cfg.InsecureSkipVerify = viper.GetBool("INSECURE")
+	}
+
+	// Client cert selectors: flag > SAP_CLIENT_CERT_CN / SAP_CLIENT_CERT_ISSUER env
+	if clientCertCN == "" {
+		clientCertCN = viper.GetString("CLIENT_CERT_CN")
+	}
+	if clientCertIssuer == "" {
+		clientCertIssuer = viper.GetString("CLIENT_CERT_ISSUER")
 	}
 
 	// Mode: flag > SAP_MODE env > default (focused)
@@ -753,6 +821,9 @@ func processCookieAuth(cmd *cobra.Command) error {
 	// Count authentication methods
 	authMethods := 0
 	if cfg.Username != "" && cfg.Password != "" {
+		authMethods++
+	}
+	if cfg.ClientCert != nil || cfg.ClientCertProvider != nil {
 		authMethods++
 	}
 	if cookieFile != "" {

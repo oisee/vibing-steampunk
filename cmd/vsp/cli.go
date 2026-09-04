@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"os"
 	"strings"
@@ -40,6 +41,7 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+	ClientCert   *tls.Certificate // mTLS client cert (macOS keychain), no password
 
 	// Auth names the authentication method ("sso" for browser single sign-on).
 	Auth string
@@ -149,8 +151,27 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 
 	user := os.Getenv("SAP_USER")
 	password := os.Getenv("SAP_PASSWORD")
-	if user == "" || password == "" {
-		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required")
+
+	// mTLS: SAP_CLIENT_CERT_CN (by CN) or SAP_CLIENT_CERT_ISSUER (freshest valid
+	// cert from that CA) loads a macOS keychain identity — no password.
+	var clientCert *tls.Certificate
+	if certCN := os.Getenv("SAP_CLIENT_CERT_CN"); certCN != "" {
+		c, err := adt.LoadKeychainClientCert(certCN)
+		if err != nil {
+			return nil, fmt.Errorf("client cert (CN=%s): %w", certCN, err)
+		}
+		clientCert = c
+	} else if certIss := os.Getenv("SAP_CLIENT_CERT_ISSUER"); certIss != "" {
+		c, err := adt.LoadKeychainClientCertByIssuers(splitTrimCLI(certIss))
+		if err != nil {
+			return nil, fmt.Errorf("client cert (issuer=%s): %w", certIss, err)
+		}
+		clientCert = c
+	} else if user == "" || password == "" {
+		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_CLIENT_CERT_CN / SAP_CLIENT_CERT_ISSUER for mTLS)")
+	}
+	if clientCert != nil && user == "" && clientCert.Leaf != nil {
+		user = clientCert.Leaf.Subject.CommonName // effective SAP user = cert CN
 	}
 
 	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
@@ -163,6 +184,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		URL:                url,
 		User:               user,
 		Password:           password,
+		ClientCert:         clientCert,
 		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
 		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
 		Insecure:           os.Getenv("SAP_INSECURE") == "true",
@@ -255,6 +277,9 @@ func getClient(params *systemParams) (*adt.Client, error) {
 	if params.Insecure {
 		opts = append(opts, adt.WithInsecureSkipVerify())
 	}
+	if params.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(params.ClientCert))
+	}
 
 	// Browser single sign-on: cookies are fetched on demand and refreshed
 	// automatically, so this is checked before the static cookie sources.
@@ -327,6 +352,9 @@ func getWSClient(ctx context.Context, params *systemParams) (*adt.AMDPWebSocketC
 		params.Password,
 		params.Insecure,
 	)
+	if params.ClientCert != nil {
+		wsClient.SetClientCert(params.ClientCert)
+	}
 
 	// A system reached through single sign-on has no password to offer, and the
 	// upgrade request carries a cookie as readily as any other.
@@ -623,4 +651,15 @@ var systemsInitCmd = &cobra.Command{
 		fmt.Println("Set passwords via environment variables: VSP_<SYSTEM>_PASSWORD")
 		return nil
 	},
+}
+
+// splitTrimCLI splits a comma-separated issuer list (see SAP_CLIENT_CERT_ISSUER).
+func splitTrimCLI(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

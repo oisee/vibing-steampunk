@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -66,6 +67,14 @@ type Config struct {
 	Client             string
 	Language           string
 	InsecureSkipVerify bool
+
+	// ClientCert, when set, is presented for TLS mutual auth (mTLS) instead of
+	// a password. On macOS it is loaded from the keychain in main.go.
+	ClientCert *tls.Certificate
+
+	// ClientCertProvider resolves the cert lazily per TLS handshake (wins over
+	// ClientCert): the server stays up without a cert and heals after SLC login.
+	ClientCertProvider func() (*tls.Certificate, error)
 
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
@@ -148,6 +157,11 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.InsecureSkipVerify {
 		opts = append(opts, adt.WithInsecureSkipVerify())
+	}
+	if cfg.ClientCertProvider != nil {
+		opts = append(opts, adt.WithClientCertProvider(cfg.ClientCertProvider))
+	} else if cfg.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
 	}
 	if len(cfg.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(cfg.Cookies))
@@ -422,6 +436,11 @@ func (s *Server) ensureWSConnected(ctx context.Context, toolName string) *mcp.Ca
 			s.config.BaseURL, s.config.Client, s.config.Username, s.config.Password, s.config.InsecureSkipVerify,
 		)
 		s.applyWSAuth(s.amdpWSClient.SetCookies)
+		if s.config.ClientCertProvider != nil {
+			s.amdpWSClient.SetClientCertProvider(s.config.ClientCertProvider)
+		} else if s.config.ClientCert != nil {
+			s.amdpWSClient.SetClientCert(s.config.ClientCert)
+		}
 		if err := s.amdpWSClient.Connect(ctx); err != nil {
 			s.amdpWSClient = nil
 			return newToolResultError(fmt.Sprintf("%s: WebSocket connect failed: %v", toolName, err))
