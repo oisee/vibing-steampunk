@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.56.0] - 2026-09-05
+### Bug Fixes
+
+- **fmtest:** Take a leading FM or FUNC, the way the other commands take a type ([`ac302a2`](https://github.com/oisee/vibing-steampunk/commit/ac302a24869568396150aed6f978118096c0b7ba))
+
+
+### Features
+
+- **cluster:** --layout names the fields from DD03L, and STXL reads as text ([`18ee30a`](https://github.com/oisee/vibing-steampunk/commit/18ee30a923f4bd7c99ccf401e2947d1856ebe39c))
+- **cluster:** Deep data — tables in rows, string objects, DD40L line types ([`fb181bf`](https://github.com/oisee/vibing-steampunk/commit/fb181bf67eca323246c81ee88fb8fa3d2a976427))
+- **cluster:** Version 5 clusters, and a decompress command for bare streams ([`04f3a29`](https://github.com/oisee/vibing-steampunk/commit/04f3a292ad1cba19a2ed6c5405dd8abec9f824f9))
+- **spool,jobs:** SM37 and SP01 as tables, the TemSe list format decoded ([`79c0f56`](https://github.com/oisee/vibing-steampunk/commit/79c0f56e271ba545d2d7a11aa73a7a27f86e765d))
+- **inspect:** Variants, SE37 test data, SE61 documentation and the IMG ([`d6eba35`](https://github.com/oisee/vibing-steampunk/commit/d6eba3588c32b2ec1321d5af1cd3954852271a48))
+
+
+
 ## [2.55.0] - 2026-09-04
 ### Bug Fixes
 
