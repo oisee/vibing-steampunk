@@ -37,6 +37,13 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
+## Landed — 2026-09-05 — v2.56.0
+
+Through the workflow again; CHANGELOG committed by it. Five PRs since
+v2.55.0, all one arc: `--layout` from DDIC (#194), deep clusters (#195),
+version 5 clusters (#196), jobs and spool (#197), variants, test data,
+documentation and the IMG (#198). Titled "the other half of a root cause".
+
 ## Done — 2026-09-05 — variants, test data, documentation, the IMG
 
 `vsp variants`, `vsp fmtest`, `vsp docs read|index|img|activity`; MCP
