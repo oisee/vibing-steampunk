@@ -229,10 +229,12 @@ const (
 	ObjectTypeTable         CreatableObjectType = "TABL/DT"
 	ObjectTypePackage       CreatableObjectType = "DEVC/K"
 	// RAP object types (read-only via ADT, created via RAP generators)
-	ObjectTypeDDLS CreatableObjectType = "DDLS/DF"  // CDS DDL Source
-	ObjectTypeBDEF CreatableObjectType = "BDEF/BDO" // Behavior Definition
-	ObjectTypeSRVD CreatableObjectType = "SRVD/SRV" // Service Definition
-	ObjectTypeSRVB CreatableObjectType = "SRVB/SVB" // Service Binding
+	ObjectTypeDDLS        CreatableObjectType = "DDLS/DF"  // CDS DDL Source
+	ObjectTypeBDEF        CreatableObjectType = "BDEF/BDO" // Behavior Definition
+	ObjectTypeSRVD        CreatableObjectType = "SRVD/SRV" // Service Definition
+	ObjectTypeSRVB        CreatableObjectType = "SRVB/SVB" // Service Binding
+	ObjectTypeDomain      CreatableObjectType = "DOMA/DD"  // DDIC domain
+	ObjectTypeDataElement CreatableObjectType = "DTEL/DE"  // DDIC data element
 )
 
 // CreateObjectOptions contains options for creating a new ABAP object.
@@ -330,6 +332,16 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 		creationPath: "/sap/bc/adt/businessservices/bindings",
 		rootName:     "srvb:serviceBinding",
 		namespace:    `xmlns:srvb="http://www.sap.com/adt/ddic/ServiceBindings"`,
+	},
+	ObjectTypeDomain: {
+		creationPath: "/sap/bc/adt/ddic/domains",
+		rootName:     "domain:domain",
+		namespace:    `xmlns:domain="http://www.sap.com/dictionary/domain"`,
+	},
+	ObjectTypeDataElement: {
+		creationPath: "/sap/bc/adt/ddic/dataelements",
+		rootName:     "blue:wbobj",
+		namespace:    `xmlns:blue="http://www.sap.com/wbobj/dictionary/dtel"`,
 	},
 }
 
@@ -984,6 +996,10 @@ func GetObjectURL(objectType CreatableObjectType, name string, parentName string
 		return fmt.Sprintf("/sap/bc/adt/ddic/tables/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeSRVB:
 		return fmt.Sprintf("/sap/bc/adt/businessservices/bindings/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDomain:
+		return fmt.Sprintf("/sap/bc/adt/ddic/domains/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDataElement:
+		return fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", url.PathEscape(strings.ToLower(name)))
 	default:
 		return ""
 	}
