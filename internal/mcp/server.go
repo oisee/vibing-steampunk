@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
+	"github.com/oisee/vibing-steampunk/pkg/cache"
 	"net"
 	"net/http"
 	"net/url"
@@ -192,6 +193,27 @@ func NewServer(cfg *Config) *Server {
 		safety.AllowTransportableEdits = true
 	}
 	opts = append(opts, adt.WithSafety(safety))
+
+	// VSP_CACHE=true keeps GET answers for VSP_CACHE_TTL (10m by default),
+	// in memory for the life of the server; VSP_CACHE_PATH puts them on
+	// SQLite instead. Any write through the client empties it.
+	if strings.EqualFold(os.Getenv("VSP_CACHE"), "true") {
+		ttl := adt.DefaultCacheTTL
+		if raw := strings.TrimSpace(os.Getenv("VSP_CACHE_TTL")); raw != "" {
+			if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+				ttl = d
+			}
+		}
+		if path := strings.TrimSpace(os.Getenv("VSP_CACHE_PATH")); path != "" {
+			if store, err := cache.NewResponseStore(path); err == nil {
+				opts = append(opts, adt.WithCacheStore(store, ttl))
+			} else {
+				opts = append(opts, adt.WithCache(ttl))
+			}
+		} else {
+			opts = append(opts, adt.WithCache(ttl))
+		}
+	}
 
 	adtClient := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
 	return NewServerWithClient(cfg, adtClient)

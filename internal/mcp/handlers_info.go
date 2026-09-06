@@ -52,6 +52,10 @@ func (s *Server) handleInfo(ctx context.Context) *mcp.CallToolResult {
 		fmt.Fprintf(&b, "  connection   NOT usable — %s\n", reason)
 	}
 
+	if cs := s.adtClient.CacheStats(); cs.Enabled {
+		fmt.Fprintf(&b, "  cache        %d hits, %d misses, %d entries (GET answers kept %s, dropped on any write)\n", cs.Hits, cs.Misses, cs.Entries, cs.TTL)
+	}
+
 	host, sysnr := saprfc.SysnrFromURL(s.config.BaseURL)
 	if host != "" {
 		fmt.Fprintf(&b, "  host         %s\n", host)

@@ -37,6 +37,23 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
+## Done — 2026-09-06 — the cache that was a flag
+
+`cache: true` in `.vsp.json` and `VSP_CACHE` reached `systemParams` and
+`vsp config` and nothing else; `pkg/cache` (nodes, edges, APIs on SQLite)
+is imported by its own tests only. What got wired is a response cache in
+the transport: GET answers and data preview queries on stable tables
+(`stableTables` in `pkg/adt/response_cache.go`), TTL 10 minutes, dropped on
+any modifying request. In memory for an MCP session; on SQLite with
+`VSP_CACHE_PATH` (`pkg/cache/responses.go`, the CGO-free driver). Measured:
+`vsp slim '$ZADT_VSP'` 3.74 s cold, 0.01 s warm, 28 of 28 from the cache.
+`-v` now also logs every ADT request (`[adt] METHOD path  FROM table`).
+
+Still open: `pkg/cache`'s graph tables have no caller. Either the graph
+builders persist their parsed edges there (keyed by object and its
+`changedAt`) or the package shrinks to the response store. The MCP server
+gets the cache only if its environment sets `VSP_CACHE`.
+
 ## Landed — 2026-09-05 — v2.56.0
 
 Through the workflow again; CHANGELOG committed by it. Five PRs since
