@@ -26,6 +26,7 @@ type HTTPDoer interface {
 type Transport struct {
 	config     *Config
 	httpClient HTTPDoer
+	cache      *responseCache
 
 	// CSRF token management
 	csrfToken string
@@ -47,19 +48,20 @@ type Transport struct {
 
 // NewTransport creates a new Transport with the given configuration.
 func NewTransport(cfg *Config) *Transport {
-	return &Transport{
-		config:     cfg,
-		httpClient: cfg.NewHTTPClient(),
-	}
+	return NewTransportWithClient(cfg, cfg.NewHTTPClient())
 }
 
 // NewTransportWithClient creates a new Transport with a custom HTTP client.
 // This is useful for testing with mock HTTP clients.
 func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
-	return &Transport{
+	t := &Transport{
 		config:     cfg,
 		httpClient: client,
 	}
+	if cfg.Cache {
+		t.cache = newResponseCache(cfg.CacheStore, cfg.CacheTTL)
+	}
+	return t
 }
 
 // RequestOptions contains options for an HTTP request.
@@ -91,7 +93,8 @@ type Response struct {
 	Body       []byte
 }
 
-// Request performs an HTTP request to the ADT API.
+// Request performs an HTTP request to the ADT API, through the response
+// cache when one is configured.
 func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptions) (*Response, error) {
 	if opts == nil {
 		opts = &RequestOptions{}
@@ -99,11 +102,45 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 	if opts.Method == "" {
 		opts.Method = http.MethodGet
 	}
+	if t.cache == nil {
+		return t.request(ctx, path, opts)
+	}
+	if !cacheable(path, opts) {
+		resp, err := t.request(ctx, path, opts)
+		if isModifyingMethod(opts.Method) && !strings.HasPrefix(path, "/sap/bc/adt/datapreview/") {
+			t.cache.invalidate()
+		}
+		return resp, err
+	}
+	key, err := t.buildURL(path, opts.Query, opts.OverrideLanguage)
+	if err != nil {
+		return nil, fmt.Errorf("building URL: %w", err)
+	}
+	key += "\x00" + opts.Method + "\x00" + opts.Accept + "\x00" + fmt.Sprint(opts.Headers) + "\x00" + string(opts.Body)
+	if resp, ok := t.cache.get(key); ok {
+		return resp, nil
+	}
+	resp, err := t.request(ctx, path, opts)
+	if err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		t.cache.put(key, resp)
+	}
+	return resp, err
+}
 
+func (t *Transport) request(ctx context.Context, path string, opts *RequestOptions) (*Response, error) {
 	// Build URL
 	reqURL, err := t.buildURL(path, opts.Query, opts.OverrideLanguage)
 	if err != nil {
 		return nil, fmt.Errorf("building URL: %w", err)
+	}
+	if LogOutput != nil {
+		detail := ""
+		if strings.HasPrefix(path, "/sap/bc/adt/datapreview/") {
+			if m := fromTable.FindStringSubmatch(string(opts.Body)); m != nil {
+				detail = "  FROM " + strings.ToUpper(m[1])
+			}
+		}
+		fmt.Fprintf(LogOutput, "[adt] %s %s%s\n", opts.Method, path, detail)
 	}
 
 	// Create request

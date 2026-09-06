@@ -113,3 +113,6 @@ quickjs.zip
 
 # Isolated worktrees for background agents
 .claude/worktrees/
+
+# response cache (VSP_CACHE)
+.vsp-cache/

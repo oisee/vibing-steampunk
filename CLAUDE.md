@@ -176,6 +176,7 @@ the lock clears — midnight on a stock A4H, `SU01` otherwise.
 4. **Auth** — use basic OR cookies, not both. `HasBasicAuth()` disables `ReauthFunc`, so a stray `SAP_USER`/`SAP_PASSWORD` alongside SSO silently kills auto-refresh
 5. **Expired SSO sessions do not return 401** — ICF forwards to the IdP and a logon page arrives under a 200. Detection is by origin and by a missing CSRF token (`http.go`), not by status code
 6. **ZADT_VSP** — WebSocket debug/RFC/RunReport require it installed on SAP
+7. **Response cache** (`VSP_CACHE`, `pkg/adt/response_cache.go`) keeps GET answers and data preview queries on the stable tables listed in `stableTables`; it is emptied on any write through the client. A change made by someone else inside the TTL is invisible to it. The `pkg/cache` node/edge/API cache is a library nothing calls yet; its SQLite driver (modernc, CGO-free) is what the response store uses
 
 ## Security
 

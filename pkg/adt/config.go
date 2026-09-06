@@ -51,6 +51,13 @@ type Config struct {
 	// TerminalID for debugger session (shared with SAP GUI for cross-tool debugging)
 	TerminalID string
 
+	// Cache keeps successful GET responses for CacheTTL and hands them back
+	// until a modifying request empties it. CacheStore is where they live;
+	// nil means in memory, for the life of the process.
+	Cache      bool
+	CacheTTL   time.Duration
+	CacheStore ResponseStore
+
 	// ReauthFunc is called on 401 to re-authenticate (e.g., re-run SAML dance).
 	// Returns fresh cookies for the SAP system. Only used when HasBasicAuth() is false.
 	ReauthFunc func(ctx context.Context) (map[string]string, error)
@@ -69,6 +76,24 @@ type Option func(*Config)
 func WithClient(client string) Option {
 	return func(c *Config) {
 		c.Client = client
+	}
+}
+
+// WithCache turns the response cache on. ttl 0 means DefaultCacheTTL.
+func WithCache(ttl time.Duration) Option {
+	return func(c *Config) {
+		c.Cache = true
+		c.CacheTTL = ttl
+	}
+}
+
+// WithCacheStore turns the cache on with a store of the caller's choosing,
+// such as pkg/cache's SQLite one that survives the process.
+func WithCacheStore(store ResponseStore, ttl time.Duration) Option {
+	return func(c *Config) {
+		c.Cache = true
+		c.CacheTTL = ttl
+		c.CacheStore = store
 	}
 }
 

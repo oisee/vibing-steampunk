@@ -81,6 +81,13 @@ Ready-to-use configs for 8 AI agents: docs/cli-agents/`,
 		}
 		return nil
 	},
+	PersistentPostRun: func(cmd *cobra.Command, args []string) {
+		if cfg.Verbose && lastClient != nil {
+			if s := lastClient.CacheStats(); s.Enabled {
+				fmt.Fprintf(os.Stderr, "[cache] %d hits, %d misses, %d entries, %d invalidations, ttl %s\n", s.Hits, s.Misses, s.Entries, s.Invalidations, s.TTL)
+			}
+		}
+	},
 	RunE: runServer,
 }
 
