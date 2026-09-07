@@ -100,6 +100,10 @@ names from DDIC over ADT for the components that *are* DDIC structures
 (`--layout` does that for whole objects only; per-path
 `SNAP.3=FRAPVSCREENCNTR` would be the small step); and `--tables-only` /
 `--limit` for a preview smaller than the 130 MB the whole file makes.
+For that snapshot the mapping is known: `SNAP.3`, `.4`, `.5` are
+FRAPVSCREENCNTR, `.6` FRAPVSCREENADDR, `.7` FRAPVSCREENNAME, `.8`
+FRA_S_ADDR_SCR_LIST_ENTITY, `SNAP.1` ZSCR_117_CPD_H; `HDR` and `HDR.10`
+are a program's local type and come from the names file only.
 
 Still open from that session's notes, not done here: a function module
 whose TABLES parameter "declares no type" in the parser; a source line
