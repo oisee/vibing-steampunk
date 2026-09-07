@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -260,7 +261,11 @@ func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequ
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	res := mcp.NewToolResultText(string(output))
+	if t := strings.ToUpper(objectType); t == "PROG" || t == "PROG/P" || t == "PROGRAM" {
+		res = withHint(res, s.textPoolHint(ctx, adt.TextPoolTarget{Type: "PROG", Name: name}, source))
+	}
+	return res, nil
 }
 
 // registerGrepObjects registers the unified GrepObjects tool

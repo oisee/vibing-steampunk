@@ -37,17 +37,67 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
-## Done — 2026-09-07 — selection texts from the source
+## Done — 2026-09-07 — the text pool, and a hint instead of a convention
 
-`vsp texts get|set|sync`, MCP `i18n` ops `write_text_pool` and
-`sync_text_pool`. The text pool is its own ADT resource
-(`/sap/bc/adt/textelements/programs/{name}`, lock object REPT — a lock on
-the program is not a lock on its texts), three plain-text documents under
-it (`KEY     =text`, key padded to eight). `sync` takes `"~t:` comments
-from PARAMETERS / SELECT-OPTIONS / named SELECTION-SCREEN COMMENT lines.
-Text symbols (I) and headings (H) write through the same call with
-`--kind`; no source convention for them yet — `"~i:001` would be the
-obvious one if anyone wants it.
+`vsp texts get|set [PROG|CLAS] NAME`, MCP `i18n` ops `texts_get` and
+`texts_set` (`text_pool` / `write_text_pool` stay as aliases), `texts` on
+`create PROGRAM`. The text pool is its own ADT resource
+(`/sap/bc/adt/textelements/{programs|classes}/{name}`, lock object REPT — a
+lock on the program is not a lock on its texts), three plain-text documents
+under it (`KEY     =text`, key padded to eight). A write goes through the
+mutation gate like any other, reads the documents, and answers with a plan
+— added, changed from what, unchanged, unknown, refused — before it locks;
+`dry_run` stops there. A language other than the logon one is a
+translation and must be named.
+
+Dropped on the way: `"~t:` comments in the source as the texts' home. PR
+#200 shipped it and this removed it the next day — a trailing comment on a
+PARAMETERS line is easy to find and impossible to find *reliably* without
+a real parser (chained statements, comments inside literals, a
+`SELECTION-SCREEN BEGIN OF BLOCK` that produced the key `SELECTION`). What
+replaced it costs nothing: after a program is created or written the result
+carries a `hints` line naming the screen fields whose selection text is
+`?...` and the `TEXT-xxx` the source uses but the pool lacks, with the
+`texts_set` call that fills them. The check reads the pool, not the source.
+
+Found by a second session writing texts on another system and confirmed
+here: the PUT to the text elements lands as an *inactive* version, and
+activating the program afterwards does not carry it — the texts read back
+unchanged from the active version and look lost. The write now activates
+the text elements resource itself, after the unlock, the way the editor
+does. Also from there: a symbols document has `001=text`, the key not
+padded, where a selections document has `P_DEVC  =text`; the padded form
+is what SAP answered "Cannot parse the source code" to. Headings keys are
+`listHeader`, `columnHeader_1..4`, case kept.
+
+Same session, same day: `vsp description [TYPE] NAME [TEXT]`, MCP `edit`
+type `set_description`, `description` on `deploy_from_file` and
+`write_program`. The metadata document is fetched with `Accept: */*`
+(the object resource speaks its own vocabulary, `text/plain` gets a 406 —
+which was also why `deploy_from_file`'s existence check failed on an
+existing program), the `adtcore:description` attribute replaced, and the
+document PUT back under a lock. And the file parser no longer takes the
+`*& Report ZDEMO` line of SE38's header template as the description.
+
+`vsp update`: GitHub latest (or `--version`), the `vsp-<os>-<arch>` asset,
+sha256 against `checksums.txt`, then rename-aside and rename-in, following
+a symlink to its target. `--check`, `--force` (needed when the running
+version is `dev`), `--json`.
+
+`vsp cluster decode` takes a binary file that starts with the cluster's
+FF — an `EXPORT ... TO DATA BUFFER` downloaded as is — and `--names` puts
+field names from a JSON file over types DDIC does not have (a program's
+local structure, a class's type). Tried on a 4.5 MB two-object snapshot
+from a second session: the header's hash and count matched the system it
+came from, and a flat structure component turned out to be flattened into
+the enclosing object's own fields (paths 1.1 … 1.11 beside the tables), so
+`OBJECT.1` names those too. That session builds a viewer over the JSON.
+
+Still open from that session's notes, not done here: a function module
+whose TABLES parameter "declares no type" in the parser; a source line
+over 255 characters refused without a line number; `save_to_file` reading
+`parent=` where the docs say `parent_name`; reusing the transport a
+CTS_WBO_API 019/020 lock error names.
 
 ## Done — 2026-09-06 — the cache that was a flag
 

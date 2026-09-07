@@ -373,3 +373,19 @@ END-OF-DEFINITION.
 		t.Errorf("Expected ClassIncludeType %s, got %s", ClassIncludeMacros, info.ClassIncludeType)
 	}
 }
+
+func TestParseABAPFile_HeaderTemplateIsNotADescription(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "zdemo_xfer.prog.abap")
+	src := "*&---------------------------------------------------------------------*\n*& Report ZDEMO_XFER\n*&---------------------------------------------------------------------*\n*& DPL snapshot transfer: download / upload / transplant\n*&---------------------------------------------------------------------*\nREPORT zdemo_xfer.\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ParseABAPFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Description != "DPL snapshot transfer: download / upload / transplant" {
+		t.Errorf("description %q", info.Description)
+	}
+}

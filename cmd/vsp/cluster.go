@@ -79,7 +79,20 @@ The file is a delimited export with a header line — the way SE16H's "download"
 writes it — with one fragment per line: the key columns, SRTF2, CLUSTR and
 CLUSTD as hex. Fragments are grouped by every column that is not the client,
 not one of those three, and not named in --ignore. A file holding only hex is
-taken as one whole cluster.`,
+taken as one whole cluster, and so is a binary one that starts with the
+cluster's own FF — what EXPORT ... TO DATA BUFFER produces once downloaded.
+
+  vsp cluster decode snapshot.dpl --json --names names.json
+
+When the exported types are a program's own — not in DDIC, so --layout has
+nothing to read — --names takes the field names from a file you write:
+{"HDR": ["format", "src_system", ...], "HDR.10": ["entity_id", "entity_hash"]},
+the object name for its own fields, the object and a path for what sits under
+it — a table's line, or a flat structure component — names in field order, the
+way DD03L lists a structure with its includes expanded: a nested flat
+structure is deeper paths (1.1, 8.2.11.1) in the one flat list, and a table
+is one name, its line named under its own path. Named objects come out as
+records, tables inside them as arrays of records.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw, err := os.ReadFile(args[0])
@@ -88,7 +101,12 @@ taken as one whole cluster.`,
 		}
 		ignore, _ := cmd.Flags().GetStringSlice("ignore")
 		var records []datacluster.Record
-		if blob, herr := datacluster.DecodeHex(string(raw)); herr == nil && len(blob) > datacluster.HeaderSize {
+		// A file that starts with the cluster's own magic byte is one cluster as
+		// bytes — an EXPORT ... TO DATA BUFFER downloaded binary, or --raw-dir's
+		// output — not an export to parse.
+		if len(raw) > datacluster.HeaderSize && raw[0] == 0xFF {
+			records = []datacluster.Record{{Key: []datacluster.KeyValue{{Column: "FILE", Value: filepath.Base(args[0])}}, Blob: raw, Parts: 1}}
+		} else if blob, herr := datacluster.DecodeHex(string(raw)); herr == nil && len(blob) > datacluster.HeaderSize {
 			records = []datacluster.Record{{Key: []datacluster.KeyValue{{Column: "FILE", Value: filepath.Base(args[0])}}, Blob: blob, Parts: 1}}
 		} else if records, err = datacluster.ReadExport(strings.NewReader(string(raw)), ignore...); err != nil {
 			return err
@@ -203,6 +221,17 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 	}
 	mode := spec.Mode()
 	resolver := adt.NewLayoutResolver(client)
+	namesFile, _ := cmd.Flags().GetString("names")
+	var names map[string][]string
+	if namesFile != "" {
+		raw, err := os.ReadFile(namesFile)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(raw, &names); err != nil {
+			return fmt.Errorf("--names %s: %w", namesFile, err)
+		}
+	}
 	ctx := context.Background()
 	if rawDir != "" {
 		if err := os.MkdirAll(rawDir, 0o755); err != nil {
@@ -239,6 +268,9 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 				}
 			default:
 				out.Notes = resolver.Apply(ctx, c, spec)
+				if names != nil {
+					out.Notes = append(out.Notes, datacluster.ApplyNames(c.Objects, names)...)
+				}
 				for _, obj := range c.Objects {
 					o := clusterObjectOut{Name: obj.Name, Kind: obj.Kind.String(), RowLength: obj.RowLength, Fields: obj.Fields, Rows: obj.Rows}
 					if o.Rows == nil {
@@ -246,6 +278,9 @@ func emitClusters(cmd *cobra.Command, table string, records []datacluster.Record
 					}
 					if len(obj.Fields) > 0 && obj.Fields[0].Name != "" {
 						o.Layout = spec.For(obj.Name)
+						if o.Layout == "" {
+							o.Layout = "names from " + namesFile
+						}
 						o.Records = obj.Records()
 					}
 					out.Objects = append(out.Objects, o)
@@ -328,6 +363,7 @@ func init() {
 		c.Flags().Bool("json", false, "Emit JSON")
 		c.Flags().Bool("schema", false, "List every field's type, length and decimals before the rows")
 		c.Flags().String("layout", "", "What to lay over the fields: a DDIC structure, OBJECT=STRUCTURE pairs, applog, or stxl")
+		c.Flags().String("names", "", "A JSON file naming the fields — {\"HDR\": [...], \"HDR.10\": [...]} — for types DDIC does not have")
 		c.Flags().String("raw-dir", "", "Also write each joined cluster, still compressed, as a .bin file into this directory")
 	}
 	clusterReadCmd.Flags().String("where", "", "WHERE clause on the table's own columns, e.g. \"relid = 'AL' AND log_handle = '...'\"")
@@ -345,7 +381,11 @@ func init() {
 func printSchema(fields []datacluster.Field, indent string) {
 	for _, f := range fields {
 		desc := fmt.Sprintf("%s(%d)", f.Type, f.Length)
-		if f.Decimals > 0 {
+		if f.Type == "DEC" {
+			// Length is bytes throughout; a packed number's declaration is
+			// digits, two per byte less the sign: 11 bytes is DEC(21,7).
+			desc = fmt.Sprintf("DEC(%d,%d) %d bytes", 2*f.Length-1, f.Decimals, f.Length)
+		} else if f.Decimals > 0 {
 			desc = fmt.Sprintf("%s(%d,%d)", f.Type, f.Length, f.Decimals)
 		}
 		fmt.Printf("%s%-8s %-24s %s\n", indent, f.Path, f.Name, desc)

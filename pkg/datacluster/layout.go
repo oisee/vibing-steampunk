@@ -2,6 +2,7 @@ package datacluster
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -345,4 +346,79 @@ func str(v any) string {
 		return s
 	}
 	return fmt.Sprint(v)
+}
+
+// ApplyNames names fields from a map the caller wrote, for clusters whose
+// types are not in DDIC — a program's local structure, a class's type. The
+// key is the object name for its own fields ("HDR"), or the object name and
+// a path for what sits under it ("HDR.10", "SNAP.1"): a table's line, or a
+// flat structure component. The value is the names in field order, the way
+// DD03L lists a structure with its includes expanded: the kernel writes
+// nested flat structures as deeper paths (1.1, 8.2.11.1) in the one flat
+// list, and a table-typed field is one name, its line named under its own
+// path. What does not fit is said, not guessed: a count that differs names
+// the shorter run.
+func ApplyNames(objects []Object, names map[string][]string) []string {
+	var notes []string
+	keys := make([]string, 0, len(names))
+	for k := range names {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		list := names[key]
+		obj, path, _ := strings.Cut(key, ".")
+		var fields []*Field
+		found := false
+		for i := range objects {
+			if !strings.EqualFold(objects[i].Name, obj) {
+				continue
+			}
+			found = true
+			fields = fieldsUnder(objects[i].Fields, path)
+		}
+		switch {
+		case !found:
+			notes = append(notes, fmt.Sprintf("names for %s: no such object", key))
+			continue
+		case len(fields) == 0:
+			notes = append(notes, fmt.Sprintf("names for %s: no fields at that path", key))
+			continue
+		case len(fields) != len(list):
+			notes = append(notes, fmt.Sprintf("names for %s: %d names for %d fields; the first %d named", key, len(list), len(fields), min(len(list), len(fields))))
+		}
+		for i := 0; i < len(fields) && i < len(list); i++ {
+			if name := strings.ToLower(strings.TrimSpace(list[i])); name != "" {
+				fields[i].Name = name
+			}
+		}
+	}
+	return notes
+}
+
+// fieldsUnder lists the fields under a path in order: the object's own
+// list for "", a table's line for the table's path, a flat structure
+// component's fields for its prefix — through a table's line when the path
+// leads into one.
+func fieldsUnder(fields []Field, path string) []*Field {
+	var out []*Field
+	for i := range fields {
+		f := &fields[i]
+		switch {
+		case path == "":
+			out = append(out, f)
+		case f.Path == path:
+			for j := range f.Fields {
+				out = append(out, &f.Fields[j])
+			}
+			return out
+		case strings.HasPrefix(f.Path, path+"."):
+			out = append(out, f)
+		case strings.HasPrefix(path, f.Path+".") && len(f.Fields) > 0:
+			if under := fieldsUnder(f.Fields, path); len(under) > 0 {
+				return under
+			}
+		}
+	}
+	return out
 }

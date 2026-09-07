@@ -316,3 +316,51 @@ func TestApplyLayoutTables(t *testing.T) {
 		t.Error("table over a field accepted")
 	}
 }
+
+func TestApplyNames(t *testing.T) {
+	objs := []Object{{Name: "HDR", Fields: []Field{
+		{Path: "1", Type: "INT4"},
+		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2"}}},
+	}, Rows: [][]any{{1, [][]any{{"a", "b"}}}}}}
+	notes := ApplyNames(objs, map[string][]string{
+		"hdr":   {"Count", "items"},
+		"HDR.2": {"id", "hash", "extra"},
+		"SNAP":  {"x"},
+		"HDR.9": {"x"},
+	})
+	if objs[0].Fields[0].Name != "count" || objs[0].Fields[1].Fields[1].Name != "hash" {
+		t.Errorf("fields: %+v", objs[0].Fields)
+	}
+	if len(notes) != 3 {
+		t.Errorf("notes: %v", notes)
+	}
+	rec := objs[0].Records()
+	items, _ := rec[0]["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["hash"] != "b" {
+		t.Errorf("records: %v", rec)
+	}
+	// Nested flat structures are deeper paths in the one flat list: 1.1,
+	// 1.2 beside the table at 2, and 2.2.1 inside the table's line. Names
+	// go by field order, the way DD03L lists an expanded structure.
+	snap := []Object{{Name: "SNAP", Fields: []Field{
+		{Path: "1.1"}, {Path: "1.2"},
+		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2.1"}, {Path: "2.3", Type: "TABLE", Fields: []Field{{Path: "2.3.1"}}}}},
+	}, Rows: [][]any{{"122", "C1", [][]any{{"k", "d", [][]any{{"i"}}}}}}}}
+	notes = ApplyNames(snap, map[string][]string{"SNAP": {"client", "cache", "rows"}, "SNAP.2": {"key", "deep", "inner_rows"}, "SNAP.2.3": {"inner"}})
+	f := snap[0].Fields
+	if f[0].Name != "client" || f[1].Name != "cache" || f[2].Name != "rows" || f[2].Fields[1].Name != "deep" || f[2].Fields[2].Fields[0].Name != "inner" || len(notes) != 0 {
+		t.Errorf("flattened: %+v %v", f, notes)
+	}
+	srec := snap[0].Records()[0]
+	rows, _ := srec["rows"].([]map[string]any)
+	inner, _ := rows[0]["inner_rows"].([]map[string]any)
+	if srec["client"] != "122" || len(rows) != 1 || rows[0]["deep"] != "d" || inner[0]["inner"] != "i" {
+		t.Errorf("records: %v", srec)
+	}
+	// The flat component alone, under its own path, with a placeholder
+	// in the object's list left as it was.
+	ApplyNames(snap, map[string][]string{"SNAP.1": {"mandt", ""}})
+	if f[0].Name != "mandt" || f[1].Name != "cache" {
+		t.Errorf("under path: %+v", f[:2])
+	}
+}

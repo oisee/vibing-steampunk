@@ -214,10 +214,12 @@ func ParseABAPFile(filePath string) (*ABAPFileInfo, error) {
 			if strings.HasPrefix(trimmed, "*") || strings.HasPrefix(trimmed, "\"") {
 				comment := strings.TrimPrefix(trimmed, "*")
 				comment = strings.TrimPrefix(comment, "\"")
+				comment = strings.TrimSpace(strings.TrimLeft(comment, "&"))
 				comment = strings.TrimSpace(comment)
 
-				// Skip common patterns
-				if comment != "" &&
+				// Skip common patterns, and the header template's own
+				// "Report ZDEMO" line, which named one program "& Report ZDEMO".
+				if comment != "" && !headerTitleLine.MatchString(comment) &&
 					!strings.HasPrefix(comment, "-") &&
 					!strings.HasPrefix(comment, "=") &&
 					!strings.HasPrefix(comment, "*") &&
@@ -374,3 +376,7 @@ func parseSRVDName(line string) string {
 	}
 	return ""
 }
+
+// headerTitleLine is the line SE38's header template puts first: the
+// object kind and its name, which is not a description.
+var headerTitleLine = regexp.MustCompile(`(?i)^(report|include|program|class|interface|function\s+module|function\s+group)\s+\S+\s*$`)
