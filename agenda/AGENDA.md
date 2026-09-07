@@ -84,6 +84,15 @@ sha256 against `checksums.txt`, then rename-aside and rename-in, following
 a symlink to its target. `--check`, `--force` (needed when the running
 version is `dev`), `--json`.
 
+`vsp cluster decode` takes a binary file that starts with the cluster's
+FF — an `EXPORT ... TO DATA BUFFER` downloaded as is — and `--names` puts
+field names from a JSON file over types DDIC does not have (a program's
+local structure, a class's type). Tried on a 4.5 MB two-object snapshot
+from a second session: the header's hash and count matched the system it
+came from, and a flat structure component turned out to be flattened into
+the enclosing object's own fields (paths 1.1 … 1.11 beside the tables), so
+`OBJECT.1` names those too. That session builds a viewer over the JSON.
+
 Still open from that session's notes, not done here: a function module
 whose TABLES parameter "declares no type" in the parser; a source line
 over 255 characters refused without a line number; `save_to_file` reading
