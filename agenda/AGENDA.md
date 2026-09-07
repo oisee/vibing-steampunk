@@ -93,6 +93,14 @@ came from, and a flat structure component turned out to be flattened into
 the enclosing object's own fields (paths 1.1 … 1.11 beside the tables), so
 `OBJECT.1` names those too. That session builds a viewer over the JSON.
 
+The viewer's first run: every count from the file matched the system,
+and a trimmer set laid over it reproduced the trimmed snapshot exactly —
+field for field. Asked for afterwards, not urgent: `--names auto`, taking
+names from DDIC over ADT for the components that *are* DDIC structures
+(`--layout` does that for whole objects only; per-path
+`SNAP.3=FRAPVSCREENCNTR` would be the small step); and `--tables-only` /
+`--limit` for a preview smaller than the 130 MB the whole file makes.
+
 Still open from that session's notes, not done here: a function module
 whose TABLES parameter "declares no type" in the parser; a source line
 over 255 characters refused without a line number; `save_to_file` reading
