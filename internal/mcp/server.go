@@ -99,6 +99,7 @@ type Config struct {
 	TransportReadOnly       bool     // Only allow read operations on transports (list, get)
 	AllowedTransports       []string // Whitelist specific transports (supports wildcards like "A4HK*")
 	AllowTransportableEdits bool     // Allow editing objects that require transport requests
+	TransportChoice         string   // auto (default): pick a request for a write that names none; off: leave it to SAP
 
 	// Feature configuration (safety network)
 	// Values: "auto" (default, probe system), "on" (force enabled), "off" (force disabled)
@@ -191,6 +192,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.AllowTransportableEdits {
 		safety.AllowTransportableEdits = true
+	}
+	if cfg.TransportChoice != "" {
+		safety.TransportChoice = cfg.TransportChoice
 	}
 	opts = append(opts, adt.WithSafety(safety))
 

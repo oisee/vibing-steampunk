@@ -242,7 +242,10 @@ type CreateObjectOptions struct {
 	Description string              `json:"description"`
 	PackageName string              `json:"packageName"`
 	Transport   string              `json:"transport,omitempty"`
-	Responsible string              `json:"responsible,omitempty"`
+	// Chosen, when given, receives the request picked for a transportable
+	// object created with no Transport named — reused or created — and why.
+	Chosen      *TransportChoice `json:"-"`
+	Responsible string           `json:"responsible,omitempty"`
 	// For function modules - the function group name
 	ParentName string `json:"parentName,omitempty"`
 	// For packages - the software component (required for transportable packages)
@@ -642,6 +645,26 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 		Transport: opts.Transport,
 	}); err != nil {
 		return err
+	}
+
+	// A transportable object with no request named: pick one the way the
+	// editor would, rather than let SAP generate a request per write.
+	if opts.Transport == "" && opts.ObjectType != ObjectTypePackage && opts.PackageName != "" && !strings.HasPrefix(opts.PackageName, "$") && c.config.Safety.TransportChoice != "off" {
+		if objectURL, uerr := c.buildObjectURLWithParent(opts.ObjectType, opts.Name, opts.ParentName); uerr == nil {
+			choice := c.planTransport(ctx, "", objectURL, opts.PackageName)
+			if choice.Err != nil {
+				return choice.Err
+			}
+			if choice.Transport != "" {
+				if err := c.checkTransportableEdit(choice.Transport, "CreateObject"); err != nil {
+					return err
+				}
+				opts.Transport = choice.Transport
+			}
+			if opts.Chosen != nil {
+				*opts.Chosen = *choice
+			}
+		}
 	}
 
 	// Package creation validation: local packages always allowed, transportable requires opt-in

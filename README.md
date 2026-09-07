@@ -372,6 +372,20 @@ vsp -s a4h description CLAS ZCL_DEMO "Demo class"    # PROG, INCL, CLAS, INTF, F
 MCP: `edit` with `type: set_description`, and a `description` on
 `deploy_from_file` and `write_program` is written after the source.
 
+**A write with no transport named** used to leave the choice to SAP, which
+answered with a request of its own — *Generated Request for Change
+Recording* — one per write, so a day's work on one feature ended up spread
+over three requests beside the one already open. Now the write asks the
+transport check what Eclipse's dialog asks it: which of your open requests
+fit. The object's own request wins, then the one already holding objects of
+the package, then the only candidate, then the newest; with none and
+`--enable-transports`, one is created and the result says so. Every result
+carries `transport` and, when the choice was made here, `transportNote`.
+`--transport-choice off` (or `SAP_TRANSPORT_CHOICE=off`) restores the old
+behaviour. Merging requests is not in ADT's surface (the organizer offers
+add-object, change-owner, new-task, sort-and-compress — no merge, no
+remove), and `TR_MERGE_REQUESTS` is not remote-enabled; that stays SE09.
+
 `vsp update` fetches the latest release for this platform, compares it with
 the running version, verifies the download against the release's
 `checksums.txt`, and puts it in place of the running binary — the old one is

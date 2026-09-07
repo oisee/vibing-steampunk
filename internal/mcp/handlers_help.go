@@ -196,6 +196,12 @@ Writing needs a lock_handle from a lock taken first, and changes the system:
       selection text and TEXT-xxx the source uses but does not define. create PROGRAM also takes "texts".
       The written texts are activated in the same call; without that they stay an inactive version.
 
+A write to a transportable object with no "transport" named picks a request the way Eclipse's
+dialog would: the object's own, else your open request that already holds the package's objects,
+else the only one that fits, else the newest; with none and --enable-transports one is created.
+The result says which under "transport" and why under "transportNote". SAP no longer generates a
+"Generated Request for Change Recording" per write. --transport-choice off restores that.
+
 The description — SE38's title — of an existing object, without touching its source:
   SAP(action="edit", target="PROG ZDEMO_XFER", params={"type": "set_description", "description": "DPL snapshot transfer"})
       PROG, INCL, CLAS, INTF, FUGR, FUNC (with "parent"), TABL, DDLS; without "description" it reads the current one.

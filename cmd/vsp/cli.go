@@ -64,6 +64,7 @@ type systemParams struct {
 	TransportReadOnly       bool
 	AllowedTransports       []string
 	AllowTransportableEdits bool
+	TransportChoice         string
 	BlockFreeSQL            bool
 
 	Cache     bool
@@ -137,6 +138,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			TransportReadOnly:       sys.TransportReadOnly || envFlag("SAP_TRANSPORT_READ_ONLY"),
 			AllowedTransports:       firstNonEmptyList(sys.AllowedTransports, splitList(os.Getenv("SAP_ALLOWED_TRANSPORTS"))),
 			AllowTransportableEdits: sys.AllowTransportableEdits || envFlag("SAP_ALLOW_TRANSPORTABLE_EDITS"),
+			TransportChoice:         firstNonEmpty(sys.TransportChoice, os.Getenv("SAP_TRANSPORT_CHOICE")),
 			BlockFreeSQL:            sys.BlockFreeSQL || envFlag("SAP_BLOCK_FREE_SQL"),
 			Cache:                   sys.Cache,
 			CachePath:               sys.CachePath,
@@ -194,6 +196,13 @@ func envFlag(name string) bool {
 }
 
 // firstNonEmptyList returns the configured list, falling back to the environment.
+func firstNonEmpty(configured, fromEnv string) string {
+	if strings.TrimSpace(configured) != "" {
+		return configured
+	}
+	return fromEnv
+}
+
 func firstNonEmptyList(configured, fromEnv []string) []string {
 	if len(configured) > 0 {
 		return configured
@@ -269,6 +278,9 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 	}
 	if len(params.AllowedTransports) > 0 {
 		safety.AllowedTransports, restricted = params.AllowedTransports, true
+	}
+	if params.TransportChoice != "" {
+		safety.TransportChoice = params.TransportChoice
 	}
 	if params.AllowTransportableEdits {
 		safety.AllowTransportableEdits = true

@@ -3239,6 +3239,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		if result.ObjectURL != "" {
 			fmt.Fprintf(os.Stderr, "URL: %s\n", result.ObjectURL)
 		}
+		if result.Transport != "" {
+			fmt.Fprintf(os.Stderr, "Transport: %s\n", result.Transport)
+		}
+		if result.TransportNote != "" {
+			fmt.Fprintf(os.Stderr, "  %s\n", result.TransportNote)
+		}
 		if result.Message != "" {
 			fmt.Fprintf(os.Stderr, "%s\n", result.Message)
 		}

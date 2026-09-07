@@ -12,12 +12,16 @@ import (
 
 // WriteProgramResult represents the result of writing a program.
 type WriteProgramResult struct {
-	Success      bool                       `json:"success"`
-	ProgramName  string                     `json:"programName"`
-	ObjectURL    string                     `json:"objectUrl"`
-	SyntaxErrors []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult          `json:"activation,omitempty"`
-	Message      string                     `json:"message,omitempty"`
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport     string              `json:"transport,omitempty"`
+	TransportNote string              `json:"transportNote,omitempty"`
+	Success       bool                `json:"success"`
+	ProgramName   string              `json:"programName"`
+	ObjectURL     string              `json:"objectUrl"`
+	SyntaxErrors  []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation    *ActivationResult   `json:"activation,omitempty"`
+	Message       string              `json:"message,omitempty"`
 }
 
 // WriteProgram performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow.
@@ -63,6 +67,7 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 	result.SyntaxErrors = syntaxErrors // Include warnings if any
 
 	// Step 2: Lock the object
+	trPlan := c.planTransport(ctx, transport, objectURL, "")
 	lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to lock object: %v", err)
@@ -79,11 +84,13 @@ func (c *Client) WriteProgram(ctx context.Context, programName string, source st
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
 	// (issue #144). Re-checks transportable-edit policy on the resolved request.
-	transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "WriteProgram")
+	var trNote string
+	transport, trNote, err = c.resolveWriteTransportFor(trPlan, transport, lock.CorrNr, "WriteProgram")
 	if err != nil {
 		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 		return result, nil
 	}
+	result.Transport, result.TransportNote = transport, trNote
 
 	// Step 3: Update source
 	err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
@@ -202,12 +209,16 @@ func (c *Client) WriteInclude(ctx context.Context, includeName string, source st
 
 // WriteClassResult represents the result of writing a class.
 type WriteClassResult struct {
-	Success      bool                       `json:"success"`
-	ClassName    string                     `json:"className"`
-	ObjectURL    string                     `json:"objectUrl"`
-	SyntaxErrors []SyntaxCheckResult        `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult          `json:"activation,omitempty"`
-	Message      string                     `json:"message,omitempty"`
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport     string              `json:"transport,omitempty"`
+	TransportNote string              `json:"transportNote,omitempty"`
+	Success       bool                `json:"success"`
+	ClassName     string              `json:"className"`
+	ObjectURL     string              `json:"objectUrl"`
+	SyntaxErrors  []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation    *ActivationResult   `json:"activation,omitempty"`
+	Message       string              `json:"message,omitempty"`
 }
 
 // WriteClass performs Lock -> SyntaxCheck -> UpdateSource -> Unlock -> Activate workflow for classes.
@@ -252,6 +263,7 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	result.SyntaxErrors = syntaxErrors
 
 	// Step 2: Lock
+	trPlan := c.planTransport(ctx, transport, objectURL, "")
 	lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to lock object: %v", err)
@@ -267,11 +279,13 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
 	// (issue #144). Re-checks transportable-edit policy on the resolved request.
-	transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "WriteClass")
+	var trNote string
+	transport, trNote, err = c.resolveWriteTransportFor(trPlan, transport, lock.CorrNr, "WriteClass")
 	if err != nil {
 		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 		return result, nil
 	}
+	result.Transport, result.TransportNote = transport, trNote
 
 	// Step 3: Update source
 	err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
@@ -308,12 +322,16 @@ func (c *Client) WriteClass(ctx context.Context, className string, source string
 
 // CreateProgramResult represents the result of creating a program.
 type CreateProgramResult struct {
-	Success      bool                `json:"success"`
-	ProgramName  string              `json:"programName"`
-	ObjectURL    string              `json:"objectUrl"`
-	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult   `json:"activation,omitempty"`
-	Message      string              `json:"message,omitempty"`
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport     string              `json:"transport,omitempty"`
+	TransportNote string              `json:"transportNote,omitempty"`
+	Success       bool                `json:"success"`
+	ProgramName   string              `json:"programName"`
+	ObjectURL     string              `json:"objectUrl"`
+	SyntaxErrors  []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation    *ActivationResult   `json:"activation,omitempty"`
+	Message       string              `json:"message,omitempty"`
 }
 
 // CreateAndActivateProgram creates a new program with source code and activates it.
@@ -341,17 +359,23 @@ func (c *Client) CreateAndActivateProgram(ctx context.Context, programName strin
 	}
 
 	// Step 1: Create the program
+	var chosen TransportChoice
 	err := c.CreateObject(ctx, CreateObjectOptions{
 		ObjectType:  ObjectTypeProgram,
 		Name:        programName,
 		Description: description,
 		PackageName: packageName,
 		Transport:   transport,
+		Chosen:      &chosen,
 	})
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to create program: %v", err)
 		return result, nil
 	}
+	if chosen.Transport != "" {
+		transport = chosen.Transport
+	}
+	result.Transport, result.TransportNote = transport, chosen.Reason
 
 	// The gate above accepted packageName, and CreateObject gated it a second
 	// time before asking SAP to put the program there — so the program's

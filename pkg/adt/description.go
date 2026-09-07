@@ -19,12 +19,13 @@ import (
 
 // DescriptionResult says what changed.
 type DescriptionResult struct {
-	ObjectURL string `json:"objectUrl"`
-	Old       string `json:"old"`
-	New       string `json:"new"`
-	Changed   bool   `json:"changed"`
-	Transport string `json:"transport,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	ObjectURL     string `json:"objectUrl"`
+	Old           string `json:"old"`
+	New           string `json:"new"`
+	Changed       bool   `json:"changed"`
+	Transport     string `json:"transport,omitempty"`
+	TransportNote string `json:"transportNote,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
 }
 
 var (
@@ -107,13 +108,14 @@ func (c *Client) SetDescription(ctx context.Context, objectType, name, parent, d
 		return res, nil
 	}
 
+	trPlan := c.planTransport(ctx, transport, objectURL, "")
 	lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		return res, fmt.Errorf("locking %s: %w", objectURL, err)
 	}
 	unlockCtx := context.WithoutCancel(ctx)
 	defer func() { _ = c.UnlockObject(unlockCtx, objectURL, lock.LockHandle) }()
-	if res.Transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "SetDescription"); err != nil {
+	if res.Transport, res.TransportNote, err = c.resolveWriteTransportFor(trPlan, transport, lock.CorrNr, "SetDescription"); err != nil {
 		return res, err
 	}
 	// Read again under the lock: the document is put back whole, so it has
