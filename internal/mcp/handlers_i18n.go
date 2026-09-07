@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
@@ -221,4 +222,80 @@ func (s *Server) handleCompareObjectLanguages(ctx context.Context, request mcp.C
 	}
 
 	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// handleWriteTextPool writes a program's texts of one kind: params
+// program_name, language (logon language by default), kind (S selection
+// texts by default, I symbols, H headings), texts as {KEY: text} or as
+// "KEY=text" lines, transport for a transportable program. The lock is
+// taken and released here; nothing to carry across calls.
+func (s *Server) handleWriteTextPool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	program := getStringParam(args, "program_name")
+	if program == "" {
+		program = getStringParam(args, "program")
+	}
+	if program == "" {
+		return newToolResultError("program_name is required"), nil
+	}
+	lang := getStringParam(args, "language")
+	if lang == "" {
+		lang = s.adtClient.Language()
+	}
+	kind := getStringParam(args, "kind")
+	if kind == "" {
+		kind = "S"
+	}
+	entries := map[string]string{}
+	switch t := args["texts"].(type) {
+	case map[string]any:
+		for k, v := range t {
+			entries[strings.ToUpper(k)] = fmt.Sprint(v)
+		}
+	case string:
+		for _, line := range strings.Split(t, "\n") {
+			if k, v, ok := strings.Cut(line, "="); ok && strings.TrimSpace(k) != "" {
+				entries[strings.ToUpper(strings.TrimSpace(k))] = strings.TrimRight(v, "\r")
+			}
+		}
+	}
+	if len(entries) == 0 {
+		return newToolResultError("texts is required: {\"P_DEVC\": \"Package to scan\"} or \"P_DEVC=Package to scan\" lines"), nil
+	}
+	if err := s.adtClient.WriteTextPool(ctx, program, lang, kind, entries, getStringParam(args, "transport")); err != nil {
+		return newToolResultError(fmt.Sprintf("WriteTextPool failed: %v", err)), nil
+	}
+	return newToolResultJSON(map[string]any{"program": strings.ToUpper(program), "language": strings.ToUpper(lang), "kind": strings.ToUpper(kind), "written": len(entries)}), nil
+}
+
+// handleSyncTextPool takes the "~t: comments of a program's source as its
+// selection texts and writes them; dry_run lists them instead.
+func (s *Server) handleSyncTextPool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	program := getStringParam(args, "program_name")
+	if program == "" {
+		program = getStringParam(args, "program")
+	}
+	if program == "" {
+		return newToolResultError("program_name is required"), nil
+	}
+	source, err := s.adtClient.GetSource(ctx, "PROG", strings.ToUpper(program), nil)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("reading the source: %v", err)), nil
+	}
+	entries := adt.SelectionTextsFromSource(source)
+	if len(entries) == 0 {
+		return newToolResultJSON(map[string]any{"program": strings.ToUpper(program), "found": 0, "notes": []string{"No \"~t: comments in the source. Put one after a PARAMETERS, SELECT-OPTIONS or named SELECTION-SCREEN COMMENT line: PARAMETERS p_devc TYPE tadir-devclass. \"~t: Package to scan"}}), nil
+	}
+	if dry, _ := getBoolParam(args, "dry_run"); dry {
+		return newToolResultJSON(map[string]any{"program": strings.ToUpper(program), "found": len(entries), "texts": entries, "written": 0}), nil
+	}
+	lang := getStringParam(args, "language")
+	if lang == "" {
+		lang = s.adtClient.Language()
+	}
+	if err := s.adtClient.WriteTextPool(ctx, program, lang, "S", entries, getStringParam(args, "transport")); err != nil {
+		return newToolResultError(fmt.Sprintf("WriteTextPool failed: %v", err)), nil
+	}
+	return newToolResultJSON(map[string]any{"program": strings.ToUpper(program), "language": strings.ToUpper(lang), "texts": entries, "written": len(entries)}), nil
 }
