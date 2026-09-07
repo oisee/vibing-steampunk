@@ -88,7 +88,7 @@ func (c *Client) SetDescription(ctx context.Context, objectType, name, parent, d
 	if description == "" {
 		return nil, fmt.Errorf("an empty description is not written")
 	}
-	if err := c.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "SetDescription", ObjectURL: objectURL, Transport: transport}); err != nil {
+	if err = c.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "SetDescription", ObjectURL: objectURL, Transport: transport}); err != nil {
 		return nil, err
 	}
 	body, _, err := c.readMetadata(ctx, objectURL, false)

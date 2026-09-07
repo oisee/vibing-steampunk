@@ -313,7 +313,7 @@ func TestUpdateEndToEndCheckOnly(t *testing.T) {
 	}
 
 	out.Reset()
-	if _, err := runUpdate(context.Background(), updateOptions{Current: "v2.57.0", Target: target, Check: true}, &out); err != nil {
+	if _, err = runUpdate(context.Background(), updateOptions{Current: "v2.57.0", Target: target, Check: true}, &out); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "vsp 2.57.0 is the latest\n" {

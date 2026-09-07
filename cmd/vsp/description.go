@@ -40,9 +40,9 @@ changes it later, on its own lock, and writes nothing when it is already so.
 		parent, _ := cmd.Flags().GetString("parent")
 		asJSON, _ := cmd.Flags().GetBool("json")
 		if text == "" {
-			res, err := client.GetDescription(context.Background(), objectType, name, parent)
-			if err != nil {
-				return err
+			res, gerr := client.GetDescription(context.Background(), objectType, name, parent)
+			if gerr != nil {
+				return gerr
 			}
 			if asJSON {
 				return printJSON(res)

@@ -319,7 +319,7 @@ func (c *Client) WriteTextPool(ctx context.Context, target TextPoolTarget, lang 
 	if err != nil {
 		return nil, err
 	}
-	if err := c.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "WriteTextPool", ObjectURL: t.objectURL(), Transport: transport}); err != nil {
+	if err = c.checkMutation(ctx, MutationContext{Op: OpUpdate, OpName: "WriteTextPool", ObjectURL: t.objectURL(), Transport: transport}); err != nil {
 		return nil, err
 	}
 	lang = strings.ToUpper(strings.TrimSpace(lang))
@@ -355,9 +355,9 @@ func (c *Client) WriteTextPool(ctx context.Context, target TextPoolTarget, lang 
 	// again under it for the write, so nothing changes in between unseen.
 	docs := map[string]*textDocument{}
 	for _, k := range kinds {
-		d, err := c.readTextDocument(ctx, t, k, lang, false)
-		if err != nil {
-			return nil, err
+		d, rerr := c.readTextDocument(ctx, t, k, lang, false)
+		if rerr != nil {
+			return nil, rerr
 		}
 		docs[k] = d
 		plan.Kinds = append(plan.Kinds, planKind(k, d, texts[k], opts))

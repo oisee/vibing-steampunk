@@ -79,7 +79,8 @@ The file is a delimited export with a header line — the way SE16H's "download"
 writes it — with one fragment per line: the key columns, SRTF2, CLUSTR and
 CLUSTD as hex. Fragments are grouped by every column that is not the client,
 not one of those three, and not named in --ignore. A file holding only hex is
-taken as one whole cluster.`,
+taken as one whole cluster, and so is a binary one that starts with the
+cluster's own FF — what EXPORT ... TO DATA BUFFER produces once downloaded.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw, err := os.ReadFile(args[0])
@@ -88,7 +89,12 @@ taken as one whole cluster.`,
 		}
 		ignore, _ := cmd.Flags().GetStringSlice("ignore")
 		var records []datacluster.Record
-		if blob, herr := datacluster.DecodeHex(string(raw)); herr == nil && len(blob) > datacluster.HeaderSize {
+		// A file that starts with the cluster's own magic byte is one cluster as
+		// bytes — an EXPORT ... TO DATA BUFFER downloaded binary, or --raw-dir's
+		// output — not an export to parse.
+		if len(raw) > datacluster.HeaderSize && raw[0] == 0xFF {
+			records = []datacluster.Record{{Key: []datacluster.KeyValue{{Column: "FILE", Value: filepath.Base(args[0])}}, Blob: raw, Parts: 1}}
+		} else if blob, herr := datacluster.DecodeHex(string(raw)); herr == nil && len(blob) > datacluster.HeaderSize {
 			records = []datacluster.Record{{Key: []datacluster.KeyValue{{Column: "FILE", Value: filepath.Base(args[0])}}, Blob: blob, Parts: 1}}
 		} else if records, err = datacluster.ReadExport(strings.NewReader(string(raw)), ignore...); err != nil {
 			return err

@@ -7,10 +7,31 @@ S/4, AMDP needs HANA, and some ADT resources present on S/4 are absent on ERP.
 > **ADT ↔ MCP Bridge**: Gives Claude (and other AI assistants) full access to SAP ADT APIs.
 > Read code, write code, debug, deploy, run tests — all through natural language (or DSL for automation).
 >
-> **New:** the whole ABAP debugger — breakpoints, attach, stepping, call stack **and variables** —
-> runs through SAP's own ADT resources over either a classic-RFC tunnel or a plain HTTPS
-> session, with **nothing installed on the server** and no SAP SDK. The MCP debugger tools
-> are enabled by default again, because the server now holds the session they always needed.
+> **New in the last three releases** — the part of a root cause that never fit in a tool:
+>
+> - **[Cluster tables, decoded](#cluster-tables-decoded--baldat-indx-stxl-over-plain-adt).**
+>   BALDAT, INDX, STXL — every table an `EXPORT ... TO DATABASE` ever wrote — read over
+>   plain ADT and decoded here: SAP's LZH and LZC decompressed in Go, the cluster format
+>   walked, the fields named from DD03L. What only `IMPORT` could read, without a line of ABAP.
+> - **[The application log with its messages](#post-mortem-from-a-dump-to-what-was-logged-around-it)**,
+>   by object and date range, and the same log from a bare SE16H export of two tables.
+> - **[Spool and jobs](#jobs-and-spool--sm37-and-sp01-as-tables)** — SP01's list decoded
+>   from TemSe, a job's steps and its log, exported for the whole night in one command.
+> - **[Where the settings are](#what-is-it-set-up-to-do--variants-test-data-documentation-the-img)** —
+>   a report's variants with the screen's own labels, SE37's saved test data, SE61
+>   documentation as Markdown, and the IMG searched by title with the activity's transaction.
+> - **[Texts and the title, from the same call](#selection-texts-and-text-symbols-without-leaving-the-call)** —
+>   selection texts and text symbols written as a plan with a diff, activated so they stay,
+>   and a hint after every program create that names the fields still without one; the
+>   [description set without touching the source](#the-description-and-the-binary-itself).
+> - **`vsp update`** — the release for this platform, verified against `checksums.txt`,
+>   renamed into place of the running binary.
+> - **[A response cache](#response-cache)** that turns a 4-second `slim` into 10 ms, on
+>   Go-native SQLite when it should outlive the process.
+>
+> And still the one that started it: the whole ABAP debugger — breakpoints, attach, stepping,
+> call stack **and variables** — through SAP's own ADT resources over a classic-RFC tunnel or a
+> plain HTTPS session, with **nothing installed on the server** and no SAP SDK.
 >
 > See also: [OData ↔ MCP Bridge](https://github.com/oisee/odata_mcp_go) for SAP data access.
 >
@@ -385,6 +406,7 @@ with the field named rather than guessed at. Two layouts are built in:
 default.
 
 ```bash
+vsp cluster decode snapshot.bin --json                 # an EXPORT TO DATA BUFFER, downloaded, decoded offline
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema   # every object, every field typed
 vsp -s a4h cluster read INDX --where "relid = 'ZD'" --layout ZDEMO_S_HEADER
 vsp -s a4h cluster read INDX --where "relid = 'ZD'" --layout "HDR=ZDEMO_S_HEADER,ITEMS=ZDEMO_S_ITEM"
