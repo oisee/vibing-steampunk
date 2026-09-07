@@ -53,8 +53,15 @@ func TestPlanKind(t *testing.T) {
 	if kp := planKind("I", parseTextDocument(""), map[string]string{"001": "New", "b01": "Block", "TOOLONG1": "x"}, TextPoolOptions{}); len(kp.Added) != 2 || len(kp.Refused) != 1 {
 		t.Errorf("symbols: %+v", kp)
 	}
-	if kp := planKind("S", doc, map[string]string{"P_DEEP": "Follow includes"}, TextPoolOptions{}); len(kp.Uncommented) != 2 {
-		t.Errorf("uncommented: %v", kp.Uncommented)
+	if kp := planKind("S", doc, map[string]string{"P_DEEP": "Follow includes"}, TextPoolOptions{}); len(kp.Untouched) != 2 {
+		t.Errorf("untouched: %v", kp.Untouched)
+	}
+	if kp := planKind("S", doc, map[string]string{"P_DEEP": TextDelete, "P_GONE": TextDelete}, TextPoolOptions{}); len(kp.Removed) != 1 || kp.Removed[0] != "P_DEEP" || len(kp.Unchanged) != 1 {
+		t.Errorf("delete: %+v", kp)
+	}
+	doc.remove("p_deep")
+	if _, ok := doc.get("P_DEEP"); ok || len(doc.entries) != 2 {
+		t.Errorf("remove: %+v", doc.entries)
 	}
 	head := parseTextDocument("listHeader=\ncolumnHeader_1=\n")
 	if kp := planKind("H", head, map[string]string{"listheader": "Found", "columnHeader_1": "", "COLUMNHEADER_9": "x"}, TextPoolOptions{}); len(kp.Changed) != 1 || kp.Changed[0].Key != "listHeader" || len(kp.Unchanged) != 1 || len(kp.Refused) != 1 {

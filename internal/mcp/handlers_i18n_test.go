@@ -6,11 +6,13 @@ import (
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
 func TestTextKindsFrom(t *testing.T) {
-	flat, err := textKindsFrom(map[string]any{"texts": map[string]any{"p_devc": "Package"}})
-	if err != nil || flat["S"]["P_DEVC"] != "Package" || len(flat) != 1 {
+	flat, err := textKindsFrom(map[string]any{"texts": map[string]any{"p_devc": "Package", "p_gone": nil}})
+	if err != nil || flat["S"]["P_DEVC"] != "Package" || flat["S"]["P_GONE"] != adt.TextDelete || len(flat) != 1 {
 		t.Errorf("flat: %v %v", flat, err)
 	}
 	kind, err := textKindsFrom(map[string]any{"kind": "i", "texts": map[string]any{"001": "Nothing"}})
