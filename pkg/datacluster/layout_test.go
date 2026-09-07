@@ -339,16 +339,28 @@ func TestApplyNames(t *testing.T) {
 	if len(items) != 1 || items[0]["hash"] != "b" {
 		t.Errorf("records: %v", rec)
 	}
-	// A flat structure component is flattened into the object: 1.1, 1.2
-	// side by side with the table at 2. Its names go under "SNAP.1", and a
-	// table inside a table's line under "SNAP.2.2".
+	// Nested flat structures are deeper paths in the one flat list: 1.1,
+	// 1.2 beside the table at 2, and 2.2.1 inside the table's line. Names
+	// go by field order, the way DD03L lists an expanded structure.
 	snap := []Object{{Name: "SNAP", Fields: []Field{
 		{Path: "1.1"}, {Path: "1.2"},
-		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2", Type: "TABLE", Fields: []Field{{Path: "2.2.1"}}}}},
-	}}}
-	notes = ApplyNames(snap, map[string][]string{"SNAP.1": {"client", "cache"}, "SNAP": {"", "", "rows"}, "SNAP.2.2": {"inner"}})
+		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2.1"}, {Path: "2.3", Type: "TABLE", Fields: []Field{{Path: "2.3.1"}}}}},
+	}, Rows: [][]any{{"122", "C1", [][]any{{"k", "d", [][]any{{"i"}}}}}}}}
+	notes = ApplyNames(snap, map[string][]string{"SNAP": {"client", "cache", "rows"}, "SNAP.2": {"key", "deep", "inner_rows"}, "SNAP.2.3": {"inner"}})
 	f := snap[0].Fields
-	if f[0].Name != "client" || f[1].Name != "cache" || f[2].Name != "rows" || f[2].Fields[1].Fields[0].Name != "inner" || len(notes) != 0 {
+	if f[0].Name != "client" || f[1].Name != "cache" || f[2].Name != "rows" || f[2].Fields[1].Name != "deep" || f[2].Fields[2].Fields[0].Name != "inner" || len(notes) != 0 {
 		t.Errorf("flattened: %+v %v", f, notes)
+	}
+	srec := snap[0].Records()[0]
+	rows, _ := srec["rows"].([]map[string]any)
+	inner, _ := rows[0]["inner_rows"].([]map[string]any)
+	if srec["client"] != "122" || len(rows) != 1 || rows[0]["deep"] != "d" || inner[0]["inner"] != "i" {
+		t.Errorf("records: %v", srec)
+	}
+	// The flat component alone, under its own path, with a placeholder
+	// in the object's list left as it was.
+	ApplyNames(snap, map[string][]string{"SNAP.1": {"mandt", ""}})
+	if f[0].Name != "mandt" || f[1].Name != "cache" {
+		t.Errorf("under path: %+v", f[:2])
 	}
 }

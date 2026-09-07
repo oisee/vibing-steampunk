@@ -88,9 +88,11 @@ When the exported types are a program's own — not in DDIC, so --layout has
 nothing to read — --names takes the field names from a file you write:
 {"HDR": ["format", "src_system", ...], "HDR.10": ["entity_id", "entity_hash"]},
 the object name for its own fields, the object and a path for what sits under
-it — a table's line, or a flat structure component, which the kernel writes
-as the object's own fields 1.1, 1.2, ... — names in component order. Named
-objects come out as records, tables inside them as arrays of records.`,
+it — a table's line, or a flat structure component — names in field order, the
+way DD03L lists a structure with its includes expanded: a nested flat
+structure is deeper paths (1.1, 8.2.11.1) in the one flat list, and a table
+is one name, its line named under its own path. Named objects come out as
+records, tables inside them as arrays of records.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		raw, err := os.ReadFile(args[0])
@@ -379,7 +381,11 @@ func init() {
 func printSchema(fields []datacluster.Field, indent string) {
 	for _, f := range fields {
 		desc := fmt.Sprintf("%s(%d)", f.Type, f.Length)
-		if f.Decimals > 0 {
+		if f.Type == "DEC" {
+			// Length is bytes throughout; a packed number's declaration is
+			// digits, two per byte less the sign: 11 bytes is DEC(21,7).
+			desc = fmt.Sprintf("DEC(%d,%d) %d bytes", 2*f.Length-1, f.Decimals, f.Length)
+		} else if f.Decimals > 0 {
 			desc = fmt.Sprintf("%s(%d,%d)", f.Type, f.Length, f.Decimals)
 		}
 		fmt.Printf("%s%-8s %-24s %s\n", indent, f.Path, f.Name, desc)

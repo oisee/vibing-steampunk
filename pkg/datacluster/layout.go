@@ -350,20 +350,20 @@ func str(v any) string {
 
 // ApplyNames names fields from a map the caller wrote, for clusters whose
 // types are not in DDIC — a program's local structure, a class's type. The
-// key is the object name for its own fields ("HDR"), or the object name
-// and a field path for what sits under that path ("HDR.10", "SNAP.1"): the
-// line of a table-typed component, or a flat structure component, which the
-// kernel writes as the enclosing object's own fields with paths 1.1, 1.2,
-// and so on. The value is the names in component order. What does not fit
-// is said, not guessed: a count that differs names the shorter run.
+// key is the object name for its own fields ("HDR"), or the object name and
+// a path for what sits under it ("HDR.10", "SNAP.1"): a table's line, or a
+// flat structure component. The value is the names in field order, the way
+// DD03L lists a structure with its includes expanded: the kernel writes
+// nested flat structures as deeper paths (1.1, 8.2.11.1) in the one flat
+// list, and a table-typed field is one name, its line named under its own
+// path. What does not fit is said, not guessed: a count that differs names
+// the shorter run.
 func ApplyNames(objects []Object, names map[string][]string) []string {
 	var notes []string
 	keys := make([]string, 0, len(names))
 	for k := range names {
 		keys = append(keys, k)
 	}
-	// The object's own list first, then the paths under it, so a name
-	// given for a component's fields wins over a placeholder in the list.
 	sort.Strings(keys)
 	for _, key := range keys {
 		list := names[key]
@@ -388,15 +388,18 @@ func ApplyNames(objects []Object, names map[string][]string) []string {
 			notes = append(notes, fmt.Sprintf("names for %s: %d names for %d fields; the first %d named", key, len(list), len(fields), min(len(list), len(fields))))
 		}
 		for i := 0; i < len(fields) && i < len(list); i++ {
-			fields[i].Name = strings.ToLower(strings.TrimSpace(list[i]))
+			if name := strings.ToLower(strings.TrimSpace(list[i])); name != "" {
+				fields[i].Name = name
+			}
 		}
 	}
 	return notes
 }
 
-// fieldsUnder lists the fields directly under a path, at whatever depth
-// they sit: the object's own fields for "", a table's line for the table's
-// path, a flattened structure's components for its prefix.
+// fieldsUnder lists the fields under a path in order: the object's own
+// list for "", a table's line for the table's path, a flat structure
+// component's fields for its prefix — through a table's line when the path
+// leads into one.
 func fieldsUnder(fields []Field, path string) []*Field {
 	var out []*Field
 	for i := range fields {
@@ -409,7 +412,7 @@ func fieldsUnder(fields []Field, path string) []*Field {
 				out = append(out, &f.Fields[j])
 			}
 			return out
-		case strings.HasPrefix(f.Path, path+".") && !strings.Contains(strings.TrimPrefix(f.Path, path+"."), "."):
+		case strings.HasPrefix(f.Path, path+"."):
 			out = append(out, f)
 		case strings.HasPrefix(path, f.Path+".") && len(f.Fields) > 0:
 			if under := fieldsUnder(f.Fields, path); len(under) > 0 {
