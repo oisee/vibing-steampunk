@@ -37,6 +37,18 @@ Left on A4H: two INDX rows under `RELID = ZV` from the cluster fixture
 program, which itself was deleted after the fixtures were captured. Its
 source is `pkg/datacluster/testdata/zvsp_cluster_fixture.prog.abap`.
 
+## Done — 2026-09-07 — selection texts from the source
+
+`vsp texts get|set|sync`, MCP `i18n` ops `write_text_pool` and
+`sync_text_pool`. The text pool is its own ADT resource
+(`/sap/bc/adt/textelements/programs/{name}`, lock object REPT — a lock on
+the program is not a lock on its texts), three plain-text documents under
+it (`KEY     =text`, key padded to eight). `sync` takes `"~t:` comments
+from PARAMETERS / SELECT-OPTIONS / named SELECTION-SCREEN COMMENT lines.
+Text symbols (I) and headings (H) write through the same call with
+`--kind`; no source convention for them yet — `"~i:001` would be the
+obvious one if anyone wants it.
+
 ## Done — 2026-09-06 — the cache that was a flag
 
 `cache: true` in `.vsp.json` and `VSP_CACHE` reached `systemParams` and

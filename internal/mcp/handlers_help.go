@@ -185,6 +185,10 @@ What differs between two languages — named separately, not as a list:
 
 Writing needs a lock_handle from a lock taken first, and changes the system:
   SAP(action="i18n", params={"op": "write_message_texts", "name": "ZVSP_GIT", "language": "DE", "lock_handle": "...", "texts": []})
+  SAP(action="i18n", params={"op": "write_text_pool", "program_name": "ZDEMO_RUN", "texts": {"P_DEVC": "Package to scan"}})
+      selection texts (kind S; I symbols, H headings); the lock is taken and released in the call
+  SAP(action="i18n", params={"op": "sync_text_pool", "program_name": "ZDEMO_RUN", "dry_run": true})
+      selection texts from "~t: comments in the source: PARAMETERS p_devc TYPE devclass. "~t: Package to scan
 
 write_labels is not implemented and refuses. What it used to send was a
 four-field document to a resource that takes the data element's whole

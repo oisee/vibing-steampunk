@@ -305,6 +305,31 @@ vsp -s a4h docs read DE BALLEVEL
 vsp -s a4h docs activity /IWBEP/CP_DELETE_JOB
 ```
 
+### Selection texts, beside the field they describe
+
+A selection text is maintained in a screen three clicks from the code and
+falls out of sync with it. `vsp texts sync` reads the source instead: a
+trailing comment of the form `"~t:` on a PARAMETERS, SELECT-OPTIONS or named
+SELECTION-SCREEN COMMENT line is that field's text, and the text pool is
+written from it, in the logon language or `--lang`.
+
+```abap
+PARAMETERS: p_devc TYPE tadir-devclass DEFAULT '$TMP', "~t: Package to scan
+            p_deep TYPE abap_bool AS CHECKBOX.      "~t: Follow includes
+SELECT-OPTIONS s_obj FOR tadir-obj_name.            "~t: Object names
+```
+
+```bash
+vsp -s a4h texts sync ZDEMO_RUN --dry-run     # what would be written
+vsp -s a4h texts sync ZDEMO_RUN               # 3 text(s) written to ZDEMO_RUN (selections, EN)
+vsp -s a4h texts set ZDEMO_RUN P_DEVC="Package to scan"    # or one at a time
+vsp -s a4h texts get ZDEMO_RUN                # S, I and H entries
+```
+
+The text elements are their own ADT resource with their own lock; the lock,
+the write and the unlock happen in the one call. MCP: `i18n` with
+`op: sync_text_pool` or `op: write_text_pool`.
+
 ### Cluster tables, decoded — BALDAT, INDX, STXL over plain ADT
 
 BALDAT is one of a family: INDX, STXL, and every table an `EXPORT ... TO
@@ -983,6 +1008,7 @@ vsp -s a4h variants ZDEMO_NIGHTLY_RUN MONTH_END      # every field, its label, i
 vsp -s a4h fmtest ZDEMO_CALCULATE_TAX                # SE37's saved test data
 vsp -s a4h docs read FU BAL_LOG_CREATE               # SE61 documentation as Markdown
 vsp -s a4h docs img "cleanup job"                    # where in the IMG, and which activity
+vsp -s a4h texts sync ZDEMO_RUN                      # selection texts from "~t: comments in the source
 
 # Cluster tables — what only IMPORT could read, decoded here
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema

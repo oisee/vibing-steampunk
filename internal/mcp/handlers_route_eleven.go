@@ -37,6 +37,8 @@ func (s *Server) i18nTypes() map[string]server.ToolHandlerFunc {
 		"compare_languages":   s.handleCompareObjectLanguages,
 		"write_labels":        s.handleWriteDataElementLabels,
 		"write_message_texts": s.handleWriteMessageClassTexts,
+		"write_text_pool":     s.handleWriteTextPool,
+		"sync_text_pool":      s.handleSyncTextPool,
 	}
 }
 
@@ -141,6 +143,6 @@ func (s *Server) lintTypes() map[string]server.ToolHandlerFunc {
 func i18nOps() []string {
 	return []string{
 		"texts", "data_element_labels", "message_class_texts", "text_pool",
-		"compare_languages", "write_labels", "write_message_texts",
+		"compare_languages", "write_labels", "write_message_texts", "write_text_pool", "sync_text_pool",
 	}
 }
