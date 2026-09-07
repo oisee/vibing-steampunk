@@ -105,6 +105,15 @@ FRAPVSCREENCNTR, `.6` FRAPVSCREENADDR, `.7` FRAPVSCREENNAME, `.8`
 FRA_S_ADDR_SCR_LIST_ENTITY, `SNAP.1` ZSCR_117_CPD_H; `HDR` and `HDR.10`
 are a program's local type and come from the names file only.
 
+After the merge, from the same second session on its own system: a
+field removed from the screen leaves its entry in the pool with an empty
+text, and the hint after a deploy asked for a text for it. Now `?...` is
+the only gap the hint counts, a null text over MCP or `--delete KEY` on
+the CLI takes the entry out (the plan lists it under `removed`), and
+`uncommented` is `untouched`. Confirmed on A4H: the entry a removed
+parameter left behind is gone after the call, and a second call says
+unchanged.
+
 Still open from that session's notes, not done here: a function module
 whose TABLES parameter "declares no type" in the parser; a source line
 over 255 characters refused without a line number; `save_to_file` reading

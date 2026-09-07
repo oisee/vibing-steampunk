@@ -113,6 +113,16 @@ func parseTextDocument(body string) *textDocument {
 	return d
 }
 
+func (d *textDocument) remove(key string) {
+	kept := d.entries[:0]
+	for _, e := range d.entries {
+		if !strings.EqualFold(e.key, key) {
+			kept = append(kept, e)
+		}
+	}
+	d.entries = kept
+}
+
 func (d *textDocument) get(key string) (textEntry, bool) {
 	for _, e := range d.entries {
 		if strings.EqualFold(e.key, key) {
@@ -213,9 +223,17 @@ type KindPlan struct {
 	Unknown []string `json:"unknown,omitempty"`
 	// Refused are keys or texts SAP would reject, with the reason.
 	Refused []KeyReason `json:"refused,omitempty"`
-	// Uncommented are the document's keys the caller said nothing about.
-	Uncommented []string `json:"uncommented,omitempty"`
+	// Removed are keys taken out of the document: the caller gave
+	// TextDelete for them.
+	Removed []string `json:"removed,omitempty"`
+	// Untouched are the document's keys the caller said nothing about;
+	// they keep their texts.
+	Untouched []string `json:"untouched,omitempty"`
 }
+
+// TextDelete as a key's text removes the key from the document. A field
+// gone from the screen leaves its entry behind; this is how it goes.
+const TextDelete = "\x00delete"
 
 // KeyText is one text by key.
 type KeyText struct {
@@ -252,7 +270,7 @@ type TextPoolOptions struct {
 func (p *TextPoolPlan) changes() int {
 	n := 0
 	for _, k := range p.Kinds {
-		n += len(k.Added) + len(k.Changed)
+		n += len(k.Added) + len(k.Changed) + len(k.Removed)
 	}
 	return n
 }
@@ -391,7 +409,7 @@ func (c *Client) WriteTextPool(ctx context.Context, target TextPoolTarget, lang 
 		}
 		kp := planKind(k, d, texts[k], opts)
 		plan.Kinds = append(plan.Kinds, kp)
-		if len(kp.Added)+len(kp.Changed) == 0 {
+		if len(kp.Added)+len(kp.Changed)+len(kp.Removed) == 0 {
 			continue
 		}
 		for _, a := range kp.Added {
@@ -399,6 +417,9 @@ func (c *Client) WriteTextPool(ctx context.Context, target TextPoolTarget, lang 
 		}
 		for _, ch := range kp.Changed {
 			d.set(k, ch.Key, ch.New)
+		}
+		for _, r := range kp.Removed {
+			d.remove(r)
 		}
 		params := url.Values{}
 		params.Set("lockHandle", lock.LockHandle)
@@ -417,7 +438,7 @@ func (c *Client) WriteTextPool(ctx context.Context, target TextPoolTarget, lang 
 		}); err != nil {
 			return plan, fmt.Errorf("writing the %s of %s: %w", TextPoolKinds[k], t, err)
 		}
-		plan.Written += len(kp.Added) + len(kp.Changed)
+		plan.Written += len(kp.Added) + len(kp.Changed) + len(kp.Removed)
 	}
 	plan.Applied = true
 	if plan.Written == 0 {
@@ -492,6 +513,10 @@ func planKind(kind string, doc *textDocument, wanted map[string]string, opts Tex
 		}
 		cur, exists := doc.get(k)
 		switch {
+		case text == TextDelete && exists:
+			kp.Removed = append(kp.Removed, k)
+		case text == TextDelete:
+			kp.Unchanged = append(kp.Unchanged, k)
 		case !exists && kind != "I" && !opts.AllowUnknown:
 			kp.Unknown = append(kp.Unknown, k)
 		case !exists:
@@ -504,7 +529,7 @@ func planKind(kind string, doc *textDocument, wanted map[string]string, opts Tex
 	}
 	for _, e := range doc.entries {
 		if !seen[e.key] {
-			kp.Uncommented = append(kp.Uncommented, e.key)
+			kp.Untouched = append(kp.Untouched, e.key)
 		}
 	}
 	return kp
@@ -544,7 +569,9 @@ func (c *Client) TextPoolGaps(ctx context.Context, target TextPoolTarget, lang, 
 			return nil, err
 		}
 		for _, e := range sel.entries {
-			if strings.TrimSpace(e.text) == "" || strings.TrimSpace(e.text) == "?..." {
+			// "?..." is a screen field with no text. An empty text is an
+			// entry a field left behind when it went; not a gap.
+			if strings.TrimSpace(e.text) == "?..." {
 				gaps.Selections = append(gaps.Selections, e.key)
 			}
 		}

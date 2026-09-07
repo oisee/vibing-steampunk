@@ -270,7 +270,8 @@ func (s *Server) handleTextsGet(ctx context.Context, request mcp.CallToolRequest
 
 // handleTextsSet writes texts: op=texts_set (write_text_pool is an alias).
 // texts is {KEY: text} for one kind (kind: S by default, I, H), or
-// {"selections": {...}, "symbols": {...}, "headings": {...}}. dry_run
+// {"selections": {...}, "symbols": {...}, "headings": {...}}; a null text
+// removes the key. dry_run
 // returns the plan; language names a translation and allows it;
 // allow_unknown writes selection texts for keys the screen does not have.
 func (s *Server) handleTextsSet(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -315,6 +316,11 @@ func textKindsFrom(args map[string]any) (map[string]map[string]string, error) {
 		}
 		flat := map[string]string{}
 		for k, x := range m {
+			if x == nil {
+				// null removes the key.
+				flat[strings.ToUpper(k)] = adt.TextDelete
+				continue
+			}
 			flat[strings.ToUpper(k)] = fmt.Sprint(x)
 		}
 		return flat, true

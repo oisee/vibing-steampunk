@@ -342,6 +342,7 @@ vsp -s a4h texts set ZDEMO_RUN P_DEVC="Package to scan" S_OBJ="Object names"
 vsp -s a4h texts set ZDEMO_RUN --kind I 001="Nothing found"
 vsp -s a4h texts set ZDEMO_RUN --dry-run P_DEVC="Package to scan"
 vsp -s a4h texts set CLAS ZCL_DEMO --kind I 001="Loaded"
+vsp -s a4h texts set ZDEMO_RUN --delete P_MODE            # the entry a removed field left behind
 ```
 
 The text elements are their own ADT resource with their own lock; the lock,

@@ -23,6 +23,7 @@ of a program or a class, list headings (H).
   vsp texts set ZDEMO_RUN --kind I 001="Nothing found" B01="Options"
   vsp texts set ZDEMO_RUN --dry-run P_DEVC="Package to scan"
   vsp texts set ZDEMO_RUN --lang DE P_DEVC="Zu prüfendes Paket"
+  vsp texts set ZDEMO_RUN --delete P_MODE                     # the entry a removed field left behind
 
 A write is a plan first: what is added, what changes from what, what is
 already so, and what is refused — a selection text for a field the screen
@@ -61,7 +62,7 @@ var textsGetCmd = &cobra.Command{
 var textsSetCmd = &cobra.Command{
 	Use:   "set [PROG|CLAS] <NAME> KEY=TEXT [KEY=TEXT ...]",
 	Short: "Write texts of one kind; keys not named keep theirs",
-	Args:  cobra.MinimumNArgs(2),
+	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// The target is the leading argument(s) up to the first KEY=TEXT.
 		split := 1
@@ -76,6 +77,13 @@ var textsSetCmd = &cobra.Command{
 				return fmt.Errorf("%q: want KEY=TEXT", kv)
 			}
 			entries[strings.ToUpper(strings.TrimSpace(k))] = v
+		}
+		del, _ := cmd.Flags().GetStringSlice("delete")
+		for _, k := range del {
+			entries[strings.ToUpper(strings.TrimSpace(k))] = adt.TextDelete
+		}
+		if len(entries) == 0 {
+			return fmt.Errorf("nothing to write: give KEY=TEXT or --delete KEY")
 		}
 		client, lang, err := docsClient(cmd)
 		if err != nil {
@@ -116,6 +124,9 @@ func printTextPlan(p *adt.TextPoolPlan) {
 		for _, c := range k.Changed {
 			fmt.Printf("~ %-3s %-16s %s  (was: %s)\n", k.Kind, c.Key, c.New, c.Old)
 		}
+		for _, r := range k.Removed {
+			fmt.Printf("- %-3s %-16s removed\n", k.Kind, r)
+		}
 		for _, u := range k.Unchanged {
 			fmt.Printf("= %-3s %-16s unchanged\n", k.Kind, u)
 		}
@@ -148,6 +159,7 @@ func init() {
 	}
 	textsSetCmd.Flags().String("kind", "S", "Text kind: S selection texts, I text symbols, H headings")
 	textsSetCmd.Flags().String("transport", "", "Transport request; the one the object is locked in is reused when empty")
+	textsSetCmd.Flags().StringSlice("delete", nil, "Keys to remove — entries a field left behind when it went from the screen")
 	textsSetCmd.Flags().Bool("dry-run", false, "Show the plan and write nothing")
 	textsSetCmd.Flags().Bool("allow-unknown", false, "Write selection texts for keys the screen does not declare")
 	textsCmd.AddCommand(textsGetCmd, textsSetCmd)

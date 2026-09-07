@@ -191,6 +191,7 @@ Writing needs a lock_handle from a lock taken first, and changes the system:
       texts_set needs no lock_handle: the text pool is its own resource, locked and released in the call.
       The answer is a plan — added, changed (from what), unchanged, unknown (not on the screen), refused —
       and dry_run stops at the plan. "language" names a translation; without it the logon language is written.
+      A null text ({"P_MODE": null}) removes the key — a field gone from the screen leaves its entry behind.
       After create PROGRAM / write_program the result carries a "hints" line naming screen fields with no
       selection text and TEXT-xxx the source uses but does not define. create PROGRAM also takes "texts".
       The written texts are activated in the same call; without that they stay an inactive version.
