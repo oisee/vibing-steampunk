@@ -316,3 +316,39 @@ func TestApplyLayoutTables(t *testing.T) {
 		t.Error("table over a field accepted")
 	}
 }
+
+func TestApplyNames(t *testing.T) {
+	objs := []Object{{Name: "HDR", Fields: []Field{
+		{Path: "1", Type: "INT4"},
+		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2"}}},
+	}, Rows: [][]any{{1, [][]any{{"a", "b"}}}}}}
+	notes := ApplyNames(objs, map[string][]string{
+		"hdr":   {"Count", "items"},
+		"HDR.2": {"id", "hash", "extra"},
+		"SNAP":  {"x"},
+		"HDR.9": {"x"},
+	})
+	if objs[0].Fields[0].Name != "count" || objs[0].Fields[1].Fields[1].Name != "hash" {
+		t.Errorf("fields: %+v", objs[0].Fields)
+	}
+	if len(notes) != 3 {
+		t.Errorf("notes: %v", notes)
+	}
+	rec := objs[0].Records()
+	items, _ := rec[0]["items"].([]map[string]any)
+	if len(items) != 1 || items[0]["hash"] != "b" {
+		t.Errorf("records: %v", rec)
+	}
+	// A flat structure component is flattened into the object: 1.1, 1.2
+	// side by side with the table at 2. Its names go under "SNAP.1", and a
+	// table inside a table's line under "SNAP.2.2".
+	snap := []Object{{Name: "SNAP", Fields: []Field{
+		{Path: "1.1"}, {Path: "1.2"},
+		{Path: "2", Type: "TABLE", Fields: []Field{{Path: "2.1"}, {Path: "2.2", Type: "TABLE", Fields: []Field{{Path: "2.2.1"}}}}},
+	}}}
+	notes = ApplyNames(snap, map[string][]string{"SNAP.1": {"client", "cache"}, "SNAP": {"", "", "rows"}, "SNAP.2.2": {"inner"}})
+	f := snap[0].Fields
+	if f[0].Name != "client" || f[1].Name != "cache" || f[2].Name != "rows" || f[2].Fields[1].Fields[0].Name != "inner" || len(notes) != 0 {
+		t.Errorf("flattened: %+v %v", f, notes)
+	}
+}
