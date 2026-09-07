@@ -33,12 +33,13 @@ func (s *Server) i18nTypes() map[string]server.ToolHandlerFunc {
 		"texts":               s.handleGetObjectTextsInLanguage,
 		"data_element_labels": s.handleGetDataElementLabels,
 		"message_class_texts": s.handleGetMessageClassTexts,
-		"text_pool":           s.handleGetTextPoolInLanguage,
+		"text_pool":           s.handleTextsGet,
+		"texts_get":           s.handleTextsGet,
+		"texts_set":           s.handleTextsSet,
 		"compare_languages":   s.handleCompareObjectLanguages,
 		"write_labels":        s.handleWriteDataElementLabels,
 		"write_message_texts": s.handleWriteMessageClassTexts,
-		"write_text_pool":     s.handleWriteTextPool,
-		"sync_text_pool":      s.handleSyncTextPool,
+		"write_text_pool":     s.handleTextsSet,
 	}
 }
 
@@ -58,6 +59,9 @@ func (s *Server) routeI18nAction(ctx context.Context, action, objectType, object
 		return nil, false, nil
 	}
 	op := firstParam(params, "op")
+	if objectName != "" && firstParam(params, "object_name") == "" {
+		params["object_type"], params["object_name"] = objectType, objectName
+	}
 	handler, known := s.i18nTypes()[op]
 	if !known {
 		// The action is recognised, so it owns the answer. Falling through
@@ -143,6 +147,6 @@ func (s *Server) lintTypes() map[string]server.ToolHandlerFunc {
 func i18nOps() []string {
 	return []string{
 		"texts", "data_element_labels", "message_class_texts", "text_pool",
-		"compare_languages", "write_labels", "write_message_texts", "write_text_pool", "sync_text_pool",
+		"compare_languages", "write_labels", "write_message_texts", "texts_get", "texts_set",
 	}
 }

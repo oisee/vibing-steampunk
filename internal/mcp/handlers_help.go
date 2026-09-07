@@ -177,18 +177,28 @@ Data element labels — short, medium, long, heading:
 Message class texts:
   SAP(action="i18n", params={"op": "message_class_texts", "name": "ZVSP_GIT", "language": "EN"})
 
-A report's selection texts and text symbols — program_name here, not name:
-  SAP(action="i18n", params={"op": "text_pool", "program_name": "ZDEMO_REPORT", "language": "EN"})
+A report's or a class's text pool — selection texts (S), text symbols (I), headings (H):
+  SAP(action="i18n", params={"op": "texts_get", "program_name": "ZDEMO_REPORT"})
+  SAP(action="i18n", target="CLAS ZCL_DEMO", params={"op": "texts_get"})
 
 What differs between two languages — named separately, not as a list:
   SAP(action="i18n", params={"op": "compare_languages", "object_url": "/sap/bc/adt/oo/classes/zcl_demo", "source_language": "EN", "target_language": "DE"})
 
 Writing needs a lock_handle from a lock taken first, and changes the system:
   SAP(action="i18n", params={"op": "write_message_texts", "name": "ZVSP_GIT", "language": "DE", "lock_handle": "...", "texts": []})
-  SAP(action="i18n", params={"op": "write_text_pool", "program_name": "ZDEMO_RUN", "texts": {"P_DEVC": "Package to scan"}})
-      selection texts (kind S; I symbols, H headings); the lock is taken and released in the call
-  SAP(action="i18n", params={"op": "sync_text_pool", "program_name": "ZDEMO_RUN", "dry_run": true})
-      selection texts from "~t: comments in the source: PARAMETERS p_devc TYPE devclass. "~t: Package to scan
+  SAP(action="i18n", params={"op": "texts_set", "program_name": "ZDEMO_RUN", "texts": {"P_DEVC": "Package to scan"}})
+  SAP(action="i18n", params={"op": "texts_set", "program_name": "ZDEMO_RUN", "texts": {"selections": {"S_OBJ": "Object names"}, "symbols": {"001": "Nothing found"}}, "dry_run": true})
+      texts_set needs no lock_handle: the text pool is its own resource, locked and released in the call.
+      The answer is a plan — added, changed (from what), unchanged, unknown (not on the screen), refused —
+      and dry_run stops at the plan. "language" names a translation; without it the logon language is written.
+      After create PROGRAM / write_program the result carries a "hints" line naming screen fields with no
+      selection text and TEXT-xxx the source uses but does not define. create PROGRAM also takes "texts".
+      The written texts are activated in the same call; without that they stay an inactive version.
+
+The description — SE38's title — of an existing object, without touching its source:
+  SAP(action="edit", target="PROG ZDEMO_XFER", params={"type": "set_description", "description": "DPL snapshot transfer"})
+      PROG, INCL, CLAS, INTF, FUGR, FUNC (with "parent"), TABL, DDLS; without "description" it reads the current one.
+      deploy_from_file and write_program take "description" too and write it after the source.
 
 write_labels is not implemented and refuses. What it used to send was a
 four-field document to a resource that takes the data element's whole

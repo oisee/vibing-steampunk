@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -54,7 +55,15 @@ func (s *Server) handleDeployFromFile(ctx context.Context, request mcp.CallToolR
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	res := mcp.NewToolResultText(string(output))
+	if result != nil && result.Success {
+		res = s.withDescription(ctx, res, result.ObjectType, result.ObjectName, getStringParam(request.GetArguments(), "parent"), getStringParam(request.GetArguments(), "description"), transport)
+	}
+	if result != nil && result.Success && strings.HasPrefix(strings.ToUpper(result.ObjectType), "PROG") {
+		src, _ := os.ReadFile(filePath)
+		res = withHint(res, s.textPoolHint(ctx, adt.TextPoolTarget{Type: "PROG", Name: result.ObjectName}, string(src)))
+	}
+	return res, nil
 }
 
 func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

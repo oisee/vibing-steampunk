@@ -305,30 +305,61 @@ vsp -s a4h docs read DE BALLEVEL
 vsp -s a4h docs activity /IWBEP/CP_DELETE_JOB
 ```
 
-### Selection texts, beside the field they describe
+### Selection texts and text symbols, without leaving the call
 
-A selection text is maintained in a screen three clicks from the code and
-falls out of sync with it. `vsp texts sync` reads the source instead: a
-trailing comment of the form `"~t:` on a PARAMETERS, SELECT-OPTIONS or named
-SELECTION-SCREEN COMMENT line is that field's text, and the text pool is
-written from it, in the logon language or `--lang`.
-
-```abap
-PARAMETERS: p_devc TYPE tadir-devclass DEFAULT '$TMP', "~t: Package to scan
-            p_deep TYPE abap_bool AS CHECKBOX.      "~t: Follow includes
-SELECT-OPTIONS s_obj FOR tadir-obj_name.            "~t: Object names
-```
+A selection text is maintained in a screen three clicks from the code, and a
+program created over MCP has none. `vsp texts` reads and writes the text pool
+over ADT — selection texts (S) and headings (H) of a program, text symbols
+(I) of a program or a class — and a write is a plan first: what is added,
+what changes from what, what is already so, what is refused (a key the
+screen does not have, a key SAP would reject, a text past 30 characters).
+Nothing is locked when nothing differs.
 
 ```bash
-vsp -s a4h texts sync ZDEMO_RUN --dry-run     # what would be written
-vsp -s a4h texts sync ZDEMO_RUN               # 3 text(s) written to ZDEMO_RUN (selections, EN)
-vsp -s a4h texts set ZDEMO_RUN P_DEVC="Package to scan"    # or one at a time
-vsp -s a4h texts get ZDEMO_RUN                # S, I and H entries
+vsp -s a4h texts get ZDEMO_RUN                       # S, I and H entries
+vsp -s a4h texts set ZDEMO_RUN P_DEVC="Package to scan" S_OBJ="Object names"
+vsp -s a4h texts set ZDEMO_RUN --kind I 001="Nothing found"
+vsp -s a4h texts set ZDEMO_RUN --dry-run P_DEVC="Package to scan"
+vsp -s a4h texts set CLAS ZCL_DEMO --kind I 001="Loaded"
 ```
 
 The text elements are their own ADT resource with their own lock; the lock,
-the write and the unlock happen in the one call. MCP: `i18n` with
-`op: sync_text_pool` or `op: write_text_pool`.
+the write, the unlock and the activation happen in the one call. The
+activation matters: the PUT lands as an inactive version, and activating the
+program does not carry it — texts written without it read back unchanged
+from the active version and look lost. MCP: `i18n` with `op: texts_get` /
+`op: texts_set`, `create PROGRAM` takes a `texts` map, and after a program
+is created or written the result says which screen fields still have no
+text and which `TEXT-xxx` the source uses but never defines — with the call
+that sets them.
+
+### The description, and the binary itself
+
+The description is the short text SE38 shows as the title and prints at the
+head of a list. Creating over ADT sets it once, from the file's header
+comment when deploying — and SE38's own template put `*& Report ZDEMO` there,
+which became the description of more than one program. The header line is
+skipped now, and the text can be set later without touching the source:
+
+```bash
+vsp -s a4h description ZDEMO_XFER                    # what it is
+vsp -s a4h description ZDEMO_XFER "DPL snapshot transfer: download / upload / transplant"
+vsp -s a4h description CLAS ZCL_DEMO "Demo class"    # PROG, INCL, CLAS, INTF, FUGR, FUNC, TABL, DDLS
+```
+
+MCP: `edit` with `type: set_description`, and a `description` on
+`deploy_from_file` and `write_program` is written after the source.
+
+`vsp update` fetches the latest release for this platform, compares it with
+the running version, verifies the download against the release's
+`checksums.txt`, and puts it in place of the running binary — the old one is
+renamed aside first, which is what Windows allows for a running executable.
+
+```bash
+vsp update --check                                   # vsp 2.56.0, latest is 2.57.0: update available
+vsp update                                           # download, verify, replace
+vsp update --version v2.55.0 --force                 # a particular release, newer or not
+```
 
 ### Cluster tables, decoded — BALDAT, INDX, STXL over plain ADT
 
@@ -1008,7 +1039,9 @@ vsp -s a4h variants ZDEMO_NIGHTLY_RUN MONTH_END      # every field, its label, i
 vsp -s a4h fmtest ZDEMO_CALCULATE_TAX                # SE37's saved test data
 vsp -s a4h docs read FU BAL_LOG_CREATE               # SE61 documentation as Markdown
 vsp -s a4h docs img "cleanup job"                    # where in the IMG, and which activity
-vsp -s a4h texts sync ZDEMO_RUN                      # selection texts from "~t: comments in the source
+vsp -s a4h texts set ZDEMO_RUN P_DEVC="Package to scan"  # selection texts, a plan first
+vsp -s a4h description ZDEMO_RUN "What the report does"  # SE38's title, without touching the source
+vsp update                                           # the latest release, verified, in place of this binary
 
 # Cluster tables — what only IMPORT could read, decoded here
 vsp -s a4h cluster read INDX --where "relid = 'ZV'" --schema

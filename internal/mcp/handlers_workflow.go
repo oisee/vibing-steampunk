@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -19,6 +20,11 @@ func (s *Server) routeWorkflowAction(ctx context.Context, action, objectType, ob
 			return s.callHandler(ctx, s.handleWriteProgram, params)
 		case "write_class":
 			return s.callHandler(ctx, s.handleWriteClass, params)
+		case "set_description", "description":
+			if objectName != "" && getStringParam(params, "object_name") == "" {
+				params["object_type"], params["object_name"] = objectType, objectName
+			}
+			return s.callHandler(ctx, s.handleSetDescription, params)
 		}
 	}
 	if action == "create" {
@@ -56,7 +62,8 @@ func (s *Server) handleWriteProgram(ctx context.Context, request mcp.CallToolReq
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	res := s.withDescription(ctx, mcp.NewToolResultText(string(output)), "PROG", programName, "", getStringParam(request.GetArguments(), "description"), transport)
+	return withHint(res, s.textPoolHint(ctx, adt.TextPoolTarget{Type: "PROG", Name: programName}, source)), nil
 }
 
 func (s *Server) handleWriteClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -116,7 +123,28 @@ func (s *Server) handleCreateAndActivateProgram(ctx context.Context, request mcp
 	}
 
 	output, _ := json.MarshalIndent(result, "", "  ")
-	return mcp.NewToolResultText(string(output)), nil
+	target := adt.TextPoolTarget{Type: "PROG", Name: programName}
+	// texts, when given, are written once the program exists and is active:
+	// {"P_DEVC": "Package to scan"} are selection texts, or {"selections":
+	// {...}, "symbols": {...}}. The plan lands in the result either way.
+	if _, given := request.GetArguments()["texts"]; given {
+		kinds, err := textKindsFrom(request.GetArguments())
+		if err != nil {
+			return withHint(mcp.NewToolResultText(string(output)), "texts not written: "+err.Error()), nil
+		}
+		plan, err := s.adtClient.WriteTextPool(ctx, target, s.adtClient.Language(), kinds, transport, adt.TextPoolOptions{})
+		var m map[string]any
+		_ = json.Unmarshal(output, &m)
+		if m == nil {
+			m = map[string]any{"result": string(output)}
+		}
+		m["texts"] = plan
+		if err != nil {
+			m["textsError"] = err.Error()
+		}
+		output, _ = json.MarshalIndent(m, "", "  ")
+	}
+	return withHint(mcp.NewToolResultText(string(output)), s.textPoolHint(ctx, target, source)), nil
 }
 
 func (s *Server) handleCreateClassWithTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

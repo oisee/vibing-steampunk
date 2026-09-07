@@ -486,10 +486,12 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 		return nil, err
 	}
 
-	// Try to get object (if 404, doesn't exist)
+	// Try to get object (if 404, doesn't exist). The object resource speaks
+	// its own vocabulary; asking for text/plain got a 406 from some
+	// releases, which read as "inconclusive" and failed the deploy.
 	_, err = c.transport.Request(ctx, objectURL, &RequestOptions{
 		Method: "GET",
-		Accept: "text/plain",
+		Accept: "*/*",
 	})
 
 	if err != nil {
