@@ -161,16 +161,20 @@ type WriteSourceOptions struct {
 
 // WriteSourceResult represents the result of WriteSource operation
 type WriteSourceResult struct {
-	Success      bool                `json:"success"`
-	ObjectType   string              `json:"objectType"`
-	ObjectName   string              `json:"objectName"`
-	ObjectURL    string              `json:"objectUrl"`
-	Mode         string              `json:"mode"`             // "created" or "updated"
-	Method       string              `json:"method,omitempty"` // Method name if method-level update
-	SyntaxErrors []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
-	Activation   *ActivationResult   `json:"activation,omitempty"`
-	TestResults  *UnitTestResult     `json:"testResults,omitempty"` // For CLAS with TestSource
-	Message      string              `json:"message,omitempty"`
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport     string              `json:"transport,omitempty"`
+	TransportNote string              `json:"transportNote,omitempty"`
+	Success       bool                `json:"success"`
+	ObjectType    string              `json:"objectType"`
+	ObjectName    string              `json:"objectName"`
+	ObjectURL     string              `json:"objectUrl"`
+	Mode          string              `json:"mode"`             // "created" or "updated"
+	Method        string              `json:"method,omitempty"` // Method name if method-level update
+	SyntaxErrors  []SyntaxCheckResult `json:"syntaxErrors,omitempty"`
+	Activation    *ActivationResult   `json:"activation,omitempty"`
+	TestResults   *UnitTestResult     `json:"testResults,omitempty"` // For CLAS with TestSource
+	Message       string              `json:"message,omitempty"`
 }
 
 // WriteSourceResultError converts a logical WriteSource failure into an error
@@ -566,11 +570,17 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		if objectType == "BDEF" {
 			createOpts.Source = source // BDEF requires source embedded in creation request
 		}
+		var chosen TransportChoice
+		createOpts.Chosen = &chosen
 		err := c.CreateObject(ctx, createOpts)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to create %s: %v", objectType, err)
 			return result, nil
 		}
+		if chosen.Transport != "" {
+			opts.Transport = chosen.Transport
+		}
+		result.Transport, result.TransportNote = opts.Transport, chosen.Reason
 
 		// Created in opts.Package, which CreateObject checked against the
 		// whitelist. Both branches below (BDEF shell fill, DDLS/SRVD source
@@ -852,6 +862,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			}
 
 			// Lock for test update
+			trPlan := c.planTransport(ctx, opts.Transport, objectURL, "")
 			lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 			if err != nil {
 				result.Message += fmt.Sprintf(" (Warning: Failed to lock for test update: %v)", err)
@@ -861,7 +872,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			// Reuse the request the object is already bound to when the caller supplied no
 			// transport, so an already-captured object is not rejected with a spurious 409
 			// (issue #144). Re-checks transportable-edit policy on the resolved request.
-			testTransport, resolveErr := c.resolveWriteTransport(opts.Transport, lock.CorrNr, "WriteSource(testclasses)")
+			testTransport, _, resolveErr := c.resolveWriteTransportFor(trPlan, opts.Transport, lock.CorrNr, "WriteSource(testclasses)")
 			if resolveErr != nil {
 				// The compensating unlock is the only place a leak can be
 				// observed, so its failure is reported rather than dropped.
@@ -943,6 +954,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		result.SyntaxErrors = syntaxErrors
 
 		// Lock
+		trPlan := c.planTransport(ctx, opts.Transport, objectURL, "")
 		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
@@ -958,11 +970,12 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		// Reuse the request the object is already bound to when the caller supplied no
 		// transport, so an already-captured object is not rejected with a spurious 409
 		// (issue #144). Re-checks transportable-edit policy on the resolved request.
-		transport, err := c.resolveWriteTransport(opts.Transport, lock.CorrNr, "WriteSource(INTF)")
+		transport, trNote, err := c.resolveWriteTransportFor(trPlan, opts.Transport, lock.CorrNr, "WriteSource(INTF)")
 		if err != nil {
 			result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 			return result, nil
 		}
+		result.Transport, result.TransportNote = transport, trNote
 
 		// Update
 		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
@@ -1047,6 +1060,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		result.SyntaxErrors = syntaxErrors
 
 		// Lock
+		trPlan := c.planTransport(ctx, opts.Transport, objectURL, "")
 		lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to lock object: %v", err)
@@ -1062,11 +1076,12 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		// Reuse the request the object is already bound to when the caller supplied no
 		// transport, so an already-captured object is not rejected with a spurious 409
 		// (issue #144). Re-checks transportable-edit policy on the resolved request.
-		transport, err := c.resolveWriteTransport(opts.Transport, lock.CorrNr, fmt.Sprintf("WriteSource(%s)", objectType))
+		transport, trNote, err := c.resolveWriteTransportFor(trPlan, opts.Transport, lock.CorrNr, fmt.Sprintf("WriteSource(%s)", objectType))
 		if err != nil {
 			result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 			return result, nil
 		}
+		result.Transport, result.TransportNote = transport, trNote
 
 		// Update
 		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, transport)
@@ -1197,6 +1212,7 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 	result.SyntaxErrors = syntaxErrors
 
 	// Lock
+	trPlan := c.planTransport(ctx, transport, objectURL, "")
 	lock, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to lock class: %v", err)
@@ -1212,11 +1228,13 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
 	// (issue #144). Re-checks transportable-edit policy on the resolved request.
-	transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "WriteSource(method)")
+	var trNote string
+	transport, trNote, err = c.resolveWriteTransportFor(trPlan, transport, lock.CorrNr, "WriteSource(method)")
 	if err != nil {
 		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 		return result, nil
 	}
+	result.Transport, result.TransportNote = transport, trNote
 
 	// Update
 	sourceURL := objectURL + "/source/main"

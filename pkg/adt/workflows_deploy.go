@@ -12,15 +12,19 @@ import (
 
 // DeployResult contains the result of a file deployment operation.
 type DeployResult struct {
-	ObjectURL    string   `json:"objectUrl"`
-	ObjectName   string   `json:"objectName"`
-	ObjectType   string   `json:"objectType"`
-	FilePath     string   `json:"filePath"`
-	Success      bool     `json:"success"`
-	Created      bool     `json:"created"` // true if created, false if updated
-	SyntaxErrors []string `json:"syntaxErrors,omitempty"`
-	Errors       []string `json:"errors,omitempty"`
-	Message      string   `json:"message,omitempty"`
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport     string   `json:"transport,omitempty"`
+	TransportNote string   `json:"transportNote,omitempty"`
+	ObjectURL     string   `json:"objectUrl"`
+	ObjectName    string   `json:"objectName"`
+	ObjectType    string   `json:"objectType"`
+	FilePath      string   `json:"filePath"`
+	Success       bool     `json:"success"`
+	Created       bool     `json:"created"` // true if created, false if updated
+	SyntaxErrors  []string `json:"syntaxErrors,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
+	Message       string   `json:"message,omitempty"`
 }
 
 // CreateFromFile creates a new ABAP object from a file and activates it.
@@ -53,6 +57,7 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 	source := string(sourceBytes)
 
 	// 3. Create object
+	var chosen TransportChoice
 	err = c.CreateObject(ctx, CreateObjectOptions{
 		ObjectType:  info.ObjectType,
 		Name:        info.ObjectName,
@@ -60,7 +65,12 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		Description: info.Description,
 		PackageName: packageName,
 		Transport:   transport,
+		Chosen:      &chosen,
 	})
+	if chosen.Transport != "" {
+		transport = chosen.Transport
+	}
+	trNote := chosen.Reason
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -210,8 +220,9 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		ObjectName: info.ObjectName,
 		ObjectType: string(info.ObjectType),
 		Success:    true,
-		Created:    true,
-		Message:    fmt.Sprintf("Successfully created and activated %s %s from %s", info.ObjectType, info.ObjectName, filePath),
+		Transport:  transport, TransportNote: trNote,
+		Created: true,
+		Message: fmt.Sprintf("Successfully created and activated %s %s from %s", info.ObjectType, info.ObjectName, filePath),
 	}, nil
 }
 
@@ -304,6 +315,7 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 	}
 
 	// 5. Lock object
+	trPlan := c.planTransport(ctx, transport, objectURL, "")
 	lockResult, err := c.LockObject(ctx, objectURL, "MODIFY")
 	if err != nil {
 		return &DeployResult{
@@ -328,7 +340,8 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
 	// (issue #144). Re-checks transportable-edit policy on the resolved request.
-	transport, err = c.resolveWriteTransport(transport, lockResult.CorrNr, "UpdateFromFile")
+	var trNote string
+	transport, trNote, err = c.resolveWriteTransportFor(trPlan, transport, lockResult.CorrNr, "UpdateFromFile")
 	if err != nil {
 		return &DeployResult{
 			FilePath:   filePath,
@@ -443,8 +456,9 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		ObjectName: info.ObjectName,
 		ObjectType: objTypeStr,
 		Success:    true,
-		Created:    false,
-		Message:    fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
+		Transport:  transport, TransportNote: trNote,
+		Created: false,
+		Message: fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
 	}, nil
 }
 

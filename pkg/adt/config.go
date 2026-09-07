@@ -191,6 +191,14 @@ func WithAllowedTransports(transports ...string) Option {
 	}
 }
 
+// WithTransportChoice sets how a write with no request named picks one:
+// "auto" (the default) or "off".
+func WithTransportChoice(mode string) Option {
+	return func(c *Config) {
+		c.Safety.TransportChoice = mode
+	}
+}
+
 // WithAllowTransportableEdits enables editing objects that require transport requests.
 // By default, only local objects ($TMP, $* packages) can be edited.
 // When enabled, users can provide transport parameters to EditSource/WriteSource.

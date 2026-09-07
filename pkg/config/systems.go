@@ -62,6 +62,7 @@ type SystemConfig struct {
 	TransportReadOnly       bool     `json:"transport_read_only,omitempty"`
 	AllowedTransports       []string `json:"allowed_transports,omitempty"`
 	AllowTransportableEdits bool     `json:"allow_transportable_edits,omitempty"`
+	TransportChoice         string   `json:"transport_choice,omitempty"` // auto (default) or off
 	BlockFreeSQL            bool     `json:"block_free_sql,omitempty"`
 }
 

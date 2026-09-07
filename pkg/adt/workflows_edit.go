@@ -10,6 +10,10 @@ import (
 
 // EditSourceResult represents the result of editing source code.
 type EditSourceResult struct {
+	// Transport is the request the write went under, and TransportNote
+	// says how it was chosen when the caller named none.
+	Transport      string            `json:"transport,omitempty"`
+	TransportNote  string            `json:"transportNote,omitempty"`
 	Success        bool              `json:"success"`
 	ObjectURL      string            `json:"objectUrl"`
 	ObjectName     string            `json:"objectName"`
@@ -380,6 +384,7 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	if isClassInclude && parentClassURL != "" {
 		lockURL = parentClassURL
 	}
+	trPlan := c.planTransport(ctx, opts.Transport, lockURL, "")
 	lockResult, err := c.LockObject(ctx, lockURL, "MODIFY")
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to lock object: %v", err)
@@ -397,11 +402,12 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
 	// (issue #144). Re-checks transportable-edit policy on the resolved request.
-	tr, err := c.resolveWriteTransport(opts.Transport, lockResult.CorrNr, "EditSource")
+	tr, trNote, err := c.resolveWriteTransportFor(trPlan, opts.Transport, lockResult.CorrNr, "EditSource")
 	if err != nil {
 		result.Message = fmt.Sprintf("Transportable-edit check failed: %v", err)
 		return result, nil
 	}
+	result.Transport, result.TransportNote = tr, trNote
 
 	// 6. Update source
 	if isClassInclude && className != "" {

@@ -114,6 +114,42 @@ the CLI takes the entry out (the plan lists it under `removed`), and
 parameter left behind is gone after the call, and a second call says
 unchanged.
 
+## Done — 2026-09-08 — the request a write goes under
+
+Asked for from the second session after a day on which the MCP, given no
+`transport`, let SAP generate two "Generated Request for Change Recording"
+beside the developer's open request. The write now runs the transport
+check first — `/sap/bc/adt/cts/transportchecks` lists the user's open
+requests that fit, the way Eclipse's dialog gets them — and picks: the
+object's own request from the lock, else the candidate already holding
+objects of the package (judged by TADIR over the request's object list),
+else the only candidate, else the newest; with none and transports
+enabled, it creates one named after the package and object. The check
+runs *before* the lock: it is stateless, and a stateless hop between LOCK
+and PUT retires the handle (#91) — the session-affinity tests caught the
+first version doing exactly that. A failed check leaves the choice to SAP
+as before; a failed creation fails the write. Every create/update result
+carries `transport` and `transportNote`. `--transport-choice off`,
+`SAP_TRANSPORT_CHOICE`, `transport_choice` in `.vsp.json`. Confirmed on
+A4H: a program created in a transportable package with no request named
+landed in the open request that already held one of that package.
+
+Not done from the same ask: merging requests and moving an object between
+them. ADT's organizer has no such resource (discovery: add-object,
+add-objects-from-package, modify, change-owner, new-task,
+sort-and-compress, release variants — nothing that removes an entry), and
+`TR_MERGE_REQUESTS`, `TR_APPEND_TO_COMM_OBJS_KEYS`, `TR_DELETE_COMM` are
+not remote-enabled (TFDIR.FMODE blank), so classic RFC cannot reach them.
+ZADT_VSP's `CALL FUNCTION` bridge could — its flat-string parameters would
+put a request number into the first field of the header structure — but
+the one test call of it was refused by the session's permission
+classifier, so nothing shipped untested. SE09 → Utilities → Reorganize →
+Merge Requests for now.
+
+Also new: `vsp adt request METHOD PATH` — one ADT request as given, over
+the client's session and CSRF token, for a resource vsp has no command for
+yet; it is what found the check's request list and the organizer's links.
+
 Still open from that session's notes, not done here: a function module
 whose TABLES parameter "declares no type" in the parser; a source line
 over 255 characters refused without a line number; `save_to_file` reading
