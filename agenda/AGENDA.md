@@ -146,6 +146,12 @@ the one test call of it was refused by the session's permission
 classifier, so nothing shipped untested. SE09 → Utilities → Reorganize →
 Merge Requests for now.
 
+Left on A4H: two released local workbench requests from the probe, each
+holding the entry of a probe program deleted before it. Deleting them
+over ADT was refused — "contains locked objects", the entry's lock
+outliving the object, the same family as #166 — and releasing them was
+the way to close them out.
+
 Also new: `vsp adt request METHOD PATH` — one ADT request as given, over
 the client's session and CSRF token, for a resource vsp has no command for
 yet; it is what found the check's request list and the organizer's links.
