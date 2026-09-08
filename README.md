@@ -382,9 +382,23 @@ the package, then the only candidate, then the newest; with none and
 `--enable-transports`, one is created and the result says so. Every result
 carries `transport` and, when the choice was made here, `transportNote`.
 `--transport-choice off` (or `SAP_TRANSPORT_CHOICE=off`) restores the old
-behaviour. Merging requests is not in ADT's surface (the organizer offers
-add-object, change-owner, new-task, sort-and-compress — no merge, no
-remove), and `TR_MERGE_REQUESTS` is not remote-enabled; that stays SE09.
+behaviour.
+
+**Merging requests, moving an entry** is SE09's Utilities → Reorganize and
+nothing in ADT — the organizer's resources add objects and release, none
+removes an entry — and the function modules behind SE09 are not
+remote-enabled. They are reachable through ZADT_VSP's `CALL FUNCTION`
+bridge, which now takes JSON for structure and table parameters and turns
+a dialog off when told to:
+
+```bash
+SAP_ENABLE_TRANSPORTS=true vsp -s a4h transport merge TR-A TR-B --into TR-C     # tasks and objects move, sources are deleted
+SAP_ENABLE_TRANSPORTS=true vsp -s a4h transport move "PROG ZDEMO_RUN" --from TR-A --to TR-B
+```
+
+MCP: `system` with `merge_transports` (`source`, `target`) and
+`move_transport_object` (`object`, `from`, `to`). Both need ZADT_VSP on the
+system — redeploy it after this release, the bridge changed.
 
 `vsp update` fetches the latest release for this platform, compares it with
 the running version, verifies the download against the release's

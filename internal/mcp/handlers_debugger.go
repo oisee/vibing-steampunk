@@ -170,15 +170,23 @@ func (s *Server) handleCallRFC(ctx context.Context, request mcp.CallToolRequest)
 		return newToolResultError("function is required"), nil
 	}
 
-	// Parse params if provided
-	params := make(map[string]string)
-	if paramsStr, ok := request.GetArguments()["params"].(string); ok && paramsStr != "" {
-		// Parse JSON params
-		var rawParams map[string]interface{}
-		if err := json.Unmarshal([]byte(paramsStr), &rawParams); err != nil {
-			return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+	// params: a JSON string or an object. A string value goes to an
+	// elementary parameter; an object or array to a structure or table.
+	params := make(map[string]any)
+	switch raw := request.GetArguments()["params"].(type) {
+	case string:
+		if raw != "" {
+			if err := json.Unmarshal([]byte(raw), &params); err != nil {
+				return newToolResultError(fmt.Sprintf("Invalid params JSON: %v", err)), nil
+			}
 		}
-		for k, v := range rawParams {
+	case map[string]any:
+		params = raw
+	}
+	for k, v := range params {
+		switch v.(type) {
+		case string, map[string]any, []any, nil:
+		default:
 			params[k] = fmt.Sprintf("%v", v)
 		}
 	}

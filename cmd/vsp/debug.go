@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -731,12 +732,20 @@ func (s *debugSession) callRFC(args []string) error {
 	}
 
 	fm := strings.ToUpper(args[0])
-	params := make(map[string]string)
+	params := make(map[string]any)
 
 	// Parse param=value pairs
 	for _, arg := range args[1:] {
 		parts := strings.SplitN(arg, "=", 2)
 		if len(parts) == 2 {
+			// {…} or […] is a structure or a table, passed as JSON.
+			if v := strings.TrimSpace(parts[1]); strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[") {
+				var obj any
+				if err := json.Unmarshal([]byte(v), &obj); err == nil {
+					params[strings.ToUpper(parts[0])] = obj
+					continue
+				}
+			}
 			params[strings.ToUpper(parts[0])] = parts[1]
 		}
 	}
