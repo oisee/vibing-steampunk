@@ -145,6 +145,7 @@ func NewTransport(cfg *Config) *Transport {
 // NewTransportWithClient creates a new Transport with a custom HTTP client.
 // This is useful for testing with mock HTTP clients.
 func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
+	applyProxyContextIDGuardEnv(cfg)
 	t := &Transport{
 		config:     cfg,
 		httpClient: client,
@@ -175,6 +176,23 @@ type RequestOptions struct {
 	// where the lock handle is bound to a specific server-side session.
 	// When set, X-sap-adt-sessiontype header is set to "stateful" for this request.
 	Stateful bool
+
+	// FreshContext asks for a brand-new stateful context for this request when
+	// Config.ProxyContextIDGuard is on. LOCK sets it: a lock→write→unlock chain
+	// that runs inside a context another chain already used — the proxy keeps
+	// injecting the same live context — writes its inactive version but the
+	// object never reaches the activation worklist, and the activation that
+	// follows is refused with activationExecuted="false" and no message. The
+	// empty "sap-contextid=" cookie makes SAP open a new context, and the proxy
+	// re-learns it from the response.
+	FreshContext bool
+
+	// ReleaseContext lets the proxy inject its stored stateful context into a
+	// stateless request when Config.ProxyContextIDGuard is on — the one case
+	// where the guard cookie is deliberately left off. A stateless request
+	// ends the context it arrives in, which is how a finished lock chain's
+	// context is retired instead of lingering until the session timeout.
+	ReleaseContext bool
 }
 
 // Response wraps an HTTP response with convenience methods.
@@ -272,6 +290,9 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 	// the cookies of the session it replaced is exactly the mismatch the server
 	// rejects as a CSRF failure.
 	t.addCookies(req)
+	// The proxy guard goes on after the cookies: it only steps in when no
+	// cookie of our own is on the request.
+	t.applyProxyContextIDGuard(req, opts)
 
 	// Execute request
 	traceHTTPRequest(req, opts.Body)
@@ -412,6 +433,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	if t.config.SessionType == SessionStateful {
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
+	t.applyProxyContextIDGuard(req, opts)
 
 	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
@@ -557,6 +579,17 @@ func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful 
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	// Session-holding proxy chain: open a fresh stateful context with an
+	// empty contextid so the chain replaces its (possibly dead) stored
+	// context with the live one from this response. Verified against SAP
+	// BAS: HEAD + stateful + "Cookie: sap-contextid=" heals ICMENOSESSION
+	// for all follow-up requests; without the stateful header the chain
+	// keeps the dead one.
+	if t.config.ProxyContextIDGuard && !t.hasJarCookies(req) && req.Header.Get("Cookie") == "" {
+		req.Header.Set("X-sap-adt-sessiontype", "stateful")
+		req.Header.Set("Cookie", "sap-contextid=")
+	}
+
 	traceHTTPRequest(req, nil)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
@@ -676,6 +709,94 @@ func (t *Transport) extractSessionID(resp *http.Response) string {
 		}
 	}
 	return ""
+}
+
+// applyProxyContextIDGuardEnv switches Config.ProxyContextIDGuard on when
+// SAP_PROXY_CONTEXTID_GUARD=true is set in the environment.
+func applyProxyContextIDGuardEnv(cfg *Config) {
+	if cfg == nil || cfg.ProxyContextIDGuard {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("SAP_PROXY_CONTEXTID_GUARD")), "true") {
+		cfg.ProxyContextIDGuard = true
+	}
+}
+
+// hasJarCookies reports whether the cookie jar holds cookies for the
+// request URL (i.e. we talk to SAP directly and manage the session
+// ourselves). Behind a session-holding proxy chain the jar stays empty for
+// sap-contextid: the chain absorbs the live Set-Cookie and only deletion
+// cookies (which the jar does not keep) get through.
+func (t *Transport) hasJarCookies(req *http.Request) bool {
+	client, ok := t.httpClient.(*http.Client)
+	if !ok || client.Jar == nil || req.URL == nil {
+		return false
+	}
+	return len(client.Jar.Cookies(req.URL)) > 0
+}
+
+// applyProxyContextIDGuard sends an explicit empty "sap-contextid=" cookie
+// on stateless requests when Config.ProxyContextIDGuard is enabled and no
+// cookie (jar or user-provided) is present. The ICM honours the first
+// sap-contextid in the header, so the empty value wins over whatever the
+// session-holding chain appends, and the stateless request no longer ends
+// the stateful context the chain keeps — which would leave every following
+// request in ICMENOSESSION. Stateful requests are left alone so the chain
+// keeps injecting the live context that lock handles are bound to — except
+// when the request asks for a fresh context (RequestOptions.FreshContext),
+// where the same empty cookie makes SAP open a new one and the chain
+// re-learns it. RequestOptions.ReleaseContext leaves a stateless request
+// without the cookie on purpose, so the injected context is ended.
+func (t *Transport) applyProxyContextIDGuard(req *http.Request, opts *RequestOptions) {
+	if !t.config.ProxyContextIDGuard {
+		return
+	}
+	if req.Header.Get("Cookie") != "" || t.hasJarCookies(req) {
+		return
+	}
+	if opts != nil && opts.ReleaseContext {
+		return
+	}
+	if req.Header.Get("X-sap-adt-sessiontype") == "stateful" && (opts == nil || !opts.FreshContext) {
+		return
+	}
+	req.Header.Set("Cookie", "sap-contextid=")
+}
+
+// ReleaseProxyContext retires the stateful context a session-holding proxy
+// chain currently injects, once a lock chain is finished with it. Without
+// the guard there is nothing to retire and the call is a no-op. The request
+// is a cheap stateless HEAD that carries no guard cookie, so the chain
+// injects its stored context and SAP ends it (verified: SM04 shows no
+// lingering ADT sessions afterwards). Failures are ignored: an already-dead
+// context answers ICMENOSESSION, which is the state this call wants anyway,
+// and the next LOCK opens a fresh context regardless.
+func (t *Transport) ReleaseProxyContext(ctx context.Context) {
+	if !t.config.ProxyContextIDGuard {
+		return
+	}
+	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
+	if err != nil {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, nil)
+	if err != nil {
+		return
+	}
+	if t.config.HasBasicAuth() {
+		req.SetBasicAuth(t.config.Username, t.config.Password)
+	}
+	t.addCookies(req)
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("X-sap-adt-sessiontype", "stateless")
+	traceHTTPRequest(req, nil)
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	traceHTTPResponse(resp, nil)
 }
 
 // CSRF token accessors with mutex protection

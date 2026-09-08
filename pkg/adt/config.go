@@ -67,6 +67,24 @@ type Config struct {
 	// stop to ask a human something — a browser sign-in with a second factor
 	// takes far longer than any machine-to-machine handshake.
 	ReauthTimeout time.Duration
+
+	// ProxyContextIDGuard enables a workaround for session-holding proxy
+	// chains such as the SAP Business Application Studio destination proxy
+	// (HTTP_PROXY=127.0.0.1:8887 → secure-outbound-connectivity → BTP
+	// destination → Cloud Connector). Verified against BAS: the chain keeps
+	// the SAP sap-contextid itself — a live Set-Cookie for it never reaches
+	// the client, deletion cookies do — and injects the stored context into
+	// every request that carries no Cookie header. A stateless request served
+	// in that context ends it on the SAP side, after which every following
+	// request fails with ICMENOSESSION and the chain never recovers on its
+	// own. The ICM honours the first sap-contextid in the Cookie header, so an
+	// explicit empty "sap-contextid=" suppresses the injection. When enabled:
+	// stateless requests carry that empty cookie (the stateful context
+	// survives), the CSRF probe and every LOCK open a fresh stateful context
+	// with it (the chain re-learns the live one from the response), and after
+	// UNLOCK a stateless probe without the cookie retires the context.
+	// Also enabled via SAP_PROXY_CONTEXTID_GUARD=true.
+	ProxyContextIDGuard bool
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -108,6 +126,14 @@ func WithLanguage(lang string) Option {
 func WithInsecureSkipVerify() Option {
 	return func(c *Config) {
 		c.InsecureSkipVerify = true
+	}
+}
+
+// WithProxyContextIDGuard enables the session-holding-proxy workaround
+// (see Config.ProxyContextIDGuard).
+func WithProxyContextIDGuard() Option {
+	return func(c *Config) {
+		c.ProxyContextIDGuard = true
 	}
 }
 

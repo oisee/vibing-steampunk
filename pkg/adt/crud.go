@@ -48,6 +48,9 @@ func (c *Client) LockObject(ctx context.Context, objectURL string, accessMode st
 		Query:    params,
 		Accept:   "application/vnd.sap.as+xml;charset=UTF-8;dataname=com.sap.adt.lock.result",
 		Stateful: true, // Lock handles are session-specific — force stateful (issue #88)
+		// Behind a session-holding proxy, every chain starts in its own context:
+		// one reused across chains loses the activation worklist entry.
+		FreshContext: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("locking object: %w", err)
@@ -167,6 +170,10 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 	// Only a *successful* unlock ends the window. A failed one may have left
 	// the lock held, and suppressing a ping is the cheaper mistake.
 	c.noteLockClosed(lockHandle)
+
+	// The chain is done with its stateful context; behind a session-holding
+	// proxy, retire it rather than leave it to the session timeout.
+	c.transport.ReleaseProxyContext(ctx)
 
 	return nil
 }
