@@ -15,6 +15,97 @@ import (
 	"time"
 )
 
+// httpTraceEnabled reports whether the VSP_HTTP_TRACE env var requests raw
+// HTTP request/response dumps to stderr. Diagnostic-only — never leaves the
+// binary switched on by default, and Authorization / Cookie values are
+// redacted so the dump is safe to paste.
+func httpTraceEnabled() bool {
+	v := os.Getenv("VSP_HTTP_TRACE")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+const httpTraceBodyLimit = 4096
+
+var (
+	traceOutMu sync.Mutex
+	traceOut   io.Writer
+)
+
+// traceWriter returns where HTTP trace lines go: the file named by
+// VSP_TRACE_LOG (appended, created on first use), otherwise stderr. An MCP
+// server's stderr is rarely visible, so the file is what makes the trace
+// readable there.
+func traceWriter() io.Writer {
+	traceOutMu.Lock()
+	defer traceOutMu.Unlock()
+	if traceOut != nil {
+		return traceOut
+	}
+	if path := strings.TrimSpace(os.Getenv("VSP_TRACE_LOG")); path != "" {
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
+			traceOut = f
+			return traceOut
+		}
+	}
+	traceOut = os.Stderr
+	return traceOut
+}
+
+func traceHTTPRequest(req *http.Request, body []byte) {
+	if !httpTraceEnabled() {
+		return
+	}
+	w := traceWriter()
+	fmt.Fprintf(w, "\n>>> HTTP %s %s %s\n", time.Now().UTC().Format(time.RFC3339Nano), req.Method, req.URL.String())
+	for k, vs := range req.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Authorization") || strings.EqualFold(k, "Cookie") {
+				v = "[REDACTED]"
+			}
+			fmt.Fprintf(w, ">>> %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(w, ">>> body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(w, ">>> ... (truncated)\n")
+		}
+	}
+}
+
+func traceHTTPResponse(resp *http.Response, body []byte) {
+	if !httpTraceEnabled() || resp == nil {
+		return
+	}
+	w := traceWriter()
+	fmt.Fprintf(w, "<<< HTTP %d %s\n", resp.StatusCode, resp.Status)
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			if strings.EqualFold(k, "Set-Cookie") {
+				if i := strings.Index(v, "="); i > 0 {
+					v = v[:i] + "=[REDACTED]"
+				}
+			}
+			fmt.Fprintf(w, "<<< %s: %s\n", k, v)
+		}
+	}
+	if len(body) > 0 {
+		trunc := body
+		if len(trunc) > httpTraceBodyLimit {
+			trunc = trunc[:httpTraceBodyLimit]
+		}
+		fmt.Fprintf(w, "<<< body (%d bytes):\n%s\n", len(body), string(trunc))
+		if len(body) > httpTraceBodyLimit {
+			fmt.Fprintf(w, "<<< ... (truncated)\n")
+		}
+	}
+	fmt.Fprintln(w)
+}
+
 // HTTPDoer is an interface for executing HTTP requests.
 // This abstraction allows for easy testing with mock implementations.
 type HTTPDoer interface {
@@ -183,6 +274,7 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 	t.addCookies(req)
 
 	// Execute request
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing request: %w", err)
@@ -194,6 +286,7 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 	t.adoptServerCookies(resp)
 
 	// The same expiry reaches a plain read as a successful-looking response that
@@ -245,6 +338,12 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 			// Clear cached CSRF token and session ID
 			t.setCSRFToken("")
 			t.setSessionID("")
+			// Drop the stale sap-contextid / SAP_SESSIONID cookies too: the
+			// stateless activation that ended the context on the SAP side left
+			// them in the jar, and every retry that re-sends them is answered
+			// with ICMENOSESSION again — including the /core/discovery probe
+			// that is supposed to open the fresh session.
+			t.resetCookieJar()
 			// Fetch new CSRF token (this establishes a new session)
 			if err := t.fetchCSRFTokenFor(ctx, opts.Stateful); err != nil {
 				return nil, fmt.Errorf("refreshing session after timeout: %w", err)
@@ -314,6 +413,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, opts.Body)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing retry request: %w", err)
@@ -324,6 +424,7 @@ func (t *Transport) retryRequest(ctx context.Context, path string, opts *Request
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
 	}
+	traceHTTPResponse(resp, body)
 
 	if resp.StatusCode >= 400 {
 		return nil, &APIError{
@@ -456,6 +557,7 @@ func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful 
 		req.Header.Set("X-sap-adt-sessiontype", "stateful")
 	}
 
+	traceHTTPRequest(req, nil)
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
 		return "", 0, false, fmt.Errorf("executing request: %w", err)
@@ -463,6 +565,7 @@ func (t *Transport) probeCSRFToken(ctx context.Context, method string, stateful 
 	defer resp.Body.Close()
 	// Drain the body so the connection can be reused.
 	_, _ = io.Copy(io.Discard, resp.Body)
+	traceHTTPResponse(resp, nil)
 	t.adoptServerCookies(resp)
 
 	return resp.Header.Get("X-CSRF-Token"), resp.StatusCode, t.redirectedAwayFromSAP(resp), nil
