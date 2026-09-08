@@ -84,6 +84,10 @@ type ctsRequest struct {
 	// separate the two. Bucket is "modifiable", "released", or "".
 	Section string
 	Bucket  string
+	// Project and ProjectID come from the tm:project level the organizer
+	// inserts between target and bucket when requests carry a CTS project.
+	Project   string
+	ProjectID string
 
 	Tasks   []ctsRequest
 	Objects []ctsObject
@@ -94,6 +98,8 @@ type ctsScope struct {
 	section    string
 	target     string
 	targetDesc string
+	project    string
+	projectID  string
 	bucket     string
 }
 
@@ -121,6 +127,9 @@ func collectCTSRequests(n ctsNode, sc ctsScope, out *[]ctsRequest) {
 		if v := n.attr("desc"); v != "" {
 			sc.targetDesc = v
 		}
+	case "project":
+		sc.project = n.attr("name")
+		sc.projectID = n.attr("projectId")
 	case "modifiable":
 		sc.bucket = "modifiable"
 	case "released":
@@ -153,6 +162,8 @@ func newCTSRequest(n ctsNode, sc ctsScope) ctsRequest {
 		LastChanged: n.attr("lastchanged_timestamp"),
 		Section:     sc.section,
 		Bucket:      sc.bucket,
+		Project:     sc.project,
+		ProjectID:   sc.projectID,
 	}
 
 	// The enclosing tm:target names the target when the request element does

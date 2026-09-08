@@ -460,11 +460,16 @@ Info:
 
 Transports:
   SAP(action="system", params={"type": "list_transports"})
+      defaults: request_type KWT, request_status DR, source auto (organizer tree → search configuration → E070/E07T)
+  SAP(action="system", params={"type": "list_transports", "request_status": "D"})        - modifiable only
+  SAP(action="system", params={"type": "list_transports", "source": "config"})           - as Eclipse: saved search configuration
+  SAP(action="system", params={"type": "list_transports", "request_status": "R", "released_from": "20260101", "released_to": "20261231"})
   SAP(action="system", params={"type": "get_transport", "transport": "A4HK900001"})
   SAP(action="system", params={"type": "create_transport", "description": "...", "package": "$TMP"})
   SAP(action="system", params={"type": "release_transport", "transport": "A4HK900001"})
   SAP(action="system", params={"type": "delete_transport", "transport": "A4HK900001"})
   SAP(action="system", params={"type": "get_user_transports", "user_name": "DEVELOPER"})
+      same parameters as list_transports (request_type, request_status, released_from/to, targets, source, config_uri)
   SAP(action="system", params={"type": "get_transport_info", "object_url": "...", "dev_class": "$TMP"})
 
 Git/abapGit:

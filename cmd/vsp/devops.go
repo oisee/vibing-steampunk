@@ -426,11 +426,21 @@ Examples:
 var transportListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List transport requests",
-	Long: `List transport requests for the current user.
+	Long: `List transport requests of a user: workbench and customizing, modifiable
+and released by default.
+
+The listing is read from GET /sap/bc/adt/cts/transportrequests with explicit
+requestType and requestStatus (without them the organizer answers with
+released requests only), falling back to the saved Transport Organizer
+search configuration and then to the E070/E07T tables. The source that
+answered is reported on stderr.
 
 Examples:
   vsp transport list
-  vsp transport list --user DEVELOPER`,
+  vsp transport list --user DEVELOPER
+  vsp transport list --status D                      # modifiable only
+  vsp transport list --source config                 # as Eclipse: saved search configuration
+  vsp transport list --status R --released-from 20260101 --released-to 20261231`,
 	RunE: runTransportList,
 }
 
@@ -557,7 +567,14 @@ func init() {
 	deployCmd.Flags().String("transport", "", "Transport request number")
 
 	// Transport list flags
-	transportListCmd.Flags().String("user", "", "Filter by user (default: current user, '*' for every user)")
+	transportListCmd.Flags().String("user", "", "Filter by user (default: current user, '*' for every user — source sql only)")
+	transportListCmd.Flags().String("type", "", "Request types: letters of K (workbench), W (customizing), T (transport of copies); default KWT")
+	transportListCmd.Flags().String("status", "", "Request statuses: letters of D (modifiable), R (released); default DR")
+	transportListCmd.Flags().String("released-from", "", "YYYYMMDD; with --released-to bounds the released requests (default: last 14 days)")
+	transportListCmd.Flags().String("released-to", "", "YYYYMMDD; see --released-from")
+	transportListCmd.Flags().String("source", "", "auto (default), params, config or sql; see 'vsp transport list --help'")
+	transportListCmd.Flags().String("config-uri", "", "Search configuration for --source config (default: the one saved for the user)")
+	transportListCmd.Flags().Bool("no-targets", false, "Do not group by transport target and CTS project")
 
 	// Install flags
 	installZadtVspCmd.Flags().String("package", "$ZADT_VSP", "Target package for ZADT_VSP objects")
@@ -3280,26 +3297,50 @@ func runTransportList(cmd *cobra.Command, args []string) error {
 	}
 
 	user, _ := cmd.Flags().GetString("user")
+	requestType, _ := cmd.Flags().GetString("type")
+	requestStatus, _ := cmd.Flags().GetString("status")
+	releasedFrom, _ := cmd.Flags().GetString("released-from")
+	releasedTo, _ := cmd.Flags().GetString("released-to")
+	source, _ := cmd.Flags().GetString("source")
+	configURI, _ := cmd.Flags().GetString("config-uri")
+	noTargets, _ := cmd.Flags().GetBool("no-targets")
 
 	ctx := context.Background()
-	transports, err := client.ListTransports(ctx, user)
+	res, err := client.QueryTransports(ctx, adt.TransportQuery{
+		User:            user,
+		RequestTypes:    requestType,
+		RequestStatuses: requestStatus,
+		ReleasedFrom:    releasedFrom,
+		ReleasedTo:      releasedTo,
+		Source:          source,
+		ConfigURI:       configURI,
+		Targets:         !noTargets,
+	})
 	if err != nil {
 		return fmt.Errorf("listing transports failed: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "source: %s; %s\n", res.Source, res.Query.Describe())
+	if res.ConfigURI != "" {
+		fmt.Fprintf(os.Stderr, "search configuration: %s\n", res.ConfigURI)
+	}
+	for _, n := range res.Notes {
+		fmt.Fprintf(os.Stderr, "note: %s\n", n)
+	}
 
+	transports := adt.FlattenTransports(res.Transports)
 	if len(transports) == 0 {
 		fmt.Println("No transport requests found.")
 		return nil
 	}
 
-	fmt.Printf("%-12s %-12s %-8s %-10s %s\n", "NUMBER", "OWNER", "STATUS", "TYPE", "DESCRIPTION")
-	fmt.Println(strings.Repeat("-", 80))
+	fmt.Printf("%-12s %-12s %-8s %-10s %-11s %s\n", "NUMBER", "OWNER", "STATUS", "TYPE", "BUCKET", "DESCRIPTION")
+	fmt.Println(strings.Repeat("-", 92))
 	for _, t := range transports {
 		status := t.Status
 		if t.StatusText != "" {
 			status = t.StatusText
 		}
-		fmt.Printf("%-12s %-12s %-8s %-10s %s\n", t.Number, t.Owner, status, t.Type, t.Description)
+		fmt.Printf("%-12s %-12s %-8s %-10s %-11s %s\n", t.Number, t.Owner, status, t.Type, t.Bucket, t.Description)
 	}
 	fmt.Printf("\n%d transport(s)\n", len(transports))
 	return nil
