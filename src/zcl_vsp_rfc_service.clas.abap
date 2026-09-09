@@ -481,8 +481,17 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " A TABLES parameter is typed by its line — or, when the reference is
+    " a table type such as DYCATT_TAB, by the table itself; a table of
+    " tables is what the function refuses as incompatible.
     TRY.
-        CREATE DATA ro_data TYPE STANDARD TABLE OF (lv_type).
+        DATA lo_type TYPE REF TO cl_abap_typedescr.
+        cl_abap_typedescr=>describe_by_name( EXPORTING p_name = lv_type RECEIVING p_descr_ref = lo_type EXCEPTIONS OTHERS = 1 ).
+        IF sy-subrc = 0 AND lo_type IS BOUND AND lo_type->kind = cl_abap_typedescr=>kind_table.
+          CREATE DATA ro_data TYPE (lv_type).
+        ELSE.
+          CREATE DATA ro_data TYPE STANDARD TABLE OF (lv_type).
+        ENDIF.
       CATCH cx_sy_create_data_error.
         CLEAR ro_data.
     ENDTRY.

@@ -124,12 +124,24 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
           DATA(lv_brace_start) = find( val = iv_text off = lv_params_start sub = '{' ).
           IF lv_brace_start >= 0.
             " Count braces to find the matching closing brace
+            " A brace inside a string value is not a brace: strings are
+            " skipped, escapes honoured, or a value such as "{" cut the
+            " params short and lost every key after it.
             DATA(lv_depth) = 0.
             DATA(lv_pos) = lv_brace_start.
             DATA(lv_len) = strlen( iv_text ).
+            DATA(lv_in_str) = abap_false.
             WHILE lv_pos < lv_len.
               DATA(lv_char) = iv_text+lv_pos(1).
-              IF lv_char = '{'.
+              IF lv_in_str = abap_true.
+                IF lv_char = '\'.
+                  lv_pos = lv_pos + 1.
+                ELSEIF lv_char = '"'.
+                  lv_in_str = abap_false.
+                ENDIF.
+              ELSEIF lv_char = '"'.
+                lv_in_str = abap_true.
+              ELSEIF lv_char = '{'.
                 lv_depth = lv_depth + 1.
               ELSEIF lv_char = '}'.
                 lv_depth = lv_depth - 1.
