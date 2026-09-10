@@ -442,6 +442,13 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		return result, nil
 	}
 	result.Activation = activation
+	if !activation.Success {
+		// The write went through, the activation did not: say so instead of
+		// reporting an activated object that is still inactive.
+		result.Message = fmt.Sprintf("Source updated but activation failed: %s",
+			strings.Join(activation.ProblemLines(), "; "))
+		return result, nil
+	}
 
 	result.Success = true
 	// Warnings no longer stop the write, so the message has to carry them —
