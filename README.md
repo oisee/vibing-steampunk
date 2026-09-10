@@ -13,6 +13,10 @@ S/4, AMDP needs HANA, and some ADT resources present on S/4 are absent on ERP.
 >   BALDAT, INDX, STXL — every table an `EXPORT ... TO DATABASE` ever wrote — read over
 >   plain ADT and decoded here: SAP's LZH and LZC decompressed in Go, the cluster format
 >   walked, the fields named from DD03L. What only `IMPORT` could read, without a line of ABAP.
+> - **[A dump's own why](#post-mortem-from-a-dump-to-what-was-logged-around-it)** — `dumps --explain`
+>   now reads the whole ST22 document, not just the stack: the message it raised with its
+>   variables, the system fields, the failing source line, and the runtime's chosen variables
+>   per frame — so a stale handle or an unresolved pointer is on screen, not dug out by hand.
 > - **[The application log with its messages](#post-mortem-from-a-dump-to-what-was-logged-around-it)**,
 >   by object and date range, and the same log from a bare SE16H export of two tables.
 > - **[Spool and jobs](#jobs-and-spool--sm37-and-sp01-as-tables)** — SP01's list decoded
@@ -214,9 +218,19 @@ happen again.
 ```bash
 vsp -s a4h dumps --group                          # what keeps failing, not what failed once
 vsp -s a4h dumps --similar latest                 # what else looks like this one, and how closely
-vsp -s a4h dumps --explain latest --tolerance 10m # one dump, its stack, and the log around it
+vsp -s a4h dumps --explain latest --tolerance 10m # the why: message, failing line, stack, and the log around it
 vsp -s a4h applog --program ZCL_ORDER_POST        # who logged what, and from where
 ```
+
+`--explain` reads the one formatted document ST22 keeps and pulls the causal
+detail out of it — no extra round trips. Before the stack it prints the message
+the dump raised with its own variables (`message SY 373 (type X) with -1`), the
+system fields that frame it (`SUBRC`, `FDPOS`, `PFKEY`, `TITLE`), and the source
+line it died on with a line either side, the failing one marked. `--json` adds
+a `detail` object with the full `systemFields`, `source`, and the runtime's
+`variables` per stack frame — where a stale handle or an unresolved pointer
+shows up as its value. So the answer to "why" is on screen, not reconstructed by
+hand from the raw dump.
 
 `--group` collapses dumps by runtime error and terminated program, which is
 structural. Grouping by "the same afternoon" would make a busy hour look like

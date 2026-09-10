@@ -140,15 +140,17 @@ func explainDump(ctx context.Context, client *adt.Client, cmd *cobra.Command, du
 	if err != nil {
 		return err
 	}
-	// Read separately for display; the correlation already used it for ranking.
-	stack, stackErr := client.DumpStack(ctx, dump.ID)
+	// One document carries the stack, the system fields, the source extract and
+	// the chosen variables; read it once and show the causal detail, not just
+	// the stack.
+	detail, detailErr := client.DumpDetail(ctx, dump.ID)
 
 	if asJSON {
 		return emitJSON(struct {
 			Dump    adt.Dump        `json:"dump"`
-			Stack   []adt.DumpFrame `json:"stack,omitempty"`
+			Detail  *adt.DumpDetail `json:"detail,omitempty"`
 			Matches []adt.LogMatch  `json:"matches"`
-		}{dump, stack, matches})
+		}{dump, detail, matches})
 	}
 
 	fmt.Printf("%s  %s\n", stamp(dump.At), dump.ErrorType)
@@ -159,24 +161,27 @@ func explainDump(ctx context.Context, client *adt.Client, cmd *cobra.Command, du
 	fmt.Println()
 
 	switch {
-	case errors.Is(stackErr, adt.ErrDumpDetailUnavailable):
+	case errors.Is(detailErr, adt.ErrDumpDetailUnavailable):
 		// Not a fault: the release has the feed and not the detail resource.
-		fmt.Fprintf(os.Stderr, "%v\n\n", stackErr)
-	case stackErr != nil:
-		fmt.Fprintf(os.Stderr, "the call stack could not be read: %v\n\n", stackErr)
-	case len(stack) > 0:
-		fmt.Println("Call stack at the failure:")
-		for _, f := range stack {
-			where := f.Program
-			if f.Include != "" && f.Include != f.Program {
-				where += "/" + f.Include
+		fmt.Fprintf(os.Stderr, "%v\n\n", detailErr)
+	case detailErr != nil:
+		fmt.Fprintf(os.Stderr, "the dump detail could not be read: %v\n\n", detailErr)
+	case detail != nil:
+		printDumpTermination(detail)
+		if len(detail.Stack) > 0 {
+			fmt.Println("Call stack at the failure:")
+			for _, f := range detail.Stack {
+				where := f.Program
+				if f.Include != "" && f.Include != f.Program {
+					where += "/" + f.Include
+				}
+				fmt.Printf("  %3d %-12s %s:%d\n", f.Position, f.Type, where, f.Line)
+				if f.Name != "" {
+					fmt.Printf("      %s\n", f.Name)
+				}
 			}
-			fmt.Printf("  %3d %-12s %s:%d\n", f.Position, f.Type, where, f.Line)
-			if f.Name != "" {
-				fmt.Printf("      %s\n", f.Name)
-			}
+			fmt.Println()
 		}
-		fmt.Println()
 	}
 
 	if len(matches) == 0 {
@@ -199,6 +204,67 @@ func explainDump(ctx context.Context, client *adt.Client, cmd *cobra.Command, du
 			"(free SQL blocked, or no authorisation for CROSS), so \"written by something a stack frame calls\" was never asked.")
 	}
 	return nil
+}
+
+// printDumpTermination shows the causal core the enriched detail carries: the
+// message the dump raised (SY-MSGID/MSGNO and its variables), the key system
+// fields for context, and the source line it died on with a line either side.
+func printDumpTermination(d *adt.DumpDetail) {
+	printed := false
+	if sf := d.SystemFields; len(sf) > 0 {
+		if id, no := sf["SY-MSGID"], sf["SY-MSGNO"]; id != "" || no != "" {
+			line := fmt.Sprintf("  message %s %s", id, no)
+			if ty := sf["SY-MSGTY"]; ty != "" {
+				line += " (type " + ty + ")"
+			}
+			var vs []string
+			for _, k := range []string{"SY-MSGV1", "SY-MSGV2", "SY-MSGV3", "SY-MSGV4"} {
+				if v := sf[k]; v != "" {
+					vs = append(vs, v)
+				}
+			}
+			if len(vs) > 0 {
+				line += "  with " + strings.Join(vs, ", ")
+			}
+			fmt.Println(line)
+			printed = true
+		}
+		var context []string
+		for _, k := range []string{"SY-SUBRC", "SY-FDPOS", "SY-PFKEY", "SY-TCODE", "SY-TITLE"} {
+			if v := sf[k]; v != "" {
+				context = append(context, strings.TrimPrefix(k, "SY-")+"="+v)
+			}
+		}
+		if len(context) > 0 {
+			fmt.Printf("  %s\n", strings.Join(context, "  "))
+			printed = true
+		}
+	}
+	for i, s := range d.Source {
+		if !s.Failed {
+			continue
+		}
+		fmt.Println("  source:")
+		lo, hi := i-1, i+1
+		if lo < 0 {
+			lo = 0
+		}
+		if hi >= len(d.Source) {
+			hi = len(d.Source) - 1
+		}
+		for j := lo; j <= hi; j++ {
+			mark := "    "
+			if d.Source[j].Failed {
+				mark = "  > "
+			}
+			fmt.Printf("  %s%5d  %s\n", mark, d.Source[j].Line, strings.TrimSpace(d.Source[j].Text))
+		}
+		printed = true
+		break
+	}
+	if printed {
+		fmt.Println()
+	}
 }
 
 // similarDumps answers "what else looks like this dump", on a ladder.

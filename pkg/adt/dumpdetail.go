@@ -53,6 +53,44 @@ type DumpDetail struct {
 	MainProgram string `json:"mainProgram,omitempty"`
 	// Stack costs nothing extra: it is parsed out of the same document.
 	Stack []DumpFrame `json:"stack,omitempty"`
+
+	// The chapters below are the causal detail. They cost nothing extra either —
+	// the formatted document is fetched once and holds all of it — but they are
+	// what turns "which program failed where" into "why". None is present on a
+	// release that does not serve the detail, so all are omitempty.
+
+	// ShortText is the one-line human summary ("Short Text" chapter).
+	ShortText string `json:"shortText,omitempty"`
+	// SystemFields is the "Contents of system fields" table: SY-SUBRC, SY-MSGID,
+	// SY-MSGNO, SY-MSGV1..4, SY-FDPOS, SY-PFKEY, SY-TITLE and the rest. After the
+	// message itself this is the richest causal signal, keyed by SY field name.
+	SystemFields map[string]string `json:"systemFields,omitempty"`
+	// Source is the "Source Code Extract": the lines around the termination
+	// point, the failing one(s) flagged. Empty when the dump has no source.
+	Source []DumpSourceLine `json:"source,omitempty"`
+	// Variables is the "Selected Variables" chapter: the runtime's chosen
+	// variables per stack frame with their rendered contents — where a stale
+	// handle or an unresolved pointer shows up as a value.
+	Variables []DumpVariable `json:"variables,omitempty"`
+}
+
+// DumpSourceLine is one line of the Source Code Extract.
+type DumpSourceLine struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+	// Failed marks the termination line — either the one SAP annotated with its
+	// "=====> Error" marker in the extract, or the one the header named.
+	Failed bool `json:"failed,omitempty"`
+}
+
+// DumpVariable is one entry of the Selected Variables chapter.
+type DumpVariable struct {
+	// Frame is the procedure whose variables these are, e.g. AC_FLUSH_CALL_INTERNAL.
+	Frame string `json:"frame,omitempty"`
+	Name  string `json:"name"`
+	// Value is the variable's rendered contents, value lines joined; long dumps
+	// (hex tables) are truncated, since the point here is the name and shape.
+	Value string `json:"value,omitempty"`
 }
 
 // DumpDetail reads one dump beyond what the feed carries.
@@ -82,7 +120,152 @@ func parseDumpDetail(formatted string) *DumpDetail {
 	where := parseDumpTermination(formatted)
 	detail.Include, detail.Line = where.include, where.line
 	detail.Procedure, detail.MainProgram = where.procedure, where.mainProgram
+	detail.ShortText = joinDumpChapter(formatted, "Short Text")
+	detail.SystemFields = parseDumpSystemFields(formatted)
+	detail.Source = parseDumpSource(formatted, detail.Line)
+	detail.Variables = parseDumpSelectedVariables(formatted)
 	return detail
+}
+
+// dumpChapterRows returns the fenced rows of one chapter, outer pipes stripped
+// but inner spacing kept — the Selected Variables chapter tells a variable name
+// (flush left) from its value lines (indented) only by that spacing. Rules of
+// dashes inside a chapter are skipped; the first blank line, which separates
+// every chapter from the next, ends it.
+func dumpChapterRows(formatted, title string) []string {
+	lines := strings.Split(formatted, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimSpace(l), "|") && strings.Contains(l, title) {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil
+	}
+	var rows []string
+	pendingCont := false // the previous row ended with "\", a wrap to be joined
+	for i := start + 1; i < len(lines); i++ {
+		s := strings.TrimSpace(lines[i])
+		switch {
+		case s == "":
+			return rows // the blank line between chapters
+		case strings.HasPrefix(s, "|"):
+			inner := strings.TrimSuffix(strings.TrimPrefix(s, "|"), "|")
+			// A trailing "\" means the value wraps onto the next line; SAP breaks
+			// long hex dumps mid-token, and the continuation is flush left, so
+			// without joining it would read as a new variable name.
+			cont := strings.HasSuffix(inner, "\\")
+			inner = strings.TrimRight(strings.TrimSuffix(inner, "\\"), " ")
+			if pendingCont && len(rows) > 0 {
+				rows[len(rows)-1] += inner
+			} else {
+				rows = append(rows, inner)
+			}
+			pendingCont = cont
+		case strings.HasPrefix(s, "-"):
+			continue // a rule of dashes, inside the chapter or closing it
+		default:
+			return rows
+		}
+	}
+	return rows
+}
+
+// parseDumpSystemFields reads the "Contents of system fields" table, a plain
+// two-column |Name|Val.| grid, into a map keyed by the SY field name.
+func parseDumpSystemFields(formatted string) map[string]string {
+	rows := dumpChapterRows(formatted, "Contents of system fields")
+	if len(rows) == 0 {
+		return nil
+	}
+	fields := map[string]string{}
+	for _, r := range rows {
+		name, val, ok := strings.Cut(r, "|")
+		if !ok {
+			continue
+		}
+		name = strings.TrimSpace(name)
+		if name == "" || name == "Name" { // the column header
+			continue
+		}
+		fields[name] = strings.TrimSpace(val)
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
+// parseDumpSource reads the "Source Code Extract", a |Line|Code| grid. failLine
+// (the header's termination line) flags the failing row in case the extract
+// carries no "=====> Error" marker of its own.
+func parseDumpSource(formatted string, failLine int) []DumpSourceLine {
+	rows := dumpChapterRows(formatted, "Source Code Extract")
+	var out []DumpSourceLine
+	for _, r := range rows {
+		num, code, ok := strings.Cut(r, "|")
+		if !ok {
+			continue
+		}
+		num = strings.TrimSpace(num)
+		if num == "Line" { // the column header
+			continue
+		}
+		n, err := strconv.Atoi(num)
+		if err != nil {
+			continue
+		}
+		out = append(out, DumpSourceLine{
+			Line:   n,
+			Text:   strings.TrimRight(code, " "),
+			Failed: strings.Contains(code, "> Error") || (failLine > 0 && n == failLine),
+		})
+	}
+	return out
+}
+
+const dumpVariableValueCap = 512
+
+// parseDumpSelectedVariables reads the "Selected Variables" chapter. Each stack
+// frame opens with a "No. n Ty. …" / "Name …" pair; within it a flush-left row
+// is a variable name and the indented rows under it are its value.
+func parseDumpSelectedVariables(formatted string) []DumpVariable {
+	rows := dumpChapterRows(formatted, "Selected Variables")
+	var out []DumpVariable
+	frame := ""
+	var cur *DumpVariable
+	flush := func() {
+		if cur != nil {
+			cur.Value = strings.TrimSpace(cur.Value)
+			out = append(out, *cur)
+			cur = nil
+		}
+	}
+	for _, r := range rows {
+		trimmed := strings.TrimSpace(r)
+		switch {
+		case trimmed == "" || trimmed == "Name" || trimmed == "Val.":
+			// column headers and empty rows carry no variable
+			continue
+		case strings.HasPrefix(trimmed, "No.") && strings.Contains(r, "Ty."):
+			flush()
+			frame = ""
+		case strings.HasPrefix(trimmed, "Name ") || strings.HasPrefix(trimmed, "Name\t"):
+			flush()
+			frame = strings.TrimSpace(strings.TrimPrefix(trimmed, "Name"))
+		case strings.HasPrefix(r, " "): // indented: a value line for the current variable
+			if cur != nil && len(cur.Value) < dumpVariableValueCap {
+				cur.Value += trimmed + " "
+			}
+		default: // flush left: a new variable name
+			flush()
+			cur = &DumpVariable{Frame: frame, Name: trimmed}
+		}
+	}
+	flush()
+	return out
 }
 
 // parseDumpHeader reads the table above the first chapter.
