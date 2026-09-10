@@ -4,6 +4,8 @@
 
 > **Doc intent:** CLAUDE.md = dev context. README.md = user onboarding. reports/ = research/history. contexts/ = session handoff. agenda/ = what is open and what was decided (`AGENDA.md` is the living board; `YYYY-MM-DD-NNN-topic.md` are dated analyses).
 
+
+> **Shared knowledge base:** [`../sap-kb/`](../sap-kb/) maps vsp against its SAP-protocol siblings (open-rfc-go, open-diag-go-pro, sap-sso-trace) — the layer stack and the reuse matrix. vsp owns `pkg/sapcompress` (decode), `pkg/datacluster`, the ADT transport and the `ZADT_VSP` bridge. Chapter: [`../sap-kb/repos/vsp.md`](../sap-kb/repos/vsp.md); cross-repo backlog: [`../sap-kb/backlog.md`](../sap-kb/backlog.md).
 ---
 
 ## Current Priorities
