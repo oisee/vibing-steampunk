@@ -193,6 +193,28 @@ flowchart LR
 | Update existing | `WriteSource(mode=update)` | Explicit update |
 | Deploy large file | `ImportFromFile` | Bypasses token limits |
 
+### Creating DDIC domains and data elements
+
+`CreateObject` supports `DOMA/DD` and `DTEL/DE`. Both calls create the SAP
+repository shell, write the typed DDIC property document while holding a
+MODIFY lock, unlock, activate, and verify the resulting object. A data element
+may reference an existing domain through `domain`.
+
+```json
+{
+  "object_type": "DOMA/DD",
+  "name": "ZORDER_STATUS",
+  "description": "Order status",
+  "package_name": "$TMP",
+  "properties_json": "{\"dataType\":\"CHAR\",\"length\":1,\"decimals\":0,\"outputLength\":1}"
+}
+```
+
+For `DTEL/DE`, use `domain`, `dataType`, `length`, `decimals`, and
+`labels` (`short`, `medium`, `long`, `heading`) in `properties_json`. The
+universal tool accepts the shorter form:
+`SAP(action="create", target="DOMA ZORDER_STATUS", params={package:"$TMP", properties:{...}})`.
+
 ### Searching
 
 | Task | Tool | Parameters |

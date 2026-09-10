@@ -989,10 +989,10 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("CreateObject") {
 		s.mcpServer.AddTool(mcp.NewTool("CreateObject",
-			mcp.WithDescription("Create a new ABAP object. Supports: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package), DDLS/DF (CDS view), BDEF/BDO (behavior definition), SRVD/SRV (service definition), SRVB/SVB (service binding)"),
+			mcp.WithDescription("Create a new ABAP object. Supports: PROG/P (program), CLAS/OC (class), INTF/OI (interface), PROG/I (include), FUGR/F (function group), FUGR/FF (function module), DEVC/K (package), DDLS/DF (CDS view), BDEF/BDO (behavior definition), SRVD/SRV (service definition), SRVB/SVB (service binding), DOMA/DD (DDIC domain), DTEL/DE (DDIC data element). DOMA/DD and DTEL/DE require properties_json."),
 			mcp.WithString("object_type",
 				mcp.Required(),
-				mcp.Description("Object type: PROG/P, CLAS/OC, INTF/OI, PROG/I, FUGR/F, FUGR/FF, DEVC/K, DDLS/DF, BDEF/BDO, SRVD/SRV, SRVB/SVB"),
+				mcp.Description("Object type: PROG/P, CLAS/OC, INTF/OI, PROG/I, FUGR/F, FUGR/FF, DEVC/K, DDLS/DF, BDEF/BDO, SRVD/SRV, SRVB/SVB, DOMA/DD, DTEL/DE (DOMA and DTEL also accept short names)"),
 			),
 			mcp.WithString("name",
 				mcp.Required(),
@@ -1028,6 +1028,9 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithString("binding_category",
 				mcp.Description("For SRVB: '0' = UI (User Interface), '1' = A2X (Web API). Default: '0' (UI). Values follow SAP domain SRVB_BND_CATEGORY."),
+			),
+			mcp.WithString("properties_json",
+				mcp.Description("For DOMA/DD or DTEL/DE: JSON object containing the DDIC property fields. Use SAP(action=\"create\", target=\"DOMA ZDOMAIN\", params={properties:{...}}) to pass an object directly."),
 			),
 		), s.handleCreateObject)
 	}

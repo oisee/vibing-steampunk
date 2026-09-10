@@ -131,7 +131,7 @@ These tools replace 11 granular read/write operations with intelligent parameter
 |------|-------------|------|
 | `LockObject` | Acquire edit lock | Focused |
 | `UnlockObject` | Release edit lock | Focused |
-| `CreateObject` | Create new object (program, class, interface, include, function group, function module, package, **DDLS, BDEF, SRVD, SRVB**) | Expert |
+| `CreateObject` | Create new object (program, class, interface, include, function group, function module, package, **DDLS, BDEF, SRVD, SRVB, DOMA, DTEL**) | Expert |
 | `UpdateSource` | Write source code | Expert |
 | `DeleteObject` | Delete an object | Expert |
 

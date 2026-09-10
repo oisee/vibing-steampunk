@@ -37,6 +37,34 @@ func (s *Server) routeCRUDAction(ctx context.Context, action, objectType, object
 		switch objectType {
 		case "OBJECT":
 			return s.callHandler(ctx, s.handleCreateObject, params)
+		case "DOMA", "DOMAIN":
+			args := map[string]any{}
+			for key, value := range params {
+				args[key] = value
+			}
+			args["object_type"] = string(adt.ObjectTypeDomain)
+			args["name"] = objectName
+			if packageName := getStringParam(params, "package"); packageName != "" {
+				args["package_name"] = packageName
+			}
+			if properties, ok := params["properties"]; ok {
+				args["properties_json"] = properties
+			}
+			return s.callHandler(ctx, s.handleCreateObject, args)
+		case "DTEL", "DATA_ELEMENT":
+			args := map[string]any{}
+			for key, value := range params {
+				args[key] = value
+			}
+			args["object_type"] = string(adt.ObjectTypeDataElement)
+			args["name"] = objectName
+			if packageName := getStringParam(params, "package"); packageName != "" {
+				args["package_name"] = packageName
+			}
+			if properties, ok := params["properties"]; ok {
+				args["properties_json"] = properties
+			}
+			return s.callHandler(ctx, s.handleCreateObject, args)
 		case "DEVC":
 			return s.callHandler(ctx, s.handleCreatePackage, params)
 		case "TABL":
@@ -168,6 +196,38 @@ func (s *Server) handleCreateObject(ctx context.Context, request mcp.CallToolReq
 	if t, ok := request.GetArguments()["transport"].(string); ok {
 		transport = t
 	}
+	objectType = adt.CanonicalObjectType(objectType)
+
+	if objectType == string(adt.ObjectTypeDomain) || objectType == string(adt.ObjectTypeDataElement) {
+		properties, err := ddicProperties(request.GetArguments()["properties_json"])
+		if err != nil {
+			return newToolResultError(err.Error()), nil
+		}
+		if objectType == string(adt.ObjectTypeDomain) {
+			var input adt.DomainCreateOptions
+			if err := decodeMap(properties, &input); err != nil {
+				return newToolResultError(fmt.Sprintf("invalid domain properties: %v", err)), nil
+			}
+			input.Name, input.Description, input.PackageName, input.Transport = name, description, packageName, transport
+			result, err := s.adtClient.CreateDomain(ctx, input)
+			if err != nil {
+				return newToolResultError(fmt.Sprintf("Failed to create domain: %v", err)), nil
+			}
+			output, _ := json.MarshalIndent(result, "", "  ")
+			return mcp.NewToolResultText(string(output)), nil
+		}
+		var input adt.DataElementCreateOptions
+		if err := decodeMap(properties, &input); err != nil {
+			return newToolResultError(fmt.Sprintf("invalid data element properties: %v", err)), nil
+		}
+		input.Name, input.Description, input.PackageName, input.Transport = name, description, packageName, transport
+		result, err := s.adtClient.CreateDataElement(ctx, input)
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("Failed to create data element: %v", err)), nil
+		}
+		output, _ := json.MarshalIndent(result, "", "  ")
+		return mcp.NewToolResultText(string(output)), nil
+	}
 
 	parentName := ""
 	if p, ok := request.GetArguments()["parent_name"].(string); ok {
@@ -248,6 +308,29 @@ func (s *Server) handleCreateObject(ctx context.Context, request mcp.CallToolReq
 	}
 	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+func ddicProperties(value any) (map[string]any, error) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, nil
+	case string:
+		var result map[string]any
+		if err := json.Unmarshal([]byte(typed), &result); err != nil {
+			return nil, fmt.Errorf("properties_json must be valid JSON: %w", err)
+		}
+		return result, nil
+	default:
+		return nil, fmt.Errorf("properties_json is required for DOMA/DD and DTEL/DE")
+	}
+}
+
+func decodeMap(input map[string]any, output any) error {
+	data, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, output)
 }
 
 func (s *Server) handleCreatePackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
