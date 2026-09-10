@@ -138,14 +138,7 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	// but accept it on regular HTTP to issue session cookies.
 	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized && !c.hasCookieAuth() {
 		jar, _ := cookiejar.New(nil)
-		preAuthClient := &http.Client{
-			Jar: jar,
-			Transport: &http.Transport{
-				TLSClientConfig: tlsConfig,
-				Proxy:           http.ProxyFromEnvironment,
-			},
-			Timeout: 30 * time.Second,
-		}
+		preAuthClient := newPreAuthHTTPClient(jar, tlsConfig)
 
 		authURL := fmt.Sprintf("%s/sap/bc/adt/core/discovery?sap-client=%s", c.baseURL, c.client)
 		authReq, authErr := http.NewRequestWithContext(ctx, http.MethodGet, authURL, nil)
@@ -450,6 +443,22 @@ func base64Encode(data []byte) string {
 		}
 	}
 	return string(result)
+}
+
+// newPreAuthHTTPClient builds the transient client that fetches SAP session
+// cookies when the WebSocket upgrade answers 401. It drives its own jar so the
+// cookies can be handed to the dialer's retry, and it resolves a proxy from the
+// environment the way the dialer and the ADT HTTP client do — behind a
+// corporate proxy the pre-auth request used to be the one leg that bypassed it.
+func newPreAuthHTTPClient(jar http.CookieJar, tlsConfig *tls.Config) *http.Client {
+	return &http.Client{
+		Jar: jar,
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+			Proxy:           http.ProxyFromEnvironment,
+		},
+		Timeout: 30 * time.Second,
+	}
 }
 
 // newWebSocketDialer builds the dialer used for the ZADT_VSP upgrade. It honours
