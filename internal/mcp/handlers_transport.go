@@ -35,6 +35,10 @@ func (s *Server) routeTransportAction(ctx context.Context, action, objectType, o
 		return s.callHandler(ctx, s.handleGetTransportInfo, params)
 	case "execute_abap":
 		return s.callHandler(ctx, s.handleExecuteABAP, params)
+	case "merge_transports":
+		return s.callHandler(ctx, s.handleMergeTransports, params)
+	case "move_transport_object", "move_object":
+		return s.callHandler(ctx, s.handleMoveTransportObject, params)
 	}
 	return nil, false, nil
 }
@@ -400,4 +404,77 @@ func (s *Server) handleDeleteTransport(ctx context.Context, request mcp.CallTool
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf("Transport %s deleted successfully.", transport)), nil
+}
+
+// handleMergeTransports merges one or more requests into a target, the way
+// SE09's Merge Requests does, through ZADT_VSP's function bridge:
+// SAP(action="system", params={"type": "merge_transports", "source": ["TR-A", "TR-B"], "target": "TR-C"}).
+// Each source is merged in turn; the first failure stops the rest.
+func (s *Server) handleMergeTransports(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	target := getStringParam(args, "target")
+	if target == "" {
+		target = getStringParam(args, "into")
+	}
+	var sources []string
+	switch v := args["source"].(type) {
+	case string:
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				sources = append(sources, p)
+			}
+		}
+	case []any:
+		for _, p := range v {
+			if str, ok := p.(string); ok && strings.TrimSpace(str) != "" {
+				sources = append(sources, strings.TrimSpace(str))
+			}
+		}
+	}
+	if target == "" || len(sources) == 0 {
+		return newToolResultError("source (one request or a list) and target are required"), nil
+	}
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("merging requests needs ZADT_VSP's function bridge: %v", err)), nil
+	}
+	var results []*adt.TransportMergeResult
+	for _, src := range sources {
+		res, err := s.adtClient.MergeTransports(ctx, s.debugWSClient, src, target)
+		if res != nil {
+			results = append(results, res)
+		}
+		if err != nil {
+			return newToolResultJSON(map[string]any{"error": err.Error(), "merged": results}), nil
+		}
+	}
+	return newToolResultJSON(map[string]any{"target": strings.ToUpper(target), "merged": results}), nil
+}
+
+// handleMoveTransportObject moves one entry between requests:
+// SAP(action="system", params={"type": "move_transport_object", "object": "PROG ZDEMO", "from": "TR-A", "to": "TR-B"}).
+func (s *Server) handleMoveTransportObject(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	object := getStringParam(args, "object")
+	if object == "" {
+		object = strings.TrimSpace(getStringParam(args, "pgmid") + " " + getStringParam(args, "object_type") + " " + getStringParam(args, "object_name"))
+	}
+	key, err := adt.ParseTransportObject(object)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
+	}
+	from, to := getStringParam(args, "from"), getStringParam(args, "to")
+	if from == "" || to == "" {
+		return newToolResultError("from and to (request numbers) are required"), nil
+	}
+	if err := s.ensureDebugWSClient(ctx); err != nil {
+		return newToolResultError(fmt.Sprintf("moving an object between requests needs ZADT_VSP's function bridge: %v", err)), nil
+	}
+	res, err := s.adtClient.MoveTransportObject(ctx, s.debugWSClient, key, from, to)
+	if err != nil {
+		if res != nil {
+			return newToolResultJSON(map[string]any{"error": err.Error(), "result": res}), nil
+		}
+		return newToolResultError(err.Error()), nil
+	}
+	return newToolResultJSON(res), nil
 }

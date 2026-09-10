@@ -134,17 +134,28 @@ carries `transport` and `transportNote`. `--transport-choice off`,
 A4H: a program created in a transportable package with no request named
 landed in the open request that already held one of that package.
 
-Not done from the same ask: merging requests and moving an object between
-them. ADT's organizer has no such resource (discovery: add-object,
-add-objects-from-package, modify, change-owner, new-task,
+Merging requests and moving an object between them, from the same ask,
+came the day after. ADT's organizer has no such resource (discovery:
+add-object, add-objects-from-package, modify, change-owner, new-task,
 sort-and-compress, release variants — nothing that removes an entry), and
-`TR_MERGE_REQUESTS`, `TR_APPEND_TO_COMM_OBJS_KEYS`, `TR_DELETE_COMM` are
-not remote-enabled (TFDIR.FMODE blank), so classic RFC cannot reach them.
-ZADT_VSP's `CALL FUNCTION` bridge could — its flat-string parameters would
-put a request number into the first field of the header structure — but
-the one test call of it was refused by the session's permission
-classifier, so nothing shipped untested. SE09 → Utilities → Reorganize →
-Merge Requests for now.
+`TR_MERGE_REQUESTS`, `TR_APPEND_TO_COMM_OBJS_KEYS`,
+`TRINT_DELETE_COMM_OBJECT_KEYS` are not remote-enabled (TFDIR.FMODE
+blank). ZADT_VSP's `CALL FUNCTION` bridge reaches them, once taught to:
+its parameters were flat strings, and a string assigned to
+`TRWBO_REQUEST` (a deep structure) is `OBJECTS_MOVE_NOT_SUPPORTED` — a
+runtime error, not an exception — which is how the first call dumped the
+handler and timed out. The bridge now takes a JSON object or array for a
+structure, table or CHANGING parameter (`/ui2/cl_json`), sets a parameter
+that is present but empty to initial (that is how `IV_REQUEST_CHOICE`'s
+default `'X'`, the dialog, is turned off), and returns the message behind
+a non-zero sy-subrc. `vsp transport merge A B --into C`, `vsp transport
+move "PROG X" --from A --to B`, MCP `merge_transports` /
+`move_transport_object`. Confirmed on A4H: two requests with one program
+each, merged — the source's task and object under the target, the source
+gone. The move's pair (append to the target's task, delete from the
+source's) was not run live: the session's permission classifier refused
+every route to it, so that half ships with its unit tests only and the
+first live run is the user's.
 
 Left on A4H: two released local workbench requests from the probe, each
 holding the entry of a probe program deleted before it. Deleting them

@@ -60,6 +60,16 @@ CLASS zcl_vsp_rfc_service DEFINITION
       IMPORTING is_param       TYPE ty_param_info
       RETURNING VALUE(ro_data) TYPE REF TO data.
 
+    METHODS param_present
+      IMPORTING iv_params         TYPE string
+                iv_name           TYPE string
+      RETURNING VALUE(rv_present) TYPE abap_bool.
+
+    METHODS extract_json
+      IMPORTING iv_params      TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rv_json) TYPE string.
+
     METHODS extract_param
       IMPORTING iv_params       TYPE string
                 iv_name         TYPE string
@@ -204,18 +214,67 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
       CLEAR: ls_ptab, lo_data, lv_val.
       lo_data = create_param_data( ls_imp ).
       IF lo_data IS BOUND.
-        lv_val = extract_param( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ).
-        IF lv_val IS NOT INITIAL.
-          ASSIGN lo_data->* TO <fs_val>.
-          IF sy-subrc = 0.
-            TRY.
-                <fs_val> = lv_val.
-              CATCH cx_root.
-            ENDTRY.
+        ASSIGN lo_data->* TO <fs_val>.
+        IF sy-subrc = 0.
+          " An elementary parameter takes its string as given, and a
+          " parameter that is present but empty is set to initial — that
+          " is how a default of 'X' is turned off. A structure or a table
+          " takes a JSON object or array, deserialized into it; assigning
+          " a string to a deep structure is a runtime error, not an
+          " exception, and dumped the handler.
+          IF cl_abap_typedescr=>describe_by_data( <fs_val> )->kind = cl_abap_typedescr=>kind_elem.
+            IF param_present( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ) = abap_true.
+              lv_val = extract_param( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ).
+              TRY.
+                  <fs_val> = lv_val.
+                CATCH cx_root.
+              ENDTRY.
+            ENDIF.
+          ELSE.
+            DATA(lv_json_in) = extract_json( iv_params = is_message-params iv_name = CONV #( ls_imp-parameter ) ).
+            IF lv_json_in IS NOT INITIAL.
+              TRY.
+                  /ui2/cl_json=>deserialize( EXPORTING json = lv_json_in pretty_name = /ui2/cl_json=>pretty_mode-none CHANGING data = <fs_val> ).
+                CATCH cx_root.
+              ENDTRY.
+            ENDIF.
           ENDIF.
         ENDIF.
         ls_ptab-name = ls_imp-parameter.
         ls_ptab-kind = abap_func_exporting.
+        ls_ptab-value = lo_data.
+        INSERT ls_ptab INTO TABLE lt_ptab.
+      ENDIF.
+    ENDLOOP.
+
+    " CHANGING params: bound the same way, filled from JSON when given.
+    " Unbound, a mandatory one fails the call.
+    LOOP AT lt_changing INTO DATA(ls_chg).
+      CLEAR: ls_ptab, lo_data.
+      lo_data = create_param_data( ls_chg ).
+      IF lo_data IS BOUND.
+        ASSIGN lo_data->* TO <fs_val>.
+        IF sy-subrc = 0.
+          IF cl_abap_typedescr=>describe_by_data( <fs_val> )->kind = cl_abap_typedescr=>kind_elem.
+            IF param_present( iv_params = is_message-params iv_name = CONV #( ls_chg-parameter ) ) = abap_true.
+              lv_val = extract_param( iv_params = is_message-params iv_name = CONV #( ls_chg-parameter ) ).
+              TRY.
+                  <fs_val> = lv_val.
+                CATCH cx_root.
+              ENDTRY.
+            ENDIF.
+          ELSE.
+            DATA(lv_chg_json) = extract_json( iv_params = is_message-params iv_name = CONV #( ls_chg-parameter ) ).
+            IF lv_chg_json IS NOT INITIAL.
+              TRY.
+                  /ui2/cl_json=>deserialize( EXPORTING json = lv_chg_json pretty_name = /ui2/cl_json=>pretty_mode-none CHANGING data = <fs_val> ).
+                CATCH cx_root.
+              ENDTRY.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+        ls_ptab-name = ls_chg-parameter.
+        ls_ptab-kind = abap_func_changing.
         ls_ptab-value = lo_data.
         INSERT ls_ptab INTO TABLE lt_ptab.
       ENDIF.
@@ -238,6 +297,16 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
       CLEAR: ls_ptab, lo_data.
       lo_data = create_table_data( ls_tbl ).
       IF lo_data IS BOUND.
+        DATA(lv_tab_json) = extract_json( iv_params = is_message-params iv_name = CONV #( ls_tbl-parameter ) ).
+        IF lv_tab_json IS NOT INITIAL.
+          ASSIGN lo_data->* TO FIELD-SYMBOL(<fs_tab_in>).
+          IF sy-subrc = 0.
+            TRY.
+                /ui2/cl_json=>deserialize( EXPORTING json = lv_tab_json pretty_name = /ui2/cl_json=>pretty_mode-none CHANGING data = <fs_tab_in> ).
+              CATCH cx_root.
+            ENDTRY.
+          ENDIF.
+        ENDIF.
         ls_ptab-name = ls_tbl-parameter.
         ls_ptab-kind = abap_func_tables.
         ls_ptab-value = lo_data.
@@ -257,10 +326,14 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
     ENDTRY.
 
     DATA(lv_subrc) = sy-subrc.
+    DATA lv_msg TYPE string.
+    IF lv_subrc <> 0 AND sy-msgid IS NOT INITIAL.
+      MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4 INTO lv_msg.
+    ENDIF.
     DATA(lv_o) = '{'.
     DATA(lv_c) = '}'.
     DATA lv_json TYPE string.
-    lv_json = |{ lv_o }"subrc":{ lv_subrc },"exports":{ lv_o }|.
+    lv_json = |{ lv_o }"subrc":{ lv_subrc },"message":"{ escape_json( lv_msg ) }","exports":{ lv_o }|.
 
     DATA lv_first TYPE abap_bool VALUE abap_true.
     DATA lv_str TYPE string.
@@ -408,8 +481,17 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
       RETURN.
     ENDIF.
 
+    " A TABLES parameter is typed by its line — or, when the reference is
+    " a table type such as DYCATT_TAB, by the table itself; a table of
+    " tables is what the function refuses as incompatible.
     TRY.
-        CREATE DATA ro_data TYPE STANDARD TABLE OF (lv_type).
+        DATA lo_type TYPE REF TO cl_abap_typedescr.
+        cl_abap_typedescr=>describe_by_name( EXPORTING p_name = lv_type RECEIVING p_descr_ref = lo_type EXCEPTIONS OTHERS = 1 ).
+        IF sy-subrc = 0 AND lo_type IS BOUND AND lo_type->kind = cl_abap_typedescr=>kind_table.
+          CREATE DATA ro_data TYPE (lv_type).
+        ELSE.
+          CREATE DATA ro_data TYPE STANDARD TABLE OF (lv_type).
+        ENDIF.
       CATCH cx_sy_create_data_error.
         CLEAR ro_data.
     ENDTRY.
@@ -574,15 +656,119 @@ CLASS ZCL_VSP_RFC_SERVICE IMPLEMENTATION.
     lv_name = iv_name.
     CONDENSE lv_name.
 
-    DATA lv_regex TYPE string.
-    CONCATENATE '"' lv_name '":' INTO lv_regex.
+    " The string value after "NAME": — up to the next quote that is not
+    " escaped. Anything else after the key (an object, a number) is not a
+    " string value and gives nothing.
+    DATA(lv_key) = |"{ lv_name }":|.
     DATA lv_pos TYPE i.
-    FIND lv_regex IN iv_params MATCH OFFSET lv_pos.
-    IF sy-subrc = 0.
-      DATA lv_rest TYPE string.
-      lv_rest = iv_params+lv_pos.
-      FIND REGEX ':\s*"([^"]*)"' IN lv_rest SUBMATCHES rv_value.
+    FIND lv_key IN iv_params MATCH OFFSET lv_pos.
+    IF sy-subrc <> 0.
+      RETURN.
     ENDIF.
+    DATA(lv_i) = lv_pos + strlen( lv_key ).
+    DATA(lv_len) = strlen( iv_params ).
+    DATA(lv_blank) = | { cl_abap_char_utilities=>cr_lf }{ cl_abap_char_utilities=>horizontal_tab }|.
+    WHILE lv_i < lv_len AND iv_params+lv_i(1) CO lv_blank.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+    IF lv_i >= lv_len OR iv_params+lv_i(1) <> '"'.
+      RETURN.
+    ENDIF.
+    lv_i = lv_i + 1.
+    DATA(lv_from) = lv_i.
+    WHILE lv_i < lv_len.
+      DATA(lv_ch) = iv_params+lv_i(1).
+      IF lv_ch = '\'.
+        lv_i = lv_i + 2.
+        CONTINUE.
+      ENDIF.
+      IF lv_ch = '"'.
+        DATA(lv_count) = lv_i - lv_from.
+        rv_value = iv_params+lv_from(lv_count).
+        RETURN.
+      ENDIF.
+      lv_i = lv_i + 1.
+    ENDWHILE.
+  ENDMETHOD.
+
+
+  METHOD param_present.
+    DATA lv_name TYPE string.
+    lv_name = iv_name.
+    CONDENSE lv_name.
+    DATA(lv_key) = |"{ lv_name }":|.
+    FIND lv_key IN iv_params.
+    rv_present = boolc( sy-subrc = 0 ).
+  ENDMETHOD.
+
+
+  METHOD extract_json.
+    " The JSON object or array given for a parameter, as text: from the
+    " { or [ after the key to its matching close, strings and escapes
+    " honoured. Nothing when the parameter is absent or a scalar.
+    DATA lv_name TYPE string.
+    lv_name = iv_name.
+    CONDENSE lv_name.
+    DATA(lv_key) = |"{ lv_name }":|.
+    DATA lv_pos TYPE i.
+    FIND lv_key IN iv_params MATCH OFFSET lv_pos.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    DATA(lv_start) = lv_pos + strlen( lv_key ).
+    DATA(lv_len) = strlen( iv_params ).
+    DATA(lv_blank) = | { cl_abap_char_utilities=>cr_lf }{ cl_abap_char_utilities=>horizontal_tab }|.
+    WHILE lv_start < lv_len AND iv_params+lv_start(1) CO lv_blank.
+      lv_start = lv_start + 1.
+    ENDWHILE.
+    IF lv_start >= lv_len.
+      RETURN.
+    ENDIF.
+    DATA(lv_open) = iv_params+lv_start(1).
+    IF lv_open = '"'.
+      " A JSON text handed over as a string — a client that can only send
+      " strings — is unquoted and taken as it is.
+      DATA(lv_quoted) = extract_param( iv_params = iv_params iv_name = iv_name ).
+      REPLACE ALL OCCURRENCES OF '\"' IN lv_quoted WITH '"'.
+      REPLACE ALL OCCURRENCES OF '\\' IN lv_quoted WITH '\'.
+      DATA(lv_first) = COND string( WHEN lv_quoted IS NOT INITIAL THEN lv_quoted(1) ELSE '' ).
+      IF lv_first = '{' OR lv_first = '['.
+        rv_json = lv_quoted.
+      ENDIF.
+      RETURN.
+    ENDIF.
+    IF lv_open <> '{' AND lv_open <> '['.
+      RETURN.
+    ENDIF.
+    DATA lv_depth TYPE i VALUE 0.
+    DATA lv_in_str TYPE abap_bool VALUE abap_false.
+    DATA lv_i TYPE i.
+    lv_i = lv_start.
+    WHILE lv_i < lv_len.
+      DATA(lv_ch) = iv_params+lv_i(1).
+      IF lv_in_str = abap_true.
+        IF lv_ch = '\'.
+          lv_i = lv_i + 1.
+        ELSEIF lv_ch = '"'.
+          lv_in_str = abap_false.
+        ENDIF.
+      ELSE.
+        CASE lv_ch.
+          WHEN '"'.
+            lv_in_str = abap_true.
+          WHEN '{' OR '['.
+            lv_depth = lv_depth + 1.
+          WHEN '}' OR ']'.
+            lv_depth = lv_depth - 1.
+            IF lv_depth = 0.
+              DATA(lv_count) = lv_i - lv_start + 1.
+              rv_json = iv_params+lv_start(lv_count).
+              RETURN.
+            ENDIF.
+        ENDCASE.
+      ENDIF.
+      lv_i = lv_i + 1.
+    ENDWHILE.
   ENDMETHOD.
 
 

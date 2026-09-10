@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -214,7 +216,7 @@ func (s *debugSession) repl() error {
 		}
 
 		// Parse and execute command
-		parts := strings.Fields(line)
+		parts := splitREPLArgs(line)
 		cmd := strings.ToLower(parts[0])
 		args := parts[1:]
 
@@ -731,12 +733,20 @@ func (s *debugSession) callRFC(args []string) error {
 	}
 
 	fm := strings.ToUpper(args[0])
-	params := make(map[string]string)
+	params := make(map[string]any)
 
 	// Parse param=value pairs
 	for _, arg := range args[1:] {
 		parts := strings.SplitN(arg, "=", 2)
 		if len(parts) == 2 {
+			// {…} or […] is a structure or a table, passed as JSON.
+			if v := strings.TrimSpace(parts[1]); strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[") {
+				var obj any
+				if err := json.Unmarshal([]byte(v), &obj); err == nil {
+					params[strings.ToUpper(parts[0])] = obj
+					continue
+				}
+			}
 			params[strings.ToUpper(parts[0])] = parts[1]
 		}
 	}
@@ -754,6 +764,37 @@ func (s *debugSession) callRFC(args []string) error {
 	fmt.Printf("Result: subrc=%d\n", result.Subrc)
 
 	// Print exports if any
+	if result.Message != "" {
+		fmt.Printf("Message: %s\n", result.Message)
+	}
+	if len(result.Tables) > 0 {
+		fmt.Println("Tables:")
+		for name, rows := range result.Tables {
+			if list, ok := rows.([]any); ok {
+				fmt.Printf("  %s (%d rows)\n", name, len(list))
+				for i, row := range list {
+					if i >= 40 {
+						fmt.Printf("    … %d more\n", len(list)-40)
+						break
+					}
+					if m, ok := row.(map[string]any); ok {
+						var parts []string
+						for k, v := range m {
+							if str := fmt.Sprint(v); strings.TrimSpace(str) != "" {
+								parts = append(parts, k+"="+str)
+							}
+						}
+						sort.Strings(parts)
+						fmt.Printf("    %s\n", strings.Join(parts, " "))
+					} else {
+						fmt.Printf("    %v\n", row)
+					}
+				}
+			} else {
+				fmt.Printf("  %s = %v\n", name, rows)
+			}
+		}
+	}
 	if len(result.Exports) > 0 {
 		fmt.Println("Exports:")
 		for k, v := range result.Exports {
@@ -762,4 +803,43 @@ func (s *debugSession) callRFC(args []string) error {
 	}
 
 	return nil
+}
+
+// splitREPLArgs splits a REPL line on blanks, except inside a quoted
+// string or inside {…} / […]: a call's parameter may be a JSON object or
+// array, and "PROCESS BEFORE OUTPUT." has blanks in it.
+func splitREPLArgs(line string) []string {
+	var out []string
+	var cur strings.Builder
+	depth, inStr, esc, has := 0, false, false, false
+	flush := func() {
+		if has {
+			out = append(out, cur.String())
+			cur.Reset()
+			has = false
+		}
+	}
+	for _, r := range line {
+		switch {
+		case esc:
+			esc = false
+		case inStr && r == '\\':
+			esc = true
+		case r == '"':
+			inStr = !inStr
+		case !inStr && (r == '{' || r == '['):
+			depth++
+		case !inStr && (r == '}' || r == ']'):
+			if depth > 0 {
+				depth--
+			}
+		case !inStr && depth == 0 && (r == ' ' || r == '\t'):
+			flush()
+			continue
+		}
+		cur.WriteRune(r)
+		has = true
+	}
+	flush()
+	return out
 }
