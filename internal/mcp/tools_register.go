@@ -1197,12 +1197,12 @@ func (s *Server) registerCRUDTools(shouldRegister func(string) bool) {
 
 	// Transport-related tools
 	if shouldRegister("GetUserTransports") {
-		s.mcpServer.AddTool(mcp.NewTool("GetUserTransports",
-			mcp.WithDescription("Get all transport requests for a user (requires --enable-transports flag). Returns both workbench and customizing requests grouped by target system."),
+		s.mcpServer.AddTool(mcp.NewTool("GetUserTransports", append([]mcp.ToolOption{
+			mcp.WithDescription("Get the transport requests of a user from the transport organizer (requires --enable-transports): workbench and customizing, modifiable and released, with tasks and objects, grouped by target and CTS project. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus (the organizer returns only released requests without them), falls back to the saved search configuration and then to E070/E07T."),
 			mcp.WithString("user_name",
-				mcp.Required(),
-				mcp.Description("SAP user name (will be converted to uppercase), or '*' for every user"),
+				mcp.Description("SAP user name (uppercased); default: the connection user. '*' for every user (source sql only)"),
 			),
+		}, transportListingParams...)...,
 		), s.handleGetUserTransports)
 	}
 
@@ -1853,11 +1853,12 @@ func (s *Server) registerAMDPTools(shouldRegister func(string) bool) {
 // registerTransportTools registers CTS/Transport management tools.
 func (s *Server) registerTransportTools(shouldRegister func(string) bool) {
 	if shouldRegister("ListTransports") {
-		s.mcpServer.AddTool(mcp.NewTool("ListTransports",
-			mcp.WithDescription("List transport requests. Returns modifiable transports for a user. Requires --enable-transports OR --allow-transportable-edits flag."),
+		s.mcpServer.AddTool(mcp.NewTool("ListTransports", append([]mcp.ToolOption{
+			mcp.WithDescription("List transport requests of a user as flat rows: workbench and customizing, modifiable and released by default (request_status D limits it to modifiable). Requires --enable-transports OR --allow-transportable-edits. Reads GET /sap/bc/adt/cts/transportrequests with explicit requestType/requestStatus, falls back to the saved search configuration and then to E070/E07T; the answer names the source used."),
 			mcp.WithString("user",
-				mcp.Description("Username to list transports for (default: current user, '*' for all users)"),
+				mcp.Description("Username to list transports for (default: the connection user, '*' for all users — source sql only)"),
 			),
+		}, transportListingParams...)...,
 		), s.handleListTransports)
 	}
 
@@ -2484,4 +2485,32 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 			),
 		), s.handleCompareObjectLanguages)
 	}
+}
+
+// transportListingParams are the parameters GetUserTransports and
+// ListTransports share. They mirror the query parameters of
+// GET /sap/bc/adt/cts/transportrequests; see pkg/adt/transport_query.go
+// for the contract.
+var transportListingParams = []mcp.ToolOption{
+	mcp.WithString("request_type",
+		mcp.Description("Letters of K (workbench), W (customizing), T (transport of copies); default KWT"),
+	),
+	mcp.WithString("request_status",
+		mcp.Description("Letters of D (modifiable), R (released); default DR. Without it the organizer would return released requests only"),
+	),
+	mcp.WithString("released_from",
+		mcp.Description("YYYYMMDD; with released_to bounds the released requests (default: last 14 days)"),
+	),
+	mcp.WithString("released_to",
+		mcp.Description("YYYYMMDD; see released_from"),
+	),
+	mcp.WithBoolean("targets",
+		mcp.Description("Group by transport target and CTS project (default true)"),
+	),
+	mcp.WithString("source",
+		mcp.Description("Where to read from: auto (default: params, then config, then sql — first source with requests wins), params (organizer tree with explicit parameters), config (organizer tree through the saved search configuration, as Eclipse does; the configuration decides the filters and the user), sql (E070/E07T)"),
+	),
+	mcp.WithString("config_uri",
+		mcp.Description("Search configuration to use with source config, e.g. /sap/bc/adt/cts/transportrequests/searchconfiguration/configurations/<id>; default: the one saved for the user, else the first one (noted in the answer)"),
+	),
 }

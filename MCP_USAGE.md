@@ -122,6 +122,23 @@ flowchart TD
 
 ---
 
+### Transports
+
+`GetUserTransports` / `ListTransports` (hyperfocused: `SAP(action="system", params={"type": "get_user_transports" | "list_transports", ...})`) read the transport organizer tree, `GET /sap/bc/adt/cts/transportrequests`. Defaults: `request_type` `KWT` (workbench, customizing, transport of copies), `request_status` `DR` (modifiable and released), `targets` true, `source` `auto`.
+
+Why the defaults matter: without `requestStatus` the organizer answers with released requests of the last two weeks only, so a listing that sends the user alone looks empty of modifiable transports. Always let vsp send both parameters, or set them yourself.
+
+`source` selects where the listing comes from:
+
+| source | behaviour |
+|---|---|
+| `auto` (default) | organizer tree with explicit parameters, then the saved search configuration, then E070/E07T — the first source with requests wins; the answer names it and lists every fallback in `notes` |
+| `params` | organizer tree with explicit parameters only |
+| `config` | organizer tree through the saved Transport Organizer search configuration, as Eclipse does; the configuration decides the filters and the user (`config_uri` picks one explicitly) |
+| `sql` | E070/E07T directly; the only source for user `*` |
+
+`released_from`/`released_to` (YYYYMMDD) widen the released window. Each request carries `bucket` (`modifiable`/`released`) and, when the tree groups by target, `project`.
+
 ## Tool Selection Decision Tree
 
 ```mermaid

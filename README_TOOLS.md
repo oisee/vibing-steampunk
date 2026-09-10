@@ -225,7 +225,7 @@ Solves token limit problem for large files:
 | `CreateTransport` | Create transport request | Expert |
 | `GetTransportInfo` | Get transport details | Expert |
 | `ReleaseTransport` | Release transport | Expert |
-| `GetUserTransports` | List user's transports | Expert |
+| `GetUserTransports` | List a user's transports: workbench/customizing, modifiable/released, grouped by target and CTS project. Parameters `request_type` (KWT), `request_status` (DR), `released_from`/`released_to`, `targets`, `source` (auto/params/config/sql), `config_uri` | Expert |
 | `GetInactiveObjects` | List inactive objects | Expert |
 
 ---

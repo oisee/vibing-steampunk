@@ -335,8 +335,11 @@ vsp deploy zcl_test.clas.abap '$TMP'
 vsp deploy zreport.prog.abap '$TMP' --transport A4HK900001
 
 # Transport management
-vsp transport list
+vsp transport list                                  # modifiable + released (KWT/DR), source auto
 vsp transport list --user DEVELOPER
+vsp transport list --status D                       # modifiable only
+vsp transport list --source config                  # through the saved search configuration, as Eclipse
+vsp transport list --status R --released-from 20260101 --released-to 20261231
 vsp transport get A4HK900001
 
 # Install components to SAP
