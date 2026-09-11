@@ -204,4 +204,3 @@ func cookieNames(cookies map[string]string) []string {
 	}
 	return names
 }
-

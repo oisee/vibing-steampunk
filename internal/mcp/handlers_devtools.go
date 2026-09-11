@@ -106,7 +106,8 @@ func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest
 
 // handleActivateMultiple activates multiple objects in a single ADT request.
 // params.objects: array of {"url": "...", "name": "..."} pairs, or
-//                 array of strings in "TYPE NAME" format (e.g. "INCL ZREP_F01").
+//
+//	array of strings in "TYPE NAME" format (e.g. "INCL ZREP_F01").
 func (s *Server) handleActivateMultiple(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw, ok := request.GetArguments()["objects"]
 	if !ok {

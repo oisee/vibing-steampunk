@@ -25,12 +25,12 @@ type UI5App struct {
 
 // UI5AppDetails contains detailed information about a UI5 application.
 type UI5AppDetails struct {
-	Name           string     `json:"name"`
-	Description    string     `json:"description,omitempty"`
-	Package        string     `json:"package,omitempty"`
-	TransportLayer string     `json:"transportLayer,omitempty"`
-	Files          []UI5File  `json:"files,omitempty"`
-	Links          []Link     `json:"-"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description,omitempty"`
+	Package        string    `json:"package,omitempty"`
+	TransportLayer string    `json:"transportLayer,omitempty"`
+	Files          []UI5File `json:"files,omitempty"`
+	Links          []Link    `json:"-"`
 }
 
 // UI5File represents a file within a UI5 application.

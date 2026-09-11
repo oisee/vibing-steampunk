@@ -30,9 +30,9 @@ func (c *AMDPWebSocketClient) GitTypes(ctx context.Context) ([]string, error) {
 
 // GitExportParams contains parameters for git export.
 type GitExportParams struct {
-	Packages           []string `json:"packages,omitempty"`
+	Packages           []string       `json:"packages,omitempty"`
 	Objects            []GitObjectRef `json:"objects,omitempty"`
-	IncludeSubpackages bool     `json:"includeSubpackages,omitempty"`
+	IncludeSubpackages bool           `json:"includeSubpackages,omitempty"`
 }
 
 // GitObjectRef identifies a single ABAP object.
@@ -43,10 +43,10 @@ type GitObjectRef struct {
 
 // GitExportResult contains the export result.
 type GitExportResult struct {
-	ObjectCount int             `json:"objectCount"`
-	FileCount   int             `json:"fileCount"`
-	ZipBase64   string          `json:"zipBase64"`
-	Files       []GitFileInfo   `json:"files"`
+	ObjectCount int           `json:"objectCount"`
+	FileCount   int           `json:"fileCount"`
+	ZipBase64   string        `json:"zipBase64"`
+	Files       []GitFileInfo `json:"files"`
 }
 
 // GitFileInfo describes a file in the export.

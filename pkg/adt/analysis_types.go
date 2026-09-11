@@ -4,11 +4,11 @@ package adt
 // CodeFinding represents a single code quality finding.
 type CodeFinding struct {
 	Rule        string `json:"rule"`
-	Category    string `json:"category"`    // "performance", "security", "quality", "robustness"
-	Severity    string `json:"severity"`    // "critical", "high", "medium", "low", "info"
-	Line        int    `json:"line"`        // start line
-	EndLine     int    `json:"endLine"`     // end line
-	Match       string `json:"match"`       // rule message or offending code fragment
+	Category    string `json:"category"` // "performance", "security", "quality", "robustness"
+	Severity    string `json:"severity"` // "critical", "high", "medium", "low", "info"
+	Line        int    `json:"line"`     // start line
+	EndLine     int    `json:"endLine"`  // end line
+	Match       string `json:"match"`    // rule message or offending code fragment
 	Description string `json:"description"`
 	Suggestion  string `json:"suggestion"`
 }

@@ -16,7 +16,7 @@ type CoverageResult struct {
 	Statements     CoverageStats              `json:"statements"`
 	Branches       CoverageStats              `json:"branches,omitempty"`
 	Procedures     CoverageStats              `json:"procedures,omitempty"`
-	SourceCoverage map[string]*SourceCoverage  `json:"sourceCoverage,omitempty"`
+	SourceCoverage map[string]*SourceCoverage `json:"sourceCoverage,omitempty"`
 }
 
 // CoverageStats contains aggregate coverage statistics.
@@ -183,7 +183,7 @@ type CheckRunResult struct {
 // CheckRunMessage represents a single message from a check run.
 type CheckRunMessage struct {
 	URI      string `json:"uri"`
-	Type     string `json:"type"`      // E=Error, W=Warning, I=Info
+	Type     string `json:"type"` // E=Error, W=Warning, I=Info
 	Line     int    `json:"line"`
 	Column   int    `json:"column"`
 	Text     string `json:"text"`

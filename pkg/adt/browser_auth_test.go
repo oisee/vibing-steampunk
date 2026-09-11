@@ -11,8 +11,8 @@ import (
 
 func TestSaveCookiesToFile(t *testing.T) {
 	cookies := map[string]string{
-		"MYSAPSSO2":              "abc123",
-		"sap-usercontext":        "sap-client=001",
+		"MYSAPSSO2":             "abc123",
+		"sap-usercontext":       "sap-client=001",
 		"SAP_SESSIONID_NPL_001": "session456",
 	}
 
@@ -261,9 +261,9 @@ func TestSAPCookieClassification(t *testing.T) {
 
 func TestSanitizeURLForLog(t *testing.T) {
 	tests := []struct {
-		name    string
-		rawURL  string
-		want    string
+		name   string
+		rawURL string
+		want   string
 	}{
 		{
 			name:   "strips SAMLResponse query param",

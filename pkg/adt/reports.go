@@ -9,7 +9,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-
 // RunReportParams contains parameters for report execution.
 // Reports run as background jobs and output to spool (APC-safe).
 type RunReportParams struct {

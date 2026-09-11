@@ -39,7 +39,7 @@ func RunCredentialCmd(ctx context.Context, args []string, verbose bool) (usernam
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Stderr = io.Discard // Discard stderr — may contain secrets.
-	cmd.Stdin = nil  // No stdin — non-interactive.
+	cmd.Stdin = nil         // No stdin — non-interactive.
 
 	if verbose {
 		fmt.Fprintf(os.Stderr, "[CREDENTIAL-CMD] Executing: %s (%d args)\n", args[0], len(args)-1)
