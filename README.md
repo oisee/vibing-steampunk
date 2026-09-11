@@ -708,17 +708,15 @@ Tests discover embedded local test classes across the full package hierarchy —
 - **[Analysis & Refactoring Guide](docs/analysis-refactoring-guide.md)** for what these commands do
 - **[Graph Guide](docs/graph-guide.md)** for examples, data sources, and current limits
 
-## 0x101 Stars!
+## 0x1D3 Stars!
 
-Read the latest article: **[VSP IS ONLY 5% EXPLORED](articles/2026-04-07-vsp-only-5-percent-explored.md)** — 257 stars, the tool surface, compilers, graph analysis, and why 95% of the surface is still unexplored.
+Read the latest: **[The frontier went down a layer](articles/2026-09-11-the-frontier-went-down-a-layer.md)** — since April: a rogue DIAG server a real SAP GUI draws from, the family's first SAP-LZH *writer* accepted by a live kernel, and the dump-RCA loop closing on itself. 467 stars, and still only 5% explored.
 
-Previous: **[Agentic ABAP at 100 Stars](articles/2026-02-18-100-stars-celebration.md)**
+Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VSP Is Only 5% Explored](articles/2026-04-07-vsp-only-5-percent-explored.md)** · **[Agentic ABAP at 100 Stars](articles/2026-02-18-100-stars-celebration.md)**
 
-## What's New — Analysis & Intelligence Sprint
+## What's New
 
-> **Sprint goal:** move from CRUD tool to ABAP intelligence platform. Package-level analysis, directional boundary crossings, side effect detection, transport correlation.
-
-The full version history is in [CHANGELOG.md](CHANGELOG.md).
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.57.0 — the dump's own why](https://github.com/oisee/vibing-steampunk/releases/tag/v2.57.0)**.
 
 ### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
 
@@ -1818,7 +1816,7 @@ See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) 
 | Document | Description |
 |----------|-------------|
 | [docs/architecture.md](docs/architecture.md) | Architecture diagrams (Mermaid) |
-| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (94 tools) |
+| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (151 tools) |
 | [MCP_USAGE.md](MCP_USAGE.md) | AI agent usage guide |
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture (detailed) |
@@ -1850,7 +1848,7 @@ make build          # Current platform
 make build-all      # All 9 platforms
 
 # Test
-go test ./...                              # Unit tests (1203)
+go test ./...                              # Unit tests (1354)
 go test -tags=integration -v ./pkg/adt/    # Integration tests (34+)
 ```
 
@@ -1879,7 +1877,7 @@ vibing-steampunk/
 | Metric | Value |
 |--------|-------|
 | **Tools** | 151 expert, 100 focused, 1 universal |
-| **Unit Tests** | 1203 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
+| **Unit Tests** | 1354 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
 | **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
 
 <details>
@@ -2130,13 +2128,15 @@ engine a held session is the obvious next step and is not done yet.
 
 **Where we're going:** TAS-style debugging, time-travel, AI-powered RCA
 
-| Phase | Target | Features |
+| Phase | Status | Features |
 |-------|--------|----------|
-| 5 | Q1 2026 | Lua scripting ✅, variable history, checkpoints, Force Replay |
-| 6 | Q2 2026 | Test case extraction, ABAP test generator, mock framework |
-| 7 | Q3 2026 | Isolated playground with mocks, patch & re-run |
-| 8 | Q4 2026 | Time-travel debugging, temporal queries |
-| 9+ | 2027 | AI-suggested breakpoints, multi-agent debugging, self-healing |
+| 5 | ✅ shipped | Lua scripting, variable history, checkpoints, Force Replay |
+| 6 | partial | Test-case extraction — the recording format is here (`vsp trace unit`), grouping recorded calls into scenarios and generating ABAP Unit is not |
+| 7 | planned | Isolated playground with mocks, patch & re-run |
+| 8 | planned | Time-travel debugging, temporal queries |
+| 9+ | horizon | AI-suggested breakpoints, multi-agent debugging, self-healing |
+
+*Note: the 2026 debugger track landed differently than this list first imagined — the whole ADT-native debugger (breakpoints, stepping, variables, over RFC **and** plain HTTPS, nothing installed), AMDP debugging, and the dump-RCA post-mortem all shipped and are covered above. Phases 6+ are the test-extraction/replay branch of the vision.*
 
 **Read more:**
 - [VISION.md](VISION.md) - The dream: AI as a senior developer
