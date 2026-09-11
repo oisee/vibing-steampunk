@@ -162,6 +162,11 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	if opts == nil {
 		opts = &EditSourceOptions{SyntaxCheck: true}
 	}
+	// ADT paths are always lowercase; the class/include detection below matches
+	// on lowercase literals ("/oo/classes/", "/includes/"), so an uppercase
+	// caller would silently misclassify a class include as a plain class
+	// source and append /source/main to a URL that must not have it (#118).
+	objectURL = strings.ToLower(objectURL)
 	ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
 
 	// Unified mutation policy gate (op type + package + transport). The mark
