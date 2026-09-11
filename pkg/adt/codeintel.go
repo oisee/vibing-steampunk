@@ -205,8 +205,8 @@ func parseUsageReferences(data []byte) ([]UsageReference, error) {
 func extractTypeFromURI(uri string) string {
 	// Common patterns: /sap/bc/adt/oo/classes/..., /sap/bc/adt/programs/programs/...
 	patterns := map[string]string{
-		"/oo/classes/":      "CLAS/OC",
-		"/oo/interfaces/":   "INTF/OI",
+		"/oo/classes/":       "CLAS/OC",
+		"/oo/interfaces/":    "INTF/OI",
 		"/programs/programs": "PROG/P",
 		"/programs/includes": "PROG/I",
 		"/functions/groups/": "FUGR/F",

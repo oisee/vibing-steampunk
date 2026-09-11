@@ -106,6 +106,7 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 	s.registerVersionHistoryTools(shouldRegister)
 	s.registerTestingQualityTools(shouldRegister)
 	s.registerI18NTools(shouldRegister)
+	s.registerIAMTools(shouldRegister)
 
 	// Register tool aliases for common operations
 	s.registerToolAliases(shouldRegister)

@@ -26,15 +26,15 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 		"es": {"EditSource", "Alias for EditSource - surgical string replacement", s.handleEditSource},
 
 		// Search
-		"so": {"SearchObject", "Alias for SearchObject - find ABAP objects", s.handleSearchObject},
+		"so":  {"SearchObject", "Alias for SearchObject - find ABAP objects", s.handleSearchObject},
 		"gro": {"GrepObjects", "Alias for GrepObjects - regex search in objects", s.handleGrepObjects},
 		"grp": {"GrepPackages", "Alias for GrepPackages - regex search in packages", s.handleGrepPackages},
 
 		// Common operations
-		"gt": {"GetTable", "Alias for GetTable - get table structure", s.handleGetTable},
+		"gt":  {"GetTable", "Alias for GetTable - get table structure", s.handleGetTable},
 		"gtc": {"GetTableContents", "Alias for GetTableContents - read table data", s.handleGetTableContents},
-		"rq": {"RunQuery", "Alias for RunQuery - execute SQL query", s.handleRunQuery},
-		"sc": {"SyntaxCheck", "Alias for SyntaxCheck - check ABAP syntax", s.handleSyntaxCheck},
+		"rq":  {"RunQuery", "Alias for RunQuery - execute SQL query", s.handleRunQuery},
+		"sc":  {"SyntaxCheck", "Alias for SyntaxCheck - check ABAP syntax", s.handleSyntaxCheck},
 		"act": {"Activate", "Alias for Activate - activate ABAP object", s.handleActivate},
 
 		// Testing
@@ -46,14 +46,14 @@ func (s *Server) registerToolAliases(shouldRegister func(string) bool) {
 	// Uncomment if you want short names like gs, ws, es, etc.
 	_ = aliases // suppress unused variable warning
 	/*
-	for alias, info := range aliases {
-		if shouldRegister(info.canonical) {
-			s.mcpServer.AddTool(mcp.NewTool(alias,
-				mcp.WithDescription(info.desc),
-				// Aliases inherit all parameters from the canonical tool
-				// The handler is the same, so parameters work identically
-			), info.handler)
+		for alias, info := range aliases {
+			if shouldRegister(info.canonical) {
+				s.mcpServer.AddTool(mcp.NewTool(alias,
+					mcp.WithDescription(info.desc),
+					// Aliases inherit all parameters from the canonical tool
+					// The handler is the same, so parameters work identically
+				), info.handler)
+			}
 		}
-	}
 	*/
 }

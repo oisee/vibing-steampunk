@@ -170,33 +170,33 @@ type TableStructure struct {
 // TableField represents a field in a table/structure definition.
 // Supports both XML (for GetTable) and JSON (for CreateTable) serialization.
 type TableField struct {
-	Name        string `xml:"name,attr" json:"name"`                   // Field name
-	Type        string `xml:"type,attr" json:"type"`                   // ABAP type: CHAR, NUMC, INT4, DEC, STRING, etc.
+	Name        string `xml:"name,attr" json:"name"`                             // Field name
+	Type        string `xml:"type,attr" json:"type"`                             // ABAP type: CHAR, NUMC, INT4, DEC, STRING, etc.
 	Length      int    `xml:"length,attr,omitempty" json:"length,omitempty"`     // Length for CHAR, NUMC, RAW, etc.
 	Decimals    int    `xml:"decimals,attr,omitempty" json:"decimals,omitempty"` // Decimals for DEC, CURR, QUAN
 	Description string `xml:"description,attr,omitempty" json:"description,omitempty"`
-	IsKey       bool   `xml:"isKey,attr,omitempty" json:"key,omitempty"`         // Primary key field
-	NotNull     bool   `xml:"-" json:"notNull,omitempty"`                        // NOT NULL constraint
+	IsKey       bool   `xml:"isKey,attr,omitempty" json:"key,omitempty"` // Primary key field
+	NotNull     bool   `xml:"-" json:"notNull,omitempty"`                // NOT NULL constraint
 }
 
 // ClassObjectStructure represents the object structure of a class with methods.
 // Used for method-level source operations.
 type ClassObjectStructure struct {
-	XMLName  xml.Name                  `xml:"objectStructureElement"`
-	Name     string                    `xml:"name,attr"`
-	Type     string                    `xml:"type,attr"`
+	XMLName  xml.Name                      `xml:"objectStructureElement"`
+	Name     string                        `xml:"name,attr"`
+	Type     string                        `xml:"type,attr"`
 	Elements []ClassObjectStructureElement `xml:"objectStructureElement"`
 	Links    []ClassObjectStructureLink    `xml:"link"`
 }
 
 // ClassObjectStructureElement represents an element (method, attribute, type) in the class structure.
 type ClassObjectStructureElement struct {
-	Name      string                     `xml:"name,attr"`
-	Type      string                     `xml:"type,attr"` // CLAS/OM for method, CLAS/OA for attribute, CLAS/OT for type
-	ClifName  string                     `xml:"clif_name,attr,omitempty"`
-	Level     string                     `xml:"level,attr,omitempty"`     // instance or static
-	Visibility string                    `xml:"visibility,attr,omitempty"` // public, protected, private
-	Links     []ClassObjectStructureLink `xml:"link"`
+	Name       string                     `xml:"name,attr"`
+	Type       string                     `xml:"type,attr"` // CLAS/OM for method, CLAS/OA for attribute, CLAS/OT for type
+	ClifName   string                     `xml:"clif_name,attr,omitempty"`
+	Level      string                     `xml:"level,attr,omitempty"`      // instance or static
+	Visibility string                     `xml:"visibility,attr,omitempty"` // public, protected, private
+	Links      []ClassObjectStructureLink `xml:"link"`
 }
 
 // ClassObjectStructureLink represents a link in the class object structure.
@@ -208,13 +208,13 @@ type ClassObjectStructureLink struct {
 
 // MethodInfo represents information about a class method with source boundaries.
 type MethodInfo struct {
-	Name              string // Method name
-	Visibility        string // public, protected, private
-	Level             string // instance or static
-	DefinitionStart   int    // Line number where definition starts
-	DefinitionEnd     int    // Line number where definition ends
-	ImplementationStart int  // Line number where implementation starts
-	ImplementationEnd   int  // Line number where implementation ends
+	Name                string // Method name
+	Visibility          string // public, protected, private
+	Level               string // instance or static
+	DefinitionStart     int    // Line number where definition starts
+	DefinitionEnd       int    // Line number where definition ends
+	ImplementationStart int    // Line number where implementation starts
+	ImplementationEnd   int    // Line number where implementation ends
 }
 
 // ParseClassObjectStructure parses the class object structure XML.
@@ -377,12 +377,12 @@ type APIReleaseStateCatalog struct {
 
 // Revision represents a single version of an ABAP object in the revision history.
 type Revision struct {
-	URI          string `json:"uri"`                    // Content URL for fetching this version's source
-	Version      string `json:"version"`                // Version identifier (entry ID)
-	VersionTitle string `json:"versionTitle"`           // Human-readable version title
-	Date         string `json:"date"`                   // ISO 8601 timestamp
-	Author       string `json:"author"`                 // Username who made the change
-	Transport    string `json:"transport,omitempty"`     // Transport request number
+	URI          string `json:"uri"`                 // Content URL for fetching this version's source
+	Version      string `json:"version"`             // Version identifier (entry ID)
+	VersionTitle string `json:"versionTitle"`        // Human-readable version title
+	Date         string `json:"date"`                // ISO 8601 timestamp
+	Author       string `json:"author"`              // Username who made the change
+	Transport    string `json:"transport,omitempty"` // Transport request number
 }
 
 // revisionFeedEntry is an internal type for parsing ADT version Atom feed entries.
