@@ -533,64 +533,34 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 		Failed:    []ActivationFailed{},
 	}
 
-	if len(toActivate) == 0 {
-		result.Summary = "No inactive objects to activate"
-		return result, nil
-	}
-
-	// Build ObjectRef list and activate all in a single request so SAP can resolve
-	// mutual dependencies between objects (same behaviour as Eclipse ADT).
-	refs := make([]ObjectRef, 0, len(toActivate))
-	refMeta := make(map[string]InactiveObject, len(toActivate)) // URI → meta
+	// Activate each object
 	for _, rec := range toActivate {
 		if rec.Object == nil {
 			continue
 		}
-		refs = append(refs, ObjectRef{URI: rec.Object.URI, Name: rec.Object.Name})
-		refMeta[rec.Object.URI] = *rec.Object
-	}
-
-	activation, err := c.ActivateMultiple(ctx, refs)
-	if err != nil {
-		return nil, fmt.Errorf("batch activation failed: %w", err)
-	}
-
-	// Build per-object reason strings from activation messages (keyed by ObjDescr/name).
-	reasons := make(map[string]string)
-	for _, msg := range activation.Messages {
-		if strings.ContainsAny(msg.Type, "EAX") && msg.ObjDescr != "" {
-			if reasons[msg.ObjDescr] == "" {
-				reasons[msg.ObjDescr] = msg.ShortText
-			}
-		}
-	}
-
-	// Objects still inactive after the request → Failed; the rest → Activated.
-	// A refusing object answers 200 but stays inactive, so this post-state check
-	// is what keeps it out of the Activated count (preserves the earlier fix:
-	// the summary must not say "Activated 12" about eleven).
-	stillInactive := make(map[string]bool, len(activation.Inactive))
-	for _, obj := range activation.Inactive {
-		stillInactive[obj.URI] = true
-	}
-
-	for _, ref := range refs {
-		meta := refMeta[ref.URI]
-		if stillInactive[ref.URI] {
-			reason := reasons[ref.Name]
-			if reason == "" {
-				reason = "still inactive after activation attempt"
-			}
+		obj := rec.Object
+		activation, err := c.Activate(ctx, obj.URI, obj.Name)
+		switch {
+		case err != nil:
 			result.Failed = append(result.Failed, ActivationFailed{
-				Name:   ref.Name,
-				Type:   meta.Type,
-				Reason: reason,
+				Name:   obj.Name,
+				Type:   obj.Type,
+				Reason: err.Error(),
 			})
-		} else {
+		case !activation.Success:
+			// The object that refuses to activate answers 200 like the rest, so
+			// counting only transport errors put it in the Activated list and
+			// the summary then said "Activated 12 objects" about eleven.
+			result.Failed = append(result.Failed, ActivationFailed{
+				Name:   obj.Name,
+				Type:   obj.Type,
+				Reason: strings.Join(activation.ProblemLines(), "; "),
+			})
+		default:
 			result.Activated = append(result.Activated, ActivatedObject{
-				Name: ref.Name,
-				Type: meta.Type,
-				URI:  ref.URI,
+				Name: obj.Name,
+				Type: obj.Type,
+				URI:  obj.URI,
 			})
 		}
 	}
