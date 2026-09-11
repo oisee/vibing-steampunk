@@ -23,6 +23,29 @@ two worktrees, which is why it says so.
 > — the v2.55.0 sprint. Four defects that are one defect: the tool could not
 > answer, so it answered anyway. Ordered, with the test that proves each.
 
+## Open — 2026-09-11 — minimise the ZADT_VSP / server-side install (parks #138)
+
+`README` already says ZADT_VSP is "no longer needed for debugging or for calling
+function modules — the debugger runs on SAP's own ADT resources and classic RFC
+is spoken natively." So the server-side footprint is mostly reducible; the goal
+is to make it near-zero and, where a service must stay, make the install
+degrade cleanly instead of failing whole.
+
+- **Park #138** (@blicksten, "InstallZADTVSP deploys real source") here. Its core
+  (Description + `!Success`) already landed on main; the useful remainder is
+  AMDP-optional + a general optional-skip + APC-handler ref-stripping, which the
+  APC handler's static `APPEND NEW zcl_vsp_amdp_service( )` makes non-trivial and
+  which needs a live-install test. Left open on GitHub, not merged.
+- **The larger task:** audit what *still* requires ZADT_VSP (the APC WebSocket
+  handler + its service classes) now that debugger and RFC don't, and cut the
+  install to the minimum — ideally optional-per-service so a system missing a
+  dependency (abapGit, AMDP APIs) installs the rest and reports what it skipped,
+  with the APC handler not statically referencing a skipped class.
+- Possibly a good **ultracode** (multi-agent) job: fan out over the embedded
+  ABAP (`embedded/abap/*.clas.abap`) + `internal/mcp/handlers_install.go` to map
+  each service's real dependency and who references it, then propose the minimal
+  install graph. Only run on explicit opt-in.
+
 ## Open — 2026-09-11 — README rework (do after the PR-backlog work)
 
 The README has drifted. Grounded against `main` on 2026-09-11 (tool counts
