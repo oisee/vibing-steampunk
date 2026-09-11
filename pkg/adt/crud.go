@@ -996,6 +996,12 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 	// how a lock-window counter ends up permanently non-zero.
 	c.noteLockClosed(lockHandle)
 
+	// The DELETE consumed the handle, but the ENQUEUE the LOCK took lives on
+	// with the stateful context. Behind a session-holding proxy that context
+	// outlives the chain, and SM12 keeps showing a lock on an object that no
+	// longer exists. Retire the context the way UnlockObject does.
+	c.transport.ReleaseProxyContext(ctx)
+
 	return nil
 }
 

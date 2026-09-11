@@ -82,7 +82,7 @@ type Config struct {
 	// stateless requests carry that empty cookie (the stateful context
 	// survives), the CSRF probe and every LOCK open a fresh stateful context
 	// with it (the chain re-learns the live one from the response), and after
-	// UNLOCK a stateless probe without the cookie retires the context.
+	// UNLOCK or DELETE a stateless probe without the cookie retires the context.
 	// Also enabled via SAP_PROXY_CONTEXTID_GUARD=true.
 	ProxyContextIDGuard bool
 }
