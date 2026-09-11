@@ -14,17 +14,26 @@ import (
 type DeployResult struct {
 	// Transport is the request the write went under, and TransportNote
 	// says how it was chosen when the caller named none.
-	Transport     string   `json:"transport,omitempty"`
-	TransportNote string   `json:"transportNote,omitempty"`
-	ObjectURL     string   `json:"objectUrl"`
-	ObjectName    string   `json:"objectName"`
-	ObjectType    string   `json:"objectType"`
-	FilePath      string   `json:"filePath"`
-	Success       bool     `json:"success"`
-	Created       bool     `json:"created"` // true if created, false if updated
-	SyntaxErrors  []string `json:"syntaxErrors,omitempty"`
-	Errors        []string `json:"errors,omitempty"`
-	Message       string   `json:"message,omitempty"`
+	Transport          string   `json:"transport,omitempty"`
+	TransportNote      string   `json:"transportNote,omitempty"`
+	ObjectURL          string   `json:"objectUrl"`
+	ObjectName         string   `json:"objectName"`
+	ObjectType         string   `json:"objectType"`
+	FilePath           string   `json:"filePath"`
+	Success            bool     `json:"success"`
+	Created            bool     `json:"created"` // true if created, false if updated
+	SyntaxErrors       []string `json:"syntaxErrors,omitempty"`
+	Errors             []string `json:"errors,omitempty"`
+	ExpectedSourceHash string   `json:"expectedSourceHash,omitempty"`
+	TargetSourceHash   string   `json:"targetSourceHash,omitempty"`
+	VerifiedSourceHash string   `json:"verifiedSourceHash,omitempty"`
+	Message            string   `json:"message,omitempty"`
+}
+
+// DeployFromFileOptions configures an optional optimistic-concurrency guard
+// for an existing object deployment.
+type DeployFromFileOptions struct {
+	ExpectedSourceHash string
 }
 
 // CreateFromFile creates a new ABAP object from a file and activates it.
@@ -234,6 +243,15 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 //
 //	result, err := client.UpdateFromFile(ctx, "/path/to/zcl_test.clas.abap", "")
 func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string) (*DeployResult, error) {
+	return c.UpdateFromFileWithOptions(ctx, filePath, transport, nil)
+}
+
+// UpdateFromFileWithOptions is UpdateFromFile with an optional source version
+// precondition. Its check happens after the object lock is acquired.
+func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transport string, opts *DeployFromFileOptions) (*DeployResult, error) {
+	if opts != nil {
+		ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
+	}
 	// Safety check
 	if err := c.checkSafety(OpUpdate, "UpdateFromFile"); err != nil {
 		return nil, err
@@ -450,16 +468,44 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 		objTypeStr = fmt.Sprintf("%s.%s", info.ObjectType, info.ClassIncludeType)
 	}
 
-	return &DeployResult{
-		FilePath:   filePath,
-		ObjectURL:  objectURL,
-		ObjectName: info.ObjectName,
-		ObjectType: objTypeStr,
-		Success:    true,
-		Transport:  transport, TransportNote: trNote,
-		Created: false,
-		Message: fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
-	}, nil
+	result := &DeployResult{
+		FilePath:      filePath,
+		ObjectURL:     objectURL,
+		ObjectName:    info.ObjectName,
+		ObjectType:    objTypeStr,
+		Success:       true,
+		Transport:     transport,
+		TransportNote: trNote,
+		Created:       false,
+		Message:       fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
+	}
+	if opts == nil || opts.ExpectedSourceHash == "" {
+		return result, nil
+	}
+	result.ExpectedSourceHash = opts.ExpectedSourceHash
+	result.TargetSourceHash = SourceHash(source)
+	verificationURL, verifyURLErr := c.buildSourceURL(info.ObjectType, info.ObjectName, info.ParentName)
+	if isClassInclude {
+		verificationURL = GetClassIncludeSourceURL(info.ObjectName, info.ClassIncludeType)
+		verifyURLErr = nil
+	}
+	if verifyURLErr != nil {
+		result.Success = false
+		result.Message = fmt.Sprintf("Source was written and activated, but post-write verification could not resolve its source URL: %v. Do not retry blindly.", verifyURLErr)
+		return result, nil
+	}
+	resp, verifyErr := c.transport.Request(ctx, verificationURL, &RequestOptions{Method: "GET", Accept: "text/plain"})
+	if verifyErr != nil {
+		result.Success = false
+		result.Message = fmt.Sprintf("Source was written and activated, but post-write verification could not read it: %v. Do not retry blindly.", verifyErr)
+		return result, nil
+	}
+	result.VerifiedSourceHash = SourceHash(string(resp.Body))
+	if result.VerifiedSourceHash != result.TargetSourceHash {
+		result.Success = false
+		result.Message = fmt.Sprintf("Source was written and activated, but post-write verification differs (target %s, actual %s). Do not retry blindly.", result.TargetSourceHash, result.VerifiedSourceHash)
+	}
+	return result, nil
 }
 
 // DeployFromFile intelligently creates or updates an object from a file.
@@ -477,6 +523,12 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 //	result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
 //	result, err := client.DeployFromFile(ctx, "/path/to/zcl_test.clas.testclasses.abap", "$TMP", "")
 func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
+	return c.DeployFromFileWithOptions(ctx, filePath, packageName, transport, nil)
+}
+
+// DeployFromFileWithOptions preserves DeployFromFile's create-or-update
+// behaviour while allowing an existing-object update to be version guarded.
+func (c *Client) DeployFromFileWithOptions(ctx context.Context, filePath, packageName, transport string, opts *DeployFromFileOptions) (*DeployResult, error) {
 	// 1. Parse file
 	info, err := ParseABAPFile(filePath)
 	if err != nil {
@@ -525,6 +577,9 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 				}, nil
 			}
 			// Regular object - create it
+			if opts != nil && opts.ExpectedSourceHash != "" {
+				return nil, fmt.Errorf("expected_source_hash is only valid when updating an existing object")
+			}
 			return c.CreateFromFile(ctx, filePath, packageName, transport)
 		}
 		// Authentication, network and server failures are inconclusive. Do not
@@ -533,7 +588,7 @@ func (c *Client) DeployFromFile(ctx context.Context, filePath, packageName, tran
 	}
 
 	// Object exists - update it (handles both regular objects and class includes)
-	return c.UpdateFromFile(ctx, filePath, transport)
+	return c.UpdateFromFileWithOptions(ctx, filePath, transport, opts)
 }
 
 // buildObjectURL constructs the ADT URL for an object type and name
