@@ -29,6 +29,12 @@ type Client struct {
 	// Lock handles believed outstanding, so the keep-alive ping does not
 	// retire the session one of them is bound to. See lock_window.go.
 	locks lockWindow
+
+	// rfcFetcherFactory, when non-nil, overrides the default WebSocket-backed
+	// RFC source fetcher used by GetEnhancement's fallback path. Production
+	// callers leave this nil; tests inject a stub to avoid opening a real
+	// WebSocket. See enhancements.go.
+	rfcFetcherFactory func(ctx context.Context) (rfcSourceFetcher, error)
 }
 
 // NewClient creates a new ADT client with the given configuration.
