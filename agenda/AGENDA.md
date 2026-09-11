@@ -23,6 +23,31 @@ two worktrees, which is why it says so.
 > — the v2.55.0 sprint. Four defects that are one defect: the tool could not
 > answer, so it answered anyway. Ordered, with the test that proves each.
 
+## Open — 2026-09-11 — README rework (do after the PR-backlog work)
+
+The README has drifted. Grounded against `main` on 2026-09-11 (tool counts
+147/148 → 151 already fixed by the #214/#215 merges; these remain):
+
+- **Roadmap phases** (`README.md` ~L2135, and "Vision & Roadmap"): the table
+  lists Phases 5–8 as Q1–Q4 2026 with no status, but Q1–Q3 are past and half
+  already shipped (Lua ✅, the debugger ✅) while cluster tables and dump-RCA
+  aren't on it at all. Rewrite: mark shipped, re-date or drop the passed
+  quarters, add what actually landed this year.
+- **"0x101 Stars!"** (~L711): says 257 stars / header `0x101` = 257; actual is
+  467 (`0x1D3`), and it links only the April article. Two newer ones now live
+  in `articles/` (2026-08-25 "still 5%", 2026-09-11 "the frontier went down a
+  layer"). Update count/header, link the newest.
+- **Test count "1203"** (~L1853, L1882) → 1354 now. De-hardcode or refresh.
+- **"94 tools"** in the Documentation table → 151; `README_TOOLS.md` still
+  mixes 94/100/151.
+- **"What's New — Analysis & Intelligence Sprint"** (~L717): stale sprint
+  framing, superseded by the top "New in the last three releases" callout —
+  merge or drop.
+- Optional: "Hot Right Now" is accurate but could lead with the freshest
+  (cluster tables / dump-RCA) and add a one-line pointer to the sibling repos
+  (`open-rfc-go`, `open-diag-go-pro`) now that the shared `sap-kb` exists — the
+  DIAG rogue-server frontier isn't mentioned at all.
+
 ## Landed — 2026-09-04 — v2.55.0
 
 Released through the workflow this time (`gh workflow run release.yml -f
