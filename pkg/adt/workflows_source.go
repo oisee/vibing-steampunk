@@ -134,8 +134,13 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 		}
 		return string(data), nil
 
+	case "ENHO":
+		// Enhancement Framework implementation — read via the ADT enhancement
+		// endpoints (see enhancements.go).
+		return c.GetEnhancement(ctx, name)
+
 	default:
-		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, VIEW, BDEF, SRVD, SRVB, MSAG)", objectType)
+		return "", fmt.Errorf("unsupported object type: %s (supported: PROG, CLAS, INTF, FUNC, FUGR, INCL, DDLS, VIEW, BDEF, SRVD, SRVB, MSAG, ENHO)", objectType)
 	}
 }
 

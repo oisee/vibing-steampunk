@@ -17,9 +17,9 @@ import (
 // routeSourceAction routes "read" for GetSource and "edit" for WriteSource/EditSource.
 func (s *Server) routeSourceAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action == "read" {
-		// GetSource covers: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, SRVB, MSAG, VIEW
+		// GetSource covers: CLAS, PROG, INTF, FUNC, FUGR, INCL, DDLS, BDEF, SRVD, SRVB, MSAG, VIEW, ENHO
 		switch objectType {
-		case "CLAS", "PROG", "INTF", "FUNC", "FUGR", "INCL", "DDLS", "BDEF", "SRVD", "SRVB", "MSAG", "VIEW":
+		case "CLAS", "PROG", "INTF", "FUNC", "FUGR", "INCL", "DDLS", "BDEF", "SRVD", "SRVB", "MSAG", "VIEW", "ENHO":
 			args := map[string]any{
 				"object_type": objectType,
 				"name":        objectName,
