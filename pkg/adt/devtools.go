@@ -405,6 +405,47 @@ func parseInactiveObjects(data []byte) ([]InactiveObjectRecord, error) {
 
 // --- Batch Activation ---
 
+// ObjectRef is a URI + name pair used to reference an ADT object in activation requests.
+type ObjectRef struct {
+	URI  string `json:"uri"`
+	Name string `json:"name"`
+}
+
+// ActivateMultiple activates multiple objects in a single ADT request, allowing SAP to
+// resolve mutual dependencies between them (e.g., a program and all its includes).
+// This is the correct approach when objects reference symbols defined in each other —
+// activating them one by one fails because the first object can't see the others.
+func (c *Client) ActivateMultiple(ctx context.Context, objects []ObjectRef) (*ActivationResult, error) {
+	if err := c.checkSafety(OpActivate, "ActivateMultiple"); err != nil {
+		return nil, err
+	}
+	if len(objects) == 0 {
+		return &ActivationResult{Success: true, Messages: []ActivationResultMessage{}, Inactive: []InactiveObject{}}, nil
+	}
+	if len(objects) == 1 {
+		return c.Activate(ctx, objects[0].URI, objects[0].Name)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	sb.WriteString("<adtcore:objectReferences xmlns:adtcore=\"http://www.sap.com/adt/core\">\n")
+	for _, obj := range objects {
+		sb.WriteString(fmt.Sprintf("  <adtcore:objectReference adtcore:uri=\"%s\" adtcore:name=\"%s\"/>\n",
+			obj.URI, obj.Name))
+	}
+	sb.WriteString("</adtcore:objectReferences>")
+
+	resp, err := c.transport.Request(ctx, "/sap/bc/adt/activation?method=activate&preauditRequested=true", &RequestOptions{
+		Method:      http.MethodPost,
+		Body:        []byte(sb.String()),
+		ContentType: "application/xml",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch activation failed: %w", err)
+	}
+	return parseActivationResult(resp.Body)
+}
+
 // ActivatePackageResult represents the result of batch activation.
 type ActivatePackageResult struct {
 	Activated []ActivatedObject  `json:"activated"`
