@@ -469,11 +469,11 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 	}
 
 	result := &DeployResult{
-		FilePath:   filePath,
-		ObjectURL:  objectURL,
-		ObjectName: info.ObjectName,
-		ObjectType: objTypeStr,
-		Success:    true,
+		FilePath:      filePath,
+		ObjectURL:     objectURL,
+		ObjectName:    info.ObjectName,
+		ObjectType:    objTypeStr,
+		Success:       true,
 		Transport:     transport,
 		TransportNote: trNote,
 		Created:       false,
