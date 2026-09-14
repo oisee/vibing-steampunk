@@ -133,8 +133,21 @@ func (s *Server) handleUpdateSource(ctx context.Context, request mcp.CallToolReq
 		sourceURL = objectURL + "/source/main"
 	}
 
-	err := s.withObjectLock(ctx, objectURL, lockHandle, func(handle string) error {
-		return s.adtClient.UpdateSource(ctx, sourceURL, source, handle, transport)
+	updateCtx := ctx
+	if lockHandle == "" {
+		// Resolve and approve the package before acquiring the session-bound
+		// lock. UpdateSource reuses this per-object marker, so it still runs
+		// every policy check but does not issue a stateless SearchObject inside
+		// the LOCK -> PUT -> UNLOCK window (#169).
+		var err error
+		updateCtx, err = s.adtClient.PrepareSourceUpdate(ctx, objectURL, transport)
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("Failed to update source: %v", err)), nil
+		}
+	}
+
+	err := s.withObjectLock(updateCtx, objectURL, lockHandle, func(handle string) error {
+		return s.adtClient.UpdateSource(updateCtx, sourceURL, source, handle, transport)
 	})
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to update source: %v", err)), nil
