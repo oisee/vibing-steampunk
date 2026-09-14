@@ -666,9 +666,12 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			// Update source
 			err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
 			if err != nil {
-				// Unlock on failure
-				_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
-				result.Message = fmt.Sprintf("Failed to update BDEF source: %v", err)
+				// Unlock on failure, detached from ctx's cancellation (issue #91/#166).
+				if unlockErr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); unlockErr != nil {
+					result.Message = fmt.Sprintf("Failed to update BDEF source: %v — %s", err, strandedLockAdvice(objectURL, unlockErr))
+				} else {
+					result.Message = fmt.Sprintf("Failed to update BDEF source: %v", err)
+				}
 				return result, nil
 			}
 

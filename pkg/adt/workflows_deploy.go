@@ -46,7 +46,7 @@ type DeployFromFileOptions struct {
 // Example:
 //
 //	result, err := client.CreateFromFile(ctx, "/path/to/zcl_test.clas.abap", "$TMP", "")
-func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, transport string) (*DeployResult, error) {
+func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, transport string) (result *DeployResult, err error) {
 	// Safety check
 	if err := c.checkSafety(OpCreate, "CreateFromFile"); err != nil {
 		return nil, err
@@ -135,11 +135,13 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}, nil
 	}
 
-	// Ensure unlock on any error
+	// Ensure unlock on any error, detached from ctx's cancellation (issue #91/#166).
 	unlocked := false
 	defer func() {
 		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+			if unlockErr := c.releaseLockAfterFailure(ctx, objectURL, lockResult.LockHandle); unlockErr != nil && result != nil {
+				result.Message = fmt.Sprintf("%s — %s", result.Message, strandedLockAdvice(objectURL, unlockErr))
+			}
 		}
 	}()
 
@@ -248,7 +250,7 @@ func (c *Client) UpdateFromFile(ctx context.Context, filePath, transport string)
 
 // UpdateFromFileWithOptions is UpdateFromFile with an optional source version
 // precondition. Its check happens after the object lock is acquired.
-func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transport string, opts *DeployFromFileOptions) (*DeployResult, error) {
+func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transport string, opts *DeployFromFileOptions) (result *DeployResult, err error) {
 	if opts != nil {
 		ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
 	}
@@ -347,11 +349,13 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 		}, nil
 	}
 
-	// Ensure unlock on any error
+	// Ensure unlock on any error, detached from ctx's cancellation (issue #91/#166).
 	unlocked := false
 	defer func() {
 		if !unlocked {
-			_ = c.UnlockObject(ctx, objectURL, lockResult.LockHandle)
+			if unlockErr := c.releaseLockAfterFailure(ctx, objectURL, lockResult.LockHandle); unlockErr != nil && result != nil {
+				result.Message = fmt.Sprintf("%s — %s", result.Message, strandedLockAdvice(objectURL, unlockErr))
+			}
 		}
 	}()
 
@@ -468,7 +472,7 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 		objTypeStr = fmt.Sprintf("%s.%s", info.ObjectType, info.ClassIncludeType)
 	}
 
-	result := &DeployResult{
+	result = &DeployResult{
 		FilePath:      filePath,
 		ObjectURL:     objectURL,
 		ObjectName:    info.ObjectName,

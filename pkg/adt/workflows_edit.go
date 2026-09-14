@@ -397,11 +397,15 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		return result, nil
 	}
 
-	// Ensure unlock
+	// Ensure unlock. Detached from ctx's cancellation and given its own
+	// deadline (issue #91/#166) — a failure that cancelled ctx would
+	// otherwise never send the compensating UNLOCK at all.
 	unlocked := false
 	defer func() {
 		if !unlocked {
-			_ = c.UnlockObject(ctx, lockURL, lockResult.LockHandle)
+			if unlockErr := c.releaseLockAfterFailure(ctx, lockURL, lockResult.LockHandle); unlockErr != nil {
+				result.Message = fmt.Sprintf("%s — %s", result.Message, strandedLockAdvice(lockURL, unlockErr))
+			}
 		}
 	}()
 

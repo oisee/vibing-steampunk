@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -701,5 +703,264 @@ func TestPrepareSourceUpdate_MarksTheObjectItChecked(t *testing.T) {
 	})
 	if after := len(rec.snapshot()); after == before {
 		t.Error("an unmarked object was accepted without resolving its package")
+	}
+}
+
+// --- Issue #166: the remaining compensating-unlock sites (ExecuteABAP is
+// covered separately, by PR #227) ---
+
+// TestEditSourceWithOptions_ReleasesLockAfterFailedSourceWrite is the
+// regression this whole slice of #166 exists for: it cancels the caller's
+// ctx at the exact moment the source PUT reaches the server (the same
+// technique PR #227 uses for ExecuteABAP), so the compensating unlock has to
+// run on a context that is already done. The old `_ = c.UnlockObject(ctx,
+// ...)` reused that ctx and so would fail before a byte left the process; a
+// version of this test using an uncancelled ctx would pass against either
+// the old or the new code and would not actually pin the fix.
+func TestEditSourceWithOptions_ReleasesLockAfterFailedSourceWrite(t *testing.T) {
+	const objectURL = "/sap/bc/adt/programs/programs/ZDEMO_EDITFAIL"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "informationsystem/search"):
+			_, _ = io.WriteString(w, searchXMLFor(
+				"/sap/bc/adt/programs/programs/zdemo_editfail", "ZDEMO_EDITFAIL", "$TMP"))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/source/main"):
+			_, _ = io.WriteString(w, "REPORT zdemo_editfail.\nWRITE 'old'.\n")
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockXML)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/source/main"):
+			cancel()
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}, WithAllowedPackages("$TMP"))
+
+	result, err := client.EditSourceWithOptions(ctx, objectURL,
+		"WRITE 'old'.", "WRITE 'new'.", &EditSourceOptions{SyntaxCheck: false})
+	if err != nil {
+		t.Fatalf("EditSourceWithOptions: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("test setup did not cancel ctx during the source PUT")
+	}
+	if result.Success {
+		t.Fatal("expected the edit to fail — the source PUT was stubbed to return 500")
+	}
+
+	calls := rec.snapshot()
+	putAt := indexOfCall(calls, isSourcePut)
+	if putAt < 0 {
+		t.Fatalf("expected a source PUT attempt; trace:\n%v", calls)
+	}
+
+	released := false
+	for _, c := range calls[putAt+1:] {
+		if isUnlock(c) && strings.EqualFold(c.path, objectURL) {
+			released = true
+		}
+	}
+	if !released {
+		t.Error("the failed source write left the object locked: no UNLOCK reached the server " +
+			"after ctx was cancelled, so the ENQUEUE outlives the call")
+		dumpCalls(t, calls)
+	}
+}
+
+func TestEditSourceWithOptions_StrandedLockAdviceWhenUnlockAlsoFails(t *testing.T) {
+	const objectURL = "/sap/bc/adt/programs/programs/ZDEMO_EDITDOUBLEFAIL"
+
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "informationsystem/search"):
+			_, _ = io.WriteString(w, searchXMLFor(
+				"/sap/bc/adt/programs/programs/zdemo_editdoublefail", "ZDEMO_EDITDOUBLEFAIL", "$TMP"))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/source/main"):
+			_, _ = io.WriteString(w, "REPORT zdemo_editdoublefail.\nWRITE 'old'.\n")
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockXML)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/source/main"):
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "UNLOCK":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}, WithAllowedPackages("$TMP"))
+
+	result, err := client.EditSourceWithOptions(context.Background(), objectURL,
+		"WRITE 'old'.", "WRITE 'new'.", &EditSourceOptions{SyntaxCheck: false})
+	if err != nil {
+		t.Fatalf("EditSourceWithOptions: %v", err)
+	}
+	if !strings.Contains(result.Message, "was left LOCKED") {
+		t.Fatalf("expected the message to carry stranded-lock advice when the compensating "+
+			"UNLOCK also fails, got: %q", result.Message)
+	}
+}
+
+func TestCreateFromFile_ReleasesLockAfterFailedSourceWrite(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "zdemo_createfail.prog.abap")
+	if err := os.WriteFile(file, []byte("REPORT zdemo_createfail.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/checkruns"):
+			w.Header().Set("Content-Type", "application/vnd.sap.adt.checkmessages+xml")
+			_, _ = io.WriteString(w, testEmptyCheckXML)
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockXML)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/source/main"):
+			// Cancelled at the moment the write is seen, mirroring PR #227's
+			// technique for ExecuteABAP: the compensating unlock then has to
+			// run on a context that is already done, which is the failure
+			// mode #166 is actually about. A test that never cancels ctx
+			// cannot tell the old `_ = c.UnlockObject(ctx, ...)` apart from
+			// the fix, since both send an identical request on a live ctx.
+			cancel()
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	result, err := client.CreateFromFile(ctx, file, "$TMP", "")
+	if err != nil {
+		t.Fatalf("CreateFromFile: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("test setup did not cancel ctx during the source PUT")
+	}
+	if result.Success {
+		t.Fatal("expected the create to fail — the source PUT was stubbed to return 500")
+	}
+
+	calls := rec.snapshot()
+	putAt := indexOfCall(calls, isSourcePut)
+	if putAt < 0 {
+		t.Fatalf("expected a source PUT attempt; trace:\n%v", calls)
+	}
+	if idx := indexOfCall(calls[putAt+1:], isUnlock); idx < 0 {
+		t.Error("the failed source write left the newly created object locked: no UNLOCK " +
+			"reached the server after ctx was cancelled")
+		dumpCalls(t, calls)
+	}
+}
+
+func TestUpdateFromFileWithOptions_ReleasesLockAfterFailedSourceWrite(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "zdemo_updatefail.prog.abap")
+	if err := os.WriteFile(file, []byte("REPORT zdemo_updatefail.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/checkruns"):
+			w.Header().Set("Content-Type", "application/vnd.sap.adt.checkmessages+xml")
+			_, _ = io.WriteString(w, testEmptyCheckXML)
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockXML)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/source/main"):
+			// See TestCreateFromFile_ReleasesLockAfterFailedSourceWrite: cancel
+			// exactly when the failing write reaches the server, so the
+			// compensating unlock has to escape an already-cancelled ctx.
+			cancel()
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	result, err := client.UpdateFromFileWithOptions(ctx, file, "", nil)
+	if err != nil {
+		t.Fatalf("UpdateFromFileWithOptions: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("test setup did not cancel ctx during the source PUT")
+	}
+	if result.Success {
+		t.Fatal("expected the update to fail — the source PUT was stubbed to return 500")
+	}
+
+	calls := rec.snapshot()
+	putAt := indexOfCall(calls, isSourcePut)
+	if putAt < 0 {
+		t.Fatalf("expected a source PUT attempt; trace:\n%v", calls)
+	}
+	if idx := indexOfCall(calls[putAt+1:], isUnlock); idx < 0 {
+		t.Error("the failed source write left the object locked: no UNLOCK reached the server " +
+			"after ctx was cancelled")
+		dumpCalls(t, calls)
+	}
+}
+
+func TestWriteSource_BDEF_ReleasesLockAfterFailedSourceWrite(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockXML)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/source/main"):
+			// See TestCreateFromFile_ReleasesLockAfterFailedSourceWrite: cancel
+			// exactly when the failing write reaches the server, so the
+			// compensating unlock has to escape an already-cancelled ctx.
+			cancel()
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	result, err := client.WriteSource(ctx, "BDEF", "ZDEMO_BDEF",
+		"define behavior for ZDEMO_BDEF { }",
+		&WriteSourceOptions{Mode: WriteModeCreate, Package: "$TMP", Description: "demo BDEF"})
+	if err != nil {
+		t.Fatalf("WriteSource: %v", err)
+	}
+	if ctx.Err() == nil {
+		t.Fatal("test setup did not cancel ctx during the source PUT")
+	}
+	if result.Success {
+		t.Fatal("expected the write to fail — the source PUT was stubbed to return 500")
+	}
+	if !strings.Contains(result.Message, "Failed to update BDEF source") {
+		t.Fatalf("unexpected message: %q", result.Message)
+	}
+
+	calls := rec.snapshot()
+	putAt := indexOfCall(calls, isSourcePut)
+	if putAt < 0 {
+		t.Fatalf("expected a source PUT attempt; trace:\n%v", calls)
+	}
+	if idx := indexOfCall(calls[putAt+1:], isUnlock); idx < 0 {
+		t.Error("the failed BDEF source write left the object locked: no UNLOCK reached the " +
+			"server after ctx was cancelled")
+		dumpCalls(t, calls)
 	}
 }
