@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/oisee/vibing-steampunk/pkg/cache"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -335,11 +336,22 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 
 	// Use cookie auth if available
 	if params.CookieFile != "" {
-		cookies, err := adt.LoadCookiesFromFile(params.CookieFile)
+		cookieFile, err := filepath.Abs(params.CookieFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load cookies from %s: %w", params.CookieFile, err)
+			return nil, fmt.Errorf("resolving cookie file path: %w", err)
 		}
-		opts = append(opts, adt.WithCookies(cookies))
+		cookies, err := adt.LoadCookiesFromFile(cookieFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load cookies from %s: %w", cookieFile, err)
+		}
+		if len(cookies) == 0 {
+			return nil, fmt.Errorf("no cookies found in file: %s", cookieFile)
+		}
+		reauth, err := adt.NewCookieFileReauthFunc(cookieFile)
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, adt.WithCookies(cookies), adt.WithReauthFunc(reauth), adt.WithReadOnlyReauth())
 		return adt.NewClient(params.URL, "", "", opts...), nil
 	}
 	if params.CookieString != "" {

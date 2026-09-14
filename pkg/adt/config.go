@@ -68,6 +68,13 @@ type Config struct {
 	// takes far longer than any machine-to-machine handshake.
 	ReauthTimeout time.Duration
 
+	// ReauthReadOnly limits an externally refreshed credential source to a
+	// safe, unlocked GET or HEAD retry. A new browser session cannot inherit an
+	// ADT lock handle, and replaying a mutation after changing credentials leaves
+	// its remote result unknowable. Cookie files opt into this narrow policy;
+	// interactive SSO keeps its established recovery behaviour.
+	ReauthReadOnly bool
+
 	// ProxyContextIDGuard enables a workaround for session-holding proxy
 	// chains such as the SAP Business Application Studio destination proxy
 	// (HTTP_PROXY=127.0.0.1:8887 → secure-outbound-connectivity → BTP
@@ -286,6 +293,15 @@ func WithReauthFunc(f func(ctx context.Context) (map[string]string, error)) Opti
 func WithReauthTimeout(d time.Duration) Option {
 	return func(c *Config) {
 		c.ReauthTimeout = d
+	}
+}
+
+// WithReadOnlyReauth limits automatic session recovery to unlocked GET and
+// HEAD requests. It is intended for credential sources that another process
+// refreshes, such as --cookie-file.
+func WithReadOnlyReauth() Option {
+	return func(c *Config) {
+		c.ReauthReadOnly = true
 	}
 }
 

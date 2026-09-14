@@ -277,7 +277,7 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 		if token == "" {
 			// Fetch CSRF token first, on the same kind of session the request
 			// itself will use (issue #91).
-			if err := t.fetchCSRFTokenFor(ctx, opts.Stateful); err != nil {
+			if err := t.fetchCSRFTokenWithReauth(ctx, !t.config.ReauthReadOnly, opts.Stateful); err != nil {
 				return nil, fmt.Errorf("fetching CSRF token: %w", err)
 			}
 			token = t.getCSRFToken()
@@ -314,6 +314,9 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 	// was in fact served by the identity provider. Nothing downstream would
 	// recognise the logon page it carries, so catch it here by origin.
 	if resp.StatusCode < 400 && t.canReauth() && t.redirectedAwayFromSAP(resp) {
+		if err := t.requireSafeReauth(opts, path); err != nil {
+			return nil, err
+		}
 		t.setCSRFToken("")
 		t.setSessionID("")
 		if err := t.callReauthFunc(ctx); err != nil {
@@ -328,7 +331,7 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 		// the request's own session kind: for a stateful write it lands between
 		// the failed attempt and the retry, and an unmarked probe there retires
 		// the session the lock handle belongs to (issue #91).
-		if err := t.fetchCSRFTokenFor(ctx, opts.Stateful); err != nil {
+		if err := t.fetchCSRFTokenWithReauth(ctx, !t.config.ReauthReadOnly, opts.Stateful); err != nil {
 			return nil, fmt.Errorf("refreshing CSRF token: %w", err)
 		}
 
@@ -356,6 +359,9 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 
 		// Handle session timeout - refresh session and retry once
 		if apiErr.IsSessionExpired() {
+			if err := t.requireSafeReauth(opts, path); err != nil {
+				return nil, err
+			}
 			// Clear cached CSRF token and session ID
 			t.setCSRFToken("")
 			t.setSessionID("")
@@ -377,6 +383,9 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 		// This happens after idle periods when the SAP session expires.
 		// We preserve apiErr so the original path/body is not lost if re-auth itself fails.
 		if resp.StatusCode == http.StatusUnauthorized {
+			if err := t.requireSafeReauth(opts, path); err != nil {
+				return nil, err
+			}
 			t.setCSRFToken("")
 			t.setSessionID("")
 
@@ -623,6 +632,20 @@ func (t *Transport) redirectedAwayFromSAP(resp *http.Response) bool {
 // by to produce one.
 func (t *Transport) canReauth() bool {
 	return !t.config.HasBasicAuth() && t.config.ReauthFunc != nil
+}
+
+// requireSafeReauth keeps externally refreshed cookie files out of writes and
+// lock windows. The request already left the process, so continuing it with a
+// new session would turn an observable failure into an unprovable outcome.
+func (t *Transport) requireSafeReauth(opts *RequestOptions, path string) error {
+	if !t.config.ReauthReadOnly || (opts != nil && !opts.Stateful && (opts.Method == http.MethodGet || opts.Method == http.MethodHead)) {
+		return nil
+	}
+	method := http.MethodGet
+	if opts != nil && opts.Method != "" {
+		method = opts.Method
+	}
+	return fmt.Errorf("session expired on %s %s: refusing cookie-file recovery and replay because the remote result is unknown", method, path)
 }
 
 // isCSRFToken reports whether the header value is an actual token rather than the
@@ -939,14 +962,25 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(cookies) == 0 {
+		return fmt.Errorf("re-authentication returned no cookies")
+	}
 
+	// Make the accepted source snapshot the sole authentication state before
+	// asking SAP for a token. The callback has already validated its input; an
+	// error before this point leaves the old session untouched.
 	t.cookiesMu.Lock()
-	t.config.Cookies = cookies
+	t.config.Cookies = cloneCookies(cookies)
 	t.cookiesMu.Unlock()
+	t.setCSRFToken("")
+	t.setSessionID("")
 	// The jar still holds what the expired session's server set — including its
 	// own SAP_SESSIONID, which would ride along beside the new one and leave the
 	// server to pick between them.
 	t.resetCookieJar()
+	if t.cache != nil {
+		t.cache.invalidate()
+	}
 
 	// Fetch CSRF token with the new cookies.
 	// Set lastReauth only after CSRF succeeds — if it fails, the next
@@ -1033,7 +1067,18 @@ func (t *Transport) CurrentCookies() map[string]string {
 func (t *Transport) SetCookies(cookies map[string]string) {
 	t.cookiesMu.Lock()
 	defer t.cookiesMu.Unlock()
-	t.config.Cookies = cookies
+	t.config.Cookies = cloneCookies(cookies)
+}
+
+func cloneCookies(cookies map[string]string) map[string]string {
+	if len(cookies) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(cookies))
+	for name, value := range cookies {
+		cloned[name] = value
+	}
+	return cloned
 }
 
 // addCookies adds user-provided cookies to a request under cookiesMu read lock.

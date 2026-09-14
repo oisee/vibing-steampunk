@@ -120,6 +120,11 @@ type Config struct {
 	// Returns fresh cookies. Passed through to adt.Config.
 	ReauthFunc func(ctx context.Context) (map[string]string, error)
 
+	// ReauthReadOnly limits the re-auth function to unlocked GET/HEAD reads.
+	// Set for credential sources another process refreshes (--cookie-file):
+	// writes and lock windows must fail instead of replaying on a new session.
+	ReauthReadOnly bool
+
 	// ReauthTimeout caps one re-authentication attempt. Zero uses the client
 	// default, which assumes the flow runs unattended; a browser sign-in that
 	// stops to ask for a second factor needs considerably longer.
@@ -159,6 +164,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.ReauthFunc != nil {
 		opts = append(opts, adt.WithReauthFunc(cfg.ReauthFunc))
+	if cfg.ReauthReadOnly {
+		opts = append(opts, adt.WithReadOnlyReauth())
+	}
 	}
 	if cfg.ReauthTimeout > 0 {
 		opts = append(opts, adt.WithReauthTimeout(cfg.ReauthTimeout))
