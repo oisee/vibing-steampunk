@@ -351,6 +351,7 @@ type capturedReq struct {
 	method      string
 	path        string
 	sessionType string
+	cookie      string
 }
 
 func (h *headerCaptureMock) Do(req *http.Request) (*http.Response, error) {
@@ -358,6 +359,7 @@ func (h *headerCaptureMock) Do(req *http.Request) (*http.Response, error) {
 		method:      req.Method,
 		path:        req.URL.Path,
 		sessionType: req.Header.Get("X-sap-adt-sessiontype"),
+		cookie:      req.Header.Get("Cookie"),
 	})
 	return h.inner.Do(req)
 }
@@ -734,5 +736,76 @@ func TestLockObject_AllowsNoModificationOnReadLock(t *testing.T) {
 	}
 	if result.LockHandle != "HANDLE-X" {
 		t.Errorf("LockHandle = %q, want HANDLE-X", result.LockHandle)
+	}
+}
+
+// TestDeleteObject_ReleasesProxyContext pins the tail of a delete chain
+// behind a session-holding proxy: a DELETE consumes the lock handle but never
+// sends an UNLOCK, so the ENQUEUE stays with the stateful context until the
+// proxy times the session out. With the guard on, DeleteObject must retire the
+// context after the DELETE the same way UnlockObject does — a stateless HEAD
+// on discovery without a Cookie, so the proxy injects the context to end.
+func TestDeleteObject_ReleasesProxyContext(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		guard       bool
+		wantRelease bool
+	}{
+		{name: "guard on retires the context", guard: true, wantRelease: true},
+		{name: "guard off sends nothing extra", guard: false, wantRelease: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &methodPathMock{
+				routes: []routedResponse{
+					resp("", "discovery", 200, "ok"),
+					resp("", "informationsystem/search", 200, searchZTESTInTmpXML),
+					resp(http.MethodDelete, "/programs/programs/ZTEST", 200, ""),
+				},
+			}
+			tracker := &headerCaptureMock{inner: mock}
+			opts := []Option{WithAllowedPackages("$TMP")}
+			if tc.guard {
+				opts = append(opts, WithProxyContextIDGuard())
+			}
+			cfg := NewConfig("https://sap.example.com:44300", "user", "pass", opts...)
+			client := NewClientWithTransport(cfg, NewTransportWithClient(cfg, tracker))
+
+			err := client.DeleteObject(context.Background(), "/sap/bc/adt/programs/programs/ZTEST", "TESTHANDLE", "")
+			if err != nil {
+				t.Fatalf("DeleteObject failed: %v", err)
+			}
+
+			deleteAt := -1
+			for i, c := range tracker.captured {
+				if c.method == http.MethodDelete {
+					deleteAt = i
+				}
+			}
+			if deleteAt < 0 {
+				t.Fatal("no DELETE request was sent")
+			}
+			var release *capturedReq
+			for i := deleteAt + 1; i < len(tracker.captured); i++ {
+				c := tracker.captured[i]
+				if c.method == http.MethodHead && strings.HasSuffix(c.path, "/core/discovery") {
+					release = &tracker.captured[i]
+				}
+			}
+			if !tc.wantRelease {
+				if release != nil {
+					t.Fatalf("DELETE was followed by a HEAD on discovery although the guard is off: %+v", tracker.captured)
+				}
+				return
+			}
+			if release == nil {
+				t.Fatalf("DELETE was not followed by the stateless HEAD that retires the proxy context: %+v", tracker.captured)
+			}
+			if release.sessionType != "stateless" {
+				t.Errorf("release X-sap-adt-sessiontype = %q, want \"stateless\"", release.sessionType)
+			}
+			if release.cookie != "" {
+				t.Errorf("release Cookie = %q, want none so the proxy injects the context to be released", release.cookie)
+			}
+		})
 	}
 }
