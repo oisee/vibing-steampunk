@@ -230,17 +230,15 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 		opts.Mode = WriteModeUpsert
 	}
 
-	// Top-level mutation gate. The precise package check runs in the
-	// delegated create/update path (CreateAndActivate* / WriteProgram /
-	// WriteClass) because the target package is known there; here we
-	// enforce op-type and transportable-edit policy up front so the caller
-	// gets a clear early rejection.
-	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpWorkflow,
-		OpName:    "WriteSource",
-		Package:   opts.Package, // empty for update path, present for create
-		Transport: opts.Transport,
-	}); err != nil {
+	// The target package has different meanings on the two branches. For a
+	// create it is caller input; for an update it must be resolved from the
+	// existing object's ADT metadata. Do only the local policy checks here,
+	// before upsert decides which branch it is taking. In particular, never
+	// let a supplied package authorise an update of an existing object.
+	if err := c.checkSafety(OpWorkflow, "WriteSource"); err != nil {
+		return nil, err
+	}
+	if err := c.checkTransportableEdit(opts.Transport, "WriteSource"); err != nil {
 		return nil, err
 	}
 
@@ -372,13 +370,67 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 
 	// Execute create or update workflow
 	if actualMode == WriteModeCreate {
+		// Creation has no existing object to resolve, so this is the one branch
+		// where the explicit package is the policy input.
+		if err := c.checkMutation(ctx, MutationContext{
+			Op:        OpWorkflow,
+			OpName:    "WriteSource",
+			Package:   opts.Package,
+			Transport: opts.Transport,
+		}); err != nil {
+			return nil, err
+		}
 		return c.writeSourceCreate(ctx, objectType, name, source, opts)
 	} else {
+		// Existing objects are checked by their actual ADT URL, before any
+		// delegated workflow can acquire a lock. The marker then prevents the
+		// lower-level writer from repeating that stateless lookup in its lock
+		// window (#91/#169).
+		objectURL, ok := writeSourceUpdateObjectURL(objectType, name)
+		if ok {
+			var err error
+			ctx, err = c.gateAndMark(ctx, MutationContext{
+				Op:        OpWorkflow,
+				OpName:    "WriteSource",
+				ObjectURL: objectURL,
+				Transport: opts.Transport,
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
 		updated, err := c.writeSourceUpdate(ctx, objectType, name, source, opts)
 		if err != nil || opts.ExpectedSourceHash == "" || !updated.Success {
 			return updated, err
 		}
 		return c.verifyWriteSourceResult(ctx, updated, source, opts)
+	}
+}
+
+// writeSourceUpdateObjectURL returns the repository URL for update branches
+// that WriteSource delegates to. FUNC derives its function group before it can
+// construct its URL, so WriteFunctionModule performs the same gate after that
+// resolution and before its lock.
+func writeSourceUpdateObjectURL(objectType, name string) (string, bool) {
+	switch objectType {
+	case "PROG":
+		return fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(name)), true
+	case "CLAS":
+		return fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(name)), true
+	case "INTF":
+		return fmt.Sprintf("/sap/bc/adt/oo/interfaces/%s", url.PathEscape(name)), true
+	case "INCL":
+		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", url.PathEscape(name)), true
+	case "DDLS":
+		return GetObjectURL(ObjectTypeDDLS, name, ""), true
+	case "BDEF":
+		return GetObjectURL(ObjectTypeBDEF, name, ""), true
+	case "SRVD":
+		return GetObjectURL(ObjectTypeSRVD, name, ""), true
+	case "TABL":
+		return GetObjectURL(ObjectTypeTable, name, ""), true
+	default:
+		return "", false
 	}
 }
 
