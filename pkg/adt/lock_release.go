@@ -31,10 +31,17 @@ func (c *Client) releaseLockAfterFailure(ctx context.Context, objectURL, lockHan
 		return nil
 	}
 
-	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockAfterFailureTimeout)
+	releaseCtx, cancel := failureCleanupContext(ctx)
 	defer cancel()
 
 	return c.UnlockObject(releaseCtx, objectURL, lockHandle)
+}
+
+// failureCleanupContext keeps best-effort cleanup independent from the failed
+// operation's cancellation while still bounding how long that cleanup may run.
+// It deliberately keeps the caller's values, including mutation-policy marks.
+func failureCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), unlockAfterFailureTimeout)
 }
 
 // strandedLockAdvice explains an unlock that failed, in the terms a user needs

@@ -184,12 +184,31 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 	// Ensure cleanup on any error (unless KeepProgram is set)
 	defer func() {
 		if !opts.KeepProgram {
-			// Try to delete the program
-			lock, lockErr := c.LockObject(ctx, objectURL, "MODIFY")
-			if lockErr == nil {
-				_ = c.DeleteObject(ctx, objectURL, lock.LockHandle, "")
-				result.CleanedUp = true
+			// The workflow may have returned because ctx was cancelled. Cleanup has
+			// to keep the mutation-policy mark above, but cannot inherit that
+			// cancellation or it will never reach SAP to release the temp object.
+			cleanupCtx, cancel := failureCleanupContext(ctx)
+			defer cancel()
+
+			lock, lockErr := c.LockObject(cleanupCtx, objectURL, "MODIFY")
+			if lockErr != nil {
+				appendExecuteCleanupWarning(result, fmt.Sprintf("could not lock the temporary program for cleanup: %v", lockErr))
+				return
 			}
+
+			// DELETE is intentionally attempted once. A failed request is an
+			// unknown result, not permission to retry a potentially completed
+			// mutation. CleanedUp therefore means only that this DELETE succeeded;
+			// it does not claim a subsequent read verified the object is absent.
+			if deleteErr := c.DeleteObject(cleanupCtx, objectURL, lock.LockHandle, ""); deleteErr != nil {
+				appendExecuteCleanupWarning(result, fmt.Sprintf("temporary-program DELETE outcome is unknown and was not retried: %v", deleteErr))
+				if unlockErr := c.releaseLockAfterFailure(cleanupCtx, objectURL, lock.LockHandle); unlockErr != nil {
+					appendExecuteCleanupWarning(result, strandedLockAdvice(objectURL, unlockErr))
+				}
+				return
+			}
+
+			result.CleanedUp = true
 		}
 	}()
 
@@ -203,8 +222,10 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 	sourceURL := objectURL + "/source/main"
 	err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, "")
 	if err != nil {
-		_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
 		result.Message = fmt.Sprintf("Failed to update source: %v", err)
+		if unlockErr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); unlockErr != nil {
+			appendExecuteCleanupWarning(result, strandedLockAdvice(objectURL, unlockErr))
+		}
 		return result, nil
 	}
 
@@ -311,6 +332,13 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 	}
 
 	return result, nil
+}
+
+func appendExecuteCleanupWarning(result *ExecuteABAPResult, warning string) {
+	if result.Message != "" {
+		result.Message += " "
+	}
+	result.Message += "Cleanup warning: " + warning
 }
 
 // executeWrapperSource builds the throwaway report that the payload runs inside.
