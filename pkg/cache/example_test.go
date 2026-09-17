@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/oisee/vibing-steampunk/pkg/cache"
@@ -53,7 +55,7 @@ func Example_withSQLite() {
 	// Create SQLite cache
 	config := cache.DefaultConfig()
 	config.Type = "sqlite"
-	config.Path = "/tmp/test_cache.db"
+	config.Path = filepath.Join(os.TempDir(), "test_cache.db")
 
 	c, err := cache.NewCache(config)
 	if err != nil {

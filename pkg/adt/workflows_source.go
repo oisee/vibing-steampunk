@@ -1197,7 +1197,13 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 
 	className = strings.ToUpper(className)
 	methodName = strings.ToUpper(methodName)
-	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(strings.ToLower(className)))
+	var urlName string
+	if strings.Contains(className, "/") {
+		urlName = strings.ToUpper(className)
+	} else {
+		urlName = strings.ToLower(className)
+	}
+	objectURL := fmt.Sprintf("/sap/bc/adt/oo/classes/%s", url.PathEscape(urlName))
 	result.ObjectURL = objectURL
 
 	// Full gate up front, so UpdateSource does not repeat the networked

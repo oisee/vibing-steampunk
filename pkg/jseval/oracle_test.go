@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -188,7 +189,7 @@ for (let i = 0; i < result.length; i++) {
 console.log(out);
 `, strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(s.code, "\\", "\\\\"), "\"", "\\\""), "\n", "\\n"))
 
-			tmpFile := fmt.Sprintf("/tmp/oracle_test_%s.js", s.name)
+			tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("oracle_test_%s.js", s.name))
 			os.WriteFile(tmpFile, []byte(nodeCode), 0644)
 			nodeResult, err := exec.Command("node", tmpFile).CombinedOutput()
 			if err != nil {
