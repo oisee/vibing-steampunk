@@ -1172,9 +1172,9 @@ func (s *Server) fetchReverseDeps(ctx context.Context, objType, objName string, 
 					g.AddNode(&graph.Node{ID: fromID, Name: fromName, Type: fromType})
 					targetID := graph.NodeID(obj.objType, obj.name)
 
-					// FU/PR → CALLS, others → REFERENCES
+					// F and R mark call sites; everything else is a reference.
 					edgeKind := graph.EdgeReferences
-					if refType == "FU" || refType == "PR" {
+					if refType == adt.CrossTypeFunctionModule || refType == adt.CrossTypeReport {
 						edgeKind = graph.EdgeCalls
 					}
 

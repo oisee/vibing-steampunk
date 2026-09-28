@@ -1867,23 +1867,32 @@ func runExamples(cmd *cobra.Command, args []string) error {
 	var crossQuery string
 	switch target.ObjectType {
 	case "FUNC":
-		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'FU'", objName)
+		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = '%s'", objName, adt.CrossTypeFunctionModule)
 	case "SUBMIT":
-		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", objName)
+		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = '%s'", objName, adt.CrossTypeReport)
 	case "PROG":
 		if form != "" {
-			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'SU'", form)
+			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = '%s'", form, adt.CrossTypeSubroutine)
 		} else {
-			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = 'PR'", objName)
+			crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME = '%s' AND TYPE = '%s'", objName, adt.CrossTypeReport)
 		}
 	case "CLAS", "INTF":
 		wbQuery = fmt.Sprintf("SELECT INCLUDE, OTYPE, NAME FROM WBCROSSGT WHERE NAME LIKE '%s%%'", objName)
 		crossQuery = fmt.Sprintf("SELECT INCLUDE, TYPE, NAME FROM CROSS WHERE NAME LIKE '%s%%'", objName)
 	}
 
+	// A failed query is recorded, not skipped: the caller count below would read
+	// as an answer. `asked` is only the note's total — FUNC, SUBMIT and PROG ask
+	// one table, CLAS and INTF ask two.
+	var gaps []adt.Unsearched
+	asked := 0
+
 	if wbQuery != "" {
+		asked++
 		wbResult, err := client.RunQuery(ctx, wbQuery, 200)
-		if err == nil && wbResult != nil {
+		if err != nil {
+			gaps = append(gaps, adt.Unsearched{Object: "WBCROSSGT", Reason: err.Error()})
+		} else if wbResult != nil {
 			for _, row := range wbResult.Rows {
 				include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
 				if include == "" || strings.Contains(include, "\\") {
@@ -1912,8 +1921,11 @@ func runExamples(cmd *cobra.Command, args []string) error {
 	}
 
 	if crossQuery != "" {
+		asked++
 		crossResult, err := client.RunQuery(ctx, crossQuery, 200)
-		if err == nil && crossResult != nil {
+		if err != nil {
+			gaps = append(gaps, adt.Unsearched{Object: "CROSS", Reason: err.Error()})
+		} else if crossResult != nil {
 			for _, row := range crossResult.Rows {
 				include := strings.TrimSpace(fmt.Sprintf("%v", row["INCLUDE"]))
 				if include == "" {
@@ -1939,6 +1951,14 @@ func runExamples(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
+	}
+
+	// A failed query is not an empty answer: no caller count is printed unless
+	// every table asked answered. UnsearchedNote caps each reason at one line —
+	// SAP's refusal is a 10 KB HTML page.
+	if note := adt.UnsearchedNote(gaps, asked, "cross-reference table"); note != "" {
+		return fmt.Errorf("a cross-reference table could not be read, so this is not a list of "+
+			"callers and must not be used as one:\n%s", note)
 	}
 
 	fmt.Fprintf(os.Stderr, "Found %d callers.\n", len(callerNames))
