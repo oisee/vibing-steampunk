@@ -235,32 +235,13 @@ func (c *Client) WriteSource(ctx context.Context, objectType, name, source strin
 	// WriteClass) because the target package is known there; here we
 	// enforce op-type and transportable-edit policy up front so the caller
 	// gets a clear early rejection.
-	//
-	// checkMutation's own package step requires either Package or ObjectURL
-	// once AllowedPackages is configured — neither exists yet on the update
-	// path (opts.Package is empty by design; the object's URL is built
-	// per-type further down). Routing update calls through checkMutation
-	// here made every WriteSource update fail outright on a namespace-
-	// restricted server, before ever reaching the delegated check that
-	// actually enforces the policy (found live against a --allowed-packages
-	// server during the v2.58.0 reconciliation, 2026-09-17). Create keeps
-	// the full gate since Package is supplied up front.
-	if opts.Package != "" {
-		if err := c.checkMutation(ctx, MutationContext{
-			Op:        OpWorkflow,
-			OpName:    "WriteSource",
-			Package:   opts.Package,
-			Transport: opts.Transport,
-		}); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := c.checkSafety(OpWorkflow, "WriteSource"); err != nil {
-			return nil, err
-		}
-		if err := c.checkTransportableEdit(opts.Transport, "WriteSource"); err != nil {
-			return nil, err
-		}
+	if err := c.checkMutation(ctx, MutationContext{
+		Op:        OpWorkflow,
+		OpName:    "WriteSource",
+		Package:   opts.Package, // empty for update path, present for create
+		Transport: opts.Transport,
+	}); err != nil {
+		return nil, err
 	}
 
 	objectType = strings.ToUpper(objectType)
