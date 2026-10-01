@@ -162,11 +162,6 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	if opts == nil {
 		opts = &EditSourceOptions{SyntaxCheck: true}
 	}
-	// ADT paths are always lowercase; the class/include detection below matches
-	// on lowercase literals ("/oo/classes/", "/includes/"), so an uppercase
-	// caller would silently misclassify a class include as a plain class
-	// source and append /source/main to a URL that must not have it (#118).
-	objectURL = strings.ToLower(objectURL)
 	ctx = withExpectedSourceHash(ctx, opts.ExpectedSourceHash)
 
 	// Unified mutation policy gate (op type + package + transport). The mark
@@ -200,13 +195,19 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		result.ObjectName = parts[len(parts)-1]
 	}
 
+	// The route segments are matched on an ASCII-lowercased copy, so an
+	// uppercase caller is not misread as a plain class (#118). The copy has the
+	// same byte offsets, so the names are sliced from objectURL itself and keep
+	// their case: a namespaced class stays %2FDMO%2FCL_FLIGHT.
+	lowerURL := lowerASCII(objectURL)
+
 	// Detect if this is a class URL (not an include)
-	isClass := strings.Contains(objectURL, "/sap/bc/adt/oo/classes/") && !strings.Contains(objectURL, "/includes/")
+	isClass := strings.Contains(lowerURL, "/sap/bc/adt/oo/classes/") && !strings.Contains(lowerURL, "/includes/")
 	var classNameForMethod string
 	if isClass && opts.Method != "" {
 		// Extract class name for method-level isolation
 		classesPrefix := "/sap/bc/adt/oo/classes/"
-		if idx := strings.Index(objectURL, classesPrefix); idx >= 0 {
+		if idx := strings.Index(lowerURL, classesPrefix); idx >= 0 {
 			rest := objectURL[idx+len(classesPrefix):]
 			if slashIdx := strings.Index(rest, "/"); slashIdx > 0 {
 				classNameForMethod = rest[:slashIdx]
@@ -219,7 +220,7 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 
 	// Detect if this is a class include (e.g., /sap/bc/adt/oo/classes/ZCL_FOO/includes/testclasses).
 	// Program includes (/programs/includes/ZZ_NAME) are NOT class includes — /includes/ is their collection path.
-	isClassInclude := strings.Contains(objectURL, "/oo/classes/") && strings.Contains(objectURL, "/includes/")
+	isClassInclude := strings.Contains(lowerURL, "/oo/classes/") && strings.Contains(lowerURL, "/includes/")
 	var className string
 	var includeType ClassIncludeType
 	var parentClassURL string
@@ -227,13 +228,13 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	if isClassInclude {
 		// Parse class name and include type from URL
 		// URL format: /sap/bc/adt/oo/classes/{class_name}/includes/{include_type}
-		includesIdx := strings.Index(objectURL, "/includes/")
+		includesIdx := strings.Index(lowerURL, "/includes/")
 		if includesIdx > 0 {
 			classesPrefix := "/sap/bc/adt/oo/classes/"
-			if strings.Contains(objectURL, classesPrefix) {
-				classStart := strings.Index(objectURL, classesPrefix) + len(classesPrefix)
+			if strings.Contains(lowerURL, classesPrefix) {
+				classStart := strings.Index(lowerURL, classesPrefix) + len(classesPrefix)
 				className = objectURL[classStart:includesIdx]
-				includeType = ClassIncludeType(objectURL[includesIdx+len("/includes/"):])
+				includeType = ClassIncludeType(lowerURL[includesIdx+len("/includes/"):])
 				parentClassURL = objectURL[:includesIdx]
 			}
 		}
@@ -242,7 +243,7 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 	// 1. Get current source
 	// For class includes, the source is accessed directly without /source/main suffix
 	sourceURL := objectURL
-	if !isClassInclude && !strings.HasSuffix(sourceURL, "/source/main") {
+	if !isClassInclude && !strings.HasSuffix(lowerURL, "/source/main") {
 		sourceURL = objectURL + "/source/main"
 	}
 
@@ -492,4 +493,16 @@ func (c *Client) EditSourceWithOptions(ctx context.Context, objectURL, oldString
 		result.Message = fmt.Sprintf("Successfully edited and activated %s%s", result.ObjectName, warned)
 	}
 	return result, nil
+}
+
+// lowerASCII lowercases A-Z only. Unlike strings.ToLower it never changes the
+// byte length, so an index found in the result is valid in the input.
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
