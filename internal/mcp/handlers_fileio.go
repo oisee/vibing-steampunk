@@ -210,7 +210,6 @@ func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolReque
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
 	}
-	objectURL = strings.ToLower(objectURL) // ADT paths are always lowercase; normalize defensively
 
 	oldString, ok := request.GetArguments()["old_string"].(string)
 	if !ok || oldString == "" {
