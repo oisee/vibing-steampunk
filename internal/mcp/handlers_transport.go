@@ -52,6 +52,8 @@ func (s *Server) routeTransportAction(ctx context.Context, action, objectType, o
 		return s.callHandler(ctx, s.handleTransportBuffer, params)
 	case "transport_status":
 		return s.callHandler(ctx, s.handleTransportStatus, params)
+	case "import_status":
+		return s.callHandler(ctx, s.handleImportStatus, params)
 	}
 	return nil, false, nil
 }

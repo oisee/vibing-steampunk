@@ -529,6 +529,17 @@ under `--read-only`. If the buffer add fails while the request is certainly not 
 buffer, the two files this upload wrote are deleted again. Taking a request
 out of the queue again is done in STMS.
 
+Whether a request has been imported, and how it went, is in TPALOG: MCP
+`system` with the read-only `import_status` (`transport`: one request, a
+comma-separated list or an array; optional `since`, `YYYYMMDD[hhmmss]`) lists
+the tp steps each request has in this server's own system, oldest first, with
+the worst return code. No steps means tp has not touched the request there.
+It reads TPALOG over classic RFC (`RFC_READ_TABLE`, with a WHERE clause vsp
+builds from the checked request numbers), so it needs the system's RFC
+settings, `--enable-transports` (or `--allow-transportable-edits`) and a
+request that `--allowed-transports` lets through, and it stays available under
+`--read-only`.
+
 **Import an abapGit zip** into a package in one call, with the abapGit
 installed on the system: an offline repository for the package, abapGit's
 deserialize checks, deserialize, activation -- and back come the outcome,

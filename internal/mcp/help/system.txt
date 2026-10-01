@@ -25,6 +25,7 @@ Transports:
     - expert mode; writes both files into this system's DIR_TRANS, releases the job that adds the request to its import queue, answers "pending" with the job; never imports (STMS does)
   SAP(action="system", params={"type": "transport_status", "transport": "TR-EXAMPLE", "job": "12345678"})  - the upload's outcome: queued / pending / job_failed / unknown, read-only
   SAP(action="system", params={"type": "transport_buffer", "transport": "TR-EXAMPLE"})  - this system's import queue, read-only
+  SAP(action="system", params={"type": "import_status", "transport": "TR-EXAMPLE", "since": "20260101"})  - tp steps of the request in this system (TPALOG), read-only; no steps = not imported here
   SAP(action="system", params={"type": "add_transport_object", "transport": "A4HK900001", "objects": ["LIMU REPT ZDEMO", "R3TR PROG ZDEMO2"]})
   SAP(action="system", params={"type": "add_transport_object", "transport": "A4HK900001", "object": "R3TR TABU ZDEMO_CONF", "keys": ["100KEY1", "100KEY2*"]})
   SAP(action="system", params={"type": "remove_transport_object", "transport": "A4HK900001", "object": "PROG ZDEMO"})

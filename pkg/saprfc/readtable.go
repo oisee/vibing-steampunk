@@ -25,6 +25,25 @@ const optionsLineLen = 72
 //     USE_ET_DATA_4_RETURN = 'X', which returns the rows in ET_DATA, whose line
 //     type is a STRING and therefore has no width limit.
 func ReadTable(ctx context.Context, client *rfc.Client, table, where string, fields []string, top int) ([]map[string]string, error) {
+	return readTable(ctx, clientCall(client), table, where, fields, top)
+}
+
+// exports is what a call returns; rfc.Result is one.
+type exports interface {
+	Get(name string) any
+	Table(name string) []map[string]any
+}
+
+// callFn calls a function module. Tests pass a fake in its place.
+type callFn func(ctx context.Context, fm string, in rfc.Params) (exports, error)
+
+func clientCall(c *rfc.Client) callFn {
+	return func(ctx context.Context, fm string, in rfc.Params) (exports, error) {
+		return c.Call(ctx, fm, in)
+	}
+}
+
+func readTable(ctx context.Context, call callFn, table, where string, fields []string, top int) ([]map[string]string, error) {
 	in := rfc.Params{"QUERY_TABLE": table, "DELIMITER": "|"}
 	if top > 0 {
 		in["ROWCOUNT"] = int64(top)
@@ -48,7 +67,7 @@ func ReadTable(ctx context.Context, client *rfc.Client, table, where string, fie
 		in["FIELDS"] = fs
 	}
 
-	r, err := client.Call(ctx, "RFC_READ_TABLE", in)
+	r, err := call(ctx, "RFC_READ_TABLE", in)
 	if err != nil {
 		var exc *rfc.ABAPException
 		if !errors.As(err, &exc) || exc.Key != "DATA_BUFFER_EXCEEDED" {
@@ -57,7 +76,7 @@ func ReadTable(ctx context.Context, client *rfc.Client, table, where string, fie
 		// The row is wider than the 512-byte DATA work area: ask for ET_DATA,
 		// whose line type is a STRING.
 		in["USE_ET_DATA_4_RETURN"] = "X"
-		r, err = client.Call(ctx, "RFC_READ_TABLE", in)
+		r, err = call(ctx, "RFC_READ_TABLE", in)
 		if err != nil {
 			return nil, err
 		}

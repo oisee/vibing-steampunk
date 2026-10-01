@@ -433,6 +433,7 @@ var readOnlyClasses = map[string]surfaceClass{
 	"SAP system type=upload_transport base64": clsMutate,
 	"SAP system type=transport_buffer":        clsRead, // reads DIR_TRANS/buffer/<SID> through EPS; no tp, no job
 	"SAP system type=transport_status":        clsRead, // TBTCO, the job log and the buffer file; no tp, no job
+	"SAP system type=import_status":           clsRead, // TPALOG through RFC_READ_TABLE; no tp, no job
 	"SAP system type=ui5_list_apps":           clsRead,
 	"SAP system type=ui5_get_app":             clsRead,
 	"SAP system type=ui5_get_file":            clsRead,
@@ -709,6 +710,7 @@ func actionCases() []actionCase {
 			"cofile_name", "K900001.XYZ", "cofile_base64", "VEVTVFVTRVIgSyBRQVMgMwo=", "datafile_name", "R900001.XYZ", "datafile_base64", "AAE=")},
 		{Name: "SAP system type=transport_buffer", Action: "system", Exact: true, Params: kv("type", "transport_buffer")},
 		{Name: "SAP system type=transport_status", Action: "system", Exact: true, Params: kv("type", "transport_status", "transport", "TR-EXAMPLE", "job", "12345678")},
+		{Name: "SAP system type=import_status", Action: "system", Exact: true, Params: kv("type", "import_status", "transport", "TR-EXAMPLE")},
 		sys("ui5_list_apps", "UI5ListApps"), sys("ui5_get_app", "UI5GetApp"), sys("ui5_get_file", "UI5GetFileContent"),
 		sys("ui5_upload_file", "UI5UploadFile"), sys("ui5_delete_file", "UI5DeleteFile"),
 		sys("ui5_create_app", "UI5CreateApp"), sys("ui5_delete_app", "UI5DeleteApp"),

@@ -43,8 +43,8 @@ func (s *Server) transportService(ctx context.Context) (adt.TransportService, er
 func (s *Server) checkOwnTarget(args map[string]any) error {
 	for _, k := range uploadTargetOverrides {
 		if _, ok := args[k]; ok {
-			return fmt.Errorf("%q is not accepted: a transport upload goes to this server's own system and client (%s client %s) and nowhere else; "+
-				"to upload to another system, use a server connected to it", k, s.config.BaseURL, orDefaultClient(s.config.Client))
+			return fmt.Errorf("%q is not accepted: this call works on this server's own system and client (%s client %s) and nowhere else; "+
+				"for another system, use a server connected to it", k, s.config.BaseURL, orDefaultClient(s.config.Client))
 		}
 	}
 	// A .vsp.json that cannot be read is not "no .vsp.json": the entry that
