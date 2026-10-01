@@ -11,9 +11,10 @@ func focusedToolSet() map[string]bool {
 		// that a deployment can still switch it off by name like anything else.
 		"SAP": true,
 
-		// Unified tools (2)
-		"GetSource":   true,
-		"WriteSource": true,
+		// Unified tools (3)
+		"GetSource":              true,
+		"WriteSource":            true,
+		"WriteMetadataExtension": true,
 
 		// Search tools (3) - foundation
 		"GrepObjects":  true, // Multi-object search (replaces GrepObject)

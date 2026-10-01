@@ -159,3 +159,44 @@ func TestDebuggerGetVariablesSchemaIncludesItems(t *testing.T) {
 		t.Fatalf("expected variable_ids.items.type to be 'string', got %v", items["type"])
 	}
 }
+
+func TestNewServerRegistersWriteMetadataExtension(t *testing.T) {
+	cfg := &Config{
+		BaseURL:  "https://sap.example.com:44300",
+		Username: "testuser",
+		Password: "testpass",
+		Client:   "001",
+		Language: "EN",
+	}
+
+	server := NewServer(cfg)
+	rawResponse := server.mcpServer.HandleMessage(context.Background(), []byte(`{
+		"jsonrpc": "2.0",
+		"id": 1,
+		"method": "tools/list",
+		"params": {}
+	}`))
+
+	response, ok := rawResponse.(mcp.JSONRPCResponse)
+	if !ok {
+		t.Fatalf("expected JSONRPCResponse, got %T", rawResponse)
+	}
+
+	var tools []mcp.Tool
+	switch result := response.Result.(type) {
+	case mcp.ListToolsResult:
+		tools = result.Tools
+	case *mcp.ListToolsResult:
+		tools = result.Tools
+	default:
+		t.Fatalf("expected ListToolsResult, got %T", response.Result)
+	}
+
+	for _, tool := range tools {
+		if tool.Name == "WriteMetadataExtension" {
+			return
+		}
+	}
+
+	t.Fatal("WriteMetadataExtension tool not found")
+}

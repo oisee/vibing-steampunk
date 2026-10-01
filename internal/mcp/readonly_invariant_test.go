@@ -391,6 +391,7 @@ var readOnlyClasses = map[string]surfaceClass{
 	"tool WriteClass":               clsMutate,
 	"tool WriteDataElementLabels":   clsMutate,
 	"tool WriteMessageClassTexts":   clsMutate,
+	"tool WriteMetadataExtension":   clsMutate,
 	"tool WriteProgram":             clsMutate,
 	"tool WriteSource":              clsMutate,
 	"tool SetBreakpoint":            knownGap(kindMutate, gapBreakpoints),

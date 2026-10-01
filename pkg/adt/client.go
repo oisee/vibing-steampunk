@@ -893,6 +893,22 @@ func (c *Client) GetDDLS(ctx context.Context, ddlsName string) (string, error) {
 	return string(resp.Body), nil
 }
 
+// GetDDLX retrieves the source code of a CDS metadata extension (DDLX/EX).
+func (c *Client) GetDDLX(ctx context.Context, ddlxName string) (string, error) {
+	ddlxName = strings.ToUpper(ddlxName)
+
+	sourcePath := fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s/source/main", url.PathEscape(strings.ToLower(ddlxName)))
+	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
+		Method: http.MethodGet,
+		Accept: "text/plain",
+	})
+	if err != nil {
+		return "", fmt.Errorf("getting DDLX source: %w", err)
+	}
+
+	return string(resp.Body), nil
+}
+
 // --- RAP Object Operations (BDEF, SRVD, SRVB) ---
 
 // GetBDEF retrieves the source code of a Behavior Definition.

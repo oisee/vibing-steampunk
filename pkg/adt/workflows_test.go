@@ -1,6 +1,7 @@
 package adt
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -17,16 +18,29 @@ type mockWorkflowTransport struct {
 func (m *mockWorkflowTransport) Do(req *http.Request) (*http.Response, error) {
 	m.requests = append(m.requests, req)
 
+	// Match by full path + query first so lock/unlock flows can be tested.
+	if req.URL.RawQuery != "" {
+		fullPath := req.URL.Path + "?" + req.URL.RawQuery
+		if resp, ok := m.responses[fullPath]; ok {
+			return cloneWorkflowTestResponse(resp)
+		}
+		for key, resp := range m.responses {
+			if strings.Contains(fullPath, key) {
+				return cloneWorkflowTestResponse(resp)
+			}
+		}
+	}
+
 	// Match by path
 	path := req.URL.Path
 	if resp, ok := m.responses[path]; ok {
-		return resp, nil
+		return cloneWorkflowTestResponse(resp)
 	}
 
 	// Check for partial matches
 	for key, resp := range m.responses {
 		if strings.Contains(path, key) {
-			return resp, nil
+			return cloneWorkflowTestResponse(resp)
 		}
 	}
 
@@ -45,6 +59,20 @@ func newWorkflowTestResponse(body string) *http.Response {
 	}
 }
 
+func cloneWorkflowTestResponse(resp *http.Response) (*http.Response, error) {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+
+	return &http.Response{
+		StatusCode: resp.StatusCode,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     resp.Header.Clone(),
+	}, nil
+}
+
 // TestClient_GetSource_Program tests GetSource for PROG type
 func TestClient_GetSource_Program(t *testing.T) {
 	sourceCode := `REPORT ztest.
@@ -59,6 +87,7 @@ WRITE: 'Hello, World!'.`
 
 	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
 	transport := NewTransportWithClient(cfg, mock)
+	transport.setCSRFToken("test-token")
 	client := NewClientWithTransport(cfg, transport)
 
 	result, err := client.GetSource(context.Background(), "PROG", "ZTEST", &GetSourceOptions{})
@@ -86,6 +115,7 @@ func TestClient_GetSource_Class(t *testing.T) {
 
 	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
 	transport := NewTransportWithClient(cfg, mock)
+	transport.setCSRFToken("test-token")
 	client := NewClientWithTransport(cfg, transport)
 
 	// Test without include parameter (returns full class)
@@ -216,6 +246,121 @@ WRITE: 'Updated!'.`
 	// Verify it's in update mode (even if workflow didn't complete due to mocks)
 	if result.ObjectType != "PROG" {
 		t.Errorf("Expected ObjectType 'PROG', got %q", result.ObjectType)
+	}
+}
+
+func TestClient_GetDDLX(t *testing.T) {
+	sourceCode := `@Metadata.layer: #CORE
+annotate entity ZC_TEST with {}`
+
+	mock := &mockWorkflowTransport{
+		responses: map[string]*http.Response{
+			"/sap/bc/adt/ddic/ddlx/sources/zc_test/source/main": newWorkflowTestResponse(sourceCode),
+			"discovery": newWorkflowTestResponse("OK"),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	client := NewClientWithTransport(cfg, transport)
+
+	result, err := client.GetDDLX(context.Background(), "ZC_TEST")
+	if err != nil {
+		t.Fatalf("GetDDLX failed: %v", err)
+	}
+
+	if result != sourceCode {
+		t.Errorf("GetDDLX returned %q, want %q", result, sourceCode)
+	}
+}
+
+func TestClient_WriteMetadataExtension_Update(t *testing.T) {
+	sourceCode := `@Metadata.layer: #CORE
+annotate entity ZC_TEST with {}`
+
+	mock := &mockWorkflowTransport{
+		responses: map[string]*http.Response{
+			"/sap/bc/adt/ddic/ddlx/sources/zc_test/source/main": newWorkflowTestResponse(sourceCode),
+			"/sap/bc/adt/checkruns": newWorkflowTestResponse(`<?xml version="1.0" encoding="UTF-8"?>
+<chkrun:checkRunReports xmlns:chkrun="http://www.sap.com/adt/checkrun"/>`),
+			"/sap/bc/adt/activation":                               newWorkflowTestResponse(""),
+			"/sap/bc/adt/ddic/ddlx/sources/zc_test?_action=LOCK":   newWorkflowTestResponse(`<?xml version="1.0"?><abap><values><DATA><LOCK_HANDLE>LOCK1</LOCK_HANDLE><IS_LOCAL>X</IS_LOCAL><IS_LINK_UP>X</IS_LINK_UP></DATA></values></abap>`),
+			"/sap/bc/adt/ddic/ddlx/sources/zc_test?_action=UNLOCK": newWorkflowTestResponse("OK"),
+			"discovery": newWorkflowTestResponse("OK"),
+		},
+	}
+
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	transport.setCSRFToken("test-token")
+	client := NewClientWithTransport(cfg, transport)
+
+	result, err := client.WriteMetadataExtension(context.Background(), "ZC_TEST", sourceCode, &WriteMetadataExtensionOptions{
+		Mode: WriteModeUpdate,
+	})
+	if err != nil {
+		t.Fatalf("WriteMetadataExtension failed: %v", err)
+	}
+	if result == nil {
+		t.Fatal("WriteMetadataExtension should return non-nil result")
+	}
+	if result.ObjectURL == "" {
+		t.Error("WriteMetadataExtension should return object URL")
+	}
+	if !result.Success {
+		t.Fatalf("WriteMetadataExtension should succeed, got message: %s", result.Message)
+	}
+}
+
+// mode=create on an extension that already exists used to skip the existence
+// check and send the create anyway; A4H answered with a raw 400.
+func TestClient_WriteMetadataExtension_CreateExisting(t *testing.T) {
+	mock := &mockWorkflowTransport{
+		responses: map[string]*http.Response{
+			"/sap/bc/adt/ddic/ddlx/sources/zc_test/source/main": newWorkflowTestResponse("annotate entity ZC_TEST with {}"),
+			"discovery": newWorkflowTestResponse("OK"),
+		},
+	}
+	cfg := NewConfig("https://sap.example.com:44300", "user", "pass")
+	transport := NewTransportWithClient(cfg, mock)
+	transport.setCSRFToken("test-token")
+	client := NewClientWithTransport(cfg, transport)
+
+	result, err := client.WriteMetadataExtension(context.Background(), "ZC_TEST", "annotate entity ZC_TEST with {}", &WriteMetadataExtensionOptions{
+		Mode: WriteModeCreate, Package: "$TMP", Description: "x",
+	})
+	if err != nil {
+		t.Fatalf("WriteMetadataExtension: %v", err)
+	}
+	if result.Success || !strings.Contains(result.Message, "already exists") {
+		t.Fatalf("want an 'already exists' refusal, got success=%v message=%q", result.Success, result.Message)
+	}
+}
+
+func TestBuildCreateObjectBody_DDLX(t *testing.T) {
+	body := buildCreateObjectBody(CreateObjectOptions{
+		ObjectType:     ObjectTypeDDLX,
+		Name:           "ZC_TEST",
+		Description:    "Test metadata extension",
+		PackageName:    "$TMP",
+		MasterLanguage: "EN",
+	}, objectTypes[ObjectTypeDDLX], "DEVELOPER")
+
+	wantSnippets := []string{
+		`<ddlx:ddlxSource`,
+		`adtcore:name="ZC_TEST"`,
+		`adtcore:type="DDLX/EX"`,
+		`adtcore:description="Test metadata extension"`,
+		`adtcore:language="EN"`,
+		`adtcore:uri="/sap/bc/adt/packages/$tmp"`,
+		`adtcore:type="DEVC/K"`,
+		`adtcore:name="$TMP"`,
+	}
+
+	for _, want := range wantSnippets {
+		if !strings.Contains(body, want) {
+			t.Fatalf("DDLX create body missing %q:\n%s", want, body)
+		}
 	}
 }
 

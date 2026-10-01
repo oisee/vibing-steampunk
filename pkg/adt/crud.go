@@ -294,6 +294,7 @@ const (
 	ObjectTypeMessageClass  CreatableObjectType = "MSAG/N"
 	// RAP object types (read-only via ADT, created via RAP generators)
 	ObjectTypeDDLS CreatableObjectType = "DDLS/DF"  // CDS DDL Source
+	ObjectTypeDDLX CreatableObjectType = "DDLX/EX"  // CDS Metadata Extension
 	ObjectTypeBDEF CreatableObjectType = "BDEF/BDO" // Behavior Definition
 	ObjectTypeSRVD CreatableObjectType = "SRVD/SRV" // Service Definition
 	ObjectTypeSRVB CreatableObjectType = "SRVB/SVB" // Service Binding
@@ -346,8 +347,8 @@ type CreateObjectOptions struct {
 	// For BDEF: source code (required for creation - ADT API embeds source in creation request)
 	Source string `json:"source,omitempty"`
 
-	// For MSAG: the original language as an ISO code ("EN", "DE"); the
-	// session language when empty.
+	// For MSAG and DDLX: the original language as an ISO code ("EN", "DE");
+	// the session language when empty for MSAG, EN for DDLX.
 	MasterLanguage string `json:"masterLanguage,omitempty"`
 }
 
@@ -410,6 +411,11 @@ var objectTypes = map[CreatableObjectType]objectTypeInfo{
 		creationPath: "/sap/bc/adt/ddic/ddl/sources",
 		rootName:     "ddl:ddlSource",
 		namespace:    `xmlns:ddl="http://www.sap.com/adt/ddic/ddlsources"`,
+	},
+	ObjectTypeDDLX: {
+		creationPath: "/sap/bc/adt/ddic/ddlx/sources",
+		rootName:     "ddlx:ddlxSource",
+		namespace:    `xmlns:ddlx="http://www.sap.com/adt/ddic/ddlxsources"`,
 	},
 	ObjectTypeBDEF: {
 		creationPath: "/sap/bc/adt/bo/behaviordefinitions",
@@ -813,7 +819,7 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 		params.Set("corrNr", opts.Transport)
 	}
 
-	// BDEF requires specific content type
+	// Some object types require specific content types
 	contentType := "application/*"
 	if opts.ObjectType == ObjectTypeBDEF {
 		contentType = "application/vnd.sap.adt.blues.v1+xml"
@@ -824,6 +830,9 @@ func (c *Client) CreateObject(ctx context.Context, opts CreateObjectOptions) err
 			opts.MasterLanguage = c.config.Language
 		}
 		body = buildCreateObjectBody(opts, typeInfo, defaultResponsible)
+	}
+	if opts.ObjectType == ObjectTypeDDLX {
+		contentType = "application/vnd.sap.adt.ddic.ddlx.v1+xml"
 	}
 
 	// First attempt
@@ -1031,6 +1040,33 @@ func buildCreateObjectBody(opts CreateObjectOptions, typeInfo objectTypeInfo, de
 			opts.PackageName)
 	}
 
+	// For DDLX (Metadata Extension), use ddlx:ddlxSource with a fully qualified packageRef.
+	if opts.ObjectType == ObjectTypeDDLX {
+		language := opts.MasterLanguage
+		if language == "" {
+			language = "EN"
+		}
+		return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
+<%s %s xmlns:adtcore="http://www.sap.com/adt/core"
+  adtcore:name="%s"
+  adtcore:type="%s"
+  adtcore:description="%s"
+  adtcore:language="%s">
+  <adtcore:packageRef
+      adtcore:uri="/sap/bc/adt/packages/%s"
+      adtcore:type="DEVC/K"
+      adtcore:name="%s"/>
+</%s>`,
+			typeInfo.rootName, typeInfo.namespace,
+			opts.Name,
+			opts.ObjectType,
+			escapeXML(opts.Description),
+			language,
+			strings.ToLower(opts.PackageName),
+			opts.PackageName,
+			typeInfo.rootName)
+	}
+
 	// Standard object creation (DDLS uses standard body)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <%s %s xmlns:adtcore="http://www.sap.com/adt/core"
@@ -1133,6 +1169,8 @@ func GetObjectURL(objectType CreatableObjectType, name string, parentName string
 	// RAP object types - use lowercase for CDS objects
 	case ObjectTypeDDLS:
 		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", url.PathEscape(strings.ToLower(name)))
+	case ObjectTypeDDLX:
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddlx/sources/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeBDEF:
 		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", url.PathEscape(strings.ToLower(name)))
 	case ObjectTypeSRVD:

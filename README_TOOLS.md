@@ -1,6 +1,6 @@
 # vsp Tool Reference
 
-Complete documentation for all 96 MCP tools available in vsp.
+Complete documentation for all MCP tools available in vsp.
 
 **Mode Legend:**
 - **Focused** - Available in focused mode (48 tools, default)
@@ -8,7 +8,7 @@ Complete documentation for all 96 MCP tools available in vsp.
 
 ---
 
-## Unified Tools (2 tools) - Focused Mode
+## Unified Tools (3 tools) - Focused Mode
 
 These tools replace 11 granular read/write operations with intelligent parameter-based routing:
 
@@ -16,6 +16,7 @@ These tools replace 11 granular read/write operations with intelligent parameter
 |------|-------------|------|
 | `GetSource` | Unified read for any ABAP source. Parameters: `type` (PROG/CLAS/INTF/FUNC/FUGR/INCL/DDLS/VIEW/BDEF/SRVD/SRVB/MSAG), `name`, optional `parent` (for FUNC), optional `include` (for CLAS). | Focused |
 | `WriteSource` | Unified write with auto-upsert. Parameters: `type` (PROG/CLAS/INTF/DDLS/BDEF/SRVD), `name`, `source`, `mode`, `options`. Supports create and update for classic ABAP and RAP types. | Focused |
+| `WriteMetadataExtension` | Create or update CDS metadata extensions (DDLX/EX) with create/update/upsert semantics, syntax check, locking, source write, and activation. | Focused |
 
 **Benefits:** 70% token reduction, simplified tool selection, extensible for new types.
 
