@@ -50,6 +50,25 @@ func TestBuildObjectURLWithParent_NamespaceCasing(t *testing.T) {
 			parentName: "ZFG_DEMO",
 			want:       "/sap/bc/adt/functions/groups/zfg_demo/fmodules/z_fm_demo",
 		},
+		// RAP sources stay lowercase, namespaced or not, as GetObjectURL builds them.
+		{
+			name:    "namespaced DDLS stays lowercase",
+			objType: ObjectTypeDDLS,
+			objName: "/NAMESPACE/I_DEMO",
+			want:    "/sap/bc/adt/ddic/ddl/sources/%2Fnamespace%2Fi_demo",
+		},
+		{
+			name:    "namespaced BDEF stays lowercase",
+			objType: ObjectTypeBDEF,
+			objName: "/NAMESPACE/I_DEMO",
+			want:    "/sap/bc/adt/bo/behaviordefinitions/%2Fnamespace%2Fi_demo",
+		},
+		{
+			name:    "namespaced SRVD stays lowercase",
+			objType: ObjectTypeSRVD,
+			objName: "/NAMESPACE/UI_DEMO",
+			want:    "/sap/bc/adt/ddic/srvd/sources/%2Fnamespace%2Fui_demo",
+		},
 	}
 
 	for _, tt := range tests {

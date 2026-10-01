@@ -598,6 +598,10 @@ func (c *Client) buildObjectURL(objType CreatableObjectType, name string) (strin
 
 // buildObjectURLWithParent constructs the ADT URL for an object type with optional parent
 func (c *Client) buildObjectURLWithParent(objType CreatableObjectType, name, parentName string) (string, error) {
+	// RAP sources keep the lowercase name GetObjectURL gives them, namespace
+	// or not; only the classic types are addressed in uppercase when the name
+	// carries a /NAMESPACE/.
+	rapName := url.PathEscape(strings.ToLower(name))
 	if strings.Contains(name, "/") {
 		name = strings.ToUpper(name)
 	} else {
@@ -629,11 +633,11 @@ func (c *Client) buildObjectURLWithParent(objType CreatableObjectType, name, par
 		return fmt.Sprintf("/sap/bc/adt/programs/includes/%s", encodedName), nil
 	// RAP object types
 	case ObjectTypeDDLS:
-		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", encodedName), nil
+		return fmt.Sprintf("/sap/bc/adt/ddic/ddl/sources/%s", rapName), nil
 	case ObjectTypeBDEF:
-		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", encodedName), nil
+		return fmt.Sprintf("/sap/bc/adt/bo/behaviordefinitions/%s", rapName), nil
 	case ObjectTypeSRVD:
-		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", encodedName), nil
+		return fmt.Sprintf("/sap/bc/adt/ddic/srvd/sources/%s", rapName), nil
 	default:
 		return "", fmt.Errorf("unsupported object type for URL building: %s", objType)
 	}
