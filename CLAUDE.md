@@ -46,7 +46,7 @@ pkg/
     package_guard.go    package allowlist (safety gate, used by checkMutation)
     search.go  objects_read.go  package_read.go  ddic_read.go  query_sql.go  system_info.go
     lock.go  create.go  delete.go  object_urls.go  table_create.go  ...
-    debugger.go         ADT debugger (held session; no ZADT_VSP needed)
+    debugger.go         ADT debugger requests and parsers (no ZADT_VSP needed). The held stateful session lives in internal/mcp/handlers_debug_session.go; the standalone client methods use the ordinary transport
     git_import.go       abapGit zip import / conditional delete (via ZADT_VSP)
   graph/              Dependency graph engine
     adtsource/          What the graph is read from on SAP; shared by cmd/vsp and internal/mcp
@@ -90,7 +90,7 @@ func (s *Server) handleX(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 5. Classify it in `internal/mcp/readonly_classes_test.go` as READ, MUTATE or EXECUTE. The read-only invariant test fails with "classify me" otherwise.
 6. Run `go test ./internal/mcp -run 'TestToolRegistryGolden|TestHelpGolden' -update-tools-golden -update-help-golden` and commit the golden diff.
 
-**Safety gates go before any request:** read-only, allowed packages, transport and free SQL are all refused before anything is parsed or sent.
+**Safety gates come before any write.** Read-only, operation filters and free SQL are refused before anything is sent. With `--allowed-packages`, `checkMutation` may first send a read to resolve an existing object's package. It never writes before the gate has passed.
 
 ---
 
@@ -116,7 +116,7 @@ func (s *Server) handleX(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 2. **Locks and sessions:** a lock handle lives in a stateful session, and any stateless request between LOCK and the write can kill it (423). See [`docs/dev-notes.md`](docs/dev-notes.md#lock-handles-and-sessions-91-family). Check stateful vs stateless before changing transport or auth logic.
 3. **Auth:** use basic auth OR cookies, never both. `HasBasicAuth()` disables `ReauthFunc`, so a stray `SAP_USER`/`SAP_PASSWORD` alongside SSO silently kills auto-refresh.
 4. **Expired SSO sessions don't return 401.** ICF forwards to the IdP, and a logon page arrives under a 200. Detection is by origin and by a missing CSRF token (`http.go`).
-5. **ZADT_VSP** (the APC/WebSocket bridge) is required for RFC calls, RunReport, abapGit zip import and delete, and transport upload. ADT debugging does not need it.
+5. **ZADT_VSP** (the APC/WebSocket bridge) is required for the WebSocket-based MCP features: RFC and RunReport over the bridge, abapGit zip import and delete, and transport upload. Classic RFC (`vsp rfc call`, `vsp rfc run`) and ADT debugging don't need it.
 6. **Response cache** (`VSP_CACHE`, `pkg/adt/response_cache.go`):
    - It keeps GET answers and data-preview queries on the tables in `stableTables`.
    - It is emptied on any write through the client.
@@ -141,7 +141,7 @@ Never commit `.env`, `cookies.txt`, `.mcp.json`, or local agent/MCP config files
 
 Always OK: `$ZHIRTEST*`, `ZCL_HIRT*`, `ZCUSTOM_DEVELOPMENT`, public GitHub handles in the module path, and upstream OSS attribution.
 
-**The leak scan enforces this** in CI and at pre-push. It reads text, hex, base64 and UTF-16, checks every added line and commit message, and takes its identifier list from the `VSP_LEAK_IDENTIFIERS` secret or `.local/leak-identifiers.txt`. Exceptions go in `.github/ci/leakscan-allow.txt`, each with a reason, in a PR of their own. The rule of thumb: could a stranger reading this file identify the customer, the system or a live account? If yes, redact.
+**The leak scan enforces this** in CI and at pre-push, in full only where the identifier list is available. Fork PRs (no secret) and a pre-push run without `.local/leak-identifiers.txt` check generic patterns only, so treat those as partial. It reads text, hex, base64 and UTF-16, checks every added line and commit message, and takes its identifier list from the `VSP_LEAK_IDENTIFIERS` secret or `.local/leak-identifiers.txt`. Exceptions go in `.github/ci/leakscan-allow.txt`, each with a reason, in a PR of their own. The rule of thumb: could a stranger reading this file identify the customer, the system or a live account? If yes, redact.
 
 ## Conventions
 
