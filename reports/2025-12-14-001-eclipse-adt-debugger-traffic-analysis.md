@@ -18,7 +18,7 @@ This explains why vsp's HTTP-based external breakpoint approach was not working 
 ## Traffic Capture Setup
 
 ```
-Eclipse ADT → 192.168.8.107 (proxy) → 192.168.8.105:3300 (SAP RFC)
+Eclipse ADT → <lan-ip> (proxy) → <lan-ip>:3300 (SAP RFC)
 ```
 
 Tools used:
