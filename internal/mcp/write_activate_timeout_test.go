@@ -168,23 +168,34 @@ func TestWriteAndActivateHonourCallTimeout(t *testing.T) {
 // byte was sent and the ENQUEUE stayed on the object (#166). It must still
 // reach SAP.
 func TestWriteSourceReleasesTheLockWhenTheBudgetRunsOut(t *testing.T) {
-	srv, counts := slowWriteSAP(t, 5*time.Second)
-	s := &Server{config: &Config{}, adtClient: adt.NewClient(srv.URL, "u", "p")}
-	res, err := s.handleWriteSource(context.Background(), newRequest(map[string]any{
-		"object_type": "PROG", "name": "ZDEMO_SLOW", "source": "REPORT zdemo_slow.", "mode": "update",
-		"timeout": 0.5,
-	}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if text := resultText(res); !res.IsError || !strings.Contains(text, "WriteSource timed out") {
-		t.Fatalf("want a timeout, got %s", text)
-	}
-	if counts.puts.Load() != 0 {
-		t.Fatal("the PUT was meant to be cut off by the budget")
-	}
-	if counts.unlocks.Load() == 0 {
-		t.Fatal("the lock taken before the PUT was never released: no UNLOCK reached SAP")
+	// One case per workflow branch: PROG update (WriteProgram), INTF update,
+	// CLAS update (WriteClass) and DDLS update each take their own lock.
+	for _, c := range []struct{ typ, name, source string }{
+		{"PROG", "ZDEMO_SLOW", "REPORT zdemo_slow."},
+		{"INTF", "ZIF_DEMO_SLOW", "INTERFACE zif_demo_slow PUBLIC.\nENDINTERFACE."},
+		{"CLAS", "ZCL_DEMO_SLOW", "CLASS zcl_demo_slow DEFINITION PUBLIC.\nENDCLASS.\nCLASS zcl_demo_slow IMPLEMENTATION.\nENDCLASS."},
+		{"DDLS", "ZDEMO_SLOW_V", "define view entity ZDEMO_SLOW_V as select from t000 { mandt }"},
+	} {
+		t.Run(c.typ, func(t *testing.T) {
+			srv, counts := slowWriteSAP(t, 5*time.Second)
+			s := &Server{config: &Config{}, adtClient: adt.NewClient(srv.URL, "u", "p")}
+			res, err := s.handleWriteSource(context.Background(), newRequest(map[string]any{
+				"object_type": c.typ, "name": c.name, "source": c.source, "mode": "update",
+				"timeout": 0.5,
+			}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text := resultText(res); !res.IsError || !strings.Contains(text, "WriteSource timed out") {
+				t.Fatalf("want a timeout, got %s", text)
+			}
+			if counts.puts.Load() != 0 {
+				t.Fatal("the PUT was meant to be cut off by the budget")
+			}
+			if counts.unlocks.Load() == 0 {
+				t.Fatal("the lock taken before the PUT was never released: no UNLOCK reached SAP")
+			}
+		})
 	}
 }
 

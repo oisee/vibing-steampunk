@@ -110,3 +110,27 @@ func TestActivationMessageFieldsAreBoundedAndOneLine(t *testing.T) {
 		t.Fatalf("a %d-rune message was not cut: %d runes, ends %q", len(huge), n, line[len(line)-10:])
 	}
 }
+
+// A refusal that names only inactive objects lists the first
+// ActivationMessageLimit of them, each bounded and on one line, and counts
+// the rest.
+func TestProblemLinesBoundsTheInactiveList(t *testing.T) {
+	r := &ActivationResult{}
+	for i := 0; i < 500; i++ {
+		r.Inactive = append(r.Inactive, InactiveObject{
+			Name: fmt.Sprintf("ZCL_%03d", i),
+			URI:  "/sap/bc/adt/oo/classes/zcl\n" + strings.Repeat("x", 1000),
+		})
+	}
+	lines := r.ProblemLines()
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	line := lines[0]
+	if !strings.Contains(line, "and 480 more") || strings.Contains(line, "ZCL_020") {
+		t.Fatalf("the list was not capped at %d: %.200q", ActivationMessageLimit, line)
+	}
+	if strings.Contains(line, "\n") || len([]rune(line)) > (activationFieldLimit+4)*ActivationMessageLimit+100 {
+		t.Fatalf("the line is not bounded or not one line: %d runes", len([]rune(line)))
+	}
+}

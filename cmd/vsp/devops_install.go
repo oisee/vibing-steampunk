@@ -240,8 +240,13 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	// The transport service's push channel. Without it uploads still work;
 	// their outcome is read with vsp transport status.
 	fmt.Fprintf(os.Stderr, "  AMC %s (transport push) ... ", embedded.AMCApplicationName)
-	if err := client.UpsertAMCApplication(ctx, embedded.AMCApplicationName, embedded.AMCApplicationDescription,
-		packageName, embedded.AMCApplicationDefinition); err != nil {
+	// Each AMC application is one write and activation, under the same
+	// per-object budget as the classes above.
+	amcCtx, amcCancel := withWriteBudget(ctx, budget)
+	err = client.UpsertAMCApplication(amcCtx, embedded.AMCApplicationName, embedded.AMCApplicationDescription,
+		packageName, embedded.AMCApplicationDefinition)
+	amcCancel()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "not set up (%v); upload outcomes are read with vsp transport status\n", err)
 	} else {
 		fmt.Fprintf(os.Stderr, "OK\n")
@@ -249,8 +254,11 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	// The git import's push channel, only with the git service it names.
 	if !skipGitService {
 		fmt.Fprintf(os.Stderr, "  AMC %s (git import push) ... ", embedded.AMCGitApplicationName)
-		if err := client.UpsertAMCApplication(ctx, embedded.AMCGitApplicationName, embedded.AMCGitApplicationDescription,
-			packageName, embedded.AMCGitApplicationDefinition); err != nil {
+		amcCtx, amcCancel := withWriteBudget(ctx, budget)
+		err = client.UpsertAMCApplication(amcCtx, embedded.AMCGitApplicationName, embedded.AMCGitApplicationDescription,
+			packageName, embedded.AMCGitApplicationDefinition)
+		amcCancel()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "not set up (%v); import outcomes are read with vsp git import-status\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "OK\n")

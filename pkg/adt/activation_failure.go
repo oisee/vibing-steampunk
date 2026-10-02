@@ -93,9 +93,15 @@ func (r *ActivationResult) ProblemLines() []string {
 		lines = append(lines, text)
 	}
 	if len(lines) == 0 && len(r.Inactive) > 0 {
+		// A package activation can leave hundreds inactive; the line names
+		// the first few, each one bounded, and counts the rest.
 		var names []string
-		for _, o := range r.Inactive {
-			names = append(names, o.Name+" ("+o.URI+")")
+		for i, o := range r.Inactive {
+			if i == ActivationMessageLimit {
+				names = append(names, fmt.Sprintf("and %d more", len(r.Inactive)-i))
+				break
+			}
+			names = append(names, displayField(o.Name+" ("+o.URI+")", activationFieldLimit))
 		}
 		lines = append(lines, "Activation was refused; still inactive: "+strings.Join(names, ", "))
 	}
