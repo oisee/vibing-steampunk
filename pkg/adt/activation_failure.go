@@ -134,3 +134,78 @@ func uriFragmentLine(uri string) int {
 	}
 	return line
 }
+
+// ActivationMessageLimit is how many activation messages a person is shown at
+// once. abapGit's standalone program, activated on a system that lacks some of
+// the standard types it names, is refused with nearly two hundred; the first
+// twenty say what is wrong, the count says how much more there is.
+const ActivationMessageLimit = 20
+
+// MessageLines renders a refused activation for a person: one line per
+// message, "[E] Program ZDEMO, line 12: text", errors first, then warnings,
+// then the rest (SAP's order within each), at most limit of them and then one
+// line saying how many more there are. limit <= 0 shows them all.
+//
+// A refusal without messages falls back to ProblemLines, which still names
+// what is known. A successful activation renders nothing.
+func (r *ActivationResult) MessageLines(limit int) []string {
+	if r == nil || r.Success {
+		return nil
+	}
+	if len(r.Messages) == 0 {
+		return r.ProblemLines()
+	}
+	rank := func(t string) int {
+		switch {
+		case strings.ContainsAny(t, activationErrorTypes):
+			return 0
+		case strings.Contains(t, "W"):
+			return 1
+		default:
+			return 2
+		}
+	}
+	ordered := make([]ActivationResultMessage, 0, len(r.Messages))
+	for want := 0; want <= 2; want++ {
+		for _, m := range r.Messages {
+			if rank(m.Type) == want {
+				ordered = append(ordered, m)
+			}
+		}
+	}
+	shown := ordered
+	if limit > 0 && len(ordered) > limit {
+		shown = ordered[:limit]
+	}
+	lines := make([]string, 0, len(shown)+1)
+	for _, m := range shown {
+		lines = append(lines, m.messageLine())
+	}
+	if more := len(ordered) - len(shown); more > 0 {
+		lines = append(lines, fmt.Sprintf("... and %d more", more))
+	}
+	return lines
+}
+
+// messageLine renders one message the way MessageLines shows it.
+func (m ActivationResultMessage) messageLine() string {
+	typ := strings.TrimSpace(m.Type)
+	if typ == "" {
+		typ = "?"
+	}
+	where := strings.TrimSpace(m.ObjDescr)
+	if line := m.SourceLine(); line > 0 {
+		if where != "" {
+			where += ", "
+		}
+		where += "line " + strconv.Itoa(line)
+	}
+	text := strings.TrimSpace(m.ShortText)
+	if text == "" {
+		text = "(SAP gave no text for this message)"
+	}
+	if where == "" {
+		return "[" + typ + "] " + text
+	}
+	return "[" + typ + "] " + where + ": " + text
+}

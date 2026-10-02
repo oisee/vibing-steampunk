@@ -74,7 +74,7 @@ Execute ABAP:
       finish, rawAlerts only when no value came back. SAP turns a line break in a value into #.
       RETURN_VALUE( x ) hands x back at once (a later RETURN, CHECK or exception keeps it);
       x may be any data object: structures and tables come back as JSON.
-  Long calls (execute_abap, unit tests, deploy_from_file, deploy_zip) take "timeout" in seconds:
+  Long calls (execute_abap, unit tests, deploy_from_file, deploy_zip, source writes, activation) take "timeout" in seconds:
     SAP(action="analyze", params={"type": "execute_abap", "code": "...", "timeout": 300})
     Default: the server's --call-timeout (SAP_CALL_TIMEOUT); without one each request to SAP is limited to 60s.
     When it runs out the call says "timed out after Ns; the operation may still be running on SAP".

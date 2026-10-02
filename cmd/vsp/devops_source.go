@@ -104,7 +104,12 @@ func runSourceWrite(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no source provided on stdin")
 	}
 
-	ctx := context.Background()
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withWriteBudget(context.Background(), budget)
+	defer cancel()
 	result, err := client.WriteSource(ctx, objType, name, string(source), &adt.WriteSourceOptions{
 		Transport: transport,
 	})
@@ -128,6 +133,7 @@ func runSourceWrite(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "  Line %d: %s\n", se.Line, se.Text)
 			}
 		}
+		printActivationMessages(os.Stderr, result.Activation)
 		return fmt.Errorf("write failed")
 	}
 
@@ -158,7 +164,12 @@ func runSourceEdit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("unsupported object type: %s (supported: CLAS, PROG, INCL, INTF)", objType)
 	}
 
-	ctx := context.Background()
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withWriteBudget(context.Background(), budget)
+	defer cancel()
 	result, err := client.EditSourceWithOptions(ctx, objectURL, oldStr, newStr, &adt.EditSourceOptions{
 		ReplaceAll:  replaceAll,
 		SyntaxCheck: true,
@@ -184,6 +195,7 @@ func runSourceEdit(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "  %s\n", se)
 			}
 		}
+		printActivationMessages(os.Stderr, result.Activation)
 		return fmt.Errorf("edit failed")
 	}
 
@@ -289,6 +301,7 @@ func init() {
 
 	// Source write flags
 	sourceWriteCmd.Flags().String("transport", "", "Transport request number")
+	addCallTimeoutFlag(sourceWriteCmd, sourceEditCmd)
 
 	// Source edit flags
 	sourceEditCmd.Flags().String("old", "", "String to find (required)")

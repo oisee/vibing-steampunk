@@ -102,6 +102,10 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	packageName = strings.ToUpper(packageName)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	skipGitService, _ := cmd.Flags().GetBool("skip-git-service")
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Validate package name
 	if !strings.HasPrefix(packageName, "$") {
@@ -221,7 +225,9 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 			Description: obj.Description,
 			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.Source, opts)
+		objCtx, cancel := withWriteBudget(ctx, budget)
+		_, err := installer.DeploySource(objCtx, client, obj.Type, obj.Name, obj.Source, opts)
+		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failed++
@@ -303,6 +309,11 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 	}
 
 	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	budget, err := resolveCallTimeout(cmd)
 	if err != nil {
 		return err
 	}
@@ -407,7 +418,9 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 			Description: desc,
 			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.MainSource, wopts)
+		objCtx, cancel := withWriteBudget(ctx, budget)
+		_, err := installer.DeploySource(objCtx, client, obj.Type, obj.Name, obj.MainSource, wopts)
+		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failCount++
@@ -497,6 +510,7 @@ func init() {
 	installAbapGitCmd.Flags().String("edition", "standalone", "abapGit edition: standalone (the developer edition is not installable yet, #277)")
 	installAbapGitCmd.Flags().String("package", "", "Target package (default: $ABAPGIT)")
 	installAbapGitCmd.Flags().Bool("dry-run", false, "Show what would be deployed without deploying")
+	addCallTimeoutFlag(installZadtVspCmd, installAbapGitCmd)
 
 	// Install subcommands
 	installCmd.AddCommand(installZadtVspCmd)

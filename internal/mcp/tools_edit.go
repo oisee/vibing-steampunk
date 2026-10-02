@@ -200,6 +200,9 @@ func (s *Server) registerEditTools(shouldRegister func(string) bool) {
 			mcp.WithString("expected_source_hash",
 				mcp.Description("Optional sourceHash returned by GetSource(include_hash=true). After locking, refuse the edit if SAP source has changed."),
 			),
+			mcp.WithNumber("timeout",
+				mcp.Description(callTimeoutDescription),
+			),
 		), s.handleEditSource)
 	}
 }

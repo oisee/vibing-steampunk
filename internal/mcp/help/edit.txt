@@ -41,6 +41,10 @@ Activate:
   SAP(action="edit", target="ACTIVATE_MULTI", params={"objects": ["PROG ZREPORT", "INCL ZREPORT_F01"]})
   SAP(action="edit", target="ACTIVATE_PACKAGE", params={"package": "$TMP"})
 
+Writes, EDITSOURCE and the activations take "timeout" in seconds for the whole call:
+  SAP(action="edit", target="PROG ZBIG", params={"source": "REPORT zbig...", "timeout": 600})
+  Default: the server's --call-timeout (SAP_CALL_TIMEOUT); without one each request to SAP is limited to 60s.
+
 Service binding:
   SAP(action="edit", target="PUBLISH_SERVICE", params={"service_name": "ZSB_TEST"})
   SAP(action="edit", target="UNPUBLISH_SERVICE", params={"service_name": "ZSB_TEST"})

@@ -146,7 +146,7 @@ type Config struct {
 	ReauthTimeout time.Duration
 
 	// CallTimeout is the default budget of one long call (ExecuteABAP, ABAP
-	// Unit, a deploy) when the call names none in params.timeout. Zero leaves
+	// Unit, a deploy, a source write, an activation) when the call names none in params.timeout. Zero leaves
 	// each request to SAP bounded by the client's per-request timeout only.
 	CallTimeout time.Duration
 

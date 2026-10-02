@@ -26,6 +26,7 @@ func init() {
 	copyCmd.Flags().StringVar(&copyObjectType, "type", "", "Filter by object type (e.g., CLAS, PROG)")
 	copyCmd.Flags().StringVar(&copyObjectName, "name", "", "Filter by object name pattern (e.g., ZCL_*)")
 	copyCmd.Flags().BoolVar(&copyDryRun, "dry-run", false, "Show what would be deployed without deploying")
+	addCallTimeoutFlag(copyCmd)
 	copyCmd.MarkFlagRequired("to")
 
 	rootCmd.AddCommand(copyCmd)
@@ -77,6 +78,10 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Get ZIP data
@@ -209,7 +214,9 @@ func runCopy(cmd *cobra.Command, args []string) error {
 
 		fmt.Printf("  Deploying %s %s... ", obj.Type, obj.Name)
 
-		err := deployObject(ctx, client, obj, copyToPackage)
+		objCtx, cancel := withWriteBudget(ctx, budget)
+		err := deployObject(objCtx, client, obj, copyToPackage)
+		cancel()
 		if err != nil {
 			fmt.Printf("FAILED: %v\n", err)
 			failed++

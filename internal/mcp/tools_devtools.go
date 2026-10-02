@@ -33,6 +33,9 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
 				mcp.Required(),
 				mcp.Description("Technical name of the object (e.g., ZTEST)"),
 			),
+			mcp.WithNumber("timeout",
+				mcp.Description(callTimeoutDescription),
+			),
 		), s.handleActivate)
 	}
 
@@ -45,6 +48,9 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
   - {"url": "/sap/bc/adt/programs/programs/zprog", "name": "ZPROG"}
   - "TYPE NAME" shorthand, e.g. "PROG ZPROG", "INCL ZPROG_TOP", "CLAS ZCL_X"`),
 			),
+			mcp.WithNumber("timeout",
+				mcp.Description(callTimeoutDescription),
+			),
 		), s.handleActivateMultiple)
 	}
 
@@ -56,6 +62,9 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
 			),
 			mcp.WithNumber("max_objects",
 				mcp.Description("Maximum number of objects to activate (default: 100)"),
+			),
+			mcp.WithNumber("timeout",
+				mcp.Description(callTimeoutDescription),
 			),
 		), s.handleActivatePackage)
 	}

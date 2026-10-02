@@ -210,7 +210,14 @@ func (s *Server) handleRenameObject(ctx context.Context, request mcp.CallToolReq
 	return mcp.NewToolResultText(string(output)), nil
 }
 
+// handleEditSource is a long call for the same reason as WriteSource: it
+// writes and activates.
 func (s *Server) handleEditSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "EditSource", s.editSource)
+}
+
+// editSource is handleEditSource without the call budget (see longCall).
+func (s *Server) editSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil

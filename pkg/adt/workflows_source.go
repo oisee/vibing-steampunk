@@ -207,6 +207,12 @@ func WriteSourceResultError(result *WriteSourceResult) error {
 	if message == "" {
 		message = "operation returned success=false without a diagnostic"
 	}
+	// "Activation failed - check activation messages" points at messages the
+	// caller of an error never sees. Carry them, capped, so a CLI run that
+	// prints this error says why SAP refused.
+	if lines := result.Activation.MessageLines(ActivationMessageLimit); len(lines) > 0 {
+		message += ":\n  " + strings.Join(lines, "\n  ")
+	}
 	return fmt.Errorf("WriteSource failed: %s", message)
 }
 
