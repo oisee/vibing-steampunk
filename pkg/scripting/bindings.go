@@ -209,7 +209,7 @@ func (e *LuaEngine) luaWriteSource(L *lua.LState) int {
 		L.Push(lua.LString(err.Error()))
 		return 2
 	}
-	if err := adt.WriteSourceResultError(result); err != nil {
+	if err := adt.WriteSourceResultReport(result); err != nil {
 		L.Push(lua.LBool(false))
 		L.Push(lua.LString(err.Error()))
 		return 2

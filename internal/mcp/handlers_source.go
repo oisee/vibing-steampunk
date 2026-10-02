@@ -87,6 +87,10 @@ func (s *Server) routeSourceAction(ctx context.Context, action, objectType, obje
 				if v := getStringParam(params, "parent"); v != "" {
 					args["parent"] = v
 				}
+				// The call's budget; longCall reads and checks it.
+				if v, ok := params["timeout"]; ok {
+					args["timeout"] = v
+				}
 				return s.callHandler(ctx, s.handleWriteSource, args)
 			}
 		case "EDITSOURCE":
@@ -175,6 +179,9 @@ func (s *Server) registerWriteSource() {
 		mcp.WithString("include",
 			mcp.Description("For CLAS only: write this include of an existing class instead of the main source: definitions, implementations, macros, testclasses (created if missing). Any other name is refused."),
 		),
+		mcp.WithNumber("timeout",
+			mcp.Description(callTimeoutDescription),
+		),
 	), s.handleWriteSource)
 }
 
@@ -244,8 +251,16 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 	return mcp.NewToolResultText(source), nil
 }
 
-// handleWriteSource handles the unified WriteSource tool call
+// handleWriteSource handles the unified WriteSource tool call. It is a long
+// call: the PUT of a large source and its activation can run past the
+// client's 60s per-request timeout, and the call's budget (params.timeout or
+// --call-timeout) is what bounds them instead.
 func (s *Server) handleWriteSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "WriteSource", s.writeSource)
+}
+
+// writeSource is handleWriteSource without the call budget (see longCall).
+func (s *Server) writeSource(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objectType, ok := request.GetArguments()["object_type"].(string)
 	if !ok || objectType == "" {
 		return newToolResultError("object_type is required"), nil

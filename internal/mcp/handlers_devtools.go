@@ -119,7 +119,15 @@ func (s *Server) handleCheckABAP(ctx context.Context, request mcp.CallToolReques
 	return mcp.NewToolResultText(string(output)), nil
 }
 
+// handleActivate and the other activations are long calls: a cold activation
+// of a large object runs past the client's 60s per-request timeout, and the
+// call's budget (params.timeout or --call-timeout) is what bounds it instead.
 func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "Activate", s.activate)
+}
+
+// activate is handleActivate without the call budget (see longCall).
+func (s *Server) activate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
@@ -150,6 +158,11 @@ func (s *Server) handleActivate(ctx context.Context, request mcp.CallToolRequest
 //
 //	array of strings in "TYPE NAME" format (e.g. "INCL ZREP_F01").
 func (s *Server) handleActivateMultiple(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "ActivateMultiple", s.activateMultiple)
+}
+
+// activateMultiple is handleActivateMultiple without the call budget (see longCall).
+func (s *Server) activateMultiple(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	raw, ok := request.GetArguments()["objects"]
 	if !ok {
 		return newToolResultError("objects is required (array of {url, name} or [\"TYPE NAME\", ...])"), nil
@@ -192,6 +205,11 @@ func (s *Server) handleActivateMultiple(ctx context.Context, request mcp.CallToo
 }
 
 func (s *Server) handleActivatePackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "ActivatePackage", s.activatePackage)
+}
+
+// activatePackage is handleActivatePackage without the call budget (see longCall).
+func (s *Server) activatePackage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	packageName := ""
 	if pkg, ok := request.GetArguments()["package"].(string); ok {
 		packageName = pkg

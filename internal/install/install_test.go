@@ -113,3 +113,25 @@ func TestDeploySource(t *testing.T) {
 		})
 	}
 }
+
+// vsp install printed "FAILED: WriteSource failed: Activation failed - check
+// activation messages" and nothing else. The error DeploySource hands the CLI
+// must carry SAP's messages.
+func TestDeploySourceNamesTheActivationMessages(t *testing.T) {
+	fake := &fakeClient{writeResult: &adt.WriteSourceResult{
+		ObjectType: "PROG", ObjectName: "ZABAPGIT_STANDALONE",
+		Message: "Activation failed - check activation messages",
+		Activation: &adt.ActivationResult{Messages: []adt.ActivationResultMessage{{
+			ObjDescr: "Program ZABAPGIT_STANDALONE", Type: "E", Line: 4711,
+			ShortText: `The type "SXCO_AO_COMPONENT" is unknown.`,
+		}}},
+	}}
+	_, err := DeploySource(context.Background(), fake, "PROG", "ZABAPGIT_STANDALONE", "REPORT zabapgit_standalone.", &adt.WriteSourceOptions{})
+	if err == nil {
+		t.Fatal("a refused activation must fail the deploy")
+	}
+	want := `[E] Program ZABAPGIT_STANDALONE, line 4711: The type "SXCO_AO_COMPONENT" is unknown.`
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("the install error must name SAP's message %q; got %q", want, err.Error())
+	}
+}

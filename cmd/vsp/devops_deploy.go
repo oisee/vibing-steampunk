@@ -41,7 +41,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	packageName := strings.ToUpper(args[1])
 	transport, _ := cmd.Flags().GetString("transport")
 
-	ctx := context.Background()
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := withWriteBudget(context.Background(), budget)
+	defer cancel()
 	result, err := client.DeployFromFile(ctx, filePath, packageName, transport)
 	if err != nil {
 		return fmt.Errorf("deploy failed: %w", err)
@@ -88,6 +93,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 func init() {
 	// Deploy flags
 	deployCmd.Flags().String("transport", "", "Transport request number")
+	addCallTimeoutFlag(deployCmd)
 
 	rootCmd.AddCommand(deployCmd)
 }

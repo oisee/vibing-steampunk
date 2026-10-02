@@ -19,8 +19,10 @@ func (c *Client) tryCleanupOrphanLock(ctx context.Context, objectURL string) {
 		// Lock acquisition failed - lock might be held by another user or doesn't exist
 		return
 	}
-	// Successfully acquired - release it immediately
-	_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+	// Successfully acquired - release it immediately, detached from ctx:
+	// this runs on the path of a create that failed, often because a call
+	// budget ran out.
+	_ = c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle)
 }
 
 // isLockConflictError checks if an error is a lock conflict (HTTP 403 "is currently editing")
@@ -264,7 +266,7 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 	if delErr != nil {
 		// Delete failed despite holding a lock — release the lock
 		// so we do not add to the leak, then surface manual steps.
-		_ = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		_ = c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle)
 		pce.CleanupActions = append(pce.CleanupActions,
 			fmt.Sprintf("delete failed: %v", delErr))
 		pce.ManualSteps = []string{
@@ -349,14 +351,19 @@ func (c *Client) RecoverFailedCreate(ctx context.Context, opts CreateObjectOptio
 func (c *Client) packageExists(ctx context.Context, packageName string) bool {
 	pkg, err := c.GetPackage(ctx, packageName)
 	if err != nil {
-		// API call failed — could be CSRF, auth, network, etc.
-		// Be optimistic: let the actual create call handle real errors
-		// rather than blocking on a false negative.
-		errStr := err.Error()
-		if strings.Contains(errStr, "404") || strings.Contains(errStr, "not found") {
-			return false
+		// Only SAP's own answer means the package is missing: a 404, or a
+		// "not found" in SAP's message. Any other failure (CSRF, auth, network,
+		// a call budget running out) is optimistic: the create that follows
+		// reports the real error. Both are read from the APIError, never from
+		// err.Error(): the URL in it can carry "404" in a port number
+		// (127.0.0.1:40457), which once turned a timeout into "package does
+		// not exist".
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			return true
 		}
-		return true
+		return apiErr.StatusCode != http.StatusNotFound &&
+			!strings.Contains(strings.ToLower(apiErr.Message), "not found")
 	}
 	// GetPackage succeeded but returned no objects and no sub-packages —
 	// still a valid (possibly empty) package

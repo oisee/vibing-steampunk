@@ -1872,7 +1872,7 @@ SAP_PASSWORD=secret
 | `--allow-transportable-edits` | `SAP_ALLOW_TRANSPORTABLE_EDITS` | Enable editing transportable objects |
 | `--allowed-transports` | `SAP_ALLOWED_TRANSPORTS` | Whitelist transports (wildcards: `A4HK*`) |
 | `--allowed-packages` | `SAP_ALLOWED_PACKAGES` | Whitelist packages (wildcards: `Z*,$TMP`) |
-| `--call-timeout` | `SAP_CALL_TIMEOUT` | Default budget in seconds of one long MCP call (ExecuteABAP, ABAP Unit, deploy) without its own `params.timeout`; 1–3600, 0 = none (each SAP request then limited to 60s). An invalid value stops startup |
+| `--call-timeout` | `SAP_CALL_TIMEOUT` | Default budget in seconds of one long MCP call (ExecuteABAP, ABAP Unit, deploy, source write, activation) without its own `params.timeout`; 1–3600, 0 = none (each SAP request then limited to 60s). An invalid value stops startup |
 
 </details>
 

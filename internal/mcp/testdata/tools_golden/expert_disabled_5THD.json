@@ -17,6 +17,10 @@
           "object_url": {
             "description": "ADT URL of the object (e.g., /sap/bc/adt/programs/programs/ZTEST)",
             "type": "string"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           }
         },
         "required": [
@@ -43,6 +47,10 @@
           "objects": {
             "description": "Objects to activate. Each item can be:\n  - {\"url\": \"/sap/bc/adt/programs/programs/zprog\", \"name\": \"ZPROG\"}\n  - \"TYPE NAME\" shorthand, e.g. \"PROG ZPROG\", \"INCL ZPROG_TOP\", \"CLAS ZCL_X\"",
             "type": "array"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           }
         },
         "required": [
@@ -72,6 +80,10 @@
           "package": {
             "description": "Package name to filter (optional, empty = all packages)",
             "type": "string"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           }
         },
         "required": [],
@@ -1179,6 +1191,10 @@
           "syntax_check": {
             "description": "If true (default), validate syntax before saving. If syntax errors found, changes are NOT saved. Default: true",
             "type": "boolean"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           },
           "transport": {
             "description": "Transport request number (required for objects not in $TMP package)",
@@ -4443,6 +4459,10 @@
           "test_source": {
             "description": "Test source code for CLAS (auto-creates test include and runs tests)",
             "type": "string"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           },
           "transport": {
             "description": "Transport request number",

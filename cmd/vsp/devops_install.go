@@ -102,6 +102,10 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	packageName = strings.ToUpper(packageName)
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	skipGitService, _ := cmd.Flags().GetBool("skip-git-service")
+	budget, err := resolveCallTimeout(cmd)
+	if err != nil {
+		return err
+	}
 
 	// Validate package name
 	if !strings.HasPrefix(packageName, "$") {
@@ -221,7 +225,9 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 			Description: obj.Description,
 			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.Source, opts)
+		objCtx, cancel := withWriteBudget(ctx, budget)
+		_, err := installer.DeploySource(objCtx, client, obj.Type, obj.Name, obj.Source, opts)
+		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failed++
@@ -234,8 +240,13 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	// The transport service's push channel. Without it uploads still work;
 	// their outcome is read with vsp transport status.
 	fmt.Fprintf(os.Stderr, "  AMC %s (transport push) ... ", embedded.AMCApplicationName)
-	if err := client.UpsertAMCApplication(ctx, embedded.AMCApplicationName, embedded.AMCApplicationDescription,
-		packageName, embedded.AMCApplicationDefinition); err != nil {
+	// Each AMC application is one write and activation, under the same
+	// per-object budget as the classes above.
+	amcCtx, amcCancel := withWriteBudget(ctx, budget)
+	err = client.UpsertAMCApplication(amcCtx, embedded.AMCApplicationName, embedded.AMCApplicationDescription,
+		packageName, embedded.AMCApplicationDefinition)
+	amcCancel()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "not set up (%v); upload outcomes are read with vsp transport status\n", err)
 	} else {
 		fmt.Fprintf(os.Stderr, "OK\n")
@@ -243,8 +254,11 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 	// The git import's push channel, only with the git service it names.
 	if !skipGitService {
 		fmt.Fprintf(os.Stderr, "  AMC %s (git import push) ... ", embedded.AMCGitApplicationName)
-		if err := client.UpsertAMCApplication(ctx, embedded.AMCGitApplicationName, embedded.AMCGitApplicationDescription,
-			packageName, embedded.AMCGitApplicationDefinition); err != nil {
+		amcCtx, amcCancel := withWriteBudget(ctx, budget)
+		err = client.UpsertAMCApplication(amcCtx, embedded.AMCGitApplicationName, embedded.AMCGitApplicationDescription,
+			packageName, embedded.AMCGitApplicationDefinition)
+		amcCancel()
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "not set up (%v); import outcomes are read with vsp git import-status\n", err)
 		} else {
 			fmt.Fprintf(os.Stderr, "OK\n")
@@ -303,6 +317,11 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 	}
 
 	client, err := getClient(params)
+	if err != nil {
+		return err
+	}
+
+	budget, err := resolveCallTimeout(cmd)
 	if err != nil {
 		return err
 	}
@@ -407,7 +426,9 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 			Description: desc,
 			Mode:        adt.WriteModeUpsert,
 		}
-		_, err := installer.DeploySource(ctx, client, obj.Type, obj.Name, obj.MainSource, wopts)
+		objCtx, cancel := withWriteBudget(ctx, budget)
+		_, err := installer.DeploySource(objCtx, client, obj.Type, obj.Name, obj.MainSource, wopts)
+		cancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "FAILED: %v\n", err)
 			failCount++
@@ -497,6 +518,7 @@ func init() {
 	installAbapGitCmd.Flags().String("edition", "standalone", "abapGit edition: standalone (the developer edition is not installable yet, #277)")
 	installAbapGitCmd.Flags().String("package", "", "Target package (default: $ABAPGIT)")
 	installAbapGitCmd.Flags().Bool("dry-run", false, "Show what would be deployed without deploying")
+	addCallTimeoutFlag(installZadtVspCmd, installAbapGitCmd)
 
 	// Install subcommands
 	installCmd.AddCommand(installZadtVspCmd)

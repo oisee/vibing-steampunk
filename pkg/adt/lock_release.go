@@ -2,7 +2,9 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -35,6 +37,118 @@ func (c *Client) releaseLockAfterFailure(ctx context.Context, objectURL, lockHan
 	defer cancel()
 
 	return c.UnlockObject(releaseCtx, objectURL, lockHandle)
+}
+
+// heldLock is a lock a write workflow holds from its LOCK to its own UNLOCK
+// before activation. The workflow defers releaseOnReturn right after the LOCK
+// and calls unlock where it means to release; any return in between, the
+// ones caused by its context running out included, releases the lock on a
+// detached, bounded context and says so when that fails too.
+//
+// The deferred release used to be c.UnlockObject(ctx, ...) on the workflow's
+// own ctx, with its error dropped. Under a call budget that is the common
+// failure: the PUT outlasts the budget, ctx is done, and the UNLOCK never
+// leaves the process — the ENQUEUE stays on the object and nobody is told.
+type heldLock struct {
+	c         *Client
+	objectURL string
+	handle    string
+	released  bool
+	// mayBeReleased is set when an UNLOCK left the process and no answer came
+	// back: SAP may have released the lock, so a later "invalid lock handle"
+	// is that release, not a refusal.
+	mayBeReleased bool
+}
+
+func (c *Client) holdLock(objectURL, handle string) *heldLock {
+	return &heldLock{c: c, objectURL: objectURL, handle: handle}
+}
+
+// unlock is the workflow's own UNLOCK. When it fails the lock counts as still
+// held, so releaseOnReturn tries again on a context of its own.
+func (h *heldLock) unlock(ctx context.Context) error {
+	sent := ctx.Err() == nil
+	if err := h.c.UnlockObject(ctx, h.objectURL, h.handle); err != nil {
+		h.noteOutcome(sent, err)
+		return err
+	}
+	h.released = true
+	return nil
+}
+
+// noteOutcome records an UNLOCK that failed without an answer from SAP: one
+// sent (its context still live) that ended in a transport error or a timeout
+// waiting for the response. An answer from SAP (an APIError) is definite.
+func (h *heldLock) noteOutcome(sent bool, err error) {
+	var apiErr *APIError
+	if sent && !errors.As(err, &apiErr) {
+		h.mayBeReleased = true
+	}
+}
+
+// release releases the lock if the workflow did not, on a detached, bounded
+// context, and returns the advice to give when that fails, or "".
+//
+// Only a definite refusal for a lock known to be held is "left LOCKED". After
+// an UNLOCK whose answer was lost, SAP answering the retry with "invalid lock
+// handle" means the first one worked; and a retry that gets no answer either
+// leaves the lock in doubt, which is what the advice then says.
+func (h *heldLock) release(ctx context.Context) string {
+	if h.released {
+		return ""
+	}
+	h.released = true
+	releaseCtx, cancel := failureCleanupContext(ctx)
+	defer cancel()
+	err := h.c.UnlockObject(releaseCtx, h.objectURL, h.handle)
+	if err == nil {
+		return ""
+	}
+	h.noteOutcome(true, err)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return uncertainLockAdvice(h.objectURL, err)
+	}
+	if h.mayBeReleased {
+		if isInvalidLockHandle(apiErr) {
+			return ""
+		}
+		return uncertainLockAdvice(h.objectURL, err)
+	}
+	return strandedLockAdvice(h.objectURL, err)
+}
+
+// releaseOnReturn is release for a deferred call: it appends the advice, if
+// any, to *message.
+func (h *heldLock) releaseOnReturn(ctx context.Context, message *string) {
+	if advice := h.release(ctx); advice != "" && message != nil {
+		*message += " — " + advice
+	}
+}
+
+// isInvalidLockHandle reports whether SAP refused an UNLOCK because it holds
+// no lock under the handle: ExceptionResourceInvalidLockHandle and its kin,
+// on a 400, 404 or 423.
+func isInvalidLockHandle(e *APIError) bool {
+	switch e.StatusCode {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusLocked:
+	default:
+		return false
+	}
+	msg := strings.ToLower(e.Message)
+	return strings.Contains(msg, "invalidlockhandle") ||
+		strings.Contains(msg, "invalid lock handle") ||
+		strings.Contains(msg, "not locked")
+}
+
+// uncertainLockAdvice is strandedLockAdvice for a lock whose release could
+// not be confirmed either way.
+func uncertainLockAdvice(objectURL string, err error) string {
+	object := strings.TrimPrefix(objectURL, "/sap/bc/adt/")
+	return fmt.Sprintf(
+		"%s may still be locked: the release could not be confirmed (%v). "+
+			"Check SM12 for an entry on your user and the object, and delete it if it is there.",
+		object, err)
 }
 
 // failureCleanupContext keeps best-effort cleanup independent from the failed

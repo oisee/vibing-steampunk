@@ -210,6 +210,25 @@ func WriteSourceResultError(result *WriteSourceResult) error {
 	return fmt.Errorf("WriteSource failed: %s", message)
 }
 
+// WriteSourceResultReport is WriteSourceResultError for a caller whose error
+// is all a person will see: the CLI, an install, a script. "Activation failed
+// - check activation messages" points at messages such a caller never shows,
+// so the report carries them, at most ActivationMessageLimit of them.
+//
+// A caller that also hands over the structured result (the MCP WriteSource
+// tool, which appends it as JSON) uses WriteSourceResultError, so the
+// messages are not sent twice.
+func WriteSourceResultReport(result *WriteSourceResult) error {
+	err := WriteSourceResultError(result)
+	if err == nil || result == nil {
+		return err
+	}
+	if lines := result.Activation.MessageLines(ActivationMessageLimit); len(lines) > 0 {
+		return fmt.Errorf("%w:\n  %s", err, strings.Join(lines, "\n  "))
+	}
+	return err
+}
+
 // WriteSource is a unified tool for writing ABAP source code across different object types.
 // Replaces WriteProgram, WriteClass, CreateAndActivateProgram, CreateClassWithTests.
 //
@@ -659,11 +678,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			return result, nil
 		}
 
-		defer func() {
-			if !result.Success {
-				c.UnlockObject(ctx, objectURL, lock.LockHandle)
-			}
-		}()
+		held := c.holdLock(objectURL, lock.LockHandle)
+		defer held.releaseOnReturn(ctx, &result.Message)
 
 		// Update source
 		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
@@ -673,7 +689,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 
 		// Unlock
-		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		err = held.unlock(ctx)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
 			return result, nil
@@ -755,21 +771,20 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 				result.Message = fmt.Sprintf("Failed to lock BDEF: %v", err)
 				return result, nil
 			}
+			// Released on any return before the unlock below, detached from
+			// ctx's cancellation (issue #91/#166).
+			held := c.holdLock(objectURL, lock.LockHandle)
+			defer held.releaseOnReturn(ctx, &result.Message)
 
 			// Update source
 			err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
 			if err != nil {
-				// Unlock on failure, detached from ctx's cancellation (issue #91/#166).
-				if unlockErr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); unlockErr != nil {
-					result.Message = fmt.Sprintf("Failed to update BDEF source: %v — %s", err, strandedLockAdvice(objectURL, unlockErr))
-				} else {
-					result.Message = fmt.Sprintf("Failed to update BDEF source: %v", err)
-				}
+				result.Message = fmt.Sprintf("Failed to update BDEF source: %v", err)
 				return result, nil
 			}
 
 			// Unlock
-			err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			err = held.unlock(ctx)
 			if err != nil {
 				result.Message = fmt.Sprintf("Failed to unlock BDEF: %v", err)
 				return result, nil
@@ -816,11 +831,8 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 			return result, nil
 		}
 
-		defer func() {
-			if !result.Success {
-				c.UnlockObject(ctx, objectURL, lock.LockHandle)
-			}
-		}()
+		held := c.holdLock(objectURL, lock.LockHandle)
+		defer held.releaseOnReturn(ctx, &result.Message)
 
 		// Update source
 		err = c.UpdateSource(ctx, sourceURL, source, lock.LockHandle, opts.Transport)
@@ -830,7 +842,7 @@ func (c *Client) writeSourceCreate(ctx context.Context, objectType, name, source
 		}
 
 		// Unlock
-		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		err = held.unlock(ctx)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
 			return result, nil
@@ -1053,13 +1065,17 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 					err = c.UpdateClassInclude(ctx, name, "testclasses", opts.TestSource, lock.LockHandle, testTransport)
 				}
 			}
-			unlockErr := c.UnlockObject(ctx, objectURL, lock.LockHandle)
+			// An UNLOCK on a ctx that has run out never leaves the process, so
+			// a failed one is retried on a detached, bounded context.
+			held := c.holdLock(objectURL, lock.LockHandle)
+			if held.unlock(ctx) != nil {
+				if advice := held.release(ctx); advice != "" {
+					result.Message += fmt.Sprintf(" (%s)", advice)
+				}
+			}
 			if err != nil {
 				result.Message += fmt.Sprintf(" (Warning: Failed to update test include: %v)", err)
 				return result, nil
-			}
-			if unlockErr != nil {
-				result.Message += fmt.Sprintf(" (Warning: Failed to unlock after test update: %v)", unlockErr)
 			}
 
 			// Activate the test include
@@ -1121,11 +1137,8 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			return result, nil
 		}
 
-		defer func() {
-			if !result.Success {
-				c.UnlockObject(ctx, objectURL, lock.LockHandle)
-			}
-		}()
+		held := c.holdLock(objectURL, lock.LockHandle)
+		defer held.releaseOnReturn(ctx, &result.Message)
 
 		// Reuse the request the object is already bound to when the caller supplied no
 		// transport, so an already-captured object is not rejected with a spurious 409
@@ -1145,7 +1158,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		}
 
 		// Unlock
-		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		err = held.unlock(ctx)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
 			return result, nil
@@ -1227,11 +1240,8 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			return result, nil
 		}
 
-		defer func() {
-			if !result.Success {
-				c.UnlockObject(ctx, objectURL, lock.LockHandle)
-			}
-		}()
+		held := c.holdLock(objectURL, lock.LockHandle)
+		defer held.releaseOnReturn(ctx, &result.Message)
 
 		// Reuse the request the object is already bound to when the caller supplied no
 		// transport, so an already-captured object is not rejected with a spurious 409
@@ -1251,7 +1261,7 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 		}
 
 		// Unlock
-		err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+		err = held.unlock(ctx)
 		if err != nil {
 			result.Message = fmt.Sprintf("Failed to unlock object: %v", err)
 			return result, nil
@@ -1385,11 +1395,8 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 		return result, nil
 	}
 
-	defer func() {
-		if !result.Success {
-			c.UnlockObject(ctx, objectURL, lock.LockHandle)
-		}
-	}()
+	held := c.holdLock(objectURL, lock.LockHandle)
+	defer held.releaseOnReturn(ctx, &result.Message)
 
 	// Reuse the request the object is already bound to when the caller supplied no
 	// transport, so an already-captured object is not rejected with a spurious 409
@@ -1411,7 +1418,7 @@ func (c *Client) writeClassMethodUpdate(ctx context.Context, className, methodNa
 	}
 
 	// Unlock
-	err = c.UnlockObject(ctx, objectURL, lock.LockHandle)
+	err = held.unlock(ctx)
 	if err != nil {
 		result.Message = fmt.Sprintf("Failed to unlock class: %v", err)
 		return result, nil
