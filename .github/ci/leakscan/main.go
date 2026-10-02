@@ -383,87 +383,194 @@ func changedFiles(root, base, rev string) ([]source, error) {
 // a message is published too and is the easiest place to paste an address.
 // A merge is read as its first-parent diff, which includes what the merge
 // itself resolved.
+//
+// Nothing here trusts a separator inside text that a commit controls. This
+// once read one `git log -p --format=%x01%h%x02%B%x03` stream and cut it on
+// those bytes, so a message or an added line holding 0x01 or 0x03 moved the
+// cut and hid what followed it. Now the commits are listed by rev-list in a
+// format of hex digits only; each message is read from the raw commit object
+// through `git cat-file --batch`, which states its length before its bytes;
+// and each commit's patch comes from a `git show` of its own. A message or an
+// added line can hold any byte (0x01, NUL, a line that looks like a diff
+// header) and is still read whole, as what it is.
 func rangeSources(root, rng string) ([]source, error) {
-	out, err := git(root, "-c", "core.quotePath=false", "log", "-p", "-U0", "--no-color", "--no-ext-diff",
-		"--no-renames", "--diff-merges=first-parent", "--format=%x01%h%x02%B%x03", rng)
+	commits, err := listCommits(root, rng)
 	if err != nil {
 		return nil, err
 	}
-	srcs, binaries := parsePatchLog(out)
-	for commit, paths := range binaries {
-		more, err := readBlobs(root, commit, paths)
+	msgs, err := readMessages(root, commits)
+	if err != nil {
+		return nil, err
+	}
+	var srcs []source
+	for i, c := range commits {
+		srcs = append(srcs, source{name: "commit " + c.short + " (message)", data: msgs[i]})
+		patch, err := git(root, "-c", "core.quotePath=false", "show", "--format=", "--no-show-signature",
+			"-p", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
+			"--diff-merges=first-parent", "--src-prefix=a/", "--dst-prefix=b/", c.full, "--")
 		if err != nil {
 			return nil, err
 		}
-		for i := range more {
-			more[i].path, more[i].commit = more[i].name, commit
-		}
+		more, binaries := parsePatch(c.short, patch)
 		srcs = append(srcs, more...)
+		if len(binaries) > 0 {
+			blobs, err := readBlobs(root, c.full, binaries)
+			if err != nil {
+				return nil, err
+			}
+			for j := range blobs {
+				blobs[j].path, blobs[j].commit = blobs[j].name, c.short
+			}
+			srcs = append(srcs, blobs...)
+		}
 	}
 	return srcs, nil
 }
 
-// parsePatchLog splits `git log -p -U0 --format=%x01%h%x02%B%x03` output into
-// one message source per commit and one source per (commit, file) holding the
-// added lines, and lists the binary files each commit added or changed.
-func parsePatchLog(out []byte) ([]source, map[string][]string) {
-	var srcs []source
-	binaries := map[string][]string{}
-	for _, rec := range strings.Split(string(out), "\x01")[1:] {
-		head, patch, _ := strings.Cut(rec, "\x03")
-		commit, msg, _ := strings.Cut(head, "\x02")
-		commit = strings.TrimSpace(commit)
-		srcs = append(srcs, source{name: "commit " + commit + " (message)", data: []byte(msg)})
+type commitID struct{ full, short string }
 
-		var cur *source
-		var buf bytes.Buffer
-		next := 0
-		flush := func() {
-			if cur != nil && len(cur.lines) > 0 {
-				cur.data = append([]byte(nil), buf.Bytes()...)
-				srcs = append(srcs, *cur)
-			}
-			cur = nil
-			buf.Reset()
-		}
-		inHeader := false
-		for _, line := range strings.Split(patch, "\n") {
-			switch {
-			case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "diff --cc "):
-				flush()
-				inHeader = true
-			case inHeader && strings.HasPrefix(line, "+++ "):
-				p := unquotePath(strings.TrimPrefix(line, "+++ "))
-				if p != "/dev/null" {
-					p = strings.TrimPrefix(p, "b/")
-					cur = &source{name: p + " @ " + commit, path: p, commit: commit}
-				}
-			case inHeader && strings.HasPrefix(line, "Binary files ") && strings.HasSuffix(line, " differ"):
-				i := strings.LastIndex(line, " and ")
-				if i >= 0 {
-					p := unquotePath(strings.TrimSuffix(line[i+len(" and "):], " differ"))
-					if p != "/dev/null" {
-						binaries[commit] = append(binaries[commit], strings.TrimPrefix(p, "b/"))
-					}
-				}
-			case strings.HasPrefix(line, "@@"):
-				inHeader = false
-				// @@ -a,b +c,d @@: added lines are numbered from c.
-				if i := strings.Index(line, " +"); i >= 0 {
-					f := strings.FieldsFunc(line[i+2:], func(r rune) bool { return r == ',' || r == ' ' })
-					if len(f) > 0 {
-						next, _ = strconv.Atoi(f[0])
-					}
-				}
-			case !inHeader && cur != nil && strings.HasPrefix(line, "+"):
-				buf.WriteString(line[1:])
-				buf.WriteByte('\n')
-				cur.lines = append(cur.lines, next)
-				next++
-			}
-		}
-		flush()
+// listCommits is every commit in rng. The format holds two hex placeholders
+// and nothing a commit can write, and every line is checked to be just that.
+func listCommits(root, rng string) ([]commitID, error) {
+	out, err := git(root, "rev-list", "--no-commit-header", "--format=%H %h", rng, "--")
+	if err != nil {
+		return nil, err
 	}
+	var ids []commitID
+	for _, line := range strings.Split(string(out), "\n") {
+		if line == "" {
+			continue
+		}
+		full, short, ok := strings.Cut(line, " ")
+		if !ok || !isHex(full) || !isHex(short) || !strings.HasPrefix(full, short) {
+			return nil, fmt.Errorf("git rev-list %s: unexpected line %q", rng, line)
+		}
+		ids = append(ids, commitID{full, short})
+	}
+	return ids, nil
+}
+
+func isHex(s string) bool {
+	if len(s) < 4 || len(s) > 64 {
+		return false
+	}
+	for _, c := range []byte(s) {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// readMessages reads every commit object through one `git cat-file --batch`
+// and returns each one's message: the raw bytes after the header's blank line,
+// with nothing re-encoded, cut or stripped (a NUL included).
+func readMessages(root string, commits []commitID) ([][]byte, error) {
+	if len(commits) == 0 {
+		return nil, nil
+	}
+	cmd := exec.Command("git", "-C", root, "cat-file", "--batch")
+	var in bytes.Buffer
+	for _, c := range commits {
+		fmt.Fprintf(&in, "%s\n", c.full)
+	}
+	cmd.Stdin = &in
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	r := bufio.NewReader(stdout)
+	msgs := make([][]byte, 0, len(commits))
+	for _, c := range commits {
+		header, err := r.ReadString('\n')
+		if err != nil {
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("git cat-file %s: %v", c.full, err)
+		}
+		f := strings.Fields(header)
+		if len(f) != 3 || f[0] != c.full || f[1] != "commit" {
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("git cat-file %s: %s", c.full, strings.TrimSpace(header))
+		}
+		var size int
+		if _, err := fmt.Sscan(f[2], &size); err != nil || size < 0 || size > maxFileSize {
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("commit %s: %s bytes is over the %d-byte limit; it cannot be scanned, so it cannot pass", c.short, f[2], maxFileSize)
+		}
+		data := make([]byte, size+1) // the object, then a newline
+		if _, err := io.ReadFull(r, data); err != nil {
+			_ = cmd.Wait()
+			return nil, fmt.Errorf("git cat-file %s: %v", c.full, err)
+		}
+		obj := data[:size]
+		msg := []byte(nil)
+		if i := bytes.Index(obj, []byte("\n\n")); i >= 0 {
+			msg = obj[i+2:]
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs, cmd.Wait()
+}
+
+// parsePatch splits one commit's `git show -p -U0` output into one source per
+// file holding the lines the commit added, and lists the binary files it added
+// or changed. Every content line of a -U0 patch starts with '+', '-' or '\',
+// so no content can pose as a header; and the output holds this one commit,
+// so no content can pose as the start of another.
+func parsePatch(commit string, patch []byte) ([]source, []string) {
+	var srcs []source
+	var binaries []string
+	var cur *source
+	var buf bytes.Buffer
+	next := 0
+	flush := func() {
+		if cur != nil && len(cur.lines) > 0 {
+			cur.data = append([]byte(nil), buf.Bytes()...)
+			srcs = append(srcs, *cur)
+		}
+		cur = nil
+		buf.Reset()
+	}
+	inHeader := false
+	for _, line := range strings.Split(string(patch), "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "diff --cc "):
+			flush()
+			inHeader = true
+		case inHeader && strings.HasPrefix(line, "+++ "):
+			p := unquotePath(strings.TrimPrefix(line, "+++ "))
+			if p != "/dev/null" {
+				p = strings.TrimPrefix(p, "b/")
+				cur = &source{name: p + " @ " + commit, path: p, commit: commit}
+			}
+		case inHeader && strings.HasPrefix(line, "Binary files ") && strings.HasSuffix(line, " differ"):
+			i := strings.LastIndex(line, " and ")
+			if i >= 0 {
+				p := unquotePath(strings.TrimSuffix(line[i+len(" and "):], " differ"))
+				if p != "/dev/null" {
+					binaries = append(binaries, strings.TrimPrefix(p, "b/"))
+				}
+			}
+		case strings.HasPrefix(line, "@@"):
+			inHeader = false
+			// @@ -a,b +c,d @@: added lines are numbered from c.
+			if i := strings.Index(line, " +"); i >= 0 {
+				f := strings.FieldsFunc(line[i+2:], func(r rune) bool { return r == ',' || r == ' ' })
+				if len(f) > 0 {
+					next, _ = strconv.Atoi(f[0])
+				}
+			}
+		case !inHeader && cur != nil && strings.HasPrefix(line, "+"):
+			buf.WriteString(line[1:])
+			buf.WriteByte('\n')
+			cur.lines = append(cur.lines, next)
+			next++
+		}
+	}
+	flush()
 	return srcs, binaries
 }
 

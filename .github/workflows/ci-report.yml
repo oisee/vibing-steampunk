@@ -13,7 +13,9 @@ name: CI report
 # per-package test summary, the metrics file — comes from a workflow file the
 # pull request can edit, so it is parsed defensively and escaped before it goes
 # into the comment. The metrics of earlier main runs, for the trend, are read
-# the same way, and the only program run on any of it is `unzip -p`.
+# the same way, and the only program run on any of it is `unzip -p`, into
+# memory under a size cap, after the zip's central directory has been checked
+# against the same cap (see "Fetch the artifacts").
 on:
   workflow_run:
     workflows: [CI]
@@ -33,8 +35,9 @@ jobs:
       # Same-repo pull requests arrive in run.pull_requests; fork ones do not,
       # so look them up by head branch. Either way, only report when the pull
       # request still points at the commit this run tested — a late run for an
-      # old commit must not overwrite a newer report. The base is the last
-      # green push run on the pull request's base branch.
+      # old commit must not overwrite a newer report (the last step checks this
+      # again, and that this is the latest run and attempt on the commit). The
+      # base is the last green push run on the pull request's base branch.
       - name: Find the pull request and the base run
         id: find
         uses: actions/github-script@v7
@@ -56,17 +59,6 @@ jobs:
             }
             core.setOutput('pr', String(pr.number));
             core.setOutput('base_ref', pr.base.ref);
-            // The pull request's own artifacts are only downloaded when they are
-            // small: a fork controls them, and a zip bomb would fill the disk.
-            // Real sizes: test-summary about 1 KB, metrics about 15 KB, zipped.
-            const caps = { 'test-summary': 256 * 1024, metrics: 1024 * 1024 };
-            const arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, { owner, repo, run_id: run.id })
-              .catch(() => []);
-            for (const [name, cap] of Object.entries(caps)) {
-              const a = arts.find((x) => x.name === name && !x.expired);
-              if (a && a.size_in_bytes <= cap) core.setOutput(`head_${name.replace('-', '_')}`, 'ok');
-              else if (a) core.warning(`${name}: ${a.size_in_bytes} bytes zipped, over the ${cap}-byte cap; not downloaded`);
-            }
             const base = await github.rest.actions.listWorkflowRuns({
               owner, repo, workflow_id: 'ci.yml', branch: pr.base.ref, event: 'push', status: 'success', per_page: 1,
             }).then((r) => r.data.workflow_runs[0]).catch(() => undefined);
@@ -75,45 +67,94 @@ jobs:
               core.setOutput('base_sha', base.head_sha);
             }
 
-      - name: Download this run's test summary
-        if: steps.find.outputs.head_test_summary == 'ok'
+      # The pull request's own artifacts are written by its own workflow, so a
+      # fork controls them: a small zip can unpack to gigabytes. So nothing is
+      # extracted on trust. Each archive is fetched as a zip, under a cap on its
+      # zipped size; its central directory is read here, in JavaScript, and an
+      # archive whose entries add up to more than the unzipped cap, or hold one
+      # over it, is refused; then only the expected file is unpacked, with
+      # `unzip -p` into memory under the same cap (the child is killed past it,
+      # whatever the headers claimed), and written out by this script. The base
+      # artifacts go through the same path. Real sizes: test-summary about
+      # 1 KB, metrics about 15 KB, zipped.
+      - name: Fetch the artifacts
+        if: steps.find.outputs.pr != ''
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/github-script@v7
+        env:
+          BASE_RUN: ${{ steps.find.outputs.base_run }}
         with:
-          name: test-summary
-          path: head
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { execFileSync } = require('child_process');
+            const { owner, repo } = context.repo;
+            const KB = 1024, MB = 1024 * KB;
+            const kinds = [
+              { name: 'test-summary', file: 'test-summary.json', zip: 256 * KB, raw: 1 * MB, head: 'head', base: 'base' },
+              { name: 'metrics', file: 'metrics.json', zip: 1 * MB, raw: 8 * MB, head: 'head-metrics', base: 'base-metrics' },
+            ];
+            const runs = [{ id: context.payload.workflow_run.id, side: 'head' }];
+            if (/^\d+$/.test(process.env.BASE_RUN || '')) runs.push({ id: Number(process.env.BASE_RUN), side: 'base' });
 
-      - name: Download the base's test summary
-        if: steps.find.outputs.base_run != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: test-summary
-          path: base
-          run-id: ${{ steps.find.outputs.base_run }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+            // The central directory, read without running anything on the zip.
+            // A zip64 archive (sizes past 4 GiB) is refused outright.
+            const centralDirectory = (buf) => {
+              if (buf.length < 22) throw new Error('not a zip');
+              let eocd = -1;
+              for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
+                if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+              }
+              if (eocd < 0) throw new Error('not a zip: no end of central directory');
+              const count = buf.readUInt16LE(eocd + 10);
+              if (count === 0xffff) throw new Error('zip64 archive refused');
+              let p = buf.readUInt32LE(eocd + 16);
+              const entries = [];
+              for (let n = 0; n < count; n++) {
+                if (p + 46 > buf.length || buf.readUInt32LE(p) !== 0x02014b50) throw new Error('malformed central directory');
+                const size = buf.readUInt32LE(p + 24);
+                const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+                if (size === 0xffffffff) throw new Error('zip64 entry refused');
+                if (p + 46 + nameLen > buf.length) throw new Error('malformed central directory');
+                entries.push({ name: buf.toString('latin1', p + 46, p + 46 + nameLen), size });
+                p += 46 + nameLen + extraLen + commentLen;
+              }
+              return entries;
+            };
 
-      - name: Download this run's metrics
-        if: steps.find.outputs.head_metrics == 'ok'
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: metrics
-          path: head-metrics
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download the base's metrics
-        if: steps.find.outputs.base_run != ''
-        continue-on-error: true
-        uses: actions/download-artifact@v4
-        with:
-          name: metrics
-          path: base-metrics
-          run-id: ${{ steps.find.outputs.base_run }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+            for (const run of runs) {
+              let arts = [];
+              try {
+                arts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, { owner, repo, run_id: run.id });
+              } catch (e) { core.warning(`${run.side} run ${run.id}: artifacts not listed: ${e.message}`); continue; }
+              for (const k of kinds) {
+                const label = `${run.side} ${k.name}`;
+                try {
+                  const a = arts.find((x) => x.name === k.name && !x.expired);
+                  if (!a) { core.info(`${label}: no artifact`); continue; }
+                  if (a.size_in_bytes > k.zip) throw new Error(`${a.size_in_bytes} bytes zipped, over the ${k.zip}-byte cap`);
+                  const res = await github.rest.actions.downloadArtifact({ owner, repo, artifact_id: a.id, archive_format: 'zip' });
+                  const buf = Buffer.from(res.data);
+                  if (buf.length > k.zip) throw new Error(`${buf.length} bytes zipped, over the ${k.zip}-byte cap`);
+                  const entries = centralDirectory(buf);
+                  const total = entries.reduce((s, e) => s + e.size, 0);
+                  const big = entries.find((e) => e.size > k.raw);
+                  if (big || total > k.raw) throw new Error(`unpacks to ${total} bytes${big ? ' (one entry ' + big.size + ')' : ''}, over the ${k.raw}-byte cap`);
+                  if (!entries.some((e) => e.name === k.file)) throw new Error(`no ${k.file} in the archive`);
+                  const zipPath = path.join(process.env.RUNNER_TEMP, `${run.side}-${k.name}.zip`);
+                  fs.writeFileSync(zipPath, buf);
+                  // Bounded whatever the headers say: past maxBuffer the child
+                  // is killed and this throws. Nothing touches the disk but the
+                  // one file, written by this script.
+                  const data = execFileSync('unzip', ['-p', zipPath, k.file], { maxBuffer: k.raw, timeout: 60000 });
+                  fs.mkdirSync(k[run.side], { recursive: true });
+                  fs.writeFileSync(path.join(k[run.side], k.file), data);
+                  core.info(`${label}: ${buf.length} bytes zipped, ${data.length} unpacked`);
+                } catch (e) {
+                  core.warning(`${label}: not used: ${e.message}`);
+                }
+              }
+            }
 
       # Size and complexity, base → head, and the trend over the last green
       # runs on the base branch. Advisory: whatever happens here, the report
@@ -383,7 +424,7 @@ jobs:
                 return `| ${label} | ${spark([...vals, ht[key]])} | ${fmt(vals[0])} → ${fmt(vals[vals.length - 1])} | ${fmt(ht[key])} |`;
               };
               out.push('', `<details><summary>Trend: the last ${series.length} green runs on ${clean(process.env.BASE_REF, 40)}, then this PR</summary>`, '',
-                '| | Trend | Main, oldest → newest | This PR |', '| --- | --- | --- | --- |',
+                `| | Trend | ${clean(process.env.BASE_REF, 40)}, oldest → newest | This PR |`, '| --- | --- | --- | --- |',
                 line('Read tokens', 'tokens', k),
                 line(`Over cognitive ${th.cognitive}`, 'over_cognitive'),
                 line(`Over cyclomatic ${th.cyclomatic}`, 'over_cyclomatic'),
@@ -411,6 +452,7 @@ jobs:
         env:
           PR: ${{ steps.find.outputs.pr }}
           BASE_SHA: ${{ steps.find.outputs.base_sha }}
+          BASE_REF: ${{ steps.find.outputs.base_ref }}
         with:
           script: |
             const fs = require('fs');
@@ -418,6 +460,38 @@ jobs:
             const { owner, repo } = context.repo;
             const run = context.payload.workflow_run;
             const prNumber = Number(process.env.PR);
+
+            // --- only the latest run and attempt on this commit writes ------
+            // The first step checked that the pull request still points at
+            // this run's commit; that is not enough. A rerun, or a second run
+            // on the same commit, makes a fresher result for the same SHA, and
+            // a report from the older one that finishes (or is delivered) late
+            // would overwrite it. So, right before writing anything: the pull
+            // request must still be at this commit, no newer attempt of this
+            // run may exist, and no later run of this workflow for the same
+            // commit and head branch. Otherwise log and stop; the newer run
+            // writes its own report when it completes.
+            const now = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
+            if (now.head.sha !== run.head_sha) {
+              core.info(`#${prNumber} moved to ${now.head.sha}; this report for ${run.head_sha} is stale, not written`);
+              return;
+            }
+            const self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })).data;
+            if (self.run_attempt > run.run_attempt) {
+              core.info(`run ${run.id} has a newer attempt (${self.run_attempt} > ${run.run_attempt}); not written`);
+              return;
+            }
+            const sameCommit = await github.paginate(github.rest.actions.listWorkflowRuns,
+              { owner, repo, workflow_id: run.workflow_id, head_sha: run.head_sha, event: run.event, per_page: 100 });
+            const newer = sameCommit.find((r) => r.id !== run.id
+              && r.head_branch === run.head_branch
+              && r.head_repository?.id === run.head_repository?.id
+              && (r.run_number > run.run_number
+                || (r.run_number === run.run_number && new Date(r.created_at) > new Date(run.created_at))));
+            if (newer) {
+              core.info(`a later run on ${run.head_sha} exists (run ${newer.id}, #${newer.run_number}, attempt ${newer.run_attempt}, ${newer.status}); this report from #${run.run_number} attempt ${run.run_attempt} is not written`);
+              return;
+            }
 
             // Escaped for markdown, and defused: a zero-width space after `@`
             // stops a fork from pinging users or teams through the bot, and one
@@ -490,8 +564,10 @@ jobs:
               const hp = sum(head, 'pass'), hf = sum(head, 'fail'), hs = sum(head, 'skip'), ht = sum(head, 'seconds');
               const bp = base ? sum(base, 'pass') : null, bt = base ? sum(base, 'seconds') : null;
               const baseRef = process.env.BASE_SHA ? `\`${process.env.BASE_SHA.slice(0, 8)}\`` : 'base';
+              // The pull request's base branch, which is not always main.
+              const baseName = process.env.BASE_REF ? '`' + process.env.BASE_REF.replace(/[\r\n`]+/g, ' ').slice(0, 60) + '`' : 'the base branch';
               testLines.push(base
-                ? `**Tests:** ${bp} → **${hp}** passed${hp - bp ? ` (${hp - bp > 0 ? '+' : ''}${hp - bp})` : ''}, ${hf} failed, ${hs} skipped · package time ${total(bt)} s → ${total(ht)} s, compared with ${baseRef} on main`
+                ? `**Tests:** ${bp} → **${hp}** passed${hp - bp ? ` (${hp - bp > 0 ? '+' : ''}${hp - bp})` : ''}, ${hf} failed, ${hs} skipped · package time ${total(bt)} s → ${total(ht)} s, compared with ${baseRef} on ${baseName}`
                 : `**Tests:** ${hp} passed, ${hf} failed, ${hs} skipped · package time ${total(ht)} s (no base run to compare with yet)`);
               const names = [...new Set([...head.keys(), ...(base ? base.keys() : [])])];
               const table = names.map((n) => {

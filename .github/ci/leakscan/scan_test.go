@@ -596,3 +596,94 @@ func TestRunPushEvent(t *testing.T) {
 		t.Fatalf("clean push: exit %d\n%s", code, errs)
 	}
 }
+
+// --- control bytes cannot blind the history scan ----------------------------
+
+// The history scan once read `git log -p --format=%x01%h%x02%B%x03` and split
+// on those bytes; a commit message or an added line holding one of them moved
+// the cut, and what came after it was never matched. Each case below must be a
+// hit: every byte of every message and every added line is read, whatever
+// control bytes it holds.
+
+const hiddenHost = "sapbox.corp.invalid"
+
+func TestRunControlBytesInCommitMessage(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, msg := range map[string]string{
+		"only an identifier after 0x01": "\x01" + hiddenHost,
+		"only an identifier after 0x02": "\x02" + hiddenHost,
+		"only an identifier after 0x03": "\x03" + hiddenHost,
+		"0x01 in the subject":           "fix\x01 seen on " + hiddenHost,
+		"0x03 then the identifier":      "fix the logon\n\nsee \x03" + hiddenHost + "\n",
+		"0x01 0x02 0x03 around it":      "subject\n\n\x01abc\x02" + hiddenHost + "\x03tail\n",
+		"0x03 0x02 0x01 reversed":       "subject\n\n\x03\x02\x01" + hiddenHost + "\n",
+		"other control bytes":           "\x1b[2K\x7f\x04\x1f\x0b\x0c" + hiddenHost,
+		"a fake patch in the message":   "subject\n\n\x03\ndiff --git a/x b/x\n+++ b/x\n@@ -0,0 +1 @@\n+" + hiddenHost + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, "a.md"), "clean\n")
+			g("add", ".")
+			mf := filepath.Join(t.TempDir(), "msg")
+			writeFile(t, mf, msg)
+			g("commit", "-q", "--cleanup=verbatim", "-F", mf)
+			for _, mode := range [][]string{{"-diff", "main"}, {"-range", "main..topic"}} {
+				code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+				if code != exitHits || !strings.Contains(out, "(message)") || !strings.Contains(out, "identifier/host") {
+					t.Fatalf("%v: exit %d, want a message hit\n%s%s", mode, code, out, errs)
+				}
+				if strings.Contains(out, "sapbox") {
+					t.Errorf("output prints the value:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+// A NUL cannot be written into a message with `git commit`, but a commit
+// object can carry one (hash-object --literally), and a pushed object is what
+// is published.
+func TestRunNULInCommitMessage(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: " + hiddenHost}
+	tree := g("rev-parse", "HEAD^{tree}")
+	parent := g("rev-parse", "HEAD")
+	obj := "tree " + tree + "\nparent " + parent + "\nauthor t <t@example.invalid> 0 +0000\ncommitter t <t@example.invalid> 0 +0000\n\n" +
+		"subject\x00\x01" + hiddenHost + "\n"
+	f := filepath.Join(t.TempDir(), "commit")
+	writeFile(t, f, obj)
+	sha := g("hash-object", "-t", "commit", "-w", "--literally", f)
+	g("update-ref", "refs/heads/topic", sha)
+	code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic")
+	if code != exitHits || !strings.Contains(out, "(message)") {
+		t.Fatalf("exit %d, want a message hit\n%s%s", code, out, errs)
+	}
+}
+
+func TestRunControlBytesInAddedLine(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, content := range map[string]string{
+		"0x01 before":       "one\n\x01" + hiddenHost + "\n",
+		"0x02 before":       "one\n\x02" + hiddenHost + "\n",
+		"0x03 before":       "one\n\x03" + hiddenHost + "\n",
+		"all three":         "one\nx\x01\x02\x03" + hiddenHost + "\n",
+		"around":            "one\n\x01" + hiddenHost + "\x03\n",
+		"other control":     "one\n\x1b\x7f\x04" + hiddenHost + "\n",
+		"NUL (binary file)": "one\n\x00\x01" + hiddenHost + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, "capture.txt"), content)
+			g("add", ".")
+			g("commit", "-qm", "add")
+			g("rm", "-q", "capture.txt")
+			g("commit", "-qm", "remove it again")
+			code, out, errs := runScan(t, env, "-root", root, "-diff", "main")
+			if code != exitHits || !strings.Contains(out, "capture.txt:") || !strings.Contains(out, "identifier/host") {
+				t.Fatalf("exit %d, want a hit in capture.txt\n%s%s", code, out, errs)
+			}
+		})
+	}
+}
