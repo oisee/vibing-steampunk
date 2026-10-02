@@ -97,3 +97,49 @@ func TestPublishedToolCountsMatchPinnedCounts(t *testing.T) {
 		}
 	}
 }
+
+// docs/cli-agents states the mode counts in two shapes the README matcher does
+// not read: "focused (98 tools) or expert (148)", plus its ES/RU/UA
+// translations where "tools" is not English, and codex.md's table rows
+// "| `focused` | 98 |". The expert count there sat at a stale 147 with nothing
+// checking it. Here each count is tied to the pin for its own mode.
+var cliAgentsModeCount = regexp.MustCompile(
+	"(?i)\\b(focused|expert)\\s*\\((\\d+)" +
+		"|\\|\\s*`(focused|expert)`\\s*\\|\\s*(\\d+)\\s*\\|")
+
+func TestCLIAgentsDocsToolCountsMatchPinnedCounts(t *testing.T) {
+	want := map[string]int{"focused": wantFocusedTools, "expert": wantExpertTools}
+
+	files, err := filepath.Glob(filepath.Join("..", "..", "docs", "cli-agents", "*.md"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no docs/cli-agents/*.md found (err=%v)", err)
+	}
+	for _, path := range files {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		seen := map[string]bool{}
+		for i, line := range strings.Split(string(raw), "\n") {
+			for _, m := range cliAgentsModeCount.FindAllStringSubmatch(line, -1) {
+				mode, num := m[1], m[2]
+				if mode == "" {
+					mode, num = m[3], m[4]
+				}
+				mode = strings.ToLower(mode)
+				n, _ := strconv.Atoi(num)
+				seen[mode] = true
+				if n != want[mode] {
+					t.Errorf("%s:%d says %s has %d tools; the server registers %d.\n  line: %s",
+						filepath.Base(path), i+1, mode, n, want[mode], strings.TrimSpace(line))
+				}
+			}
+		}
+		// Each of these files states both counts today. If one suddenly states
+		// neither, the matcher broke; the docs did not get fixed.
+		if !seen["focused"] || !seen["expert"] {
+			t.Errorf("%s: expected both a focused and an expert tool count, found %v — the matcher has stopped matching",
+				filepath.Base(path), seen)
+		}
+	}
+}
