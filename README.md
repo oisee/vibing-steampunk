@@ -172,6 +172,58 @@ ends with a stack read, every catch was thrown away. It serves the same document
 from the dispatcher instead. The shape is discovered once per session and
 remembered.
 
+### Debug from your editor (DAP)
+
+`vsp dap` is a Debug Adapter Protocol server on stdin/stdout. VS Code, nvim-dap,
+JetBrains and other DAP clients can use it to set breakpoints in ABAP and step
+through it on a real system. It is the same debugger as `vsp adt debug`: SAP's
+own `/sap/bc/adt/debugger*` resources on one held stateful session, with nothing
+installed on the server.
+
+- **Logon:** vsp's usual config (a `.vsp.json` system, or `SAP_*` env). The launch
+  configuration names a system and a user, never a password.
+- **What it does:** it arms your breakpoints and waits. Run the program in SAP
+  (SE38, a unit test, an RFC call, a job) and the editor stops on the line. vsp
+  never starts the program itself, and it is not an MCP tool.
+- **Breakpoints:** set them in files named by vsp's export convention
+  (`zcl_x.clas.abap`, `zrep.prog.abap`, `zgrp.fugr.z_fm.abap`, ...). Stack frames
+  open the local file when it is under `sourceRoot`. Otherwise the source is read
+  from SAP.
+- **Read-only systems:** you can still debug, but you can't change variables.
+
+VS Code: until the vsp extension ships, any extension can declare the adapter in
+its `package.json`. The `launch.json` entry then uses that type:
+
+```jsonc
+// package.json of a local extension
+"contributes": {
+  "breakpoints": [{ "language": "abap" }],
+  "debuggers": [{ "type": "abap-sap", "label": "ABAP (vsp)", "program": "vsp", "args": ["dap"] }]
+}
+
+// .vscode/launch.json
+{ "type": "abap-sap", "request": "attach", "name": "ABAP on A4H",
+  "system": "a4h", "object": "ZVSP_DEBUG_DEMO", "sourceRoot": "${workspaceFolder}" }
+```
+
+nvim-dap:
+
+```lua
+local dap = require('dap')
+dap.adapters.vsp = { type = 'executable', command = 'vsp', args = { 'dap' } }
+dap.configurations.abap = {
+  { type = 'vsp', request = 'attach', name = 'ABAP on A4H',
+    system = 'a4h', object = 'ZVSP_DEBUG_DEMO', sourceRoot = '${workspaceFolder}' },
+}
+```
+
+Launch and attach take the same arguments: `system`, `user` (whose debuggees to
+catch; the default is the logon user), `object` and `include` (optional, resolved
+at start), `sourceRoot`, `systemDebugging` and `listenSeconds`. Supported
+requests: breakpoints, continue, step over/in/out, the stack, and variables
+(locals, globals, and structures and tables expanded in place). Changing a
+variable is also supported.
+
 ### AMDP debugging over plain ADT — the breakpoint fires
 
 An AMDP method runs inside HANA, not inside ABAP, so debugging one means
@@ -1056,6 +1108,8 @@ The headline changes are in the **"New in the last three releases"** callout at 
 
 ### v2.60.0 — upcoming
 
+**New:** `vsp dap`, a Debug Adapter Protocol server. It lets you debug ABAP from VS Code, nvim-dap or JetBrains on a real system, with no Z code. See [Debug from your editor (DAP)](#debug-from-your-editor-dap).
+
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
 
 ### v2.59.1 — new since v2.59.0
@@ -1415,6 +1469,7 @@ vsp rfc describe BAPI_USER_GET_DETAIL            # FM interface as JSON Schema
 # Debugging and tracing (nothing installed on the server)
 vsp rfc debug                                    # debug REPL on a pinned RFC session
 vsp adt debug                                    # the same REPL over stateful HTTPS
+vsp dap                                          # the debugger for editors (Debug Adapter Protocol)
 vsp trace run ZFOO --call                        # SAT trace: the measured call tree
 vsp trace unit ZFOO --line 12 --values           # record a unit, statement by statement
 

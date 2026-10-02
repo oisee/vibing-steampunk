@@ -42,14 +42,29 @@ records how things got the way they are.
   - a session that survives across MCP tool calls (`internal/mcp/handlers_debug_session.go`);
   - six registered tools;
   - ADT-native AMDP routing;
-  - a local web UI, `vsp debug ui` (2026-09-02).
+  - a local web UI, `vsp debug ui` (2026-09-02);
+  - a DAP adapter, `vsp dap` (2026-10-02, #184), for VS Code, nvim-dap and JetBrains.
 - Breakpoints and the debug loop go through `/sap/bc/adt/debugger*` on a held
   ADT session. No ZADT_VSP is needed. The old note "REST breakpoints return 403
   on newer SAP" described the stateless client, not the SAP release. The
   breakpoint kinds (line, statement, exception, message) were verified against
   A4H on 2026-08-21.
-- Not built: a DAP adapter. It is tracked in #184; a design for `vsp dap` plus
-  a VS Code companion is being drafted together with open-steamgate.
+- `vsp dap` (`internal/dap`, `cmd/vsp/dap.go`):
+  - It has a hand-written DAP codec, because the protocol is Content-Length
+    plus JSON. It adds no dependency.
+  - The session layer is `saprfc.Debugger` over `statefulADTTransport`, the
+    same one `vsp adt debug` uses, so nothing was forked or extracted.
+  - Sources map to objects through `adt.ParseABAPFile`. Frames map back
+    through the files that have breakpoints, then a `sourceRoot` scan. Any
+    other frame becomes a DAP source reference whose text is read from SAP.
+  - It is CLI-only, not an MCP tool. On a read-only system it debugs but
+    refuses `setVariable`, the same rule as `vsp debug ui` and the REPL.
+  - A disconnect, the end of the stream, or a signal each clear the
+    breakpoints, release the debuggee and delete the listener.
+  - Tests use a fake ADT debugger (`internal/dap/fake_test.go`) shaped after
+    the a4h-step cassette.
+  - Not built yet: conditional breakpoints, watch/evaluate, exception
+    breakpoints, AMDP, and the VS Code extension (`abap-sap` type).
 - Design: [001](../reports/2026-04-05-001-gui-debugger-design.md)
 
 ## Lock handles and sessions (#91 family)
