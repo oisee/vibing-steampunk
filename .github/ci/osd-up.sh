@@ -105,7 +105,7 @@ if [ "$binary" = osd ]; then
   # PROG edits and INTERFACES changes stay cold; the X-OSD-Generation response
   # header says which path an activation took and why. OSD_WARM=0 STG_DEV=0
   # in the caller's environment restores the all-cold behaviour.
-  export OSD_WARM="${OSD_WARM:-1}" STG_DEV="${STG_DEV:-1}"
+  export OSD_WARM="${OSD_WARM:-0}" STG_DEV="${STG_DEV:-0}"
   warm="; OSD_WARM=$OSD_WARM STG_DEV=$STG_DEV"
   (cd "$work/cwd" && "$bin" doctor) > "$work/doctor.log" 2>&1 || true
 fi
