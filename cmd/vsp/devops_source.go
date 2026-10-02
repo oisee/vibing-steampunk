@@ -22,8 +22,8 @@ var sourceReadCmd = &cobra.Command{
 With --summary it prints JSON metadata instead of the source: lines, bytes,
 sha256 (lower-case hex SHA-256 of the exact text as read, not normalised),
 sourceHash (for a guarded write) and uri. With --if-none-match <sha256> it
-prints one "unchanged (sha256 ...)" line when the source still has that
-digest, and the source otherwise. Either is the same single read.
+prints one "unchanged: source sha256 ..." line when the source still has
+that digest, and the source otherwise. Either is the same single read.
 
 Examples:
   vsp source read CLAS ZCL_MY_CLASS

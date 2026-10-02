@@ -2706,7 +2706,7 @@
       "inputSchema": {
         "properties": {
           "if_none_match": {
-            "description": "The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged (sha256 ...)\" instead of the body; otherwise the normal read.",
+            "description": "The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged: source sha256 ...\" instead of the body; otherwise the normal read. Compares the object's own source only, not the dependency context.",
             "type": "string"
           },
           "include": {

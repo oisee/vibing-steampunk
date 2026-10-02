@@ -1113,8 +1113,9 @@ The headline changes are in the **"New in the last three releases"** callout at 
 **New:** read summary. `SAP(action="read", ..., params={"summary": true})`
 (`vsp source read ... --summary`) returns the lines, bytes and `sha256` of
 the source instead of the source. `params={"if_none_match": "<sha256>"}`
-(`--if-none-match`) answers "unchanged (sha256 …)" while the source still
-has that digest. A read with `include_hash` now carries the same `sha256`. The digest is over the exact text, not normalised. See
+(`--if-none-match`) answers "unchanged: source sha256 …" while the source
+still has that digest. Only the object's own source is compared, not the
+dependency context. A read with `include_hash` now carries the same `sha256`. The digest is over the exact text, not normalised. See
 [Read Summary](#read-summary--is-this-the-version-i-already-have).
 
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
@@ -1427,11 +1428,13 @@ SAP(action="read", target="CLAS ZCL_CALCULATOR", params={"summary": true})
 
 # Later: only pay for the body if it changed
 SAP(action="read", target="CLAS ZCL_CALCULATOR", params={"if_none_match": "3f0a…"})
-→ unchanged (sha256 3f0a…): CLAS ZCL_CALCULATOR, 412 lines, 15873 bytes; the source was not returned
+→ unchanged: source sha256 3f0a… (CLAS ZCL_CALCULATOR, 412 lines, 15873 bytes); the source was not returned; dependency context not compared: read without if_none_match to refresh it
 ```
 
 - **`sha256`** is the lower-case hex SHA-256 of the exact text a read returns, **not normalised**: CRLF stays CRLF and a final newline stays. `sha256sum` over the text you received gives the same value.
-- **`sourceHash`** is the normalised hash (CRLF→LF, trailing newlines dropped) for `expected_source_hash` on a guarded write.
+- **`sourceHash`** is the normalised hash (CRLF→LF, trailing newlines dropped) for `expected_source_hash` on a guarded write. It is left out where WriteSource refuses one (a method-level read, a FUNC, types it does not write as source); `sourceHashNote` then says why.
+- **`uri`** is the ADT source that actually served the text. When that is not the one asked for, `requested` names the original: a PROG that ADT knows only as an include is read from `/programs/includes`.
+- **`if_none_match` compares the object's own source only.** The dependency context a default read appends is not compared, so a changed dependency still answers "unchanged", and the answer says so. Read without `if_none_match` to refresh the context. Pulling the context into the comparison would cost a round trip per dependency, which defeats the point.
 - Neither equals `git_delete_objects`' `expect` sha256: that one is computed on SAP over the object's whole abapGit serialisation (one `<file>=<sha256>` line per file, XML included), so it is never a single source's digest.
 - Both are the same single read as a normal one: no extra SAP round trip, and no dependency context (which costs one per dependency).
 - With `if_none_match` and a different digest you get the normal read, body and all. `summary` and `if_none_match` together report `"unchanged": true|false`.

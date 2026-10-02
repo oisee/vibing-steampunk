@@ -97,7 +97,7 @@ func TestReadIfNoneMatch(t *testing.T) {
 		if isErr || strings.Contains(text, "REPORT") {
 			t.Fatalf("a matching digest must not return the body: %q", text)
 		}
-		if !strings.HasPrefix(text, "unchanged (sha256 "+summaryProgSHA256+")") {
+		if !strings.HasPrefix(text, "unchanged: source sha256 "+summaryProgSHA256+" ") {
 			t.Fatalf("got %q", text)
 		}
 		onlyTheSourceRead(t, seen())
@@ -152,5 +152,53 @@ func TestReadSummaryControlNormalReadFetchesContext(t *testing.T) {
 	}
 	if n := len(seen()); n < 2 {
 		t.Fatalf("a normal read made %d requests; the fake source must cost a dependency lookup", n)
+	}
+}
+
+// if_none_match compares the object's own source, never the dependency
+// context a default read appends. With the source the same and a dependency
+// changed, a normal read's answer changes but the conditional read still says
+// "unchanged" -- and says that the context was not compared.
+func TestReadIfNoneMatchIgnoresChangedDependency(t *testing.T) {
+	var mu sync.Mutex
+	method := "first_version"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-CSRF-Token", "t")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == summaryProgPath:
+			_, _ = w.Write([]byte(summaryProgSource))
+		case r.Method == http.MethodGet && strings.Contains(strings.ToUpper(r.URL.Path), "/ZCL_DEP/SOURCE/MAIN"):
+			mu.Lock()
+			m := method
+			mu.Unlock()
+			_, _ = w.Write([]byte("CLASS zcl_dep DEFINITION PUBLIC.\n  PUBLIC SECTION.\n    METHODS " + m + ".\nENDCLASS.\nCLASS zcl_dep IMPLEMENTATION.\n  METHOD " + m + ".\n  ENDMETHOD.\nENDCLASS.\n"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(ts.Close)
+	s := NewServer(&Config{BaseURL: ts.URL, Username: "u", Password: "p", Client: "001", Language: "EN", Mode: "hyperfocused"})
+
+	if text, _ := readProg(t, s, nil); !strings.Contains(text, "first_version") {
+		t.Fatalf("the normal read must carry the dependency's contract:\n%s", text)
+	}
+	mu.Lock()
+	method = "second_version"
+	mu.Unlock()
+	if text, _ := readProg(t, s, nil); !strings.Contains(text, "second_version") {
+		t.Fatalf("the normal read must change with the dependency:\n%s", text)
+	}
+
+	text, isErr := readProg(t, s, map[string]any{"if_none_match": summaryProgSHA256})
+	if isErr || !strings.HasPrefix(text, "unchanged: source sha256 "+summaryProgSHA256) {
+		t.Fatalf("same source, changed dependency: want unchanged, got %q", text)
+	}
+	if !strings.Contains(text, "dependency context not compared") || !strings.Contains(text, "read without if_none_match to refresh it") {
+		t.Fatalf("the unchanged answer must say the context was not compared: %q", text)
+	}
+	// Without context nothing is left out, and nothing is said about it.
+	text, _ = readProg(t, s, map[string]any{"if_none_match": summaryProgSHA256, "include_context": false})
+	if strings.Contains(text, "dependency context") {
+		t.Fatalf("include_context=false: %q", text)
 	}
 }

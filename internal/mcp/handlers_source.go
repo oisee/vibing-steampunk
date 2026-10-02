@@ -146,7 +146,7 @@ func (s *Server) registerGetSource() {
 			mcp.Description("Return JSON metadata instead of the source: objectType, name, uri, lines, bytes, sha256 (hex SHA-256 of the exact source text, not normalised) and sourceHash. Same single read, no body, no dependency context."),
 		),
 		mcp.WithString("if_none_match",
-			mcp.Description("The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged (sha256 ...)\" instead of the body; otherwise the normal read."),
+			mcp.Description("The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged: source sha256 ...\" instead of the body; otherwise the normal read. Compares the object's own source only, not the dependency context."),
 		),
 	), s.handleGetSource)
 }
@@ -230,15 +230,23 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		ifNoneMatch = d
 	}
 
-	rawSource, err := s.adtClient.GetSource(ctx, objectType, name, opts)
+	rawSource, readURI, err := s.adtClient.GetSourceWithURI(ctx, objectType, name, opts)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
 	}
 
+	// Append dependency context (default: true, set include_context=false to disable)
+	includeContext := true
+	if ic, ok := request.GetArguments()["include_context"].(bool); ok {
+		includeContext = ic
+	}
+
 	// Summary and if_none_match answer from the text just read, before the
-	// dependency context, which would cost a round trip per dependency.
+	// dependency context, which would cost a round trip per dependency. So
+	// if_none_match compares the object's own source only, never the
+	// context, and its answer says so.
 	if summary || ifNoneMatch != "" {
-		sum := adt.SummarizeSource(objectType, name, opts, rawSource)
+		sum := adt.SummarizeSource(objectType, name, opts, readURI, rawSource)
 		unchanged := ifNoneMatch != "" && ifNoneMatch == sum.SHA256
 		if summary {
 			if ifNoneMatch != "" {
@@ -248,17 +256,12 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 			return mcp.NewToolResultText(string(output)), nil
 		}
 		if unchanged {
-			return mcp.NewToolResultText(adt.SourceUnchangedText(sum)), nil
+			return mcp.NewToolResultText(adt.SourceUnchangedText(sum, includeContext)), nil
 		}
 	}
 	source := rawSource
 	contextPrologue := ""
 
-	// Append dependency context (default: true, set include_context=false to disable)
-	includeContext := true
-	if ic, ok := request.GetArguments()["include_context"].(bool); ok {
-		includeContext = ic
-	}
 	if includeContext {
 		maxDeps := 20
 		if md, ok := request.GetArguments()["max_deps"].(float64); ok && md > 0 {

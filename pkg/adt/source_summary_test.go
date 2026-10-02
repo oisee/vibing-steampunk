@@ -1,8 +1,11 @@
 package adt
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -20,7 +23,7 @@ const (
 )
 
 func TestSummarizeSourceExactLinesBytesSHA256(t *testing.T) {
-	s := SummarizeSource("prog", "zdemo_sum", nil, summaryFakeSource)
+	s := SummarizeSource("prog", "zdemo_sum", nil, "", summaryFakeSource)
 	if s.ObjectType != "PROG" || s.Name != "ZDEMO_SUM" {
 		t.Fatalf("type/name = %s %s", s.ObjectType, s.Name)
 	}
@@ -88,7 +91,7 @@ func TestSourceSHA256VersusGitExpectSHA256(t *testing.T) {
 	sort.Strings(lines)
 	expect := hexOf(strings.Join(lines, "\n"))
 
-	got := SummarizeSource("PROG", "ZDEMO_SUM", nil, summaryFakeSource).SHA256
+	got := SummarizeSource("PROG", "ZDEMO_SUM", nil, "", summaryFakeSource).SHA256
 	if got == expect {
 		t.Fatal("a source digest cannot be an abapGit manifest digest; the docs would be wrong")
 	}
@@ -112,6 +115,56 @@ func TestSourceReadURI(t *testing.T) {
 	for _, c := range cases {
 		if got := SourceReadURI(c.typ, c.name, c.opts); got != c.want {
 			t.Errorf("SourceReadURI(%s %s) = %q, want %q", c.typ, c.name, got, c.want)
+		}
+	}
+}
+
+// A PROG that ADT knows only as an include is served from /programs/includes
+// (GetProgram's fallback). The summary names the URI that served the text,
+// and the one asked for as requested.
+func TestSummaryReportsTheURIThatServedTheText(t *testing.T) {
+	const incPath = "/sap/bc/adt/programs/includes/ZDEMO_INC/source/main"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-CSRF-Token", "t")
+		if r.URL.Path == incPath {
+			_, _ = w.Write([]byte(summaryFakeSource))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "TESTUSER", "pw")
+
+	src, uri, err := c.GetSourceWithURI(context.Background(), "PROG", "ZDEMO_INC", nil)
+	if err != nil || src != summaryFakeSource {
+		t.Fatalf("GetSourceWithURI = %q, %v", src, err)
+	}
+	if uri != incPath {
+		t.Fatalf("uri = %q, want the include that served the text %q", uri, incPath)
+	}
+	s := SummarizeSource("PROG", "ZDEMO_INC", nil, uri, src)
+	if s.URI != incPath || s.Requested != "/sap/bc/adt/programs/programs/ZDEMO_INC/source/main" {
+		t.Fatalf("uri/requested = %q/%q", s.URI, s.Requested)
+	}
+	if same := SummarizeSource("PROG", "ZDEMO_SUM", nil, "/sap/bc/adt/programs/programs/ZDEMO_SUM/source/main", src); same.Requested != "" {
+		t.Fatalf("requested must be set only when it differs, got %q", same.Requested)
+	}
+}
+
+// sourceHash is offered only where a guarded WriteSource takes it: not for a
+// method-level read, whose WriteSource refuses expected_source_hash.
+func TestSummarySourceHashOnlyWhereAGuardedWriteTakesIt(t *testing.T) {
+	m := SummarizeSource("CLAS", "ZCL_X", &GetSourceOptions{Method: "RUN"}, "", summaryFakeSource)
+	if m.SourceHash != "" || !strings.Contains(m.SourceHashNote, "method-level WriteSource") {
+		t.Fatalf("method read: sourceHash=%q note=%q", m.SourceHash, m.SourceHashNote)
+	}
+	if f := SummarizeSource("FUNC", "Z_FM", &GetSourceOptions{Parent: "ZG"}, "", summaryFakeSource); f.SourceHash != "" || f.SourceHashNote == "" {
+		t.Fatalf("FUNC read: sourceHash=%q note=%q", f.SourceHash, f.SourceHashNote)
+	}
+	for _, opts := range []*GetSourceOptions{nil, {Include: "testclasses"}} {
+		c := SummarizeSource("CLAS", "ZCL_X", opts, "", summaryFakeSource)
+		if c.SourceHash != summaryFakeSourceHash || c.SourceHashNote != "" {
+			t.Fatalf("class read %+v: sourceHash=%q note=%q", opts, c.SourceHash, c.SourceHashNote)
 		}
 	}
 }

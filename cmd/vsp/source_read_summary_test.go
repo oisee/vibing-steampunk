@@ -76,7 +76,7 @@ func TestSourceReadSummaryFlag(t *testing.T) {
 }
 
 func TestSourceReadIfNoneMatchFlag(t *testing.T) {
-	if out := runSourceRead(t, map[string]string{"if-none-match": cliSummarySHA256}); !strings.HasPrefix(out, "unchanged (sha256 "+cliSummarySHA256+")") {
+	if out := runSourceRead(t, map[string]string{"if-none-match": cliSummarySHA256}); !strings.HasPrefix(out, "unchanged: source sha256 "+cliSummarySHA256+" ") {
 		t.Fatalf("matching --if-none-match printed %q", out)
 	}
 	if out := runSourceRead(t, map[string]string{"if-none-match": strings.Repeat("a", 64)}); out != cliSummarySource {

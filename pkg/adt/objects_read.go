@@ -17,6 +17,13 @@ import (
 // GetProgram retrieves the source code of an ABAP program.
 // Supports namespaced programs like /UI5/UI5_REPOSITORY_LOAD.
 func (c *Client) GetProgram(ctx context.Context, programName string) (string, error) {
+	src, _, err := c.getProgram(ctx, programName)
+	return src, err
+}
+
+// getProgram is GetProgram that also says which ADT source served the text:
+// the program's, or, after the include fallback below, the include's.
+func (c *Client) getProgram(ctx context.Context, programName string) (string, string, error) {
 	programName = strings.ToUpper(programName)
 
 	// Go directly to source/main endpoint (URL encode for namespaced objects)
@@ -38,13 +45,13 @@ func (c *Client) GetProgram(ctx context.Context, programName string) (string, er
 		// same information arriving later and for free.
 		if isNotFound(err) {
 			if src, incErr := c.GetInclude(ctx, programName); incErr == nil {
-				return src, nil
+				return src, fmt.Sprintf("/sap/bc/adt/programs/includes/%s/source/main", url.PathEscape(programName)), nil
 			}
 		}
-		return "", fmt.Errorf("getting program source: %w", err)
+		return "", "", fmt.Errorf("getting program source: %w", err)
 	}
 
-	return string(resp.Body), nil
+	return string(resp.Body), sourcePath, nil
 }
 
 // isNotFound reports whether an error is ADT saying the resource does not

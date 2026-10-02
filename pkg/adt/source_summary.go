@@ -28,7 +28,10 @@ import (
 //     CRLF to LF and drops trailing newlines, because a write must not be
 //     refused over a line-ending difference ADT itself introduces. A summary
 //     reports it too, as sourceHash, so an agent can go from a summary
-//     straight to a guarded write.
+//     straight to a guarded write -- but only where WriteSource accepts
+//     expected_source_hash: not for a method-level read (method-level
+//     WriteSource refuses it) nor a FUNC or a type WriteSource does not
+//     write as source; there sourceHashNote says why it is missing.
 //   - git_delete_objects' expect sha256 (git_versions.go) is computed on SAP
 //     by ZADT_VSP over the object's whole abapGit serialisation: the SHA-256
 //     of the lines "<file>=<sha256 of the file>" for every file (XML
@@ -44,16 +47,20 @@ type SourceSummary struct {
 	Parent     string `json:"parent,omitempty"`
 	Include    string `json:"include,omitempty"`
 	Method     string `json:"method,omitempty"`
-	// URI is the ADT source the text was read from, when it follows from
-	// the arguments alone (a FUNC without its group has none: finding the
-	// group is the read's business, not the summary's).
-	URI   string `json:"uri,omitempty"`
-	Lines int    `json:"lines"`
-	Bytes int    `json:"bytes"`
+	// URI is the ADT source that actually served the text. Requested is
+	// the one the arguments name, set only when it differs (a PROG that ADT
+	// knows only as an include is served from /programs/includes).
+	URI       string `json:"uri,omitempty"`
+	Requested string `json:"requested,omitempty"`
+	Lines     int    `json:"lines"`
+	Bytes     int    `json:"bytes"`
 	// SHA256 is SourceSHA256 of the text: exact bytes, no normalisation.
 	SHA256 string `json:"sha256"`
-	// SourceHash is SourceHash of the text, for expected_source_hash.
-	SourceHash string `json:"sourceHash"`
+	// SourceHash is SourceHash of the text, for expected_source_hash, when
+	// a guarded WriteSource of what was read accepts one; otherwise it is
+	// empty and SourceHashNote says why.
+	SourceHash     string `json:"sourceHash,omitempty"`
+	SourceHashNote string `json:"sourceHashNote,omitempty"`
 	// Unchanged is set only when the caller passed a digest to compare:
 	// whether it is this text's sha256.
 	Unchanged *bool `json:"unchanged,omitempty"`
@@ -81,14 +88,15 @@ func SourceLineCount(source string) int {
 }
 
 // SummarizeSource is the summary of source, read for objectType and name
-// with opts.
-func SummarizeSource(objectType, name string, opts *GetSourceOptions, source string) SourceSummary {
+// with opts from readURI (GetSourceWithURI's uri; "" means the URI the
+// arguments name).
+func SummarizeSource(objectType, name string, opts *GetSourceOptions, readURI, source string) SourceSummary {
 	if opts == nil {
 		opts = &GetSourceOptions{}
 	}
 	objectType = strings.ToUpper(strings.TrimSpace(objectType))
 	name = strings.ToUpper(strings.TrimSpace(name))
-	return SourceSummary{
+	s := SourceSummary{
 		ObjectType: objectType,
 		Name:       name,
 		Parent:     strings.ToUpper(opts.Parent),
@@ -98,8 +106,32 @@ func SummarizeSource(objectType, name string, opts *GetSourceOptions, source str
 		Lines:      SourceLineCount(source),
 		Bytes:      len(source),
 		SHA256:     SourceSHA256(source),
-		SourceHash: SourceHash(source),
 	}
+	if readURI != "" && readURI != s.URI {
+		s.Requested, s.URI = s.URI, readURI
+	}
+	if note := guardedWriteRefusal(objectType, opts); note != "" {
+		s.SourceHashNote = note
+	} else {
+		s.SourceHash = SourceHash(source)
+	}
+	return s
+}
+
+// guardedWriteRefusal says why WriteSource would not take a sourceHash of
+// this read as expected_source_hash, or "" when it would.
+func guardedWriteRefusal(objectType string, opts *GetSourceOptions) string {
+	switch {
+	case objectType == "CLAS" && opts.Method != "":
+		return "no sourceHash: method-level WriteSource does not accept expected_source_hash; read the whole class (no method) for a guarded write"
+	case objectType == "FUNC":
+		return "no sourceHash: WriteSource does not accept expected_source_hash for a function module"
+	}
+	switch objectType {
+	case "PROG", "CLAS", "INTF", "INCL", "DDLS", "BDEF", "SRVD":
+		return ""
+	}
+	return "no sourceHash: WriteSource does not write " + objectType + " as source"
 }
 
 // SourceReadURI is the ADT URI GetSource reads for these arguments, or ""
@@ -157,7 +189,13 @@ func ParseIfNoneMatch(v string) (string, error) {
 }
 
 // SourceUnchangedText is the short answer to a read whose if_none_match is
-// the source's sha256.
-func SourceUnchangedText(s SourceSummary) string {
-	return fmt.Sprintf("unchanged (sha256 %s): %s %s, %d lines, %d bytes; the source was not returned", s.SHA256, s.ObjectType, s.Name, s.Lines, s.Bytes)
+// the source's sha256. The condition is on the object's own source only:
+// when the normal read would have appended dependency context, withContext
+// says so, since a dependency may have changed while the source did not.
+func SourceUnchangedText(s SourceSummary, withContext bool) string {
+	text := fmt.Sprintf("unchanged: source sha256 %s (%s %s, %d lines, %d bytes); the source was not returned", s.SHA256, s.ObjectType, s.Name, s.Lines, s.Bytes)
+	if withContext {
+		text += "; dependency context not compared: read without if_none_match to refresh it"
+	}
+	return text
 }

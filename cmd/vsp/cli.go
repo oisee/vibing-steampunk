@@ -650,7 +650,7 @@ func addSourceReadFlags(cmds ...*cobra.Command) {
 		c.Flags().String("include", "", "Class include type: definitions, implementations, macros, testclasses (CLAS only)")
 		c.Flags().String("method", "", "Method name to retrieve only that METHOD...ENDMETHOD block (CLAS only)")
 		c.Flags().Bool("summary", false, "Print JSON metadata instead of the source: lines, bytes, sha256 (exact text, not normalised), sourceHash, uri")
-		c.Flags().String("if-none-match", "", "sha256 from an earlier --summary: if the source still has it, print \"unchanged (sha256 ...)\" instead of the source")
+		c.Flags().String("if-none-match", "", "sha256 from an earlier --summary: if the source still has it, print \"unchanged: source sha256 ...\" instead of the source")
 	}
 }
 
@@ -686,14 +686,14 @@ func runSource(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
-	source, err := client.GetSource(ctx, objType, name, opts)
+	source, readURI, err := client.GetSourceWithURI(ctx, objType, name, opts)
 	if err != nil {
 		return fmt.Errorf("failed to get source: %w", err)
 	}
 
 	out := cmd.OutOrStdout()
 	if summary || ifNoneMatch != "" {
-		sum := adt.SummarizeSource(objType, name, opts, source)
+		sum := adt.SummarizeSource(objType, name, opts, readURI, source)
 		unchanged := ifNoneMatch != "" && ifNoneMatch == sum.SHA256
 		if summary {
 			if ifNoneMatch != "" {
@@ -704,7 +704,7 @@ func runSource(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if unchanged {
-			_, err := fmt.Fprintln(out, adt.SourceUnchangedText(sum))
+			_, err := fmt.Fprintln(out, adt.SourceUnchangedText(sum, false))
 			return err
 		}
 	}

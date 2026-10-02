@@ -26,10 +26,16 @@ Summary instead of the source (saves tokens; same single read, no body, no conte
       -> {objectType, name, uri, lines, bytes, sha256, sourceHash}
       sha256: lower-case hex SHA-256 of the exact source text as a read returns it,
       not normalised (CRLF stays CRLF). sourceHash is the normalised one for
-      expected_source_hash on a write. Neither equals git_delete_objects' expect
-      sha256, which covers the whole abapGit serialisation.
+      expected_source_hash on a write; it is left out (sourceHashNote says why)
+      where WriteSource refuses one, e.g. a method-level read. Neither equals
+      git_delete_objects' expect sha256, which covers the whole abapGit serialisation.
+      uri is the source that served the text; requested is set when that differs
+      (a PROG ADT knows only as an include is read from /programs/includes).
   SAP(action="read", target="CLAS ZCL_TEST", params={"if_none_match": "<sha256>"})
-      the same digest still: one line "unchanged (sha256 ...)"; else the normal read.
+      the same digest still: one line "unchanged: source sha256 ..."; else the normal read.
+      Compares the object's own source only: the dependency context is not compared,
+      so a changed dependency still answers unchanged. Read without if_none_match to
+      refresh the context.
   SAP(action="read", target="CLAS ZCL_TEST", params={"include_hash": true})
       -> {source, sourceHash, sha256}: a full read that also gives the sha256 to keep.
 

@@ -144,6 +144,40 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 	}
 }
 
+// GetSourceWithURI is GetSource that also returns the ADT URI that actually
+// served the text, which is not always the one the arguments name: a PROG
+// that ADT knows only as an include is read from /programs/includes, and a
+// FUNC's group is resolved when the caller did not give it. It makes the
+// same requests as GetSource. uri is "" for types without one source
+// document (FUGR, SRVB, MSAG, ENHO).
+func (c *Client) GetSourceWithURI(ctx context.Context, objectType, name string, opts *GetSourceOptions) (source, uri string, err error) {
+	if err := c.checkSafety(OpRead, "GetSource"); err != nil {
+		return "", "", err
+	}
+	if opts == nil {
+		opts = &GetSourceOptions{}
+	}
+	switch strings.ToUpper(objectType) {
+	case "PROG":
+		return c.getProgram(ctx, name)
+	case "FUNC":
+		group, err := c.functionGroupFor(ctx, opts.Parent, strings.ToUpper(name))
+		if err != nil {
+			return "", "", err
+		}
+		src, err := c.GetFunction(ctx, name, group)
+		if err != nil {
+			return "", "", err
+		}
+		return src, SourceReadURI("FUNC", name, &GetSourceOptions{Parent: group}), nil
+	}
+	src, err := c.GetSource(ctx, objectType, name, opts)
+	if err != nil {
+		return "", "", err
+	}
+	return src, SourceReadURI(objectType, name, opts), nil
+}
+
 // WriteSourceMode specifies how WriteSource behaves
 type WriteSourceMode string
 
