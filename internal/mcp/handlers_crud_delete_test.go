@@ -396,3 +396,56 @@ func TestUniversalDeleteDEVCNotByName(t *testing.T) {
 		t.Fatal("DEVC is deletable by name")
 	}
 }
+
+// LockObject, then DeleteObject with that handle. With a handle supplied,
+// DeleteObject's own gate resolves the package between the LOCK and the
+// DELETE. This test pins the choice to send that lookup in the lock's
+// stateful session while this client holds a lock. It asserts the session
+// header, not that the handle survives: the fake does not model the
+// stateless-request isolation that already protects the lock's context on
+// SAP_BASIS 758. A report from 816 suggests that isolation alone may not be
+// enough there, so the lookup does not rely on it.
+func TestHandleDeleteObject_SuppliedHandleKeepsLookupInLockSession(t *testing.T) {
+	server, trace := newDeleteTestServer(t, "$TMP")
+	url := "/sap/bc/adt/programs/programs/ZDEMO_DEL"
+
+	lockRes, err := server.handleLockObject(context.Background(), newRequest(map[string]any{"object_url": url}))
+	if err != nil || lockRes.IsError {
+		t.Fatalf("LockObject: %v %+v", err, lockRes)
+	}
+	res, err := server.handleDeleteObject(context.Background(), newRequest(map[string]any{
+		"object_url":  url,
+		"lock_handle": "HANDLE-1",
+	}))
+	if err != nil || res.IsError {
+		t.Fatalf("DeleteObject: %v %+v", err, res)
+	}
+
+	calls := trace()
+	lockAt, delAt := -1, -1
+	for i, c := range calls {
+		if c.action == "LOCK" {
+			lockAt = i
+		}
+		if c.method == http.MethodDelete {
+			delAt = i
+		}
+	}
+	if lockAt < 0 || delAt < lockAt {
+		dumpDeleteCalls(t, calls)
+		t.Fatal("expected a LOCK followed by a DELETE")
+	}
+	between := calls[lockAt+1 : delAt]
+	if len(between) == 0 {
+		dumpDeleteCalls(t, calls)
+		t.Fatal("expected the package lookup between LOCK and DELETE")
+	}
+	for _, c := range between {
+		if c.sessionType != "stateful" {
+			t.Errorf("request between LOCK and DELETE is not stateful: %s", c)
+		}
+	}
+	if t.Failed() {
+		dumpDeleteCalls(t, calls)
+	}
+}

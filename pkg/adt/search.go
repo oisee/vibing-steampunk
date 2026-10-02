@@ -77,6 +77,12 @@ func CanonicalObjectType(s string) string {
 // maxResults: filtering after the fact silently drops results that didn't
 // fit in the pre-filter window.
 func (c *Client) SearchObjectByType(ctx context.Context, query, objectType string, maxResults int) ([]SearchResult, error) {
+	return c.searchObjectByType(ctx, query, objectType, maxResults, false)
+}
+
+// searchObjectByType is SearchObjectByType with a choice of session: stateful
+// joins the context a held lock lives in.
+func (c *Client) searchObjectByType(ctx context.Context, query, objectType string, maxResults int, stateful bool) ([]SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 100
 	}
@@ -95,9 +101,10 @@ func (c *Client) SearchObjectByType(ctx context.Context, query, objectType strin
 	}
 
 	resp, err := c.transport.Request(ctx, "/sap/bc/adt/repository/informationsystem/search", &RequestOptions{
-		Method: http.MethodGet,
-		Query:  params,
-		Accept: "application/xml",
+		Method:   http.MethodGet,
+		Query:    params,
+		Accept:   "application/xml",
+		Stateful: stateful,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("search request failed: %w", err)

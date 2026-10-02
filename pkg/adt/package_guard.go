@@ -70,7 +70,11 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 		return "", err
 	}
 
-	results, err := c.SearchObject(ctx, objectName, 20)
+	// This lookup runs inside DeleteObject/UpdateSource's own gate, which with a
+	// caller-supplied lock handle is after the LOCK. While this client holds a
+	// lock the lookup is sent stateful, so it joins the lock's context instead
+	// of relying on stateless-request isolation to leave that context alone.
+	results, err := c.searchObjectByType(ctx, objectName, "", 20, c.lockOutstanding())
 	if err != nil {
 		return "", err
 	}
