@@ -103,8 +103,9 @@ inside the tag, and written by nobody but a human. CI writes to no branch.
 `release.yml` runs on a `v*` tag push, or on workflow_dispatch with an
 existing tag. Its jobs:
 
-1. **prepare**: tag format; the tag commit is on main; refuse if a release
-   already exists. This is what keeps v2.59.0 untouchable.
+1. **prepare**: tag format; the tag commit is on main, or on its own
+   release/X.Y for an LTS patch (see below); refuse if a release already
+   exists. This is what keeps v2.59.0 untouchable.
 2. **test**: `go test -race`. Runs in parallel with the next two jobs.
 3. **leak-scan**: the ci.yml scanner, `-all -rev <tag> -range <prev>..<tag>`,
    `-require-identifiers`.
@@ -124,6 +125,50 @@ existing tag. Its jobs:
 One script backs both CI and the fallback. `make release-dist TAG=vX.Y.Z`
 runs the same build/verify/run locally. `.goreleaser.yml` is removed, so there
 is one build definition, not two that drift.
+
+### LTS (release/X.Y)
+
+**Update:** v2.59.x is an LTS line. `release/2.59` starts at v2.59.1
+(`8d897f3`); fixes are cherry-picked onto it and tagged v2.59.2 and up.
+
+- **Where a tag may come from** (`release.sh on-branch TAG`, called by
+  prepare): reachable from `origin/main`, or from exactly one
+  `origin/release/X.Y` and that X.Y is the tag's major.minor. v2.59.2 on
+  release/2.59 is accepted; v2.60.9 on release/2.59 is refused; a v2.59.x only
+  on another branch is refused; a tag on main is accepted as before. The error
+  names every branch checked. Only `release/<digits>.<digits>` counts as a
+  release branch.
+- **How to cut one:** a branch from `origin/release/X.Y`,
+  `git cherry-pick -x <main-sha>` for each fix (the trailer names the main
+  commit), `### vX.Y.Z` (e.g. `### v2.59.2`) in that branch's README
+  "What's New" as the notes, PR into release/X.Y. After the merge,
+  `git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"` on release/X.Y and
+  `git push origin vX.Y.Z`. The full steps are in `/celebrate`.
+- **Which code runs:** a tag push runs `release.yml` as it is at the tag,
+  and prepare takes `on-branch` from the tag, which must then be on main or
+  its release/X.Y. `workflow_dispatch` is accepted only from main or a
+  release/X.Y branch, checked in the workflow itself before any checked-out
+  code runs, and a dispatched prepare takes `on-branch` from main, not from
+  the dispatched branch. Every gate after prepare checks out the tag's commit and uses
+  its `release.sh`, so an LTS release ships its own line's platform set
+  (release/2.59 still has the nine). `release/2.59` predates `on-branch`: a
+  tag pushed there is refused by its older prepare until this change is
+  carried onto the branch; until then
+  `gh workflow run release.yml --ref main -f tag=v2.59.2` releases it with
+  main's policy and the tag's build.
+- **Latest:** `latest` compares with every published final release, so a
+  v2.59.2 published after v2.60.0 is not latest, and `vsp update` (which reads
+  releases/latest) keeps offering v2.60.x. The workflow-level concurrency
+  group is per tag, so two tags could publish at the same moment and both
+  compute latest=true; the publish job therefore has its own group,
+  `release-publish`, shared by all tags, and `release.sh publish` reads the
+  published set right before `--draft=false`. (GitHub keeps one pending job
+  per group: a third queued publish is cancelled before anything goes public,
+  and is dispatched again.) `.github/ci/release-test.sh` checks this with a
+  stateful fake `gh`: v2.60.0 and v2.59.2 drafts published in either order
+  leave v2.60.0 as the last one marked latest, and v2.59.2 after v2.60.0 gets
+  latest=false. It also checks the branch rule in a throwaway repository; CI's
+  build job runs it.
 
 ### Dry run (local, no tag pushed, no release touched)
 
