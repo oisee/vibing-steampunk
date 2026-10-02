@@ -1,0 +1,17 @@
+# Leak scan allow-file (.github/ci/leakscan). Hits that were looked at and
+# judged not to be a leak. Every line needs a reason; a line without one makes
+# the scan fail closed. This file is public: never write an identifier here.
+#
+#   path  <glob>  <class>  <reason>     every hit of <class> in matching files
+#   match <class> <regex>  <reason>     a built-in class whose value matches the
+#                                       whole regex, in any file
+#
+# <class>: a hit class (private-ip, packed-private-ip, csrf-token, ...,
+# identifier/host), "generic" for every built-in class, or "*" (path only).
+# A match rule cannot name an identifier class: that would publish it.
+
+path  **/go.sum                       packed-private-ip  Module checksums (h1: base64 SHA-256). Four hashed bytes that read as 192.168 or 172.16-31 are chance.
+path  **/package-lock.json            packed-private-ip  npm integrity hashes (base64 SHA-512). Four hashed bytes that read as an address are chance.
+path  pkg/sapcompress/testdata/*.hex  packed-private-ip  Compressed random and synthetic test vectors for the LZC/LZH decoders; no capture in them.
+path  internal/mcp/server_http_test.go  private-ip       Bind-address test fixture: a sample LAN address checked to count as exposed, not a host of ours.
+match packed-private-ip  172\.17\.0\.[0-9]{1,3}       Docker's default bridge network. SAP GUIDs from the trial container carry its MAC 02:42:ac:11:00:xx in the node field; the same on every Docker host, it names no network of ours.

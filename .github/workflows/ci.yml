@@ -231,6 +231,81 @@ jobs:
           BASE_REF: origin/${{ github.base_ref || github.ref_name }}
         run: ./.github/ci/lint.sh gate "$BASE_REF"
 
+  # Safety gate, blocking: live SAP identifiers (hosts, addresses, SIDs, users)
+  # and secrets (session cookies, basic auth, CSRF tokens, config passwords) in
+  # what this change publishes. .github/ci/leakscan decodes every byte view of a
+  # file (text, UTF-16LE, hex, base64) before matching. A pull request is
+  # scanned for the files and commit messages it adds; a push to main for every
+  # file in the tree.
+  #
+  # The identifier list is the VSP_LEAK_IDENTIFIERS secret (one value per line,
+  # optionally `class: value`), masked line by line before anything runs. It is
+  # expected on a push to this repository and on a pull request from a branch
+  # of it, and its absence there is red (fail closed). A pull request from a
+  # fork gets no secrets: it runs the generic patterns only, and the job says
+  # so in a warning and in the report row, never as a plain pass.
+  # Locally: the pre-push hook, or
+  #   cd .github/ci/leakscan && go build -o /tmp/leakscan . && /tmp/leakscan -root ../../.. -diff origin/main
+  leak-scan:
+    name: leak scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The merge base, to tell what the pull request adds.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .github/ci/leakscan/go.mod
+          cache: false
+
+      - name: Test the scanner
+        working-directory: .github/ci/leakscan
+        run: go test ./...
+
+      # Built, not `go run`: go run turns every non-zero exit into 1, and the
+      # step below tells "hits" (1) from "fail closed" (2) from "partial" (3).
+      - name: Build the scanner
+        working-directory: .github/ci/leakscan
+        run: go build -o "$RUNNER_TEMP/leakscan" .
+
+      - name: Scan
+        env:
+          VSP_LEAK_IDENTIFIERS: ${{ secrets.VSP_LEAK_IDENTIFIERS }}
+          EXPECTED: ${{ github.repository == 'oisee/vibing-steampunk' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+          EVENT: ${{ github.event_name }}
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          # Mask every line, and the value after a `class:` prefix, before the
+          # scanner (or anything else) can print one.
+          while IFS= read -r line || [ -n "$line" ]; do
+            line=${line%$'\r'}
+            case $line in ''|'#'*) continue ;; esac
+            echo "::add-mask::$line"
+            value=$(printf '%s' "${line#*:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            [ -n "$value" ] && echo "::add-mask::$value"
+          done <<< "$VSP_LEAK_IDENTIFIERS"
+
+          require=()
+          [ "$EXPECTED" = true ] && require=(-require-identifiers)
+          if [ "$EVENT" = pull_request ]; then mode=(-diff "$BASE_REF"); what="changed files"; else mode=(-all); what="all tracked files"; fi
+          status=0
+          "$RUNNER_TEMP/leakscan" -root "$GITHUB_WORKSPACE" "${require[@]}" "${mode[@]}" || status=$?
+          case $status in
+            0) echo "::notice title=ci-report::full scan of ${what}: clean" ;;
+            3) echo "::warning title=leak scan::Identifier list unavailable (fork pull request, no secrets): only the generic patterns ran. Host, user and SID names were NOT checked; a maintainer's run on main checks them."
+               echo "::notice title=ci-report::PARTIAL: generic patterns only, identifier list unavailable (fork)"
+               { echo "### Leak scan: partial"; echo; echo "The identifier list (secret \`VSP_LEAK_IDENTIFIERS\`) is not available to a pull request from a fork, so only the generic patterns ran over the ${what}. Host, user and SID names were not checked."; } >> "$GITHUB_STEP_SUMMARY"
+               ;;
+            1) echo "::error title=leak scan::Possible leak in the ${what}: see the file:line list above. Replace the value with a placeholder, or excuse it in .github/ci/leakscan-allow.txt with a reason."
+               echo "::notice title=ci-report::hits in the ${what}"
+               exit 1 ;;
+            *) echo "::error title=leak scan::The scan could not run in full (exit $status), so it cannot pass. If the identifier list is missing, a repository admin must set the VSP_LEAK_IDENTIFIERS secret."
+               echo "::notice title=ci-report::fail closed (exit $status)"
+               exit "$status" ;;
+          esac
+
   # Advisory: every linter in .github/ci/golangci-full.yml over the whole tree,
   # so the debt stays visible as one number per linter. New code over a
   # complexity threshold becomes a warning annotation, never an error. A crash or config error

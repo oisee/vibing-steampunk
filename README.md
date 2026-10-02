@@ -2362,6 +2362,35 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2   # if
 
 Skip it for one push with `git push --no-verify`.
 
+**Leak scan.** This repository is public, and agents capture raw answers from
+live SAP systems. The `leak scan` job in CI and the first step of the pre-push
+hook block on live identifiers and secrets in what a change adds: SAP session
+and SSO cookies, `Authorization: Basic` headers, CSRF token values, private
+addresses, and passwords in `.vsp.json`/`.mcp.json`-style config, plus the
+host names, addresses, SIDs and user names on a private list. The scanner
+(`.github/ci/leakscan`) decodes UTF-16LE, hex and base64 before it matches, and
+prints only `file:line` and the class that matched, never the value.
+
+The list of names is never committed. Seed it once per clone, one value per
+line, optionally `class: value`:
+
+```bash
+mkdir -p .local && cat > .local/leak-identifiers.txt <<'EOF'
+host: <your SAP host name>
+ip:   <its address>
+sid:  <its SID, if it is not a public one>
+user: <your SAP user name>
+EOF
+chmod 600 .local/leak-identifiers.txt    # .local/ is gitignored
+```
+
+Without the file the hook still runs the generic patterns and warns that the
+names were not checked. A reviewed false positive goes in
+`.github/ci/leakscan-allow.txt`, which needs a reason on every line. In CI the
+list is the `VSP_LEAK_IDENTIFIERS` secret: a pull request from a fork has no
+secrets, so it gets the generic patterns only and the report row says
+"PARTIAL"; on this repository's own branches and on main a missing list is red.
+
 <details>
 <summary><strong>Architecture</strong></summary>
 

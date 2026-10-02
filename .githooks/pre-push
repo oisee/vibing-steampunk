@@ -5,9 +5,14 @@
 #   git config core.hooksPath .githooks
 # Skip one push:  git push --no-verify
 #
-# Policy: correctness gates block in CI and here; quality and style (complexity,
-# size) can only ever block here, never in CI, where they are advisory. This
-# hook runs:
+# Policy: correctness and safety gates block in CI and here; quality and style
+# (complexity, size) can only ever block here, never in CI, where they are
+# advisory. This hook runs:
+#   0. The leak scan, blocking (.github/ci/leakscan): live SAP identifiers and
+#      secrets in the files and commit messages this push adds since the merge
+#      base, read as they are in the pushed commits. The identifier list is
+#      .local/leak-identifiers.txt (gitignored; see README, "Leak scan"). Without
+#      it only the generic patterns run, and the hook says so in yellow.
 #   1. The CI lint gate, blocking: the same pinned golangci-lint, the same
 #      correctness linters (.golangci.yml), new code since the merge base,
 #      fail-closed with the canary (.github/ci/lint.sh gate).
@@ -24,6 +29,42 @@ base=${VSP_PREPUSH_BASE:-origin/main}
 
 if [ -t 2 ]; then red=$'\033[31m' yellow=$'\033[33m' reset=$'\033[0m'; else red='' yellow='' reset=''; fi
 
+# --- 0. leak scan -----------------------------------------------------------
+# git gives one line per ref pushed: <local ref> <local sha> <remote ref> <remote sha>.
+# A deletion pushes no content (all-zero local sha). Run by hand, with nothing
+# on stdin, it scans HEAD.
+leakbin=$(mktemp -d)
+trap 'rm -rf "$leakbin"' EXIT
+if ! go build -C .github/ci/leakscan -o "$leakbin/leakscan" . >&2; then
+  echo "${red}pre-push: the leak scanner did not build, so the push is not checked; blocked.${reset}" >&2
+  exit 1
+fi
+revs=()
+if [ ! -t 0 ]; then
+  while read -r _ local_sha _ _; do
+    case $local_sha in ''|*[!0]*) [ -n "$local_sha" ] && revs+=("$local_sha") ;; esac
+  done
+fi
+[ ${#revs[@]} -eq 0 ] && [ -t 0 ] && revs=(HEAD)
+partial=0
+for rev in "${revs[@]}"; do
+  echo "pre-push: leak scan (${rev:0:12}, changes since ${base})" >&2
+  status=0
+  "$leakbin/leakscan" -root "$repo" -diff "$base" -rev "$rev" >&2 || status=$?
+  case $status in
+    0) ;;
+    3) partial=1 ;;
+    1) echo "${red}pre-push: blocked by the leak scan.${reset} Replace the value with a placeholder, or move the file under .local/;
+a reviewed false positive goes in .github/ci/leakscan-allow.txt, with a reason." >&2
+       exit 1 ;;
+    *) echo "${red}pre-push: the leak scan could not run in full (exit $status); blocked.${reset}" >&2
+       exit 1 ;;
+  esac
+done
+if [ $partial -eq 1 ]; then
+  echo "${yellow}pre-push: warning: no .local/leak-identifiers.txt, so host, user and SID names were not checked (generic patterns only). See README, \"Leak scan\".${reset}" >&2
+fi
+
 # The version CI pins, read from ci.yml so there is one place to bump it.
 GOLANGCI_LINT_VERSION=$(sed -n 's/^  GOLANGCI_LINT_VERSION: *//p' .github/workflows/ci.yml)
 export GOLANGCI_LINT_VERSION
@@ -39,7 +80,7 @@ MSG
 fi
 
 out=$(mktemp)
-trap 'rm -f "$out"' EXIT
+trap 'rm -f "$out"; rm -rf "$leakbin"' EXIT
 status=0
 golangci-lint run -c .github/ci/golangci-full.yml --enable-only=gocyclo,gocognit,funlen \
   --new-from-merge-base="$base" --show-stats=false ./... >"$out" 2>&1 || status=$?
