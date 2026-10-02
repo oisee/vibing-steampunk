@@ -17,11 +17,13 @@ import (
 //	path  <glob>  <class>  <reason ...>
 //	match <class> <regex>  <reason ...>
 //
-// A path rule's class is a hit class ("private-ip", "identifier/host"), or
-// "generic" for every built-in pattern, or "*" for everything. A match rule's
-// class must be a built-in (generic) class, or "generic", and its regex must
-// match the whole matched value; it can never excuse an identifier, because
-// that would need the identifier written down in a public file.
+// <class> is a built-in (generic) class such as "private-ip", or "generic" for
+// all of them. A hit on the identifier list is never excused: a listed name in
+// a public file is a leak whatever the file, and excusing it by value would
+// mean writing it down here. Rules that would excuse everything (a path glob
+// of only wildcards, a value regex that matches anything) are refused, and so
+// is the whole file with them: in CI the file is read from the base revision,
+// so a pull request cannot excuse its own hits, but a merged one still could.
 type allowRule struct {
 	kind   string // "path" or "match"
 	path   *regexp.Regexp
@@ -53,6 +55,9 @@ func parseAllow(r io.Reader) ([]allowRule, error) {
 		rule := allowRule{kind: f[0], reason: reason, line: n}
 		switch f[0] {
 		case "path":
+			if strings.Trim(f[1], "*/?") == "" {
+				return nil, fmt.Errorf("line %d: path %q covers every file; name the files", n, f[1])
+			}
 			re, err := globRegexp(f[1])
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %v", n, err)
@@ -60,16 +65,21 @@ func parseAllow(r io.Reader) ([]allowRule, error) {
 			rule.path, rule.class = re, f[2]
 		case "match":
 			rule.class = f[1]
-			if rule.class != "generic" && !genericClasses[rule.class] {
-				return nil, fmt.Errorf("line %d: a match rule may only name a built-in class or \"generic\", not %q: an identifier is excused by path only", n, rule.class)
-			}
 			re, err := regexp.Compile(`^(?:` + f[2] + `)$`)
 			if err != nil {
 				return nil, fmt.Errorf("line %d: %v", n, err)
 			}
+			for _, probe := range []string{"", "x", "Zq7-unrelated.value_42"} {
+				if re.MatchString(probe) {
+					return nil, fmt.Errorf("line %d: regex %q matches anything; name the value's shape", n, f[2])
+				}
+			}
 			rule.value = re
 		default:
 			return nil, fmt.Errorf("line %d: unknown rule %q (want path or match)", n, f[0])
+		}
+		if rule.class != "generic" && !genericClasses[rule.class] {
+			return nil, fmt.Errorf("line %d: class %q cannot be excused; only built-in classes (or \"generic\") can: a listed identifier in a public file is a leak wherever it is", n, rule.class)
 		}
 		rules = append(rules, rule)
 	}
@@ -77,7 +87,7 @@ func parseAllow(r io.Reader) ([]allowRule, error) {
 }
 
 func classMatches(want string, h Hit) bool {
-	return want == "*" || want == h.Class || (want == "generic" && h.Generic)
+	return h.Generic && (want == h.Class || want == "generic")
 }
 
 func allowed(rules []allowRule, h Hit) bool {
@@ -87,11 +97,11 @@ func allowed(rules []allowRule, h Hit) bool {
 		}
 		switch r.kind {
 		case "path":
-			if r.path.MatchString(h.File) {
+			if h.Path != "" && r.path.MatchString(h.Path) {
 				return true
 			}
 		case "match":
-			if h.Generic && r.value.MatchString(h.value) {
+			if r.value.MatchString(h.value) {
 				return true
 			}
 		}

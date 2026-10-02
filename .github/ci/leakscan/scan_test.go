@@ -127,14 +127,28 @@ func TestIdentifierBoundaries(t *testing.T) {
 			t.Errorf("%q: hit=%v, want %v", text, got, want)
 		}
 	}
-	// A short identifier (a SID) is matched in text, not in decoded bytes.
+	// A short identifier (a SID) is matched in text, and in decoded bytes when
+	// it stands there as a token.
 	sid := Identifier{Class: "sid", Value: "QX7"}
 	if hasHit(scanBytes("f", []byte("system QX7 client"), []Identifier{sid}), "identifier/sid", "text") == nil {
 		t.Error("SID not matched in text")
 	}
-	enc := base64.StdEncoding.EncodeToString([]byte("--QX7--QX7--"))
-	if h := hasHit(scanBytes("f", []byte(enc), []Identifier{sid}), "identifier/sid", "base64"); h != nil {
-		t.Error("a 3-character identifier matched in a decoded view")
+	for name, c := range map[string]struct {
+		data []byte
+		view string
+		want bool
+	}{
+		"base64 token":          {[]byte(base64.StdEncoding.EncodeToString([]byte("sysid=QX7;client=100"))), "base64", true},
+		"hex token":             {[]byte(hex.EncodeToString([]byte("logon QX7 100 EN"))), "hex", true},
+		"base64 run edge":       {[]byte(base64.StdEncoding.EncodeToString([]byte("QX7 is the system id"))), "base64", true},
+		"base64 utf-16le token": {[]byte(base64.StdEncoding.EncodeToString(utf16le("SID=QX7;"))), "base64+utf-16le", true},
+		"base64 next to a byte": {[]byte(base64.StdEncoding.EncodeToString([]byte("\x01\x9c\x80\x81\x90QX7\xff\x02\xa0\xa1\xb0\xb1"))), "", false},
+		"base64 inside a word":  {[]byte(base64.StdEncoding.EncodeToString([]byte("abcdefQX7ghijkl"))), "", false},
+	} {
+		got := hasHit(scanBytes("f", c.data, []Identifier{sid}), "identifier/sid", c.view) != nil
+		if got != c.want {
+			t.Errorf("%s: hit=%v, want %v", name, got, c.want)
+		}
 	}
 }
 
@@ -156,10 +170,20 @@ func TestGenericPatterns(t *testing.T) {
 		{`req.Header.Set("Authorization", "Basic "+enc)`, "basic-auth", false},
 		{"X-CSRF-" + "Token: " + token, "csrf-token", true},
 		{"X-CSRF-" + "Token: Fetch", "csrf-token", false},
-		{`"x-csrf-` + `token": "test-csrf-token-0001"`, "csrf-token", false},
+		{`"x-csrf-` + `token": "xxxxxxxxxxxxxxxxxxxx"`, "csrf-token", false},
+		{`"x-csrf-` + `token": "test-csrf-token-0001"`, "csrf-token", true},
 		{`{"SAP_` + `PASSWORD": "Wk7pq2Zr9"}`, "config-password", true},
 		{`{"pass` + `word": "your-password"}`, "config-password", false},
 		{`{"pass` + `word": "pass"}`, "config-password", false},
+		// Only an exact placeholder is one: a word inside a value is not.
+		{`{"pass` + `word": "MySecret2026!"}`, "config-password", true},
+		{`{"pass` + `word": "testing-Kq81"}`, "config-password", true},
+		{`{"pass` + `word": "<password>"}`, "config-password", false},
+		{`{"pass` + `word": "${SAP_PASSWORD}"}`, "config-password", false},
+		{`{"pass` + `word": "changeme"}`, "config-password", false},
+		{`{"pass` + `word": "****"}`, "config-password", false},
+		{`{"SAP_` + `PASSWORD": "YOUR_PASSWORD_HERE"}`, "config-password", false},
+		{"Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("JDOE:MySecret2026!")), "basic-auth", true},
 		{"host " + ip("10", "20", "30", "40"), "private-ip", true},
 		{"host " + ip("172", "20", "1", "5") + ":8000", "private-ip", true},
 		{"host " + ip("172", "32", "1", "5"), "private-ip", false},
@@ -192,30 +216,31 @@ func TestAllowFileRules(t *testing.T) {
 	good := `# comment
 path  **/go.sum              packed-private-ip  module checksums are hashed bytes
 path  docs/*.md              generic            documentation examples, reviewed
-path  fixtures/**            *                  synthetic fixtures only, reviewed
 match private-ip  10\.0\.0\.[0-9]+               the documentation address range we use
 `
 	rules, err := parseAllow(strings.NewReader(good))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rules) != 4 {
+	if len(rules) != 3 {
 		t.Fatalf("got %d rules", len(rules))
 	}
 	cases := []struct {
 		h    Hit
 		want bool
 	}{
-		{Hit{File: "go.sum", Class: "packed-private-ip", Generic: true}, true},
-		{Hit{File: "a/b/go.sum", Class: "packed-private-ip", Generic: true}, true},
-		{Hit{File: "go.sum", Class: "private-ip", Generic: true}, false},
-		{Hit{File: "docs/x.md", Class: "csrf-token", Generic: true}, true},
-		{Hit{File: "docs/sub/x.md", Class: "csrf-token", Generic: true}, false},
-		{Hit{File: "docs/x.md", Class: "identifier/host"}, false},
-		{Hit{File: "fixtures/a/b.json", Class: "identifier/host"}, true},
-		{Hit{File: "x.go", Class: "private-ip", Generic: true, value: ip("10", "0", "0", "7")}, true},
-		{Hit{File: "x.go", Class: "private-ip", Generic: true, value: ip("10", "0", "0", "7") + "1.1"}, false},
-		{Hit{File: "x.go", Class: "private-ip", Generic: true, value: ip("10", "9", "0", "7")}, false},
+		{Hit{Path: "go.sum", Class: "packed-private-ip", Generic: true}, true},
+		{Hit{Path: "a/b/go.sum", Class: "packed-private-ip", Generic: true}, true},
+		{Hit{Path: "go.sum", Class: "private-ip", Generic: true}, false},
+		{Hit{Path: "docs/x.md", Class: "csrf-token", Generic: true}, true},
+		{Hit{Path: "docs/sub/x.md", Class: "csrf-token", Generic: true}, false},
+		// A listed identifier is never excused, even where generic hits are.
+		{Hit{Path: "docs/x.md", Class: "identifier/host"}, false},
+		// A commit message has no path, so no path rule reaches it.
+		{Hit{File: "commit abc (message)", Class: "csrf-token", Generic: true}, false},
+		{Hit{Path: "x.go", Class: "private-ip", Generic: true, value: ip("10", "0", "0", "7")}, true},
+		{Hit{Path: "x.go", Class: "private-ip", Generic: true, value: ip("10", "0", "0", "7") + "1.1"}, false},
+		{Hit{Path: "x.go", Class: "private-ip", Generic: true, value: ip("10", "9", "0", "7")}, false},
 	}
 	for _, c := range cases {
 		if got := allowed(rules, c.h); got != c.want {
@@ -224,12 +249,18 @@ match private-ip  10\.0\.0\.[0-9]+               the documentation address range
 	}
 
 	for name, bad := range map[string]string{
-		"no reason":              "path go.sum packed-private-ip\n",
-		"reason too short":       "path go.sum packed-private-ip ok\n",
-		"match on an identifier": "match identifier/host sapbox\\.corp\\.invalid somebody wanted it quiet\n",
-		"match on everything":    "match * .* somebody wanted it quiet\n",
-		"unknown kind":           "file go.sum * checksums are hashed bytes\n",
-		"bad regex":              "match private-ip ( an unbalanced pattern here\n",
+		"no reason":                  "path go.sum packed-private-ip\n",
+		"reason too short":           "path go.sum packed-private-ip ok\n",
+		"match on an identifier":     "match identifier/host sapbox\\.corp\\.invalid somebody wanted it quiet\n",
+		"path on an identifier":      "path fixtures/a.json identifier/host somebody wanted it quiet\n",
+		"class star":                 "path fixtures/a.json * somebody wanted it quiet\n",
+		"match on everything":        "match generic .* somebody wanted it quiet\n",
+		"match on anything nonempty": "match private-ip .+ somebody wanted it quiet\n",
+		"path everything":            "path ** generic somebody wanted it quiet\n",
+		"path every top file":        "path * private-ip somebody wanted it quiet\n",
+		"path every file":            "path **/* private-ip somebody wanted it quiet\n",
+		"unknown kind":               "file go.sum generic checksums are hashed bytes\n",
+		"bad regex":                  "match private-ip ( an unbalanced pattern here\n",
 	} {
 		if _, err := parseAllow(strings.NewReader(good + bad)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -370,5 +401,124 @@ func TestRunDiffAndAll(t *testing.T) {
 	// A base that does not exist fails closed.
 	if code, _, _ := runScan(t, env, "-root", root, "-diff", "no-such-ref"); code != exitClosed {
 		t.Fatalf("bad base: exit %d", code)
+	}
+}
+
+// newRepo is a temporary git repository with one commit on main, and a
+// function that runs git in it and returns the trimmed output.
+func newRepo(t *testing.T) (string, func(args ...string) string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	g := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	g("init", "-q", "-b", "main")
+	writeFile(t, filepath.Join(root, "README.md"), "clean\n")
+	g("add", ".")
+	g("commit", "-qm", "base")
+	return root, g
+}
+
+func TestRunAddThenDeleteInRange(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbox.corp.invalid"}
+	g("checkout", "-qb", "topic")
+	writeFile(t, filepath.Join(root, "notes/capture.md"), "one\ntwo\nconnected to sapbox.corp.invalid\n")
+	g("add", ".")
+	g("commit", "-qm", "add a capture")
+	added := g("rev-parse", "--short", "HEAD")
+	g("rm", "-q", "notes/capture.md")
+	g("commit", "-qm", "remove it again")
+
+	// The tip is clean; the history is not.
+	if code, _, _ := runScan(t, env, "-root", root, "-all"); code != exitClean {
+		t.Fatalf("tip: exit %d, want clean", code)
+	}
+	code, out, _ := runScan(t, env, "-root", root, "-diff", "main")
+	if code != exitHits || !strings.Contains(out, "notes/capture.md:3: identifier/host (text) [added in "+added+"]") {
+		t.Fatalf("diff: exit %d, want the line the first commit added\n%s", code, out)
+	}
+	if code, _, _ := runScan(t, env, "-root", root, "-range", "main..topic"); code != exitHits {
+		t.Fatalf("range: exit %d", code)
+	}
+
+	// A binary added and removed again is read whole from its commit.
+	g("checkout", "-q", "main")
+	g("checkout", "-qb", "binary")
+	writeFile(t, filepath.Join(root, "logon.bin"), string(append([]byte{0, 1, 2, 0}, utf16le("Server=sapbox.corp.invalid")...)))
+	g("add", ".")
+	g("commit", "-qm", "add a template")
+	g("rm", "-q", "logon.bin")
+	g("commit", "-qm", "remove it")
+	code, out, _ = runScan(t, env, "-root", root, "-diff", "main")
+	if code != exitHits || !strings.Contains(out, "logon.bin:1: identifier/host (utf-16le)") {
+		t.Fatalf("binary: exit %d\n%s", code, out)
+	}
+}
+
+func TestRunPushRangeCommitMessage(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbox.corp.invalid"}
+	before := g("rev-parse", "HEAD")
+	writeFile(t, filepath.Join(root, "a.go"), "package a\n")
+	g("add", ".")
+	g("commit", "-qm", "fix the logon\n\nreproduced against sapbox.corp.invalid")
+	after := g("rev-parse", "HEAD")
+
+	if code, _, _ := runScan(t, env, "-root", root, "-all"); code != exitClean {
+		t.Fatalf("tree only: exit %d, want clean (the hit is in a message)", code)
+	}
+	code, out, _ := runScan(t, env, "-root", root, "-all", "-range", before+".."+after)
+	if code != exitHits || !strings.Contains(out, "(message)") || !strings.Contains(out, "identifier/host") {
+		t.Fatalf("push range: exit %d\n%s", code, out)
+	}
+	if strings.Contains(out, "sapbox") {
+		t.Errorf("output prints the value:\n%s", out)
+	}
+}
+
+func TestRunHostileAllowFileInPR(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbox.corp.invalid"}
+	writeFile(t, filepath.Join(root, defaultAllw), "path **/go.sum packed-private-ip module checksums are hashed bytes\n")
+	g("add", ".")
+	g("commit", "-qm", "allow-file")
+
+	g("checkout", "-qb", "pr")
+	writeFile(t, filepath.Join(root, "fixtures/a.txt"), "host "+ip("10", "1", "2", "3")+"\n")
+	writeFile(t, filepath.Join(root, defaultAllw), "path **/go.sum packed-private-ip module checksums are hashed bytes\n"+
+		"path fixtures/a.txt private-ip a perfectly reasonable sounding excuse\n")
+	g("add", ".")
+	g("commit", "-qm", "add a fixture and excuse it")
+
+	// The PR's own allow-file would excuse it...
+	if code, _, _ := runScan(t, env, "-root", root, "-diff", "main"); code != exitClean {
+		t.Fatalf("PR allow-file: exit %d", code)
+	}
+	// ...but CI reads the base's, where the rule does not exist yet.
+	if code, out, _ := runScan(t, env, "-root", root, "-diff", "main", "-allow-rev", "main"); code != exitHits || !strings.Contains(out, "fixtures/a.txt:1: private-ip") {
+		t.Fatalf("base allow-file: exit %d\n%s", code, out)
+	}
+	// A rule that excuses everything is refused outright, wherever it is read.
+	writeFile(t, filepath.Join(root, defaultAllw), "path ** generic nothing to see here at all\n")
+	if code, _, _ := runScan(t, env, "-root", root, "-diff", "main"); code != exitClosed {
+		t.Fatalf("broad rule: exit %d, want %d", code, exitClosed)
+	}
+	// A base without an allow-file excuses nothing; a base that is not a
+	// commit fails closed.
+	if code, _, _ := runScan(t, env, "-root", root, "-diff", "main", "-allow-rev", "main~1"); code != exitHits {
+		t.Fatalf("base without allow-file: exit %d", code)
+	}
+	if code, _, _ := runScan(t, env, "-root", root, "-diff", "main", "-allow-rev", "no-such-ref"); code != exitClosed {
+		t.Fatalf("bad -allow-rev: exit %d", code)
 	}
 }

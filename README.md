@@ -2369,7 +2369,9 @@ and SSO cookies, `Authorization: Basic` headers, CSRF token values, private
 addresses, and passwords in `.vsp.json`/`.mcp.json`-style config, plus the
 host names, addresses, SIDs and user names on a private list. The scanner
 (`.github/ci/leakscan`) decodes UTF-16LE, hex and base64 before it matches, and
-prints only `file:line` and the class that matched, never the value.
+prints only `file:line` and the class that matched, never the value. It reads
+every commit of a push or pull request, not just its last state: a value one
+commit added and a later one deleted is still in the history, and blocks.
 
 The list of names is never committed. Seed it once per clone, one value per
 line, optionally `class: value`:
@@ -2384,9 +2386,15 @@ EOF
 chmod 600 .local/leak-identifiers.txt    # .local/ is gitignored
 ```
 
+Leave out a SID that is public anyway, such as the `A4H` of SAP's developer
+edition: it is all over this repository's docs, and a gate on it would block
+every change to them. A private system's SID belongs on the list.
+
 Without the file the hook still runs the generic patterns and warns that the
-names were not checked. A reviewed false positive goes in
-`.github/ci/leakscan-allow.txt`, which needs a reason on every line. In CI the
+names were not checked. A reviewed false positive of a generic pattern goes in
+`.github/ci/leakscan-allow.txt`, with a reason on every line; a name from the
+list can never be excused. CI reads that file from the base branch, so a new
+rule takes effect only once merged: propose it in a pull request of its own. In CI the
 list is the `VSP_LEAK_IDENTIFIERS` secret: a pull request from a fork has no
 secrets, so it gets the generic patterns only and the report row says
 "PARTIAL"; on this repository's own branches and on main a missing list is red.

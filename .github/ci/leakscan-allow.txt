@@ -1,14 +1,20 @@
-# Leak scan allow-file (.github/ci/leakscan). Hits that were looked at and
-# judged not to be a leak. Every line needs a reason; a line without one makes
-# the scan fail closed. This file is public: never write an identifier here.
+# Leak scan allow-file (.github/ci/leakscan). Generic-pattern hits that were
+# looked at and judged not to be a leak. Every line needs a reason; a line
+# without one makes the scan fail closed. This file is public: never write an
+# identifier here.
 #
 #   path  <glob>  <class>  <reason>     every hit of <class> in matching files
-#   match <class> <regex>  <reason>     a built-in class whose value matches the
+#   match <class> <regex>  <reason>     hits of <class> whose value matches the
 #                                       whole regex, in any file
 #
-# <class>: a hit class (private-ip, packed-private-ip, csrf-token, ...,
-# identifier/host), "generic" for every built-in class, or "*" (path only).
-# A match rule cannot name an identifier class: that would publish it.
+# <class>: a built-in class (private-ip, packed-private-ip, csrf-token,
+# basic-auth, sap-session-cookie, sap-sso-cookie, config-password) or
+# "generic" for all of them. A hit on the identifier list cannot be excused.
+# Refused outright: a glob of only wildcards (**, *, **/*) and a regex that
+# matches anything.
+#
+# CI reads this file from the pull request's BASE, so a new rule only takes
+# effect once merged: add it in a pull request of its own, for review.
 
 path  **/go.sum                       packed-private-ip  Module checksums (h1: base64 SHA-256). Four hashed bytes that read as 192.168 or 172.16-31 are chance.
 path  **/package-lock.json            packed-private-ip  npm integrity hashes (base64 SHA-512). Four hashed bytes that read as an address are chance.

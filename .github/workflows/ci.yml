@@ -234,9 +234,14 @@ jobs:
   # Safety gate, blocking: live SAP identifiers (hosts, addresses, SIDs, users)
   # and secrets (session cookies, basic auth, CSRF tokens, config passwords) in
   # what this change publishes. .github/ci/leakscan decodes every byte view of a
-  # file (text, UTF-16LE, hex, base64) before matching. A pull request is
-  # scanned for the files and commit messages it adds; a push to main for every
-  # file in the tree.
+  # file (text, UTF-16LE, hex, base64) before matching. What it reads:
+  #   pull request: the files it changes (as they are at its head), the lines
+  #     every one of its commits added (so a value added and deleted again is
+  #     still caught: it is in the history), and every commit message;
+  #   push to main: every file in the tree, plus the lines and messages of the
+  #     pushed range (event.before..event.after).
+  # The allow-file is read from the base revision on a pull request, so a PR
+  # cannot excuse its own hits; a PR that changes it gets a warning to review it.
   #
   # The identifier list is the VSP_LEAK_IDENTIFIERS secret (one value per line,
   # optionally `class: value`), masked line by line before anything runs. It is
@@ -276,6 +281,8 @@ jobs:
           EXPECTED: ${{ github.repository == 'oisee/vibing-steampunk' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
           EVENT: ${{ github.event_name }}
           BASE_REF: origin/${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           # Mask every line, and the value after a `class:` prefix, before the
           # scanner (or anything else) can print one.
@@ -289,17 +296,36 @@ jobs:
 
           require=()
           [ "$EXPECTED" = true ] && require=(-require-identifiers)
-          if [ "$EVENT" = pull_request ]; then mode=(-diff "$BASE_REF"); what="changed files"; else mode=(-all); what="all tracked files"; fi
+          allow_note=
+          if [ "$EVENT" = pull_request ]; then
+            mode=(-diff "$BASE_REF" -allow-rev "$BASE_REF")
+            what="pull request's files, added lines and commit messages"
+            if ! git diff --quiet "$(git merge-base "$BASE_REF" HEAD)" HEAD -- .github/ci/leakscan-allow.txt; then
+              echo "::warning title=leak scan::This pull request changes .github/ci/leakscan-allow.txt. The scan used the base's allow-file; the new rules take effect only after merge, so review each one and its reason."
+              allow_note="; allow-file changed, needs review"
+            fi
+          else
+            mode=(-all)
+            what="tree and the pushed commits"
+            if [ -n "$BEFORE" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              mode+=(-range "$BEFORE..$AFTER")
+            elif git cat-file -e "${AFTER}^" 2>/dev/null; then
+              # A new branch or a force push: no usable "before". The tip
+              # commit at least; the tree scan covers every file.
+              echo "::warning title=leak scan::No usable push base ($BEFORE); scanning the tree and the tip commit only."
+              mode+=(-range "$AFTER^..$AFTER")
+            fi
+          fi
           status=0
           "$RUNNER_TEMP/leakscan" -root "$GITHUB_WORKSPACE" "${require[@]}" "${mode[@]}" || status=$?
           case $status in
-            0) echo "::notice title=ci-report::full scan of ${what}: clean" ;;
+            0) echo "::notice title=ci-report::full scan of the ${what}: clean${allow_note}" ;;
             3) echo "::warning title=leak scan::Identifier list unavailable (fork pull request, no secrets): only the generic patterns ran. Host, user and SID names were NOT checked; a maintainer's run on main checks them."
-               echo "::notice title=ci-report::PARTIAL: generic patterns only, identifier list unavailable (fork)"
+               echo "::notice title=ci-report::PARTIAL: generic patterns only, identifier list unavailable (fork)${allow_note}"
                { echo "### Leak scan: partial"; echo; echo "The identifier list (secret \`VSP_LEAK_IDENTIFIERS\`) is not available to a pull request from a fork, so only the generic patterns ran over the ${what}. Host, user and SID names were not checked."; } >> "$GITHUB_STEP_SUMMARY"
                ;;
-            1) echo "::error title=leak scan::Possible leak in the ${what}: see the file:line list above. Replace the value with a placeholder, or excuse it in .github/ci/leakscan-allow.txt with a reason."
-               echo "::notice title=ci-report::hits in the ${what}"
+            1) echo "::error title=leak scan::Possible leak in the ${what}: see the file:line list above. Replace the value with a placeholder; a value in a commit that a later commit removed is still in the history, so rewrite the branch. A generic false positive can be excused in .github/ci/leakscan-allow.txt, with a reason, in a pull request of its own."
+               echo "::notice title=ci-report::hits in the ${what}${allow_note}"
                exit 1 ;;
             *) echo "::error title=leak scan::The scan could not run in full (exit $status), so it cannot pass. If the identifier list is missing, a repository admin must set the VSP_LEAK_IDENTIFIERS secret."
                echo "::notice title=ci-report::fail closed (exit $status)"

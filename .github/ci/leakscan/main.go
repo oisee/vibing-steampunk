@@ -17,8 +17,14 @@
 //
 //	cd .github/ci/leakscan
 //	go run . -root ../../.. -all                  # every file in HEAD's tree
-//	go run . -root ../../.. -diff origin/main     # files changed since the merge base
+//	go run . -root ../../.. -diff origin/main     # what HEAD adds since the merge base:
+//	                                              # changed files, every commit's added
+//	                                              # lines, every commit message
+//	go run . -root ../../.. -all -range A..B      # the tree, plus a pushed range
 //	go run . -root ../../.. path/to/file dir/     # files on disk, tracked or not
+//
+// -allow-rev <rev> reads the allow-file from that revision (CI passes the base,
+// so a pull request cannot excuse its own hits).
 //
 // Exit codes. Build the binary and run it: `go run` turns every non-zero exit
 // into 1.
@@ -47,6 +53,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -66,9 +73,14 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Getenv, os.Stdout, os.Stderr))
 }
 
+// A source is one thing read: a file as it is at a revision, the lines one
+// commit added to a file, or a commit message.
 type source struct {
-	name string
-	data []byte
+	name   string // shown: the path, or "commit abc1234 (message)"
+	path   string // the repository path, for allow-file path rules; "" for a message
+	commit string // the commit whose patch this is, "" for a whole file
+	data   []byte
+	lines  []int // for a patch: line i+1 of data is line lines[i] of the file
 }
 
 func run(args []string, getenv func(string) string, stdout, stderr io.Writer) int {
@@ -76,11 +88,13 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "repository root")
 	all := fs.Bool("all", false, "scan every file in the tree of -rev")
-	diff := fs.String("diff", "", "scan files changed between the merge base with this ref and -rev, and those commits' messages")
+	diff := fs.String("diff", "", "scan what -rev adds since its merge base with this ref: the files as they are at -rev, the lines every commit in between added, and the commit messages")
+	rng := fs.String("range", "", "scan the lines every commit in this A..B range added, and the commit messages (combine with -all on a push)")
 	rev := fs.String("rev", "HEAD", "the commit whose files are scanned with -all or -diff")
 	idFile := fs.String("identifiers", "", "identifier list file (default: $"+envList+", else "+defaultList+")")
 	require := fs.Bool("require-identifiers", false, "fail closed (exit 2) when no identifier list is available")
-	allowFile := fs.String("allow", "", "allow-file (default: "+defaultAllw+" under -root)")
+	allowFile := fs.String("allow", "", "allow-file on disk (default: "+defaultAllw+" under -root)")
+	allowRev := fs.String("allow-rev", "", "read the allow-file as it is at this revision instead (CI: the base, so a pull request cannot excuse its own hits)")
 	if err := fs.Parse(args); err != nil {
 		return exitClosed
 	}
@@ -88,36 +102,53 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "leakscan: "+format+"\n", a...)
 		return exitClosed
 	}
-	modes := 0
-	for _, on := range []bool{*all, *diff != "", fs.NArg() > 0} {
-		if on {
-			modes++
-		}
-	}
-	if modes != 1 {
-		return fail("choose exactly one of -all, -diff <ref>, or paths")
+	paths := fs.NArg() > 0
+	switch {
+	case paths && (*all || *diff != "" || *rng != ""):
+		return fail("paths cannot be combined with -all, -diff or -range")
+	case *diff != "" && (*all || *rng != ""):
+		return fail("-diff cannot be combined with -all or -range")
+	case !paths && !*all && *diff == "" && *rng == "":
+		return fail("choose -all, -diff <ref>, -range <a..b> (with or without -all), or paths")
+	case *allowFile != "" && *allowRev != "":
+		return fail("choose one of -allow and -allow-rev")
 	}
 
 	ids, idSource, err := loadIdentifiers(*root, *idFile, getenv)
 	if err != nil {
 		return fail("%v", err)
 	}
-	rules, err := loadAllow(*root, *allowFile)
+	rules, err := loadAllow(*root, *allowFile, *allowRev)
 	if err != nil {
 		return fail("allow-file: %v", err)
 	}
 
 	var sources []source
 	explicit := false
+	add := func(more []source, err error) error {
+		sources = append(sources, more...)
+		return err
+	}
 	switch {
-	case *all:
+	case paths:
 		explicit = true
-		sources, err = treeFiles(*root, *rev)
+		err = add(diskFiles(*root, fs.Args()))
 	case *diff != "":
-		sources, err = changedFiles(*root, *diff, *rev)
+		var mb []byte
+		if mb, err = git(*root, "merge-base", *diff, *rev); err == nil {
+			base := strings.TrimSpace(string(mb))
+			if err = add(changedFiles(*root, base, *rev)); err == nil {
+				err = add(rangeSources(*root, base+".."+*rev))
+			}
+		}
 	default:
-		explicit = true
-		sources, err = diskFiles(*root, fs.Args())
+		if *all {
+			explicit = true
+			err = add(treeFiles(*root, *rev))
+		}
+		if err == nil && *rng != "" {
+			err = add(rangeSources(*root, *rng))
+		}
 	}
 	if err != nil {
 		return fail("%v", err)
@@ -125,8 +156,24 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 
 	var hits []Hit
 	excused := 0
+	seen := map[string]bool{}
 	for _, s := range sources {
 		for _, h := range scanBytes(s.name, s.data, ids) {
+			if s.lines != nil && h.Line-1 < len(s.lines) {
+				h.Line = s.lines[h.Line-1]
+			}
+			h.Path, h.Commit = s.path, s.commit
+			if s.path != "" {
+				h.File = s.path
+				// The same value on the same line, met again in another view
+				// of the history (the file at the tip, the commit that added
+				// it, a merge's first-parent diff), is one finding.
+				key := s.path + "\x00" + h.Class + "\x00" + h.value + "\x00" + strconv.Itoa(h.Line)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+			}
 			if allowed(rules, h) {
 				excused++
 				continue
@@ -141,21 +188,25 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		return hits[i].Line < hits[j].Line
 	})
 	for _, h := range hits {
-		fmt.Fprintf(stdout, "%s:%d: %s (%s)\n", h.File, h.Line, h.Class, h.View)
+		where := ""
+		if h.Commit != "" {
+			where = " [added in " + h.Commit + "]"
+		}
+		fmt.Fprintf(stdout, "%s:%d: %s (%s)%s\n", h.File, h.Line, h.Class, h.View, where)
 	}
 
 	listNote := fmt.Sprintf("%d identifiers from %s", len(ids), idSource)
 	if len(ids) == 0 {
 		listNote = "NO identifier list: generic patterns only, host/user/SID names NOT checked"
 	}
-	fmt.Fprintf(stderr, "leakscan: %d files read, %d hits, %d excused by the allow-file; %s\n",
+	fmt.Fprintf(stderr, "leakscan: %d sources read (files, patches, commit messages), %d hits, %d excused by the allow-file; %s\n",
 		len(sources), len(hits), excused, listNote)
 
 	if len(sources) == 0 && explicit {
-		return fail("no file was read; that is \"nothing looked at\", not \"clean\"")
+		return fail("nothing was read; that is \"nothing looked at\", not \"clean\"")
 	}
 	if len(hits) > 0 {
-		fmt.Fprintln(stderr, "leakscan: this is a public repository. Replace the value with a placeholder (see CLAUDE.md, Security), or move the file under .local/.")
+		fmt.Fprintln(stderr, "leakscan: this is a public repository. Replace the value with a placeholder (see CLAUDE.md, Security), or move the file under .local/. A value that is in a commit, even one a later commit removed, is in the history: rewrite the branch before it is pushed or merged.")
 		return exitHits
 	}
 	if len(ids) == 0 {
@@ -201,7 +252,20 @@ func loadIdentifiers(root, file string, getenv func(string) string) ([]Identifie
 	return nil, "", nil
 }
 
-func loadAllow(root, file string) ([]allowRule, error) {
+func loadAllow(root, file, rev string) ([]allowRule, error) {
+	if rev != "" {
+		if _, err := git(root, "rev-parse", "--verify", "--quiet", rev+"^{commit}"); err != nil {
+			return nil, fmt.Errorf("-allow-rev %s: not a commit", rev)
+		}
+		if _, err := git(root, "cat-file", "-e", rev+":"+defaultAllw); err != nil {
+			return nil, nil // the base has no allow-file yet: nothing is excused
+		}
+		out, err := git(root, "show", rev+":"+defaultAllw)
+		if err != nil {
+			return nil, err
+		}
+		return parseAllow(bytes.NewReader(out))
+	}
 	path := file
 	if path == "" {
 		path = filepath.Join(root, defaultAllw)
@@ -247,16 +311,10 @@ func treeFiles(root, rev string) ([]source, error) {
 	return readBlobs(root, rev, paths)
 }
 
-// changedFiles is what a push or a PR adds: files added or changed between the
-// merge base and rev, read as they are at rev, plus the commit messages, which
-// are published too and the easiest place to paste an address into.
+// changedFiles is every file added or changed between base and rev, read as
+// it is at rev: the whole file, so a binary is read too.
 func changedFiles(root, base, rev string) ([]source, error) {
-	mb, err := git(root, "merge-base", base, rev)
-	if err != nil {
-		return nil, err
-	}
-	mbs := strings.TrimSpace(string(mb))
-	out, err := git(root, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=ACMRT", mbs, rev)
+	out, err := git(root, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=ACMRT", base, rev)
 	if err != nil {
 		return nil, err
 	}
@@ -266,21 +324,108 @@ func changedFiles(root, base, rev string) ([]source, error) {
 			paths = append(paths, p)
 		}
 	}
-	srcs, err := readBlobs(root, rev, paths)
+	return readBlobs(root, rev, paths)
+}
+
+// rangeSources is what every commit in a range adds, commit by commit: a value
+// that one commit added and a later one removed leaves a clean tip and a
+// history that still carries it, and the history is what gets published. So
+// each commit's added lines are a source of their own, each added binary is
+// read whole as it is in that commit, and every commit message is read, since
+// a message is published too and is the easiest place to paste an address.
+// A merge is read as its first-parent diff, which includes what the merge
+// itself resolved.
+func rangeSources(root, rng string) ([]source, error) {
+	out, err := git(root, "-c", "core.quotePath=false", "log", "-p", "-U0", "--no-color", "--no-ext-diff",
+		"--no-renames", "--diff-merges=first-parent", "--format=%x01%h%x02%B%x03", rng)
 	if err != nil {
 		return nil, err
 	}
-	logs, err := git(root, "log", "-z", "--format=%h%n%B", mbs+".."+rev)
-	if err != nil {
-		return nil, err
-	}
-	for _, rec := range strings.Split(string(logs), "\x00") {
-		h, msg, ok := strings.Cut(rec, "\n")
-		if ok {
-			srcs = append(srcs, source{name: "commit " + strings.TrimSpace(h) + " (message)", data: []byte(msg)})
+	srcs, binaries := parsePatchLog(out)
+	for commit, paths := range binaries {
+		more, err := readBlobs(root, commit, paths)
+		if err != nil {
+			return nil, err
 		}
+		for i := range more {
+			more[i].path, more[i].commit = more[i].name, commit
+		}
+		srcs = append(srcs, more...)
 	}
 	return srcs, nil
+}
+
+// parsePatchLog splits `git log -p -U0 --format=%x01%h%x02%B%x03` output into
+// one message source per commit and one source per (commit, file) holding the
+// added lines, and lists the binary files each commit added or changed.
+func parsePatchLog(out []byte) ([]source, map[string][]string) {
+	var srcs []source
+	binaries := map[string][]string{}
+	for _, rec := range strings.Split(string(out), "\x01")[1:] {
+		head, patch, _ := strings.Cut(rec, "\x03")
+		commit, msg, _ := strings.Cut(head, "\x02")
+		commit = strings.TrimSpace(commit)
+		srcs = append(srcs, source{name: "commit " + commit + " (message)", data: []byte(msg)})
+
+		var cur *source
+		var buf bytes.Buffer
+		next := 0
+		flush := func() {
+			if cur != nil && len(cur.lines) > 0 {
+				cur.data = append([]byte(nil), buf.Bytes()...)
+				srcs = append(srcs, *cur)
+			}
+			cur = nil
+			buf.Reset()
+		}
+		inHeader := false
+		for _, line := range strings.Split(patch, "\n") {
+			switch {
+			case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "diff --cc "):
+				flush()
+				inHeader = true
+			case inHeader && strings.HasPrefix(line, "+++ "):
+				p := unquotePath(strings.TrimPrefix(line, "+++ "))
+				if p != "/dev/null" {
+					p = strings.TrimPrefix(p, "b/")
+					cur = &source{name: p + " @ " + commit, path: p, commit: commit}
+				}
+			case inHeader && strings.HasPrefix(line, "Binary files ") && strings.HasSuffix(line, " differ"):
+				i := strings.LastIndex(line, " and ")
+				if i >= 0 {
+					p := unquotePath(strings.TrimSuffix(line[i+len(" and "):], " differ"))
+					if p != "/dev/null" {
+						binaries[commit] = append(binaries[commit], strings.TrimPrefix(p, "b/"))
+					}
+				}
+			case strings.HasPrefix(line, "@@"):
+				inHeader = false
+				// @@ -a,b +c,d @@: added lines are numbered from c.
+				if i := strings.Index(line, " +"); i >= 0 {
+					f := strings.FieldsFunc(line[i+2:], func(r rune) bool { return r == ',' || r == ' ' })
+					if len(f) > 0 {
+						next, _ = strconv.Atoi(f[0])
+					}
+				}
+			case !inHeader && cur != nil && strings.HasPrefix(line, "+"):
+				buf.WriteString(line[1:])
+				buf.WriteByte('\n')
+				cur.lines = append(cur.lines, next)
+				next++
+			}
+		}
+		flush()
+	}
+	return srcs, binaries
+}
+
+func unquotePath(p string) string {
+	if strings.HasPrefix(p, "\"") {
+		if u, err := strconv.Unquote(p); err == nil {
+			return u
+		}
+	}
+	return p
 }
 
 // readBlobs reads rev:path for every path through one `git cat-file --batch`.
@@ -327,7 +472,7 @@ func readBlobs(root, rev string, paths []string) ([]source, error) {
 			_ = cmd.Wait()
 			return nil, fmt.Errorf("git cat-file %s: %v", p, err)
 		}
-		out = append(out, source{name: p, data: data[:size]})
+		out = append(out, source{name: p, path: p, data: data[:size]})
 	}
 	return out, cmd.Wait()
 }
@@ -370,7 +515,7 @@ func diskFiles(root string, paths []string) ([]source, error) {
 			if rel, err := filepath.Rel(root, path); err == nil && !strings.HasPrefix(rel, "..") {
 				name = filepath.ToSlash(rel)
 			}
-			out = append(out, source{name: name, data: data})
+			out = append(out, source{name: name, path: name, data: data})
 			return nil
 		})
 		if err != nil {

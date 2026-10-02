@@ -19,6 +19,8 @@ type Hit struct {
 	Class   string // e.g. "private-ip", or "identifier/host"
 	View    string // which byte view it was found in: text, utf-16le, hex, base64, ...
 	Generic bool   // a built-in pattern, as opposed to an entry of the identifier list
+	Path    string // repository path, for allow-file path rules; "" for a commit message
+	Commit  string // the commit that added the line, when it was found in a patch
 	value   string // kept for allow-file matching only; never printed
 }
 
@@ -44,11 +46,15 @@ var (
 	b64Run = regexp.MustCompile(`[A-Za-z0-9+/_-]{12,}={0,2}`)
 )
 
-// minDecodedIdentifier is the shortest identifier matched inside a decoded
-// (hex or base64) view. Those views are mostly random bytes, and a three-byte
-// value such as a SID turns up there by chance; the text and UTF-16LE views
-// still match it at any length.
-const minDecodedIdentifier = 5
+// In a decoded (hex or base64) view most bytes are random, and a short
+// identifier such as a three-character SID turns up there by chance next to
+// any non-alphanumeric byte. So in those views an identifier must stand as a
+// token: each neighbour is the edge of the decoded run or printable ASCII
+// punctuation or whitespace ("SID=QX7;", "QX7 100"), never a control or high
+// byte. The text and UTF-16LE views keep the plain alphanumeric boundary.
+func tokenEdge(c byte) bool {
+	return (c >= 0x20 && c < 0x7f && !isAlnum(c)) || c == '\t' || c == '\n' || c == '\r'
+}
 
 type lineIndex []int
 
@@ -166,28 +172,28 @@ var genericClasses = func() map[string]bool {
 	return m
 }()
 
-var placeholderWords = []string{
-	"xxx", "...", "…", "<", ">", "$", "{", "%s", "%v", "***",
-	"your", "example", "placeholder", "changeme", "change-me", "redacted",
-	"secret", "password", "passwd", "dummy", "fake", "sample", "test", "mock",
-}
-
-// placeholderValues are whole values documentation and tests use.
+// placeholderValues are whole values documentation and tests use. Only an
+// exact value is a placeholder: a word inside a value proves nothing, and a
+// real password such as "MySecret2026!" contains one often enough.
 var placeholderValues = map[string]bool{
-	"pass": true, "pwd": true, "user": true, "admin": true, "token": true, "value": true,
-	"abc123": true, "12345678": true, "foobar": true, "hunter2": true,
+	"pass": true, "passwd": true, "password": true, "pwd": true, "secret": true,
+	"user": true, "username": true, "admin": true, "token": true, "value": true,
+	"changeme": true, "change-me": true, "change_me": true, "redacted": true,
+	"your-password": true, "your_password": true, "yourpassword": true,
+	"your-token": true, "your-session-id": true, "placeholder": true,
+	"example": true, "dummy": true, "test": true, "fetch": true, "required": true,
+	"abc123": true, "12345678": true, "foobar": true, "hunter2": true, "secret123": true,
 }
 
-// notPlaceholder is false for the values documentation and tests use.
+// placeholderShape: a template or an elision rather than a value: <...>,
+// ${VAR}, {{var}}, $VAR, %s / %v, runs of x, *, . or the ellipsis, and the
+// <env>_password / YOUR_PASSWORD_HERE family of the example configs.
+var placeholderShape = regexp.MustCompile(`^(?:<[^<>]*>|\$\{[^}]*\}|\{\{[^}]*\}\}|\$[A-Za-z_][A-Za-z0-9_]*|%[sv]|[xX*.…-]+|(?i:(?:your|my|dev|prod|qa|test)[_-]?password(?:[_-]here)?))$`)
+
+// notPlaceholder is false for an exact placeholder value or shape.
 func notPlaceholder(v string) bool {
-	l := strings.ToLower(v)
-	if placeholderValues[l] {
+	if placeholderValues[strings.ToLower(v)] || placeholderShape.MatchString(v) {
 		return false
-	}
-	for _, w := range placeholderWords {
-		if strings.Contains(l, w) {
-			return false
-		}
 	}
 	return true
 }
@@ -203,12 +209,12 @@ func realBasic(v string) bool {
 		return false
 	}
 	user, pass, _ := strings.Cut(string(b), ":")
-	common := map[string]bool{"user": true, "username": true, "admin": true, "developer": true, "foo": true, "bar": true, "pass": true, "": true}
+	common := map[string]bool{"user": true, "username": true, "admin": true, "developer": true, "foo": true, "bar": true, "pass": true, "password": true, "": true}
 	l := func(s string) string { return strings.ToLower(s) }
 	if common[l(user)] && common[l(pass)] {
 		return false
 	}
-	return notPlaceholder(user) && notPlaceholder(pass)
+	return notPlaceholder(pass)
 }
 
 // validIP rejects an address with an octet over 255, and a dotted run that is
@@ -303,9 +309,6 @@ func scanBytes(file string, data []byte, ids []Identifier) []Hit {
 		hay := asciiLower(v.text)
 		for i, id := range ids {
 			needle := lowerIDs[i]
-			if v.decoded && len(needle) < minDecodedIdentifier {
-				continue
-			}
 			for from := 0; ; {
 				k := strings.Index(hay[from:], needle)
 				if k < 0 {
@@ -314,7 +317,11 @@ func scanBytes(file string, data []byte, ids []Identifier) []Hit {
 				k += from
 				end := k + len(needle)
 				from = k + 1
-				if (k > 0 && isAlnum(hay[k-1])) || (end < len(hay) && isAlnum(hay[end])) {
+				if v.decoded {
+					if (k > 0 && !tokenEdge(hay[k-1])) || (end < len(hay) && !tokenEdge(hay[end])) {
+						continue
+					}
+				} else if (k > 0 && isAlnum(hay[k-1])) || (end < len(hay) && isAlnum(hay[end])) {
 					continue
 				}
 				note(Hit{File: file, Line: v.line(k), Class: "identifier/" + id.Class, View: v.how, value: id.Value})

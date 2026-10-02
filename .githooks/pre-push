@@ -9,8 +9,12 @@
 # (complexity, size) can only ever block here, never in CI, where they are
 # advisory. This hook runs:
 #   0. The leak scan, blocking (.github/ci/leakscan): live SAP identifiers and
-#      secrets in the files and commit messages this push adds since the merge
-#      base, read as they are in the pushed commits. The identifier list is
+#      secrets in what this push adds since the merge base: the changed files as
+#      they are in the pushed commit, the lines each pushed commit added (a value
+#      added and removed again is still in the history), and the commit
+#      messages. It uses the allow-file in the working tree; CI uses the base's,
+#      so a new allow rule passes here and not there until it is merged. The
+#      identifier list is
 #      .local/leak-identifiers.txt (gitignored; see README, "Leak scan"). Without
 #      it only the generic patterns run, and the hook says so in yellow.
 #   1. The CI lint gate, blocking: the same pinned golangci-lint, the same
