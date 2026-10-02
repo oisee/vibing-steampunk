@@ -533,7 +533,8 @@ Whether a request has been imported, and how it went, is in TPALOG: MCP
 `system` with the read-only `import_status` (`transport`: one request, a
 comma-separated list or an array; optional `since`, `YYYYMMDD[hhmmss]`) lists
 the tp steps each request has in this server's own system, oldest first, with
-the worst return code. No steps means tp has not touched the request there.
+the worst return code. No steps means tp has not touched the request there, or,
+with `since`, not since that time: an earlier import is filtered out, not absent.
 Each step carries its client, step code, return code, time and target system
 (`TARSYSTEM`). Step times and `since` are UTC (`TRTIME` is a UTC time stamp).
 In the system the request was exported from, TPALOG also holds the export
