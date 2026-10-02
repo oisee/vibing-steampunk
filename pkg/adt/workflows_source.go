@@ -1067,12 +1067,11 @@ func (c *Client) writeSourceUpdate(ctx context.Context, objectType, name, source
 			}
 			// An UNLOCK on a ctx that has run out never leaves the process, so
 			// a failed one is retried on a detached, bounded context.
-			unlockErr := c.UnlockObject(ctx, objectURL, lock.LockHandle)
-			if unlockErr != nil {
-				unlockErr = c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle)
-			}
-			if unlockErr != nil {
-				result.Message += fmt.Sprintf(" (%s)", strandedLockAdvice(objectURL, unlockErr))
+			held := c.holdLock(objectURL, lock.LockHandle)
+			if held.unlock(ctx) != nil {
+				if advice := held.release(ctx); advice != "" {
+					result.Message += fmt.Sprintf(" (%s)", advice)
+				}
 			}
 			if err != nil {
 				result.Message += fmt.Sprintf(" (Warning: Failed to update test include: %v)", err)
