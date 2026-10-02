@@ -1104,9 +1104,12 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.59.1 — built by CI](https://github.com/oisee/vibing-steampunk/releases/tag/v2.59.1)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.60.0 — debug, pin, summarise](https://github.com/oisee/vibing-steampunk/releases/tag/v2.60.0)**.
 
-### v2.60.0 — upcoming
+### v2.60.0 — new since v2.59.1
+
+Debug from your editor, pin where vsp may work, read less to know more.
+v2.59.x continues as an LTS line on `release/2.59` (fixes only).
 
 **New:** `vsp dap`, a Debug Adapter Protocol server. It lets you debug ABAP from VS Code, nvim-dap or JetBrains on a real system, with no Z code. See [Debug from your editor (DAP)](#debug-from-your-editor-dap).
 
@@ -1117,6 +1120,20 @@ the source instead of the source. `params={"if_none_match": "<sha256>"}`
 still has that digest. Only the object's own source is compared, not the
 dependency context. A read with `include_hash` now carries the same `sha256`. The digest is over the exact text, not normalised. See
 [Read Summary](#read-summary--is-this-the-version-i-already-have).
+
+**Fixed:**
+
+- **`vsp dap` releases everything it took.** Every exit path (disconnect,
+  end of stream, a signal, a failed step or attach) clears the breakpoints,
+  releases the debuggee and stops the listener. A disconnect during a listen
+  no longer waits behind it: measured on a real system, 58 s → 0.1 s (#346).
+- **A failed BADI_IMPL leaves no empty ENHO** (#349, ported from #336). The
+  shared cleanup after a failed create now also releases the lock it took,
+  and a container whose transport request can't be established is kept, with
+  the manual step named, rather than deleted past `--allowed-transports`.
+- **The leak scan can't be blinded.** Control bytes in a commit message, a
+  file name or a foreign message encoding no longer hide a value from it, and
+  it never prints a scanned path or value in its own log (#347).
 
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
 
