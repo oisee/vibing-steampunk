@@ -220,6 +220,26 @@ func withoutContext(cookies map[string]string) map[string]string {
 	return out
 }
 
+// ssoAuthOptions are the single sign-on cookies and the refresh hook, both
+// passed through filter. The refresh matters as much as the first set: on a
+// re-authentication the transport replaces its cookies with whatever the
+// refresh returns, so an unfiltered refresh would hand a stateless side
+// connection the sap-contextid it must never send.
+func ssoAuthOptions(cookies map[string]string, refresh func(context.Context) (map[string]string, error),
+	budget time.Duration, filter func(map[string]string) map[string]string) []adt.Option {
+	return []adt.Option{
+		adt.WithCookies(filter(cookies)),
+		adt.WithReauthFunc(func(ctx context.Context) (map[string]string, error) {
+			fresh, err := refresh(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return filter(fresh), nil
+		}),
+		adt.WithReauthTimeout(budget),
+	}
+}
+
 // debugHTTPTransport builds the HTTP transport the debugger's ADT requests go
 // over, in the given session type.
 func debugHTTPTransport(params *systemParams, timeout time.Duration, session adt.SessionType) (*adt.Transport, error) {
@@ -256,11 +276,7 @@ func debugHTTPTransport(params *systemParams, timeout time.Duration, session adt
 		if err != nil {
 			return nil, err
 		}
-		opts = append(opts,
-			adt.WithCookies(cookieFilter(cookies)),
-			adt.WithReauthFunc(provider.Refresh),
-			adt.WithReauthTimeout(provider.ReauthBudget()),
-		)
+		opts = append(opts, ssoAuthOptions(cookies, provider.Refresh, provider.ReauthBudget(), cookieFilter)...)
 		cfg := adt.NewConfig(params.URL, "", "", opts...)
 		return adt.NewTransport(cfg), nil
 	}

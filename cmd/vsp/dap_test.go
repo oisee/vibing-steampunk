@@ -12,8 +12,59 @@ import (
 	"time"
 
 	"github.com/oisee/vibing-steampunk/internal/dap"
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
+
+// A single sign-on refresh replaces the side connection's cookies; what it
+// returns is filtered like the first set, so a sap-contextid in it never
+// reaches the next side request.
+func TestDAPSideConnectionFiltersRefreshedCookies(t *testing.T) {
+	var mu sync.Mutex
+	deletes, refreshes := 0, 0
+	var cookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(r.Header.Get("X-Csrf-Token"), "fetch") {
+			w.Header().Set("X-Csrf-Token", "token")
+			return
+		}
+		if r.Method != http.MethodDelete {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		deletes++
+		if deletes == 1 {
+			w.WriteHeader(http.StatusUnauthorized) // the SSO ticket expired
+			return
+		}
+		cookie = r.Header.Get("Cookie")
+	}))
+	defer srv.Close()
+
+	refresh := func(context.Context) (map[string]string, error) {
+		mu.Lock()
+		refreshes++
+		mu.Unlock()
+		return map[string]string{"MYSAPSSO2": "fresh", "sap-contextid": "SID%3aANON%3astateful"}, nil
+	}
+	opts := append([]adt.Option{adt.WithClient("001"), adt.WithSessionType(adt.SessionStateless), adt.WithTimeout(10 * time.Second)},
+		ssoAuthOptions(map[string]string{"MYSAPSSO2": "first"}, refresh, 10*time.Second, withoutContext)...)
+	side := saprfc.HTTPStateless(adt.NewTransport(adt.NewConfig(srv.URL, "", "", opts...)))
+
+	res, err := side.Do(context.Background(), saprfc.ADTRequest{Method: "DELETE", URI: "/sap/bc/adt/debugger/listeners?debuggingMode=user&requestUser=X"})
+	if err != nil || res.Status != 200 {
+		t.Fatalf("delete: %v %v", res, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if refreshes != 1 || deletes != 2 {
+		t.Fatalf("want one refresh and a retried delete; refreshes=%d deletes=%d", refreshes, deletes)
+	}
+	if strings.Contains(cookie, "sap-contextid") || !strings.Contains(cookie, "MYSAPSSO2=fresh") {
+		t.Errorf("cookies sent after the refresh: %q", cookie)
+	}
+}
 
 // The opener gives the session a side connection, and that connection is
 // stateless and joins no session: it sends no sap-contextid, even when the
