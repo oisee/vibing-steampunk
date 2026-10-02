@@ -295,7 +295,7 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 	}
 	if uerr := c.releaseLockAfterDelete(ctx, objectURL, lock.LockHandle, false); uerr != nil {
 		pce.CleanupActions = append(pce.CleanupActions, "could not release the delete lock")
-		pce.ManualSteps = append(pce.ManualSteps, strandedLockAdvice(objectURL, uerr))
+		pce.ManualSteps = append(pce.ManualSteps, lockAdviceAfterDelete(objectURL, uerr))
 		return pce
 	}
 	pce.CleanupActions = append(pce.CleanupActions, "released the delete lock")

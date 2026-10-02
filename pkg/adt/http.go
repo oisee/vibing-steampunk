@@ -843,31 +843,48 @@ func (t *Transport) applyProxyContextIDGuard(req *http.Request, opts *RequestOpt
 // the guard there is nothing to retire and the call is a no-op. The request
 // is a cheap stateless HEAD that carries no guard cookie, so the chain
 // injects its stored context and SAP ends it (verified: SM04 shows no
-// lingering ADT sessions afterwards). Failures are ignored: an already-dead
-// context answers ICMENOSESSION, which is the state this call wants anyway,
-// and the next LOCK opens a fresh context regardless. retireProxyContext is
-// the same call for a caller that needs to know whether it worked.
+// lingering ADT sessions afterwards). Nothing is sent while another lock
+// chain or stateful request uses the context (see retireProxyContext).
+// Failures are ignored: an already-dead context answers ICMENOSESSION, which
+// is the state this call wants anyway, and the next LOCK opens a fresh
+// context regardless. retireProxyContext is the same call for a caller that
+// needs to know whether it worked.
 func (t *Transport) ReleaseProxyContext(ctx context.Context) {
 	_ = t.retireProxyContext(ctx)
 }
 
-// errProxyContextShared: the release went out while another chain held a
-// lock or a stateful request was under way, so do sent it without the
-// context id and the context was left alone.
-var errProxyContextShared = errors.New("another lock chain was using the context; it was not retired")
+// errProxyContextShared: another lock chain or a stateful request was using
+// the proxy's context, so no release was sent: the proxy would inject that
+// context, the one in use, and the release would end it.
+var errProxyContextShared = errors.New("another lock chain or stateful request is using the proxy context; it was not retired")
 
 // retireProxyContext is ReleaseProxyContext with its outcome. nil means the
 // guard is off (nothing to retire) or the chain answered 2xx to a release
-// that carried its context. Anything else -- the request never got an
-// answer, a non-2xx answer, or a release sent while another chain held the
-// context -- is an error: the context, and an ENQUEUE that lives in it, may
-// still be there. A HEAD answer has no body, so a 4xx cannot be told apart
-// from ICMENOSESSION here; a caller that must know releases the lock itself.
+// that carried its context. Anything else is an error, and the context, with
+// any ENQUEUE in it, may still be there: the request never got an answer, it
+// got a non-2xx answer, or it was not sent at all.
+//
+// It is not sent while another lock chain holds a handle or a stateful
+// request is under way. The release carries no cookie of its own; the proxy
+// injects whichever context it holds at that moment, which may be the other
+// caller's. The check and the send happen under the context gate's shared
+// side, which no stateful request (a LOCK included) can enter, so neither
+// can change in between. A caller told "not retired" UNLOCKs with its own
+// handle instead.
+//
+// A HEAD answer has no body, so a 4xx cannot be told apart from
+// ICMENOSESSION here; a caller that must know releases the lock itself.
 func (t *Transport) retireProxyContext(ctx context.Context) error {
 	if !t.config.ProxyContextIDGuard {
 		return nil
 	}
-	shared := t.contextInFlight.Load() != 0 || (t.locks != nil && t.locks.present())
+	if !t.contextGate.tryShared() {
+		return errProxyContextShared
+	}
+	defer t.contextGate.releaseShared()
+	if t.contextInFlight.Load() != 0 || (t.locks != nil && t.locks.present()) {
+		return errProxyContextShared
+	}
 	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
 	if err != nil {
 		return err
@@ -883,10 +900,9 @@ func (t *Transport) retireProxyContext(ctx context.Context) error {
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("X-sap-adt-sessiontype", "stateless")
 	traceHTTPRequest(req, nil)
-	// Through do, like every other request: while another chain holds a lock
-	// or a stateful request is under way, the release goes without the
-	// context id and leaves that chain's context alone.
-	resp, err := t.do(req)
+	// Straight to send, as do does for a stateless request when the gate is
+	// free: the gate's shared side is already held here.
+	resp, err := t.send(req)
 	if err != nil {
 		return err
 	}
@@ -895,9 +911,6 @@ func (t *Transport) retireProxyContext(ctx context.Context) error {
 	traceHTTPResponse(resp, nil)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return fmt.Errorf("retiring the proxy context: status %d", resp.StatusCode)
-	}
-	if shared {
-		return errProxyContextShared
 	}
 	return nil
 }

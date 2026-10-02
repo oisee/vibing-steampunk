@@ -189,16 +189,97 @@ func TestCleanupPartialObject_FailedProxyRetirementAndUnlockIsReported(t *testin
 	}
 }
 
-// Retirement unconfirmed, but the UNLOCK says the session is gone: the
-// retirement did work after all, and there is no lock to report.
+// Retirement unconfirmed, and the UNLOCK says the session is gone or the
+// handle invalid. That proves nothing: the proxy may have moved to a fresh
+// context while the old one, with the ENQUEUE, stays live. The lock is
+// reported as possibly held, never as released.
 func TestCleanupPartialObject_UnconfirmedRetirementThenSessionGone(t *testing.T) {
+	for name, body := range map[string]string{
+		"session gone":        "ICMENOSESSION",
+		"invalid lock handle": "ExceptionResourceInvalidLockHandle",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &adtRecorder{}
+			client := newStubbedClient(t, rec, proxyRoute(http.StatusBadGateway, http.StatusBadRequest, body),
+				WithAllowedPackages("$ZDEMO"), WithProxyContextIDGuard())
+
+			pce := recoverDemo(client)
+			if pce == nil || !pce.CleanupOK {
+				t.Fatalf("the object was deleted, yet CleanupOK is false: %+v", pce)
+			}
+			steps := strings.Join(pce.ManualSteps, "\n")
+			if !strings.Contains(steps, "may still be locked") || !strings.Contains(steps, "SM12") {
+				t.Errorf("manual steps lack the may-still-be-locked advice: %v", pce.ManualSteps)
+			}
+		})
+	}
+}
+
+func TestDeleteObjectGated_UnconfirmedRetirementThenInvalidHandle(t *testing.T) {
 	rec := &adtRecorder{}
-	client := newStubbedClient(t, rec, proxyRoute(http.StatusBadGateway, http.StatusBadRequest, "ICMENOSESSION"),
+	client := newStubbedClient(t, rec, proxyRoute(http.StatusBadGateway, http.StatusBadRequest, "ExceptionResourceInvalidLockHandle"),
 		WithAllowedPackages("$ZDEMO"), WithProxyContextIDGuard())
 
-	pce := recoverDemo(client)
-	if pce == nil || !pce.CleanupOK || len(pce.ManualSteps) != 0 {
-		t.Fatalf("want a clean cleanup without manual steps: %+v", pce)
+	note, err := client.DeleteObjectGated(context.Background(), cleanupTestURI, "")
+	if err != nil {
+		t.Fatalf("DeleteObjectGated: %v", err)
+	}
+	if !strings.Contains(note, "may still be locked") {
+		t.Errorf("note = %q, want the may-still-be-locked advice", note)
+	}
+}
+
+// isRetireHead is the stateless HEAD on discovery that retires a proxy context.
+func isRetireHead(c wireCall) bool {
+	return c.method == http.MethodHead && strings.HasSuffix(c.path, "/core/discovery")
+}
+
+// While another lock chain holds a handle, no retirement HEAD is sent: the
+// proxy would inject the context in use, and the HEAD would end it.
+func TestRetireProxyContext_NotSentWhileAnotherLockIsHeld(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, WithProxyContextIDGuard())
+	client.noteLockOpened("OTHER-HANDLE")
+
+	if err := client.transport.retireProxyContext(context.Background()); err == nil {
+		t.Error("retirement reported as confirmed while another lock is held")
+	}
+	if calls := rec.snapshot(); indexOfCall(calls, isRetireHead) >= 0 {
+		dumpCalls(t, calls)
+		t.Error("a retirement HEAD was sent while another lock chain held the context")
+	}
+}
+
+// The same, end to end: the delete chain sends no HEAD and releases its own
+// lock with an UNLOCK on its own handle.
+func TestDeleteObjectGated_AnotherLockHeldUnlocksInsteadOfRetiring(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, proxyRoute(http.StatusOK, http.StatusOK, ""),
+		WithAllowedPackages("$ZDEMO"), WithProxyContextIDGuard())
+	client.noteLockOpened("OTHER-HANDLE")
+
+	note, err := client.DeleteObjectGated(context.Background(), cleanupTestURI, "")
+	if err != nil || note != "" {
+		t.Fatalf("DeleteObjectGated: note=%q err=%v", note, err)
+	}
+	calls := rec.snapshot()
+	delAt := indexOfCall(calls, isDelete)
+	if delAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("no DELETE was sent")
+	}
+	for i := delAt + 1; i < len(calls); i++ {
+		if isRetireHead(calls[i]) {
+			dumpCalls(t, calls)
+			t.Fatalf("retirement HEAD at %d while another lock chain held the context", i)
+		}
+	}
+	u := unlockAfterDelete(calls)
+	if u < 0 || calls[u].query.Get("lockHandle") != "HANDLE-1" {
+		dumpCalls(t, calls)
+		t.Error("want an UNLOCK with the delete chain's own handle after the DELETE")
 	}
 }
 

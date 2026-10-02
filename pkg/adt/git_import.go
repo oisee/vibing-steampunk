@@ -1412,6 +1412,9 @@ func (c *Client) deleteGatedChecked(ctx context.Context, objectURL, transport st
 		return "", true, derr
 	}
 	if uerr := c.releaseLockAfterDelete(gctx, objectURL, lock.LockHandle, lockGone); uerr != nil {
+		if errors.Is(uerr, errLockUnverified) {
+			return lockAdviceAfterDelete(objectURL, uerr), true, nil
+		}
 		return "its lock entry may stay in SM12 until the ADT session ends: " + uerr.Error(), true, nil
 	}
 	return "", true, nil

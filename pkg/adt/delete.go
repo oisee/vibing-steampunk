@@ -63,15 +63,20 @@ func (c *Client) deleteObject(ctx context.Context, objectURL string, lockHandle 
 	return c.transport.retireProxyContext(ctx) == nil, nil
 }
 
+// errLockUnverified marks an UNLOCK after a DELETE whose answer neither
+// releases the lock nor proves it held: see releaseLockAfterDelete.
+var errLockUnverified = errors.New("the lock's release could not be verified")
+
 // releaseLockAfterDelete releases the lock a successful deleteObject left,
-// on a detached, bounded context, and returns an error only for a lock that
-// may still be held. lockGone (the proxy context was retired, and the
-// ENQUEUE with it) means there is nothing to release.
+// on a detached, bounded context. lockGone (a confirmed proxy context
+// retirement) or an UNLOCK that SAP accepts are the only outcomes that count
+// as released; every other outcome is an error.
 //
-// Behind the proxy, a retirement that was not confirmed may still have
-// happened; the UNLOCK then lands in a context that is gone or holds no
-// lock, and SAP's "session gone" or "invalid lock handle" answer means just
-// that, not a stranded lock.
+// Behind the proxy, an UNLOCK answered "session gone" or "invalid lock
+// handle" proves nothing either way: the proxy may have switched to a fresh
+// context (a concurrent LockObject does that) while the old one, and the
+// ENQUEUE in it, stays live. That answer comes back wrapped in
+// errLockUnverified, for lockAdviceAfterDelete's "may still be locked".
 func (c *Client) releaseLockAfterDelete(ctx context.Context, objectURL, lockHandle string, lockGone bool) error {
 	if lockGone {
 		return nil
@@ -83,9 +88,19 @@ func (c *Client) releaseLockAfterDelete(ctx context.Context, objectURL, lockHand
 	var apiErr *APIError
 	if c.transport.config != nil && c.transport.config.ProxyContextIDGuard &&
 		errors.As(err, &apiErr) && (apiErr.IsSessionExpired() || isInvalidLockHandle(apiErr)) {
-		return nil
+		return fmt.Errorf("%w: %w", errLockUnverified, err)
 	}
 	return err
+}
+
+// lockAdviceAfterDelete is the advice for releaseLockAfterDelete's error:
+// "may still be locked; check SM12" when the release could not be verified,
+// the stranded-lock advice when it definitely failed.
+func lockAdviceAfterDelete(objectURL string, err error) string {
+	if errors.Is(err, errLockUnverified) {
+		return uncertainLockAdvice(objectURL, err)
+	}
+	return strandedLockAdvice(objectURL, err)
 }
 
 // DeleteObjectGated deletes an object in one call, taking and releasing its
