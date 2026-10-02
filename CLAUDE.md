@@ -28,6 +28,20 @@ Key flags: `--mode focused|expert|hyperfocused`, `--read-only`, `--allowed-packa
 
 ---
 
+## Agents and budget modes
+
+How to run codex and Claude subagents (commands, sandboxes, prompt shapes, the review loop) is in the shared playbook [oisee/agent-playbook](https://github.com/oisee/agent-playbook) (private; `gh repo clone oisee/agent-playbook`), especially [critics-and-executors](https://github.com/oisee/agent-playbook/blob/main/critics-and-executors.md) and [review-loop](https://github.com/oisee/agent-playbook/blob/main/review-loop.md). Alice sets the mode in chat; without a word from her it is **normal**.
+
+| Mode | Who writes code | Critics | Claude reads |
+|------|-----------------|---------|--------------|
+| **Economy** ("экономим") | codex executors (`-s workspace-write`, own worktree, `gpt-6-sol` medium); Claude only writes TASK.md/CRITIC.md and orchestrates | one per PR: codex for Claude's few lines, a Sonnet subagent on the diff only for codex's code | the diff and the critic's final answer, not whole files or logs |
+| **Normal** | Claude, or Claude subagents in worktrees | codex read-only critic on every PR; a fresh Claude critic for codex-written code; block only on P1/P2 | as needed |
+| **Lavish** ("не экономим") | as normal; for safety gates, release, delete | both families every round, a running critic that applies mutants, a third-model tie-breaker, high effort | everything it needs |
+
+Every mode keeps the gates: CI green, cross-family review before merge, and the hard rules in the spec (commit locally, never push or comment from an executor).
+
+---
+
 ## Codebase
 
 ```
