@@ -46,6 +46,11 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Offline: which branches a release tag may come from (main, or its own
+      # release/X.Y for LTS), and that an LTS patch never becomes latest.
+      - name: Release script self-test
+        run: ./.github/ci/release-test.sh
+
       # Cross-compilation only guards main; a release already builds its six
       # targets, and PRs do not need to pay for it. linux/386, linux/arm and
       # windows/386 are not released since v2.60.0, but `vsp update` tells users

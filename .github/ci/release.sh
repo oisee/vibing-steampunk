@@ -5,7 +5,8 @@
 # the manual fallback (`make release-dist TAG=vX.Y.Z`), so a dry run on a laptop
 # runs the same checks CI runs.
 #
-#   release.sh build   TAG [DIST]          one binary per PLATFORMS entry + checksums.txt + LICENSE + NOTICE
+#   release.sh on-branch TAG               the tag is on origin/main, or on origin/release/X.Y of its own X.Y (LTS)
+#   release.sh build   TAG [DIST]       one binary per PLATFORMS entry + checksums.txt + LICENSE + NOTICE
 #   release.sh verify  TAG [DIST]          by content: names, headers, build info, checksums
 #   release.sh run     TAG DIST SPEC...    execute binaries; each must print exactly TAG
 #   release.sh notes   TAG [OUT]           release notes: README "What's New", else git-cliff
@@ -60,6 +61,44 @@ check_tag() {
 }
 
 tag_commit() { git rev-parse --verify --quiet "refs/tags/$1^{commit}" || die "tag $1 does not exist locally"; }
+
+# ------------------------------------------------------------------ on-branch
+# Where a tag may come from. A release is cut from main, or, for an LTS line,
+# from release/X.Y: v2.59.2 is cherry-picked onto release/2.59 and tagged there.
+# Accepted when the tag's commit is reachable from origin/main, or from exactly
+# one origin/release/X.Y branch and that branch's X.Y is the tag's major.minor.
+# So v2.60.9 on release/2.59 is refused, and so is v2.59.2 on any other branch.
+# It reads origin's branches as already fetched (refs/remotes/origin/*) and
+# fetches nothing itself: the caller fetches main and release/*.
+cmd_on_branch() {
+	local tag=$1 sha xy b branches checked hits=
+	check_tag "$tag"
+	sha=$(tag_commit "$tag")
+	git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null ||
+		die "origin/main is not fetched: git fetch origin '+refs/heads/main:refs/remotes/origin/main'"
+	if git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
+		ok "$tag ($sha) is on origin/main"; return
+	fi
+	xy=$(echo "$tag" | sed -E 's/^v([0-9]+\.[0-9]+)\..*$/\1/')
+	branches=$(git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/release |
+		grep -E '^release/[0-9]+\.[0-9]+$' || true)
+	checked="origin/main"
+	for b in $branches; do
+		checked="$checked origin/$b"
+		if git merge-base --is-ancestor "$sha" "refs/remotes/origin/$b"; then hits="$hits $b"; fi
+	done
+	hits=${hits# }
+	case $hits in
+	"release/$xy")
+		ok "$tag ($sha) is on origin/release/$xy (LTS)" ;;
+	"")
+		die "$tag ($sha) is on none of the branches a release comes from (checked: $checked). Tag main, or tag an LTS patch on release/$xy." ;;
+	*" "*)
+		die "$tag ($sha) is on more than one release branch ($hits; checked: $checked). An LTS tag must be on exactly one: release/$xy." ;;
+	*)
+		die "$tag ($sha) is on origin/$hits, not on origin/main (checked: $checked). A v$xy.x tag belongs on main or on release/$xy, never on $hits." ;;
+	esac
+}
 
 # ---------------------------------------------------------------------- build
 cmd_build() {
@@ -386,9 +425,10 @@ cmd_publish() {
 		--jq '"\(.url) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length) latest='"$latest"'"'
 }
 
-[ $# -ge 1 ] || die "usage: release.sh build|verify|run|notes|compare|tag-at|digests|latest|publish ..."
+[ $# -ge 1 ] || die "usage: release.sh on-branch|build|verify|run|notes|compare|tag-at|digests|latest|publish ..."
 sub=$1; shift
 case $sub in
+on-branch) [ $# -eq 1 ] || die "usage: release.sh on-branch TAG"; cmd_on_branch "$@" ;;
 build) [ $# -ge 1 ] || die "usage: release.sh build TAG [DIST]"; cmd_build "$@" ;;
 verify) [ $# -ge 1 ] || die "usage: release.sh verify TAG [DIST]"; cmd_verify "$@" ;;
 run) [ $# -ge 3 ] || die "usage: release.sh run TAG DIST SPEC..."; cmd_run "$@" ;;

@@ -5,16 +5,26 @@ name: Release
 # compares it byte for byte, and only then makes the release public.
 #
 # What a human does: merge the release-prep PR (README "What's New" vX.Y.Z,
-# CHANGELOG.md), then `git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"` on main and
-# push the tag. The tag's subject after "vX.Y.Z: " becomes the release title.
+# CHANGELOG.md), then `git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"` on main (an
+# LTS patch: on release/X.Y) and push the tag. The tag's subject after "vX.Y.Z: " becomes the release title.
 # See .claude/commands/celebrate.md.
 #
 # This workflow never pushes to any branch and never creates or moves a tag. It
 # refuses a tag that already has a release (it cannot overwrite one) and a tag
-# whose commit is not on main.
+# whose commit is neither on main nor, for an LTS patch, on release/X.Y of the
+# tag's own major.minor (`release.sh on-branch`; v2.59.2 on release/2.59).
 #
 # workflow_dispatch releases an existing tag, e.g. after fixing whatever made a
 # tag-push run fail. The checks are the same.
+#
+# Which code runs: GitHub runs this file as it is at the pushed tag (tag push)
+# or at the dispatched branch (workflow_dispatch). prepare checks that same
+# commit out, so the release policy is the workflow's own; every gate after it
+# (test, leak scan, build, run, publish) checks out the tag's commit and builds
+# with the release.sh in it. An LTS tag pushed on a release/X.Y that predates
+# on-branch is refused by that branch's older prepare; release it with
+# `gh workflow run release.yml --ref main -f tag=vX.Y.Z`, or carry this change
+# onto release/X.Y first.
 #
 # The build and every check are .github/ci/release.sh, so a dry run on a laptop
 # is the same code: `make release-dist TAG=vX.Y.Z` in a clean checkout of the tag.
@@ -44,10 +54,13 @@ jobs:
       sha: ${{ steps.tag.outputs.sha }}
       prev: ${{ steps.tag.outputs.prev }}
     steps:
+      # The workflow's own commit (the tag on a tag push, the branch head on a
+      # dispatch), so on-branch below is the policy of this workflow file even
+      # when the tag is an LTS commit whose release.sh predates it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
+          ref: ${{ github.sha }}
 
       - name: Resolve and check the tag
         id: tag
@@ -58,12 +71,17 @@ jobs:
           if ! [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error title=release::'$TAG' is not a release tag (vMAJOR.MINOR.PATCH[-pre])"; exit 1
           fi
-          # actions/checkout can leave an annotated tag lightweight; fetch it as it is.
-          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" "refs/heads/main:refs/remotes/origin/main"
+          # actions/checkout can leave an annotated tag lightweight; fetch it as
+          # it is, with main and every release/* branch as origin has them now.
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/release/*:refs/remotes/origin/release/*"
           sha=$(git rev-parse "refs/tags/$TAG^{commit}")
-          if ! git merge-base --is-ancestor "$sha" origin/main; then
-            echo "::error title=release::$TAG ($sha) is not on main. Release only what main has."; exit 1
+          # On origin/main, or on exactly one origin/release/X.Y of the tag's X.Y.
+          if ! where=$(./.github/ci/release.sh on-branch "$TAG" 2>&1); then
+            echo "::error title=release::${where#release.sh: }"; exit 1
           fi
+          echo "$where"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "::error title=release::$TAG already has a release. This workflow never modifies a published release; delete a failed draft by hand if that is what is there."; exit 1
           fi

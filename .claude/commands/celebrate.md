@@ -47,12 +47,47 @@ git push origin vX.Y.Z
 The tag subject after `vX.Y.Z: ` becomes the release title (`vX.Y.Z: <title>`).
 Push **only the tag**; CI pushes nothing anywhere.
 
+### LTS (release/X.Y)
+
+v2.59.x is an LTS line: its patches are cut from `release/2.59`, not main. A
+patch is a fix that has landed on main, carried over with `cherry-pick -x` (the
+`(cherry picked from commit …)` line names the main commit), plus the notes:
+
+```bash
+git fetch origin
+git switch -c lts/vX.Y.Z origin/release/X.Y
+git cherry-pick -x <main-sha>...               # each fix, oldest first
+# README.md "What's New": add `### vX.Y.Z` (e.g. `### v2.59.2`) on this branch;
+# that section is the release notes. CHANGELOG.md as usual.
+# PR into release/X.Y (not main); after it is merged:
+git switch release/X.Y && git pull --ff-only   # a local branch tracking origin/release/X.Y
+git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"
+git push origin vX.Y.Z                         # only the tag
+```
+
+- `prepare` accepts a tag on `origin/main`, or on exactly one
+  `origin/release/X.Y` whose X.Y is the tag's major.minor. A v2.60.x on
+  release/2.59, or a v2.59.x only on some other branch, is refused; the error
+  lists the branches checked (`.github/ci/release.sh on-branch vX.Y.Z` says the
+  same locally after a `git fetch origin`).
+- The gates (test, leak scan, build, run, publish) run on the tag's commit,
+  with the `release.sh` in it: an LTS release ships the platform set its own
+  line ships.
+- A tag push runs `release.yml` as it is at the tag. If `release/X.Y` predates
+  the LTS rule (`release.sh on-branch`), that run is refused before anything
+  is built; run it from main instead:
+  `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
+- Latest: an LTS patch is marked latest only if it is above every published
+  final release, so v2.59.2 after v2.60.0 is never latest and `vsp update`
+  keeps offering v2.60.x.
+
 ## 4. What CI does
 
 `release.yml`, on the tag push (or `gh workflow run release.yml -f tag=vX.Y.Z`
 for an existing tag that has no release yet):
 
-1. **prepare**: tag format, tag commit is on `main`, no release exists for it.
+1. **prepare**: tag format, tag commit is on `main` (or, for an LTS patch, on
+   its own `release/X.Y`), no release exists for it.
 2. **test**: `go test -race ./...` at the tag.
 3. **leak scan**: the tag's tree and the commits since the previous tag, with
    the `VSP_LEAK_IDENTIFIERS` list (fails closed without it).
