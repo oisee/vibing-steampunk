@@ -176,6 +176,10 @@ func (c *Client) WriteMessageClassTexts(ctx context.Context, name, lang string, 
 		OpName:    "WriteMessageClassTexts",
 		ObjectURL: objectURL,
 		Transport: transport,
+		// The caller's handle, if any: the gate then runs after that LOCK and
+		// its lookup joins the lock's session. Empty when this call locks
+		// itself, below the gate.
+		LockHandle: lockHandle,
 	})
 	if err != nil {
 		return err
@@ -255,10 +259,11 @@ func (c *Client) WriteDataElementLabels(ctx context.Context, name, lang string, 
 
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpUpdate,
-		OpName:    "WriteDataElementLabels",
-		ObjectURL: fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", url.PathEscape(name)),
-		Transport: transport,
+		Op:         OpUpdate,
+		OpName:     "WriteDataElementLabels",
+		ObjectURL:  fmt.Sprintf("/sap/bc/adt/ddic/dataelements/%s", url.PathEscape(name)),
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return err
 	}

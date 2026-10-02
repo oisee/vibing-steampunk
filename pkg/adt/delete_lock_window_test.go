@@ -249,3 +249,47 @@ func TestDeleteObject_SuppliedHandlePastKeepAliveWindowKeepsLookupStateful(t *te
 		dumpCalls(t, calls)
 	}
 }
+
+// WriteMessageClassTexts with a caller-supplied handle runs its gate after the
+// caller's LOCK, so its package lookup must go out in that lock's stateful
+// session, like DeleteObject's.
+func TestWriteMessageClassTexts_SuppliedHandleKeepsLookupStateful(t *testing.T) {
+	const objURL = "/sap/bc/adt/messageclass/zdemo_mc"
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, deleteRoute(objURL, "ZDEMO_MC", "$TMP"),
+		WithAllowedPackages("$TMP"))
+	ctx := context.Background()
+
+	lock, err := client.LockObject(ctx, objURL, "MODIFY")
+	if err != nil {
+		t.Fatalf("LockObject: %v", err)
+	}
+	if err := client.WriteMessageClassTexts(ctx, "ZDEMO_MC", "EN",
+		[]MessageClassMessage{{Number: "001", Text: "hello"}}, lock.LockHandle, ""); err != nil {
+		t.Fatalf("WriteMessageClassTexts: %v", err)
+	}
+
+	calls := rec.snapshot()
+	putAt := indexOfCall(calls, func(c wireCall) bool {
+		return c.method == http.MethodPut && strings.Contains(c.path, "/messageclass/")
+	})
+	lockAt := lastIndexBefore(calls, putAt, isLock)
+	if putAt < 0 || lockAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("expected a LOCK followed by a PUT of the message class")
+	}
+	searchAt := -1
+	for i := lockAt + 1; i < putAt; i++ {
+		if isSearch(calls[i]) {
+			searchAt = i
+		}
+	}
+	if searchAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("no package lookup between LOCK and PUT")
+	}
+	if calls[searchAt].sessionType != "stateful" {
+		t.Errorf("package lookup between LOCK and PUT is not stateful: %s", calls[searchAt])
+		dumpCalls(t, calls)
+	}
+}
