@@ -415,6 +415,10 @@ cmd_publish() {
 	local tag=$1 sha=$2 dist=$3 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} latest
 	"$0" tag-at "$tag" "$sha"
 	"$0" digests "$tag" "$dist"
+	# Read the published set as late as possible: release.yml serializes its
+	# publish jobs across all tags (concurrency group release-publish), so a
+	# v2.60.0 published a moment ago is already listed here, and an LTS v2.59.2
+	# publishing after it gets latest=false.
 	latest=$("$0" latest "$tag")
 	gh release edit "$tag" --repo "$repo" --draft=false --latest="$latest"
 	if ! { "$0" tag-at "$tag" "$sha" && "$0" digests "$tag" "$dist"; }; then

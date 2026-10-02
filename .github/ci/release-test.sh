@@ -102,6 +102,64 @@ latest_is true "next minor" v2.61.0 v2.60.0 v2.59.2
 latest_is false "LTS after a higher major" v2.59.3 v3.0.0 v2.60.0
 latest_is false "prerelease" v2.60.1-rc.1 v2.60.0
 
+# -------------------------------------------------- publish, one after another
+# release.yml runs publish jobs one at a time across tags (concurrency group
+# release-publish). Two drafts, v2.60.0 and the LTS v2.59.2, are published in
+# turn, in both orders, through the real `release.sh publish` (tag-at against a
+# local "origin", digests and latest against a stateful fake gh). Whatever the
+# order, v2.59.2 is never left as Latest, and it is not marked latest at all
+# once v2.60.0 is public.
+cat > "$tmp/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+# State: $FAKE_GH/releases holds "<tag> draft|published"; edits go to $FAKE_GH/log.
+set -euo pipefail
+st=$FAKE_GH/releases
+case "$1 $2" in
+"api --paginate") awk '$2 == "published" { print $1 }' "$st" ;;
+"release view")
+	grep -q "^$3 " "$st" || exit 1
+	case "$*" in *databaseId*) echo "id-$3" ;; *) echo "https://example.invalid/$3 draft=false" ;; esac ;;
+"api repos/"*)
+	for f in "$FAKE_DIST"/*; do echo "$(basename "$f") sha256:$(sha256sum "$f" | cut -d' ' -f1)"; done ;;
+"release edit")
+	tag=$3 draft= latest=-
+	for a in "$@"; do case $a in --draft=*) draft=${a#--draft=} ;; --latest=*) latest=${a#--latest=} ;; esac; done
+	echo "$tag draft=$draft latest=$latest" >> "$FAKE_GH/log"
+	if [ "$draft" = false ]; then s=published; else s=draft; fi
+	awk -v t="$tag" -v s="$s" '$1 == t { $2 = s } { print }' "$st" > "$st.new" && mv "$st.new" "$st" ;;
+*) echo "fake gh: unexpected call: $*" >&2; exit 2 ;;
+esac
+EOF
+chmod +x "$tmp/bin/gh"
+export FAKE_GH="$tmp/gh" FAKE_DIST="$tmp/dist"
+mkdir -p "$FAKE_GH" "$FAKE_DIST"
+echo placeholder > "$FAKE_DIST/vsp-linux-amd64"
+cd "$repo"
+git remote add origin "$repo" # tag-at reads `git ls-remote origin`: this repository's own tags
+git tag v2.59.2 "$lts"
+
+# publish_in_order <name> <tag> <tag>: both start as drafts next to a published v2.59.1.
+publish_in_order() {
+	local name=$1 t want_lts out; shift
+	printf '%s\n' "v2.59.1 published" "v2.60.0 draft" "v2.59.2 draft" > "$FAKE_GH/releases"
+	: > "$FAKE_GH/log"
+	for t in "$@"; do
+		out=$(PATH="$tmp/bin:$PATH" "$rel" publish "$t" "$(git rev-parse "$t^{commit}")" "$FAKE_DIST" 2>&1) ||
+			{ flunk "publish $name: $t failed: $out"; return; }
+	done
+	# v2.59.2 may be latest only if it went first, while v2.60.0 was a draft.
+	if [ "$1" = v2.59.2 ]; then want_lts=true; else want_lts=false; fi
+	grep -qx "v2.59.2 draft=false latest=$want_lts" "$FAKE_GH/log" ||
+		{ flunk "publish $name: v2.59.2 not published with latest=$want_lts: $(tr '\n' ';' < "$FAKE_GH/log")"; return; }
+	[ "$(grep 'latest=true' "$FAKE_GH/log" | tail -n 1 | cut -d' ' -f1)" = v2.60.0 ] ||
+		{ flunk "publish $name: the last release marked latest is not v2.60.0: $(tr '\n' ';' < "$FAKE_GH/log")"; return; }
+	pass "publish $name: $(tr '\n' ';' < "$FAKE_GH/log")"
+}
+publish_in_order "v2.60.0 then LTS v2.59.2" v2.60.0 v2.59.2
+publish_in_order "LTS v2.59.2 then v2.60.0" v2.59.2 v2.60.0
+git tag -d v2.59.2 >/dev/null
+cd "$here"
+
 cat > "$tmp/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 exit 1

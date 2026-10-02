@@ -77,9 +77,17 @@ git push origin vX.Y.Z                         # only the tag
   the LTS rule (`release.sh on-branch`), that run is refused before anything
   is built; run it from main instead:
   `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
+- `workflow_dispatch` is accepted only from `main` or a `release/X.Y` branch
+  (checked in the workflow before any checked-out code runs), and a
+  dispatched prepare takes `release.sh on-branch` from main, never from the
+  dispatched branch.
 - Latest: an LTS patch is marked latest only if it is above every published
   final release, so v2.59.2 after v2.60.0 is never latest and `vsp update`
-  keeps offering v2.60.x.
+  keeps offering v2.60.x. Publish jobs run one at a time across all tags
+  (concurrency group `release-publish`) and decide latest right before going
+  public, so two releases at once cannot both end up latest. GitHub keeps one
+  pending job per group: a third queued publish is cancelled (nothing goes
+  public); dispatch it again.
 
 ## 4. What CI does
 

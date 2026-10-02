@@ -147,9 +147,12 @@ is one build definition, not two that drift.
   "What's New" as the notes, PR into release/X.Y. After the merge,
   `git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"` on release/X.Y and
   `git push origin vX.Y.Z`. The full steps are in `/celebrate`.
-- **Which code runs:** a tag push runs `release.yml` as it is at the tag;
-  prepare checks out the workflow's own commit, so the branch policy is the
-  workflow's. Every gate after prepare checks out the tag's commit and uses
+- **Which code runs:** a tag push runs `release.yml` as it is at the tag,
+  and prepare takes `on-branch` from the tag, which must then be on main or
+  its release/X.Y. `workflow_dispatch` is accepted only from main or a
+  release/X.Y branch, checked in the workflow itself before any checked-out
+  code runs, and a dispatched prepare takes `on-branch` from main, not from
+  the dispatched branch. Every gate after prepare checks out the tag's commit and uses
   its `release.sh`, so an LTS release ships its own line's platform set
   (release/2.59 still has the nine). `release/2.59` predates `on-branch`: a
   tag pushed there is refused by its older prepare until this change is
@@ -158,8 +161,16 @@ is one build definition, not two that drift.
   main's policy and the tag's build.
 - **Latest:** `latest` compares with every published final release, so a
   v2.59.2 published after v2.60.0 is not latest, and `vsp update` (which reads
-  releases/latest) keeps offering v2.60.x. `.github/ci/release-test.sh` checks
-  this with a fake `gh`, and the branch rule in a throwaway repository; CI's
+  releases/latest) keeps offering v2.60.x. The workflow-level concurrency
+  group is per tag, so two tags could publish at the same moment and both
+  compute latest=true; the publish job therefore has its own group,
+  `release-publish`, shared by all tags, and `release.sh publish` reads the
+  published set right before `--draft=false`. (GitHub keeps one pending job
+  per group: a third queued publish is cancelled before anything goes public,
+  and is dispatched again.) `.github/ci/release-test.sh` checks this with a
+  stateful fake `gh`: v2.60.0 and v2.59.2 drafts published in either order
+  leave v2.60.0 as the last one marked latest, and v2.59.2 after v2.60.0 gets
+  latest=false. It also checks the branch rule in a throwaway repository; CI's
   build job runs it.
 
 ### Dry run (local, no tag pushed, no release touched)
