@@ -6,6 +6,9 @@
 releases, and can CI do it safely?
 **Answer:** CI, on a tag push, with every check done by reading the files.
 Implemented on `ci/release-on-tag`.
+**Update (v2.60.0):** the release builds six platforms (linux, darwin,
+windows x amd64, arm64); linux-386, linux-arm and windows-386 are no longer
+built. The process below is described as it is now; the dry run is as it ran.
 
 ## How we got two paths
 
@@ -67,12 +70,12 @@ release is built the new way.
 
 | Concern | Old CI (`release.yml` + goreleaser) | Manual `/celebrate` (since `e8c5391`) | New CI (this branch) |
 |---|---|---|---|
-| Stale binaries | none (`--clean`) | possible: `rm` is a step a human can skip; `build-all` vs `build-all-all` trap | `build` deletes `dist/`; `verify` requires exactly the 12 files |
-| Version vs tag | creates the tag itself; prints `2.56.0`, not the tag | `git describe`: right only if tagged *before* building, on a clean tree | `main.Version` = the tag, by construction; checked in build info for all 9 and by `--version` for 8 |
+| Stale binaries | none (`--clean`) | possible: `rm` is a step a human can skip; `build-all` vs `build-all-all` trap | `build` deletes `dist/`; `verify` requires exactly the 9 files (6 binaries, checksums, LICENSE, NOTICE) |
+| Version vs tag | creates the tag itself; prints `2.56.0`, not the tag | `git describe`: right only if tagged *before* building, on a clean tree | `main.Version` = the tag, by construction; checked in build info for all 6 and by `--version` for all 6 (darwin-amd64 best effort) |
 | Built from the tag | yes | not enforced (v2.59.0: no) | `build` refuses HEAD ≠ tag or a dirty tree; `verify` checks `vcs.revision` and `vcs.modified` |
-| Platforms | same 9 (goarm 7 implicit) | 9, but linux-amd64 cgo/dynamic | 9, `CGO_ENABLED=0`, `GOARM=7` explicit, header + build info checked |
+| Platforms | same 9 (goarm 7 implicit) | 9, but linux-amd64 cgo/dynamic | 6 since v2.60.0, `CGO_ENABLED=0`, header + build info checked |
 | Asset names (`vsp update`) | match | match | match (`asset_of` = `assetName`) |
-| checksums.txt | yes | hand-run `sha256sum` | generated; 9 lines exactly, each checked |
+| checksums.txt | yes | hand-run `sha256sum` | generated; one line per platform exactly (6), each checked |
 | After upload | not checked | not checked | draft → download → byte compare → publish |
 | LICENSE/NOTICE | yes | dropped since v2.58.0 | yes, compared with the repo's |
 | Tests / leak scan | `go test` / none | `go test` / staged-diff grep | `go test -race` / the CI leak scanner over the tag's tree and commits since the previous tag, fails closed |
@@ -109,9 +112,9 @@ existing tag. Its jobs:
 3. **leak-scan**: the ci.yml scanner, `-all -rev <tag> -range <prev>..<tag>`,
    `-require-identifiers`.
 4. **build-and-verify**: `.github/ci/release.sh build` and `verify`. Then
-   `run` executes linux amd64, 386, and arm64/arm under qemu.
+   `run` executes linux amd64, and arm64 under qemu.
 5. **run**: macOS (darwin-arm64 required; darwin-amd64 best effort via
-   Rosetta, reported as a warning if it cannot start) and Windows (amd64, 386).
+   Rosetta, reported as a warning if it cannot start) and Windows (amd64).
    windows-arm64 runs on a Windows ARM runner.
 6. **publish**: README/git-cliff notes, with the title from the annotated
    tag's subject. Creates a draft, downloads it back, compares byte for byte,

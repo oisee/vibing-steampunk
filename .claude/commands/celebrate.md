@@ -56,17 +56,17 @@ for an existing tag that has no release yet):
 2. **test**: `go test -race ./...` at the tag.
 3. **leak scan**: the tag's tree and the commits since the previous tag, with
    the `VSP_LEAK_IDENTIFIERS` list (fails closed without it).
-4. **build and verify** (`.github/ci/release.sh`): nine binaries + `checksums.txt`
+4. **build and verify** (`.github/ci/release.sh`): six binaries + `checksums.txt`
    + `LICENSE` + `NOTICE`, then by content:
    - exactly that file set, nothing stale;
    - each executable header is the platform its name says (ELF/Mach-O/PE + arch);
-   - Go's build info in each binary: GOOS/GOARCH (GOARM=7), `vcs.revision` = the
+   - Go's build info in each binary: GOOS/GOARCH, `vcs.revision` = the
      tag commit, `vcs.modified=false`, `main.Version` = the tag;
-   - `checksums.txt` has exactly the nine lines and every one matches;
+   - `checksums.txt` has exactly the six lines and every one matches;
    - `--version` prints exactly `vsp version vX.Y.Z (commit: <sha>, …)` for
-     linux amd64/386, and arm64/arm under qemu.
+     linux amd64, and arm64 under qemu.
 5. **run**: the same `--version` check on macOS (darwin-arm64; darwin-amd64 if
-   Rosetta is there, else a warning) and Windows (amd64, 386; arm64 on a
+   Rosetta is there, else a warning) and Windows (amd64; arm64 on a
    Windows ARM runner).
 6. **publish**: notes from the README (else git-cliff), release created as a
    **draft**, every asset downloaded back and compared byte for byte. Just

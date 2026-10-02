@@ -144,7 +144,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Install qemu (to run the arm binaries)
+      - name: Install qemu (to run the arm64 binary)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
       - name: Build
         run: ./.github/ci/release.sh build "$TAG" dist
@@ -153,8 +153,7 @@ jobs:
       - name: Run (each prints exactly the tag)
         run: |
           ./.github/ci/release.sh run "$TAG" dist \
-            vsp-linux-amd64 vsp-linux-386 \
-            vsp-linux-arm64@qemu-aarch64-static vsp-linux-arm@qemu-arm-static
+            vsp-linux-amd64 vsp-linux-arm64@qemu-aarch64-static
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -175,7 +174,7 @@ jobs:
             # as a warning, and the header and build info checks still apply.
             specs: vsp-darwin-arm64 ?vsp-darwin-amd64
           - os: windows-latest
-            specs: vsp-windows-amd64.exe vsp-windows-386.exe
+            specs: vsp-windows-amd64.exe
           - os: windows-11-arm
             specs: vsp-windows-arm64.exe
     runs-on: ${{ matrix.os }}

@@ -5,7 +5,7 @@
 # the manual fallback (`make release-dist TAG=vX.Y.Z`), so a dry run on a laptop
 # runs the same checks CI runs.
 #
-#   release.sh build   TAG [DIST]          nine binaries + checksums.txt + LICENSE + NOTICE
+#   release.sh build   TAG [DIST]          one binary per PLATFORMS entry + checksums.txt + LICENSE + NOTICE
 #   release.sh verify  TAG [DIST]          by content: names, headers, build info, checksums
 #   release.sh run     TAG DIST SPEC...    execute binaries; each must print exactly TAG
 #   release.sh notes   TAG [OUT]           release notes: README "What's New", else git-cliff
@@ -24,10 +24,14 @@
 # associative arrays, no mapfile, no GNU-only flags.
 set -euo pipefail
 
-# The nine assets every release has shipped since v2.4x. `vsp update` downloads
+# The six assets every release ships since v2.60.0 (linux/386, linux/arm and
+# windows/386 were dropped then). `vsp update` downloads
 # assetName(GOOS, GOARCH) = vsp-<os>-<arch>[.exe] (cmd/vsp/update.go) and refuses
-# one without a checksums.txt entry, so these names are an interface.
-PLATFORMS="linux/amd64 linux/arm64 linux/386 linux/arm darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 windows/386"
+# one without a checksums.txt entry, so these names are an interface. Every
+# count below is derived from this list; there is no second copy of the number.
+PLATFORMS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
+# shellcheck disable=SC2086 # split on purpose: one platform per word
+NPLATFORMS=$(set -- $PLATFORMS; echo $#)
 EXTRA_FILES="LICENSE NOTICE" # Apache-2.0 s.4 (open-rfc-go is embedded); the binaries are bare
 TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 
@@ -88,13 +92,11 @@ cmd_build() {
 		os=${p%/*}; arch=${p#*/}
 		out="$dist/$(asset_of "$p")"
 		echo "build $out"
-		# GOARM pinned: the default for a cross-compile has changed across Go
-		# releases, and vsp-linux-arm has always meant ARMv7. CGO_ENABLED=0
-		# pinned: a native build otherwise links glibc (v2.57.0-v2.59.0's
+		# CGO_ENABLED=0 pinned: a native build otherwise links glibc (v2.57.0-v2.59.0's
 		# linux-amd64 needs glibc 2.34). No -trimpath: it drops -ldflags from
 		# the build info, and verify reads main.Version from there for the
 		# binaries no runner can start.
-		CGO_ENABLED=0 GOOS=$os GOARCH=$arch GOARM=7 \
+		CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
 			go build -ldflags "$ldflags" -o "$out" ./cmd/vsp
 	done
 	(cd "$dist" && for p in $PLATFORMS; do a=$(asset_of "$p"); echo "$(sha256_of "$a")  $a"; done) > "$dist/checksums.txt"
@@ -113,8 +115,7 @@ expect_header() { # file os arch -> 0 if the executable header is that platform
 		case $arch in
 		amd64) [ "$cls$mach" = 023e00 ] ;;
 		arm64) [ "$cls$mach" = 02b700 ] ;;
-		386) [ "$cls$mach" = 010300 ] ;;
-		arm) [ "$cls$mach" = 012800 ] ;;
+		*) false ;; # an architecture without a header rule is never a pass
 		esac || { echo "ELF class $cls machine $mach is not $arch"; return 1; } ;;
 	darwin)
 		magic=$(hexbytes "$f" 0 4); mach=$(hexbytes "$f" 4 4)
@@ -122,6 +123,7 @@ expect_header() { # file os arch -> 0 if the executable header is that platform
 		case $arch in
 		amd64) [ "$mach" = 07000001 ] ;;
 		arm64) [ "$mach" = 0c000001 ] ;;
+		*) false ;; # an architecture without a header rule is never a pass
 		esac || { echo "Mach-O cputype $mach is not $arch"; return 1; } ;;
 	windows)
 		[ "$(hexbytes "$f" 0 2)" = 4d5a ] || { echo "no MZ header"; return 1; }
@@ -132,8 +134,9 @@ expect_header() { # file os arch -> 0 if the executable header is that platform
 		case $arch in
 		amd64) [ "$mach" = 6486 ] ;;
 		arm64) [ "$mach" = 64aa ] ;;
-		386) [ "$mach" = 4c01 ] ;;
+		*) false ;; # an architecture without a header rule is never a pass
 		esac || { echo "PE machine $mach is not $arch"; return 1; } ;;
+	*) echo "no header rule for $os"; return 1 ;;
 	esac
 }
 
@@ -157,7 +160,7 @@ cmd_verify() {
 	want=$(for p in $PLATFORMS; do asset_of "$p"; done; echo checksums.txt; for f in $EXTRA_FILES; do echo "$f"; done)
 	want=$(echo "$want" | LC_ALL=C sort)
 	got=$(cd "$dist" && ls -1A | LC_ALL=C sort)
-	if [ "$want" = "$got" ]; then ok "file set: 9 binaries, checksums.txt, $EXTRA_FILES"
+	if [ "$want" = "$got" ]; then ok "file set: $NPLATFORMS binaries, checksums.txt, $EXTRA_FILES"
 	else bad "file set differs from the expected one:"; diff <(echo "$want") <(echo "$got") >&2 || true; fi
 
 	# 2. Per binary: the header is the platform the name claims, and Go's own
@@ -169,7 +172,6 @@ cmd_verify() {
 		if why=$(expect_header "$f" "$os" "$arch"); then ok "$a header is $os/$arch"; else bad "$a header: $why"; fi
 		[ "$(buildinfo "$f" GOOS)" = "$os" ] || bad "$a build info GOOS=$(buildinfo "$f" GOOS)"
 		[ "$(buildinfo "$f" GOARCH)" = "$arch" ] || bad "$a build info GOARCH=$(buildinfo "$f" GOARCH)"
-		if [ "$arch" = arm ]; then [ "$(buildinfo "$f" GOARM)" = 7 ] || bad "$a GOARM=$(buildinfo "$f" GOARM), want 7"; fi
 		[ "$(buildinfo "$f" CGO_ENABLED)" = 0 ] || bad "$a CGO_ENABLED=$(buildinfo "$f" CGO_ENABLED)"
 		v=$(buildinfo "$f" vcs.revision)
 		[ "$v" = "$sha" ] || bad "$a was built from ${v:-an unknown revision}, not $tag ($sha)"
@@ -185,7 +187,7 @@ cmd_verify() {
 	local sums="$dist/checksums.txt" n line hex name
 	if [ -f "$sums" ]; then
 		n=$(grep -c . "$sums" || true)
-		[ "$n" = 9 ] || bad "checksums.txt has $n lines, want 9"
+		[ "$n" = "$NPLATFORMS" ] || bad "checksums.txt has $n lines, want $NPLATFORMS"
 		for p in $PLATFORMS; do
 			a=$(asset_of "$p")
 			line=$(grep -E "^[0-9a-f]{64}  \*?$a\$" "$sums" || true)
@@ -198,7 +200,7 @@ cmd_verify() {
 			case " $(for p in $PLATFORMS; do asset_of "$p"; done | tr '\n' ' ') " in
 			*" $name "*) ;; *) bad "checksums.txt names an unexpected file: $name" ;; esac
 		done < "$sums"
-		[ "$fail" = 0 ] && ok "checksums.txt: 9 entries, all match"
+		[ "$fail" = 0 ] && ok "checksums.txt: $NPLATFORMS entries, all match"
 	else
 		bad "checksums.txt missing"
 	fi
@@ -293,13 +295,10 @@ cmd_notes() {
 		echo "|----------|--------------|------|"
 		echo "| Linux | x64 | vsp-linux-amd64 |"
 		echo "| Linux | ARM64 | vsp-linux-arm64 |"
-		echo "| Linux | x86 | vsp-linux-386 |"
-		echo "| Linux | ARMv7 | vsp-linux-arm |"
 		echo "| macOS | x64 | vsp-darwin-amd64 |"
 		echo "| macOS | Apple Silicon | vsp-darwin-arm64 |"
 		echo "| Windows | x64 | vsp-windows-amd64.exe |"
 		echo "| Windows | ARM64 | vsp-windows-arm64.exe |"
-		echo "| Windows | x86 | vsp-windows-386.exe |"
 		echo
 		echo "Checksums: \`checksums.txt\`. Or run \`vsp update\` from an older version."
 		echo "\`LICENSE\` and \`NOTICE\` travel with the binaries (Apache-2.0 components are embedded)."

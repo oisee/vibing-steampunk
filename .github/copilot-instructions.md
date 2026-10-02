@@ -2,7 +2,7 @@
 
 ## Project
 
-**vsp** is a Go-native MCP (Model Context Protocol) server that bridges AI agents to SAP ABAP systems via the ADT REST API. Single binary, 9 platforms, zero dependencies. It exposes 81 tools (focused mode) or 122 tools (expert mode) over JSON-RPC/stdio.
+**vsp** is a Go-native MCP (Model Context Protocol) server that bridges AI agents to SAP ABAP systems via the ADT REST API. Single binary, 6 platforms, zero dependencies. It exposes 81 tools (focused mode) or 122 tools (expert mode) over JSON-RPC/stdio.
 
 ## Build, Test, Lint
 

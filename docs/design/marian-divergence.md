@@ -401,7 +401,7 @@ premise that made it necessary.
 
 **Depending on a non-redistributable SAP binary.** `adt-ls` is elegant and it is a real
 second door, but it requires the user to bring `adt-lsc` under the SAP Developer License,
-plus a JVM. For a Go binary whose entire pitch is "one file, nine platforms, no SAP SDK",
+plus a JVM. For a Go binary whose entire pitch is "one file, six platforms, no SAP SDK",
 that is the same trap the NetWeaver RFC SDK is — and avoiding exactly that trap is the reason
 `open-rfc-go` exists.
 

@@ -203,7 +203,7 @@ func runUpdate(ctx context.Context, opts updateOptions, out io.Writer) (*updateR
 		}
 	}
 	if dl == nil {
-		return rep, fmt.Errorf("release %s has no asset %s for this platform", rel.TagName, asset)
+		return rep, missingAssetError(rel.TagName, asset, runtime.GOOS, runtime.GOARCH)
 	}
 	var sums *releaseAsset
 	for i := range rel.Assets {
@@ -355,6 +355,30 @@ func assetName(goos, goarch string) string {
 		name += ".exe"
 	}
 	return name
+}
+
+// installFromSource is how a platform without a release binary gets vsp.
+const installFromSource = "go install github.com/oisee/vibing-steampunk/cmd/vsp@latest"
+
+// droppedPlatforms were released up to v2.59.x and are not built since
+// v2.60.0 (.github/ci/release.sh PLATFORMS). They still compile.
+var droppedPlatforms = map[string]bool{
+	"linux/386":   true,
+	"linux/arm":   true,
+	"windows/386": true,
+}
+
+// missingAssetError explains a release without a binary for goos/goarch: a
+// dropped platform is named as such, and either way the way out is a build
+// from source.
+func missingAssetError(tag, asset, goos, goarch string) error {
+	platform := goos + "/" + goarch
+	if droppedPlatforms[platform] {
+		return fmt.Errorf("release %s has no asset %s for this platform: %s is no longer built since v2.60.0; build from source with: %s",
+			tag, asset, platform, installFromSource)
+	}
+	return fmt.Errorf("release %s has no asset %s for this platform: %s is not built; build from source with: %s",
+		tag, asset, platform, installFromSource)
 }
 
 // checksumFor finds the sha256 for asset in a checksums.txt of

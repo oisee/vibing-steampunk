@@ -564,3 +564,50 @@ func TestUpdateRepoWithoutReleaseNamesTheRepo(t *testing.T) {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 }
+
+func TestUpdateMissingAssetMessage(t *testing.T) {
+	for _, p := range [][2]string{{"linux", "386"}, {"linux", "arm"}, {"windows", "386"}} {
+		asset := assetName(p[0], p[1])
+		got := missingAssetError("v2.60.0", asset, p[0], p[1]).Error()
+		want := "release v2.60.0 has no asset " + asset + " for this platform: " + p[0] + "/" + p[1] +
+			" is no longer built since v2.60.0; build from source with: go install github.com/oisee/vibing-steampunk/cmd/vsp@latest"
+		if got != want {
+			t.Errorf("%s/%s:\n got  %q\n want %q", p[0], p[1], got, want)
+		}
+	}
+	// A platform that was never released is not called dropped, but gets the same way out.
+	got := missingAssetError("v2.60.0", "vsp-freebsd-amd64", "freebsd", "amd64").Error()
+	if strings.Contains(got, "no longer built") || !strings.Contains(got, "freebsd/amd64 is not built") ||
+		!strings.HasSuffix(got, "build from source with: "+installFromSource) {
+		t.Errorf("freebsd/amd64: %q", got)
+	}
+}
+
+// A release without this platform's binary is refused with the way out, and
+// the installed binary is left alone.
+func TestUpdateEndToEndNoAssetForPlatform(t *testing.T) {
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/"+defaultReleaseRepo+"/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+		rel := release{TagName: "v2.60.0", Assets: []releaseAsset{
+			{Name: "vsp-plan9-mips", URL: srv.URL + "/dl/vsp-plan9-mips"},
+			{Name: "checksums.txt", URL: srv.URL + "/dl/checksums.txt"},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rel)
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	setUpdateBase(t, srv.URL)
+	target := writeTarget(t)
+
+	var out bytes.Buffer
+	_, err := runUpdate(context.Background(), updateOptions{Current: "v2.59.1", Target: target}, &out)
+	want := missingAssetError("v2.60.0", assetName(runtime.GOOS, runtime.GOARCH), runtime.GOOS, runtime.GOARCH)
+	if err == nil || err.Error() != want.Error() {
+		t.Fatalf("err = %v\nwant  %v", err, want)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "the old binary" {
+		t.Error("a release without this platform's asset must leave the binary alone")
+	}
+}

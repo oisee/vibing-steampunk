@@ -16,7 +16,7 @@ Current work and priorities are on the project's Trail Map, in `agenda/AGENDA.md
 go build -o vsp ./cmd/vsp               # Build
 go test ./...                            # Unit tests
 go test -tags=integration -v ./pkg/adt/  # Integration (needs SAP or the OSD emulator)
-make build-all-all                       # Release build, all 9 platforms (build-all builds only 3)
+make build-all-all                       # Release build, all 6 platforms (build-all builds only 3)
 ```
 
 Key flags: `--mode focused|expert|hyperfocused`, `--read-only`, `--allowed-packages "Z*"`, `--block-free-sql`, `--disabled-groups 5THD`

@@ -46,8 +46,10 @@ jobs:
       - name: Build
         run: go build ./...
 
-      # Cross-compilation only guards main; a release already builds all nine
-      # targets, and PRs do not need to pay for it.
+      # Cross-compilation only guards main; a release already builds its six
+      # targets, and PRs do not need to pay for it. linux/386 is not released
+      # since v2.60.0, but `vsp update` tells users there to `go install`, so a
+      # 32-bit build must keep compiling.
       - name: Cross-compile check
         if: github.event_name == 'push'
         run: |

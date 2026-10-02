@@ -1058,6 +1058,12 @@ The headline changes are in the **"New in the last three releases"** callout at 
 
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
 
+**Platforms:** six binaries: linux-amd64, linux-arm64, darwin-amd64,
+darwin-arm64, windows-amd64 and windows-arm64. `vsp-linux-386`,
+`vsp-linux-arm` and `vsp-windows-386` are no longer built; on those platforms
+`vsp update` says so and points at
+`go install github.com/oisee/vibing-steampunk/cmd/vsp@latest`.
+
 ### v2.59.1 — new since v2.59.0
 
 The first release built, checked and published by CI on the tag push
@@ -2415,7 +2421,7 @@ Uses **ABAP SQL syntax**, not standard SQL:
 ```bash
 # Build
 make build          # Current platform
-make build-all      # All 9 platforms
+make build-all      # Common 3 platforms (build-all-all: all 6)
 
 # Test (go.mod pins toolchain go1.26.8)
 go test ./...                              # Unit tests (1354)
@@ -2519,7 +2525,7 @@ vibing-steampunk/
 |--------|-------|
 | **Tools** | 148 expert, 98 focused, 1 universal |
 | **Unit Tests** | 1354 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
-| **Platforms** | 9 (Linux, macOS, Windows × amd64/arm64/386) |
+| **Platforms** | 6 (Linux, macOS, Windows × amd64/arm64) |
 
 <details>
 <summary><strong>Roadmap</strong></summary>

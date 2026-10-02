@@ -38,7 +38,7 @@ var rootCmd = &cobra.Command{
 	Short: "ABAP Development Tools for AI agents and DevOps",
 	Long: `vsp — ABAP Development Tools for AI agents and DevOps.
 
-Single binary, 9 platforms, no dependencies. Download from GitHub releases,
+Single binary, 6 platforms, no dependencies. Download from GitHub releases,
 point your MCP config at it, done.
 
 Two modes of operation:

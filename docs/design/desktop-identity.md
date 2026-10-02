@@ -93,7 +93,7 @@ Worth checking so nobody spends a week on it:
   JavaScript and Python. There is **no Go binding**:
   `github.com/Azure/azure-sdk-for-go/sdk/azidentity/broker` does not exist (404 on
   pkg.go.dev), and MSAL Go's public client has no broker option. Building one means cgo
-  against the MSAL native runtime DLL, which breaks the `CGO_ENABLED=0` nine-platform
+  against the MSAL native runtime DLL, which breaks the `CGO_ENABLED=0` six-platform
   release build outright. **Verdict: cannot do, do not try.**
 - **macOS `ASWebAuthenticationSession`.** Objective-C/Swift API; from Go it is cgo plus an
   app bundle with a registered URL scheme. A CLI binary is not an app bundle. It buys
@@ -693,7 +693,7 @@ once vsp runs as a shared BTP-hosted MCP server.
 
 | Item | Why not now |
 |---|---|
-| WAM / macOS broker | No Go binding exists; cgo would break the nine-platform static build |
+| WAM / macOS broker | No Go binding exists; cgo would break the six-platform static build |
 | SAML2 bearer grant from the desktop | Entra cannot issue an assertion out of band (§3.3) |
 | Desktop-minted ephemeral certs | Puts an impersonation-capable CA key on a laptop (§3.5) |
 | RFC ticket tag reverse engineering | Time-boxed research; WebSocket RFC is the better bet |
