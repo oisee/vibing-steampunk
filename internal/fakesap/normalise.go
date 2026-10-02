@@ -6,7 +6,7 @@ import (
 
 var (
 	progressRun = regexp.MustCompile(`\r[^\r\n]*`)
-	ageDays     = regexp.MustCompile(`("age_days":\s*)\d+|(age_days=)\d+|\(\d+ days?\)|\d+ days ago|(Age \(days\)\s*\|\s*)\d+`)
+	ageDays     = regexp.MustCompile(`("age_days":\s*)\d+|(age_days=)\d+|\(\d+ days?\)|\d+ days ago|(Age \(days\)\s*\|\s*)\d+|(age_days:\s*)\d+`)
 	digits      = regexp.MustCompile(`\d+`)
 	serverURL   = regexp.MustCompile(`http://127\.0\.0\.1:\d+`)
 )

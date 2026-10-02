@@ -10,7 +10,7 @@
 | tests | FAIL | alerts: 1, classes: 1, methods: 2, packages_scanned: 1 |
 | atc | FINDINGS | errors: 1, findings: 4, infos: 2, warnings: 1 |
 | boundaries | VIOLATIONS | downward: 1, dynamic: 1, external: 4, objects_scanned: 4, packages_scanned: 2, upward: 1 |
-| staleness | STALE | age_days: 2771, checked: 2, last_changed: 2019-03-01T10:00:00Z |
+| staleness | STALE | age_days: N, checked: 2, last_changed: 2019-03-01T10:00:00Z |
 
 ## Test Details
 
