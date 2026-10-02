@@ -14,12 +14,12 @@ package dap
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -73,7 +73,7 @@ type Conn struct {
 
 // NewConn wraps a byte stream — stdin/stdout for `vsp dap`.
 func NewConn(r io.Reader, w io.Writer) *Conn {
-	return &Conn{r: bufio.NewReader(r), w: w}
+	return &Conn{r: bufio.NewReaderSize(r, maxHeaderLine+64), w: w}
 }
 
 // Read returns the next message. An error wrapping errFrame means that frame
@@ -96,33 +96,81 @@ func (c *Conn) Read() (*ProtocolMessage, error) {
 // the reader resynchronises on the next Content-Length it sees.
 const maxDrainBytes = 64 << 20
 
+// Header limits. A DAP header block is one short line; anything much larger
+// is junk, and is refused without being held in memory.
+const (
+	maxHeaderLine  = 1024 // bytes in one header line
+	maxHeaderLines = 32   // lines in one header block
+)
+
+// contentLength is the one header the reader acts on, matched byte-wise.
+var contentLength = []byte("content-length:")
+
+// findFold returns the offset of key (lower-case ASCII) in line, matching
+// ASCII letters without regard to case, or -1. It works on bytes: lower-casing
+// the line as a string would turn each invalid UTF-8 byte into a three-byte
+// replacement rune and move every offset after it, which is how an offset
+// found in a lowered copy once sliced the original out of range.
+func findFold(line, key []byte) int {
+	for i := 0; i+len(key) <= len(line); i++ {
+		if bytes.EqualFold(line[i:i+len(key)], key) {
+			return i
+		}
+	}
+	return -1
+}
+
+// readLine returns the next line without its terminator. A line longer than
+// maxHeaderLine is consumed and reported as too long rather than returned.
+func (c *Conn) readLine() (line []byte, tooLong bool, err error) {
+	for {
+		chunk, err := c.r.ReadSlice('\n')
+		switch {
+		case err == bufio.ErrBufferFull:
+			tooLong = true
+			continue
+		case err != nil:
+			if err == io.EOF && (len(chunk) > 0 || tooLong) {
+				return nil, false, io.ErrUnexpectedEOF
+			}
+			return nil, false, err
+		}
+		if tooLong || len(chunk) > maxHeaderLine+2 {
+			return nil, true, nil
+		}
+		return bytes.TrimRight(chunk, "\r\n"), false, nil
+	}
+}
+
 // readFrame returns the body of the next frame.
 func (c *Conn) readFrame() ([]byte, error) {
 	length := -1
-	sawHeader := false
+	lines := 0
 	for {
-		line, err := c.r.ReadString('\n')
+		line, tooLong, err := c.readLine()
 		if err != nil {
-			if err == io.EOF && line != "" {
-				return nil, io.ErrUnexpectedEOF
-			}
 			return nil, err
 		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if !sawHeader {
+		if tooLong {
+			return nil, fmt.Errorf("%w: a header line longer than %d bytes", errFrame, maxHeaderLine)
+		}
+		if len(line) == 0 {
+			if lines == 0 {
 				continue // stray blank line between frames
 			}
 			break
 		}
-		sawHeader = true
+		lines++
+		if lines > maxHeaderLines {
+			return nil, fmt.Errorf("%w: more than %d header lines", errFrame, maxHeaderLines)
+		}
 		// Found anywhere in the line, so a header glued to the tail of a
 		// broken frame's junk is still recognised.
-		i := strings.Index(strings.ToLower(line), "content-length:")
+		i := findFold(line, contentLength)
 		if i < 0 {
 			continue // another header, or junk: skipped, not fatal
 		}
-		n, perr := strconv.Atoi(strings.TrimSpace(line[i+len("content-length:"):]))
+		n, perr := strconv.Atoi(string(bytes.TrimSpace(line[i+len(contentLength):])))
 		if perr != nil || n < 0 {
 			length = -2
 			continue

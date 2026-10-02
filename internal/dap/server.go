@@ -29,6 +29,9 @@ const defaultListenSeconds = 60
 // exit.
 const cleanupTimeout = 30 * time.Second
 
+// releaseStepTimeout bounds each step of the release on its own.
+var releaseStepTimeout = 15 * time.Second
+
 // LaunchArgs are the arguments of launch and attach. They are the same for
 // both: vsp never starts the program itself, so "launch" also means "arm the
 // breakpoints and wait for the program to reach one".
@@ -795,12 +798,17 @@ func (s *Server) halt(reason string) {
 	_ = s.conn.Emit("stopped", map[string]any{"reason": reason, "threadId": threadID, "allThreadsStopped": true})
 }
 
-// terminate ends the debug session from the adapter's side.
+// terminate ends the debug session from the adapter's side. It releases
+// SAP's side at once rather than waiting for a disconnect: an editor may keep
+// the adapter running long after it shows "terminated", and until the release
+// the breakpoints stay armed, the listener stays registered and a debuggee
+// may sit in a work process. It runs on the worker, which holds no lock here.
 func (s *Server) terminate() {
 	s.mu.Lock()
 	s.ended = true
 	s.stopped = false
 	s.mu.Unlock()
+	s.release()
 	_ = s.conn.Emit("terminated", nil)
 }
 
@@ -1249,31 +1257,60 @@ func (s *Server) disconnect(msg *ProtocolMessage) {
 	s.Shutdown()
 }
 
-// Shutdown releases everything the session holds on SAP: the listener in
-// flight, the breakpoints this client registered, the attached debuggee (which
-// runs on) and the listener registration. It runs once, on disconnect, on the
-// end of the stream, or from a signal handler.
+// Shutdown stops whatever is in flight and releases the session. It runs
+// once, on disconnect, on the end of the stream, or from a signal handler.
 func (s *Server) Shutdown() {
 	s.shutdownOnce.Do(func() {
 		s.stopWorker()
-		s.mu.Lock()
-		sess := s.sess
-		hadBreakpoints := len(s.bps) > 0
-		s.sess = nil
-		s.stopped = false
-		s.mu.Unlock()
-		if sess == nil {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), cleanupTimeout)
-		defer cancel()
-		s.dbgMu.Lock()
-		defer s.dbgMu.Unlock()
-		if hadBreakpoints {
-			_ = sess.Debugger.ADTClearBreakpoints(ctx)
-		}
-		_ = sess.Debugger.Close(ctx)
+		s.release()
 	})
+}
+
+// release gives back everything the session holds on SAP: the breakpoints
+// this client registered, the attached debuggee (which runs on) and the
+// listener registration. It is idempotent: the session is taken out under the
+// lock, so a second caller finds nothing to do.
+//
+// Each step gets its own bounded context, detached from the server's own: a
+// step that hangs must not spend the budget of the ones after it, and the
+// server's context may already be cancelled when the release is needed most.
+// A step that fails is reported and the next one still runs.
+func (s *Server) release() {
+	s.mu.Lock()
+	sess := s.sess
+	hadBreakpoints := len(s.bps) > 0
+	s.sess = nil
+	s.stopped = false
+	s.mu.Unlock()
+	if sess == nil {
+		return
+	}
+	s.dbgMu.Lock()
+	defer s.dbgMu.Unlock()
+
+	bounded := func(fn func(context.Context) error) error {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), releaseStepTimeout)
+		defer cancel()
+		return fn(ctx)
+	}
+	var held []string
+	if hadBreakpoints {
+		if err := bounded(sess.Debugger.ADTClearBreakpoints); err != nil {
+			held = append(held, fmt.Sprintf("the breakpoints (%v)", err))
+		}
+	}
+	// Detach releases the debuggee and deletes the listener. Close repeats
+	// it on a fresh budget if it did not finish, and tidies the rest.
+	if err := bounded(sess.Debugger.ADTDetach); err != nil {
+		held = append(held, fmt.Sprintf("the listener or the debuggee (%v)", err))
+	}
+	if err := bounded(sess.Debugger.Close); err != nil {
+		held = append(held, fmt.Sprintf("the session (%v)", err))
+	}
+	if len(held) > 0 {
+		s.output("stderr", "vsp dap: SAP may still hold "+strings.Join(held, "; ")+
+			"; see SM50/SM04 for a suspended work process and the user's external breakpoints\n")
+	}
 }
 
 func (s *Server) output(category, text string) {

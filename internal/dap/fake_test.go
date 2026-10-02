@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
@@ -35,8 +36,13 @@ type fakeADT struct {
 	counter   string
 
 	listenerDeleted bool
-	detachTried     bool
-	log             []string
+
+	// Faults for the teardown tests.
+	failStep    string        // a step method that fails with a real error
+	hangBPClear bool          // posting the empty set hangs until its context ends
+	slowRelease time.Duration // deleting the listener takes this long
+	detachTried bool
+	log         []string
 }
 
 func newFakeADT() *fakeADT {
@@ -99,6 +105,11 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 
 	case u.Path == "/sap/bc/adt/debugger/breakpoints" && req.Method == "POST":
 		f.mu.Lock()
+		if f.hangBPClear && !bpLine.Match(req.Body) {
+			f.mu.Unlock()
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
 		defer f.mu.Unlock()
 		f.bpPosts++
 		f.bps = map[int]bool{}
@@ -147,6 +158,16 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		}
 
 	case u.Path == "/sap/bc/adt/debugger/listeners" && req.Method == "DELETE":
+		f.mu.Lock()
+		slow := f.slowRelease
+		f.mu.Unlock()
+		if slow > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(slow):
+			}
+		}
 		f.mu.Lock()
 		f.listenerDeleted = true
 		f.listening = false
@@ -209,6 +230,8 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		}
 		f.cursor = ""
 		switch {
+		case method == f.failStep:
+			return exception(500, "Internal Server Error", "kernelError", "The work process was cancelled"), nil
 		case method == "stepContinue":
 			f.attached = false
 			return exception(500, "Internal Server Error", "debuggeeEnded", "An exception was raised"), nil

@@ -332,38 +332,110 @@ func TestConversation(t *testing.T) {
 	}
 }
 
-// Disconnecting while the listener waits releases the session: the wait is
-// cut short, the breakpoints are withdrawn and the listener deleted.
-func TestDisconnectReleasesTheSession(t *testing.T) {
-	fake := newFakeADT()
-	c, _ := startAdapter(t, fakeOpener(fake, false, nil))
-	path := demoFile(t)
-	c.ok("initialize", map[string]any{})
-	c.ok("launch", map[string]any{})
-	c.event("initialized")
-	c.ok("setBreakpoints", map[string]any{"source": map[string]any{"path": path}, "breakpoints": []any{map[string]any{"line": 26}}})
-	c.ok("configurationDone", nil)
-
+// waitListening blocks until the fake has a listener in flight.
+func waitListening(t *testing.T, fake *fakeADT) {
+	t.Helper()
 	deadline := time.Now().Add(waitFor)
 	for {
 		fake.mu.Lock()
 		listening := fake.listening
 		fake.mu.Unlock()
-		if listening || time.Now().After(deadline) {
-			break
+		if listening {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the adapter never listened")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// armed brings a session to the point where it listens with a breakpoint set.
+func armed(t *testing.T, fake *fakeADT) *client {
+	t.Helper()
+	c, _ := startAdapter(t, fakeOpener(fake, false, nil))
+	c.ok("initialize", map[string]any{})
+	c.ok("launch", map[string]any{})
+	c.event("initialized")
+	c.ok("setBreakpoints", map[string]any{"source": map[string]any{"path": demoFile(t)}, "breakpoints": []any{map[string]any{"line": 26}}})
+	c.ok("configurationDone", nil)
+	waitListening(t, fake)
+	return c
+}
+
+// Disconnecting while the listener waits releases the session — before the
+// disconnect is answered, with the stream still open. A release left to the
+// end of Serve would come after the answer, and an editor that keeps the
+// adapter alive (or kills it on the answer) would never get it.
+func TestDisconnectReleasesTheSession(t *testing.T) {
+	fake := newFakeADT()
+	fake.slowRelease = 300 * time.Millisecond
+	c := armed(t, fake)
 
 	c.ok("disconnect", map[string]any{"terminateDebuggee": false})
-	<-c.served
-	c.served <- nil
-
-	if !fake.listenerDeleted || !fake.detachTried {
-		t.Errorf("listener deleted=%v detach tried=%v; calls: %v", fake.listenerDeleted, fake.detachTried, fake.calls())
+	fake.mu.Lock()
+	deleted, detached, left := fake.listenerDeleted, fake.detachTried, fake.lastBPSet
+	fake.mu.Unlock()
+	if !deleted || !detached {
+		t.Errorf("at the disconnect answer: listener deleted=%v detach tried=%v; calls: %v", deleted, detached, fake.calls())
 	}
-	if fake.lastBPSet != 0 {
-		t.Errorf("%d breakpoints left registered", fake.lastBPSet)
+	if left != 0 {
+		t.Errorf("at the disconnect answer: %d breakpoints left registered", left)
+	}
+}
+
+// A step that fails ends the session from the adapter's side, and that must
+// release SAP's side then and there: the editor may keep the adapter running
+// long after it shows "terminated".
+func TestTerminateReleasesTheSession(t *testing.T) {
+	fake := newFakeADT()
+	fake.failStep = "stepOver"
+	c := armed(t, fake)
+	fake.run()
+	c.event("stopped")
+	c.ok("next", map[string]any{"threadId": 1})
+	c.event("terminated")
+
+	// The stream stays open: no disconnect, no end of input.
+	fake.mu.Lock()
+	deleted, detached, left := fake.listenerDeleted, fake.detachTried, fake.lastBPSet
+	fake.mu.Unlock()
+	if !deleted || !detached || left != 0 {
+		t.Errorf("after terminated: listener deleted=%v detach tried=%v breakpoints left=%d; calls: %v", deleted, detached, left, fake.calls())
+	}
+	// A disconnect afterwards is harmless.
+	c.ok("disconnect", map[string]any{})
+}
+
+// Each release step has its own budget: a breakpoint removal that hangs must
+// not leave the detach and the listener deletion to run on a spent context,
+// and what could not be released is reported.
+func TestReleaseStepsAreBoundedSeparately(t *testing.T) {
+	saved := releaseStepTimeout
+	releaseStepTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { releaseStepTimeout = saved })
+
+	fake := newFakeADT()
+	fake.hangBPClear = true
+	c := armed(t, fake)
+	c.ok("disconnect", map[string]any{})
+
+	fake.mu.Lock()
+	deleted, detached := fake.listenerDeleted, fake.detachTried
+	fake.mu.Unlock()
+	if !deleted || !detached {
+		t.Errorf("a hung breakpoint removal starved the rest: listener deleted=%v detach tried=%v; calls: %v", deleted, detached, fake.calls())
+	}
+	reported := false
+	for _, e := range c.events {
+		body, _ := e["body"].(map[string]any)
+		if e["event"] == "output" && strings.Contains(fmt.Sprint(body["output"]), "SAP may still hold") &&
+			strings.Contains(fmt.Sprint(body["output"]), "breakpoints") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Errorf("the unreleased breakpoints were not reported; events: %v", c.events)
 	}
 }
 
