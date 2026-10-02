@@ -1036,9 +1036,9 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.58.0 — where the file actually ends](https://github.com/oisee/vibing-steampunk/releases/tag/v2.58.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.59.0 — only what you saw](https://github.com/oisee/vibing-steampunk/releases/tag/v2.59.0)**.
 
-### Unreleased — new since v2.58.0
+### v2.59.0 — new since v2.58.0
 
 **Transports and change control**
 
@@ -1091,6 +1091,25 @@ lock, `expect_repo` for the repository row, and the read-only
   and enhancement implementations — source plug-ins and BAdI
   implementations (#263).
 
+**Safety and quality**
+
+- **Delete only the version you saw**: `git_delete_objects` takes an expected
+  stamp or sha256 per object, checked under the object's lock right before its
+  DELETE; a changed object is kept and reported (#320). Dependent objects are
+  deleted before what they use (#323), and `git_object_versions` reads the
+  versions first.
+- Typed abapGit files take their name from the file name, never the content,
+  so a TOP include can no longer overwrite its main program (#305, #312).
+- Table reads with caller SQL are refused under `--block-free-sql` (#310);
+  every ZADT_VSP WebSocket authenticates the way its ADT client does (#306).
+- Graph and health: program callers and their main programs (#309), one data
+  source for CLI and MCP (#322), health reads classes and function groups and
+  names what it could not read (#325).
+- A leak scan blocks commits that carry system identifiers (CI and an opt-in
+  pre-push hook); correctness lint blocks new code; the PR report shows
+  complexity and token drift; an advisory integration run against the OSD SAP
+  emulator on every PR (#311, #321, #324, #326).
+
 **Fixed**, among others: concurrent callers of one client no longer break
 each other's locks (#251); a cookie-jar race (#229); credentials and the CSRF
 token stay on the SAP host across redirects (#257); namespaced objects and
@@ -1108,7 +1127,7 @@ parts (#271); a failed transport download is an error (#302).
   than `type`, `name` and `expect` (a typo such as `expected` used to be
   ignored) (#320).
 
-### Unreleased — behaviour changes since v2.58.0
+### v2.59.0 — behaviour changes since v2.58.0
 
 **`--read-only` now also refuses**, each before anything reaches SAP:
 
