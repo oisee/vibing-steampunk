@@ -70,6 +70,14 @@ func (c *Client) CreateBadiImplementation(ctx context.Context, opts BadiImplemen
 		return "", err
 	}
 	opts.Transport = transport
+	// A transportable package with no request and transportable edits off:
+	// the POST would still land in a request SAP picks, which the lock then
+	// names and the write refuses -- after the container exists. Refused
+	// here instead, before anything is written.
+	if opts.Transport == "" && !strings.HasPrefix(opts.Package, "$") && !c.config.Safety.AllowTransportableEdits {
+		return "", fmt.Errorf("CreateBadiImplementation in package %s is blocked: it is not a local ($) package, and editing transportable "+
+			"objects is disabled (use --allow-transportable-edits; name a transport unless the transport choice picks one)", opts.Package)
+	}
 	// The implementation is written by a PUT into the container: an update.
 	// Refused here, before the POST, so a refusal leaves no empty ENHO.
 	if err = c.checkSafety(OpUpdate, "CreateBadiImplementation"); err != nil {
@@ -90,18 +98,26 @@ func (c *Client) CreateBadiImplementation(ctx context.Context, opts BadiImplemen
 		return "", fmt.Errorf("creating %s: %w", opts.Name, err)
 	}
 
+	// From here on the ENHO exists, and this call created it: a step that
+	// fails takes it away again rather than leaving an empty container
+	// behind, which would also block the next attempt under the same name.
 	lock, err := c.LockObject(ctx, objectURL, "MODIFY", opts.Transport)
 	if err != nil {
-		return objectURL, fmt.Errorf("created %s, but locking it to add the implementation failed: %w", opts.Name, err)
+		return c.undoBadiContainer(ctx, objectURL, opts, fmt.Errorf("locking it to add the implementation failed: %w", err))
 	}
 	// With no request chosen at creation, the PUT goes with the one the lock
 	// names, as every other write under a lock does.
-	if opts.Transport, err = c.resolveWriteTransport(opts.Transport, lock.CorrNr, "CreateBadiImplementation"); err != nil {
+	writeTransport, err := c.resolveWriteTransport(opts.Transport, lock.CorrNr, "CreateBadiImplementation")
+	if err != nil {
 		if uerr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); uerr != nil {
 			return objectURL, fmt.Errorf("created %s, but %w; %s", opts.Name, err, strandedLockAdvice(objectURL, uerr))
 		}
-		return objectURL, fmt.Errorf("created %s, but %w", opts.Name, err)
+		// Not deleted: the refusal is about writing to the request the
+		// container landed in, and a DELETE is a write to that same request.
+		return objectURL, fmt.Errorf("created %s in %s, but %w; it is an empty ENHO without its BAdI implementation: "+
+			"delete it in SE80, or allow the request and add the implementation in SE19 or Eclipse", opts.Name, lock.CorrNr, err)
 	}
+	opts.Transport = writeTransport
 	put := url.Values{}
 	put.Set("lockHandle", lock.LockHandle)
 	if opts.Transport != "" {
@@ -119,14 +135,55 @@ func (c *Client) CreateBadiImplementation(ctx context.Context, opts BadiImplemen
 		// Released on a context of its own: the PUT may have failed because
 		// ctx was cancelled, and the lock must not stay behind.
 		if uerr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); uerr != nil {
-			return objectURL, fmt.Errorf("created %s, but adding the implementation failed: %w; %s", opts.Name, err, strandedLockAdvice(objectURL, uerr))
+			return objectURL, fmt.Errorf("created %s, but adding the implementation failed: %w%s; %s", opts.Name, err, dialogHint(err), strandedLockAdvice(objectURL, uerr))
 		}
-		return objectURL, fmt.Errorf("created %s, but adding the implementation failed: %w", opts.Name, err)
+		return c.undoBadiContainer(ctx, objectURL, opts, fmt.Errorf("adding the implementation failed: %w%s", err, dialogHint(err)))
 	}
 	if uerr := c.UnlockObject(ctx, objectURL, lock.LockHandle); uerr != nil {
 		return objectURL, fmt.Errorf("created %s with its implementation, but %s", opts.Name, strandedLockAdvice(objectURL, uerr))
 	}
 	return objectURL, nil
+}
+
+// undoBadiContainer deletes the ENHO this call created when adding the
+// implementation to it failed. It returns no URL when the container is gone
+// again, and the URL with what is left to do by hand when it is not. The
+// delete runs on a context of its own: the step may have failed because ctx
+// was cancelled.
+func (c *Client) undoBadiContainer(ctx context.Context, objectURL string, opts BadiImplementationOptions, stepErr error) (string, error) {
+	cleanupCtx, cancel := failureCleanupContext(ctx)
+	defer cancel()
+	pce := c.cleanupPartialObject(cleanupCtx, objectURL, opts.Package, opts.Transport)
+	pce.OriginalErr = fmt.Errorf("created %s, but %w", opts.Name, stepErr)
+	if pce.CleanupOK {
+		if opts.Transport != "" {
+			// Created and deleted within one open request: the request keeps
+			// an R3TR ENHO entry for an object that no longer exists.
+			pce.ManualSteps = append(pce.ManualSteps, fmt.Sprintf(
+				"%s keeps an entry R3TR ENHO %s for the deleted container; remove it if unwanted (remove_transport_object)", opts.Transport, opts.Name))
+		}
+		return "", pce
+	}
+	pce.ManualSteps = append([]string{
+		fmt.Sprintf("%s is an empty ENHO without its BAdI implementation: add the implementation in SE19 or Eclipse, or delete it", opts.Name),
+	}, pce.ManualSteps...)
+	return objectURL, pce
+}
+
+// dialogHint explains SAP's answer when the server side tried to show a
+// dialog. Over ADT there is no window to show it in, so the request fails
+// with "Sending of dynpro SAPLSPO1 ... not possible" -- a POPUP_TO_CONFIRM.
+func dialogHint(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Sending of dynpro") && !strings.Contains(msg, "SAPLSPO1") {
+		return ""
+	}
+	return " (SAP asked a question in a dialog, which cannot be answered over ADT. One known case: the BAdI is marked " +
+		"SAP-internal and the ENHO's name is in a namespace of your own rather than Y/Z; SAP then asks whether to create " +
+		"the implementation as an SAP advance delivery. Answer that question in SE19 or Eclipse.)"
 }
 
 // badiImplementationBody is the BADI_IMPL document: the container the POST

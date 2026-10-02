@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -194,6 +195,20 @@ func (s *Server) handleCreateBadiImplementation(ctx context.Context, request mcp
 	}
 	enhoURL, err := s.adtClient.CreateBadiImplementation(ctx, opts)
 	if err != nil {
+		// The ENHO was created but the implementation could not be added:
+		// say whether the empty container was taken away again, and what is
+		// left to do if not.
+		var pce *adt.PartialCreateError
+		if errors.As(err, &pce) {
+			out := map[string]any{"cleanup_actions": pce.CleanupActions}
+			if enhoURL != "" {
+				out["object_url"] = enhoURL
+			}
+			if len(pce.ManualSteps) > 0 {
+				out["manual_steps"] = pce.ManualSteps
+			}
+			return enhancementPartial(out, err.Error()), nil
+		}
 		if enhoURL != "" {
 			return enhancementPartial(map[string]any{"object_url": enhoURL}, err.Error()), nil
 		}

@@ -249,3 +249,53 @@ func TestEnhancementCreates_LockCarriesTheCreationTransport(t *testing.T) {
 		}
 	}
 }
+
+// A transportable package with no request and transportable edits off is
+// refused before the POST: no container is created to be stranded.
+func TestCreateBadiImplementation_TransportablePackageRefusedBeforeThePOST(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}, WithTransportChoice("off"))
+
+	_, err := client.CreateBadiImplementation(context.Background(), testBadiOptions("ZPKG", ""))
+	if err == nil || !strings.Contains(err.Error(), "transportable") {
+		t.Fatalf("err = %v, want a transportable-edit refusal", err)
+	}
+	for _, c := range rec.snapshot() {
+		if c.method == http.MethodPost && c.path == enhoxhbCollection {
+			t.Fatalf("the container was POSTed before the refusal")
+		}
+	}
+}
+
+// The request the lock names is refused by the transport whitelist after the
+// container exists. It is not deleted -- a DELETE writes to that same request
+// -- and comes back with what to do by hand.
+func TestCreateBadiImplementation_LockTransportRefusedKeepsTheContainer(t *testing.T) {
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
+			_, _ = io.WriteString(w, testLockWithCorrNrXML)
+		case r.Method == http.MethodPost && r.URL.Path == enhoxhbCollection:
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}, WithTransportChoice("off"), WithAllowTransportableEdits(), WithAllowedTransports("OTHER*"))
+
+	u, err := client.CreateBadiImplementation(context.Background(), testBadiOptions("ZPKG", ""))
+	if err == nil || !strings.Contains(err.Error(), "TR-EXAMPLE-2") || !strings.Contains(err.Error(), "empty ENHO") {
+		t.Fatalf("err = %v, want the lock's request refused and the empty ENHO named", err)
+	}
+	if u != testEnhoxhbURL {
+		t.Errorf("url = %q, want the container's", u)
+	}
+	for _, c := range rec.snapshot() {
+		if c.method == http.MethodDelete || c.method == http.MethodPut {
+			t.Errorf("%s %s after the refusal", c.method, c.path)
+		}
+	}
+}
