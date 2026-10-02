@@ -522,3 +522,64 @@ func TestRunHostileAllowFileInPR(t *testing.T) {
 		t.Fatalf("bad -allow-rev: exit %d", code)
 	}
 }
+
+func TestShortEncodedSID(t *testing.T) {
+	sid := Identifier{Class: "sid", Value: "A4H"}
+	for name, data := range map[string]string{
+		"hex, 14 digits":          "id 5349443d413448 end",
+		"base64, padded":          "id U0lEPUE0SA== end",
+		"base64, padding dropped": "id U0lEPUE0SA end",
+	} {
+		if hasHit(scanBytes("f", []byte(data), []Identifier{sid}), "identifier/sid", "") == nil {
+			t.Errorf("%s: %q not found", name, data)
+		}
+	}
+	// The token boundary still holds for short runs: inside a word, no hit.
+	inner := base64.StdEncoding.EncodeToString([]byte("xA4Hy"))
+	if hasHit(scanBytes("f", []byte("id "+inner+" end"), []Identifier{sid}), "identifier/sid", "") != nil {
+		t.Errorf("%q: SID matched inside a word", inner)
+	}
+}
+
+func TestRunPushEvent(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbox.corp.invalid"}
+	main := g("rev-parse", "HEAD")
+
+	// A branch whose history adds a host and deletes it again.
+	g("checkout", "-qb", "feature")
+	writeFile(t, filepath.Join(root, "capture.md"), "sapbox.corp.invalid\n")
+	g("add", ".")
+	g("commit", "-qm", "add")
+	g("rm", "-q", "capture.md")
+	g("commit", "-qm", "delete")
+	tip := g("rev-parse", "HEAD")
+	zero := strings.Repeat("0", 40)
+
+	// New branch (all-zero BEFORE): every commit not on the base, not just the tip.
+	code, out, _ := runScan(t, env, "-root", root, "-all", "-push", zero+".."+tip, "-push-base", "main")
+	if code != exitHits || !strings.Contains(out, "capture.md:1: identifier/host") {
+		t.Fatalf("new branch: exit %d\n%s", code, out)
+	}
+	if code, _, _ := runScan(t, env, "-root", root, "-all", "-push", zero+".."+tip); code != exitClosed {
+		t.Fatalf("new branch without -push-base: exit %d", code)
+	}
+	// A normal push: BEFORE..AFTER.
+	if code, _, _ := runScan(t, env, "-root", root, "-all", "-push", main+".."+tip); code != exitHits {
+		t.Fatalf("push range: exit %d", code)
+	}
+	// A force push: BEFORE is gone from the clone. Fail closed, never "tip only".
+	gone := strings.Repeat("ab", 20)
+	code, _, errs := runScan(t, env, "-root", root, "-all", "-push", gone+".."+tip, "-push-base", "main")
+	if code != exitClosed || !strings.Contains(errs, "force push") || !strings.Contains(errs, "empty one will do") {
+		t.Fatalf("force push: exit %d, want %d\n%s", code, exitClosed, errs)
+	}
+	// A clean push passes.
+	g("checkout", "-q", "main")
+	writeFile(t, filepath.Join(root, "ok.md"), "fine\n")
+	g("add", ".")
+	g("commit", "-qm", "fine")
+	if code, _, errs := runScan(t, env, "-root", root, "-all", "-push", main+".."+g("rev-parse", "HEAD")); code != exitClean {
+		t.Fatalf("clean push: exit %d\n%s", code, errs)
+	}
+}

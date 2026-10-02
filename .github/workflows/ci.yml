@@ -239,9 +239,13 @@ jobs:
   #     every one of its commits added (so a value added and deleted again is
   #     still caught: it is in the history), and every commit message;
   #   push to main: every file in the tree, plus the lines and messages of the
-  #     pushed range (event.before..event.after).
+  #     pushed range (event.before..event.after; a new branch: every commit not
+  #     on main; a force push, whose before is gone: red, see the job's message).
   # The allow-file is read from the base revision on a pull request, so a PR
   # cannot excuse its own hits; a PR that changes it gets a warning to review it.
+  # Known limitation: a PR from a branch of this repository runs its own copy
+  # of this job and of the scanner, so it could weaken the gate; without branch
+  # protection only review stops that, and the job warns when a PR touches it.
   #
   # The identifier list is the VSP_LEAK_IDENTIFIERS secret (one value per line,
   # optionally `class: value`), masked line by line before anything runs. It is
@@ -304,17 +308,22 @@ jobs:
               echo "::warning title=leak scan::This pull request changes .github/ci/leakscan-allow.txt. The scan used the base's allow-file; the new rules take effect only after merge, so review each one and its reason."
               allow_note="; allow-file changed, needs review"
             fi
-          else
-            mode=(-all)
-            what="tree and the pushed commits"
-            if [ -n "$BEFORE" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-              mode+=(-range "$BEFORE..$AFTER")
-            elif git cat-file -e "${AFTER}^" 2>/dev/null; then
-              # A new branch or a force push: no usable "before". The tip
-              # commit at least; the tree scan covers every file.
-              echo "::warning title=leak scan::No usable push base ($BEFORE); scanning the tree and the tip commit only."
-              mode+=(-range "$AFTER^..$AFTER")
+            # Known limitation: the job runs the PR's own copy of this workflow
+            # and of the scanner, so a PR from a branch of this repository can
+            # weaken the gate it is judged by. Branch protection would close
+            # that; this repository does not use it, so a reviewer is told.
+            gate_files=$(git diff --name-only "$(git merge-base "$BASE_REF" HEAD)" HEAD -- .github/workflows/ci.yml .github/ci/leakscan/ .githooks/pre-push | tr '\n' ' ')
+            if [ -n "$gate_files" ]; then
+              echo "::warning title=leak scan::This pull request changes the leak scan itself (${gate_files% }), and this run used the changed version. Review that the gate is not weakened before merging."
+              allow_note="${allow_note}; changes the gate itself, review it"
             fi
+          else
+            # A new branch (all-zero BEFORE) is read as every commit not on
+            # main; a force push, whose BEFORE is gone, fails closed in the
+            # scanner with instructions, because the replaced commits cannot be
+            # told from the new ones.
+            mode=(-all -push "$BEFORE..$AFTER" -push-base origin/main)
+            what="tree and the pushed commits"
           fi
           status=0
           "$RUNNER_TEMP/leakscan" -root "$GITHUB_WORKSPACE" "${require[@]}" "${mode[@]}" || status=$?

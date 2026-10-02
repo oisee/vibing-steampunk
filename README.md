@@ -2394,7 +2394,18 @@ Without the file the hook still runs the generic patterns and warns that the
 names were not checked. A reviewed false positive of a generic pattern goes in
 `.github/ci/leakscan-allow.txt`, with a reason on every line; a name from the
 list can never be excused. CI reads that file from the base branch, so a new
-rule takes effect only once merged: propose it in a pull request of its own. In CI the
+rule takes effect only once merged: propose it in a pull request of its own.
+
+A push to main whose previous tip is gone (a force push) is red: the commits
+it replaced cannot be told from the ones it added. Scan the rewritten range
+locally with `-range <last trusted commit>..<new tip>`, then push any commit to
+give the next run a base. Known limitation: a pull request from a branch of
+this repository runs its own copy of the workflow and the scanner, so it could
+weaken the gate it is judged by. Branch protection would close that and this
+repository does not use it, so the job warns, and the report row says so,
+whenever a pull request touches `.github/workflows/ci.yml`,
+`.github/ci/leakscan/` or `.githooks/pre-push`: review those changes as
+changes to the gate. In CI the
 list is the `VSP_LEAK_IDENTIFIERS` secret: a pull request from a fork has no
 secrets, so it gets the generic patterns only and the report row says
 "PARTIAL"; on this repository's own branches and on main a missing list is red.

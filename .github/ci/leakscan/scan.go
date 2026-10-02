@@ -41,9 +41,11 @@ type view struct {
 }
 
 // Runs of text that are really bytes: a capture pasted into a source file.
+// Short ones too: "SID=" plus a three-character SID is seven bytes, 14 hex
+// digits or 12 base64 characters with padding.
 var (
-	hexRun = regexp.MustCompile(`[0-9a-fA-F]{16,}`)
-	b64Run = regexp.MustCompile(`[A-Za-z0-9+/_-]{12,}={0,2}`)
+	hexRun = regexp.MustCompile(`[0-9a-fA-F]{8,}`)
+	b64Run = regexp.MustCompile(`[A-Za-z0-9+/_-]{6,}={0,2}`)
 )
 
 // In a decoded (hex or base64) view most bytes are random, and a short
@@ -132,9 +134,15 @@ func views(data []byte) []view {
 		run := strings.NewReplacer("-", "+", "_", "/").Replace(orig)
 		// A block can start mid-token (a path, "key=..."), so try every
 		// alignment rather than trust where the run happened to begin.
-		for shift := 0; shift < 4 && len(run)-shift >= 8; shift++ {
+		for shift := 0; shift < 4 && len(run)-shift >= 6; shift++ {
+			// Decode the whole tail: two or three characters past the last
+			// full quantum are one or two more bytes (the final "SA" of a
+			// padded "...SA==" is the last letter of a SID). A single
+			// leftover character carries no whole byte.
 			s := run[shift:]
-			s = s[:len(s)/4*4]
+			if len(s)%4 == 1 {
+				s = s[:len(s)-1]
+			}
 			if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
 				// A long Go identifier (a test name) is a base64-shaped run too;
 				// encoded bytes all but always include a digit, + or /.

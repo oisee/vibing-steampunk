@@ -20,7 +20,8 @@
 //	go run . -root ../../.. -diff origin/main     # what HEAD adds since the merge base:
 //	                                              # changed files, every commit's added
 //	                                              # lines, every commit message
-//	go run . -root ../../.. -all -range A..B      # the tree, plus a pushed range
+//	go run . -root ../../.. -all -range A..B      # the tree, plus a range of commits
+//	go run . -root ../../.. -all -push B..A -push-base origin/main   # CI on a push
 //	go run . -root ../../.. path/to/file dir/     # files on disk, tracked or not
 //
 // -allow-rev <rev> reads the allow-file from that revision (CI passes the base,
@@ -90,6 +91,8 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	all := fs.Bool("all", false, "scan every file in the tree of -rev")
 	diff := fs.String("diff", "", "scan what -rev adds since its merge base with this ref: the files as they are at -rev, the lines every commit in between added, and the commit messages")
 	rng := fs.String("range", "", "scan the lines every commit in this A..B range added, and the commit messages (combine with -all on a push)")
+	push := fs.String("push", "", "a push event's BEFORE..AFTER: scan the pushed commits like -range; an all-zero BEFORE (a new branch) scans every commit not on -push-base, and a BEFORE that is not a commit (a force push) fails closed")
+	pushBase := fs.String("push-base", "", "with -push: the branch a new branch is compared with (e.g. origin/main)")
 	rev := fs.String("rev", "HEAD", "the commit whose files are scanned with -all or -diff")
 	idFile := fs.String("identifiers", "", "identifier list file (default: $"+envList+", else "+defaultList+")")
 	require := fs.Bool("require-identifiers", false, "fail closed (exit 2) when no identifier list is available")
@@ -106,12 +109,24 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	switch {
 	case paths && (*all || *diff != "" || *rng != ""):
 		return fail("paths cannot be combined with -all, -diff or -range")
-	case *diff != "" && (*all || *rng != ""):
-		return fail("-diff cannot be combined with -all or -range")
-	case !paths && !*all && *diff == "" && *rng == "":
-		return fail("choose -all, -diff <ref>, -range <a..b> (with or without -all), or paths")
+	case paths && *push != "":
+		return fail("paths cannot be combined with -push")
+	case *diff != "" && (*all || *rng != "" || *push != ""):
+		return fail("-diff cannot be combined with -all, -range or -push")
+	case *rng != "" && *push != "":
+		return fail("choose one of -range and -push")
+	case !paths && !*all && *diff == "" && *rng == "" && *push == "":
+		return fail("choose -all, -diff <ref>, -range <a..b> or -push <before..after> (with or without -all), or paths")
 	case *allowFile != "" && *allowRev != "":
 		return fail("choose one of -allow and -allow-rev")
+	}
+
+	if *push != "" {
+		r, msg := pushRange(*root, *push, *pushBase)
+		if msg != "" {
+			return fail("%s", msg)
+		}
+		*rng = r
 	}
 
 	ids, idSource, err := loadIdentifiers(*root, *idFile, getenv)
@@ -309,6 +324,39 @@ func treeFiles(root, rev string) ([]source, error) {
 		}
 	}
 	return readBlobs(root, rev, paths)
+}
+
+// pushRange turns a push event's BEFORE..AFTER into the range of commits the
+// push published. A new branch has an all-zero BEFORE: every commit on it that
+// is not on base. A force push leaves a BEFORE that is no longer in the
+// repository, and the commits it replaced cannot be told from the ones it
+// added; scanning only the tip would let a value added and deleted again in
+// the rewritten history through, so that fails closed.
+func pushRange(root, spec, base string) (string, string) {
+	before, after, ok := strings.Cut(spec, "..")
+	if !ok || after == "" {
+		return "", fmt.Sprintf("-push %q: want BEFORE..AFTER", spec)
+	}
+	if _, err := git(root, "rev-parse", "--verify", "--quiet", after+"^{commit}"); err != nil {
+		return "", fmt.Sprintf("-push: AFTER %s is not a commit here", after)
+	}
+	if strings.Trim(before, "0") == "" {
+		if base == "" {
+			return "", "-push: a new branch (all-zero BEFORE) needs -push-base to tell its commits from the base's"
+		}
+		if _, err := git(root, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
+			return "", fmt.Sprintf("-push-base %s is not a commit here", base)
+		}
+		return base + ".." + after, ""
+	}
+	if _, err := git(root, "rev-parse", "--verify", "--quiet", before+"^{commit}"); err != nil {
+		return "", fmt.Sprintf("-push: the previous tip %s is not in this clone (a force push?), so the pushed commits cannot be told apart and are not scanned; this fails closed.\n"+
+			"  To clear it: scan the rewritten history where you still have it,\n"+
+			"    leakscan -root . -require-identifiers -range <last commit you trust>..%s\n"+
+			"  and, if it is clean, push any new commit (an empty one will do) so the next run has a BEFORE to compare with.\n"+
+			"  Re-running this job does not help: it gets the same BEFORE.", before, after)
+	}
+	return before + ".." + after, ""
 }
 
 // changedFiles is every file added or changed between base and rev, read as
