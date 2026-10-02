@@ -252,7 +252,10 @@ cmd_run() {
 readme_section() {
 	awk -v tag="$1" '
 	function is_tag_heading(s) { return index(s, "### " tag) == 1 && (length(s) == length("### " tag) || substr(s, length("### " tag) + 1, 1) == " ") }
-	/^(```|~~~)/ { fence = !fence; if (taking) print; next }
+	# A fence closes only on its own character, at least as long, with nothing after it (CommonMark).
+	function run(s,   c, n) { c = substr(s, 1, 1); n = 0; while (substr(s, n + 1, 1) == c) n++; return n }
+	!fence && /^(```|~~~)/ { fence = 1; fc = substr($0, 1, 1); fl = run($0); if (taking) print; next }
+	fence && substr($0, 1, 1) == fc && run($0) >= fl && substr($0, run($0) + 1) ~ /^[ \t]*$/ { fence = 0; if (taking) print; next }
 	fence { if (taking) print; next }
 	/^## / { inside = ($0 ~ /^## What.s New/); taking = 0; next }
 	!inside { next }
@@ -356,10 +359,13 @@ cmd_digests() { # the release (draft or not) holds exactly DIST, by GitHub's own
 }
 
 cmd_latest() { # prints true when TAG is final and above every published final release
-	local tag=$1 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} top
+	local tag=$1 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} published top
 	check_tag "$tag"
 	case $tag in *-*) echo false; return ;; esac
-	top=$( { gh release list --repo "$repo" --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName'; echo "$tag"; } |
+	# Every published release, all pages; a failed listing is an error, never "latest".
+	published=$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft | not) | select(.prerelease | not) | .tag_name') ||
+		die "latest $tag: cannot list the published releases"
+	top=$(printf '%s\n%s\n' "$published" "$tag" |
 		grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
 	if [ "v$top" = "$tag" ]; then echo true; else echo false; fi
 }
