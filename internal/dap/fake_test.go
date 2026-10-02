@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,20 @@ type fakeADT struct {
 
 	listenerDeleted bool
 
+	// The stateful session, as SAP serialises it: one request in flight, the
+	// rest queued until it returns. A request whose client stops waiting while
+	// queued is never sent. A listener whose client stops waiting is not ended
+	// by that: it runs on server-side, holding the session, until its timeout
+	// or — when listenEndsOnDelete — until the listener is deleted from any
+	// connection. Requests through aside() are stateless and never queue.
+	slot chan struct{}
+	// second is how long one of the listener's "timeout" seconds lasts here.
+	second             time.Duration
+	listenEndsOnDelete bool
+	deleted            chan struct{} // closed, and replaced, on each listener deletion
+	queuedOut          []string      // requests given up on while queued
+	openListens        int           // listener requests still running server-side
+
 	// Faults for the teardown tests.
 	failStep    string        // a step method that fails with a real error
 	hangBPClear bool          // posting the empty set hangs until its context ends
@@ -58,7 +73,30 @@ type fakeADT struct {
 }
 
 func newFakeADT() *fakeADT {
-	return &fakeADT{bps: map[int]bool{}, runs: make(chan struct{}, 4), counter: "7"}
+	return &fakeADT{bps: map[int]bool{}, runs: make(chan struct{}, 4), counter: "7",
+		slot: make(chan struct{}, 1), second: 10 * time.Millisecond, deleted: make(chan struct{})}
+}
+
+// fakeAside is a stateless connection to the same fake system: it shares
+// SAP's state but not the session, so nothing open on the session holds it up.
+type fakeAside struct{ f *fakeADT }
+
+func (a fakeAside) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTResponse, error) {
+	return a.f.serve(ctx, req, false)
+}
+
+func (f *fakeADT) aside() saprfc.ADTTransport { return fakeAside{f} }
+
+// fakeCall is what a handler tells serve about the session after it answers.
+type fakeCall struct {
+	// holdUntil, when set, keeps the session busy after the answer until it
+	// is closed: a request the client gave up on that SAP is still running.
+	holdUntil chan struct{}
+}
+
+// Do is the stateful session.
+func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTResponse, error) {
+	return f.serve(ctx, req, true)
 }
 
 // run starts the report, as a user in SAP GUI would.
@@ -87,7 +125,7 @@ func exception(status int, reason, subType, msg string) *saprfc.ADTResponse {
 			`<properties><entry key="com.sap.adt.communicationFramework.subType">` + subType + `</entry></properties></exc:exception>`)}
 }
 
-func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTResponse, error) {
+func (f *fakeADT) serve(ctx context.Context, req saprfc.ADTRequest, session bool) (*saprfc.ADTResponse, error) {
 	u, err := url.Parse(req.URI)
 	if err != nil {
 		return nil, err
@@ -105,14 +143,46 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		return nil, err
 	}
 
-	f.mu.Lock()
 	entry := req.Method + " " + u.Path
 	if method != "" {
 		entry += "?method=" + method
 	}
+	if !session {
+		entry = "aside " + entry
+	}
+
+	// One request at a time on the session: wait for the one in flight.
+	if session {
+		select {
+		case f.slot <- struct{}{}:
+		case <-ctx.Done():
+			f.mu.Lock()
+			f.queuedOut = append(f.queuedOut, entry)
+			f.mu.Unlock()
+			return nil, ctx.Err()
+		}
+	}
+
+	f.mu.Lock()
 	f.log = append(f.log, entry)
 	f.mu.Unlock()
 
+	call := &fakeCall{}
+	res, err := f.handle(ctx, req, u, q, method, call)
+	if session {
+		if call.holdUntil != nil {
+			go func() {
+				<-call.holdUntil
+				<-f.slot
+			}()
+		} else {
+			<-f.slot
+		}
+	}
+	return res, err
+}
+
+func (f *fakeADT) handle(ctx context.Context, req saprfc.ADTRequest, u *url.URL, q url.Values, method string, call *fakeCall) (*saprfc.ADTResponse, error) {
 	switch {
 	case req.Method == "GET" && u.Path == "/sap/bc/adt/repository/informationsystem/search":
 		name := strings.ToLower(q.Get("query"))
@@ -159,15 +229,47 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 	case u.Path == "/sap/bc/adt/debugger/listeners" && req.Method == "POST":
 		f.mu.Lock()
 		f.listening = true
-		f.mu.Unlock()
-		f.mu.Lock()
 		fail := f.failListen
+		var gone <-chan struct{}
+		if f.listenEndsOnDelete {
+			gone = f.deleted
+		}
+		var expired <-chan time.Time
+		if n, _ := strconv.Atoi(q.Get("timeout")); n > 0 && f.second > 0 {
+			expired = time.NewTimer(time.Duration(n) * f.second).C
+		}
+		f.openListens++
 		f.mu.Unlock()
+		ended := func() {
+			f.mu.Lock()
+			f.openListens--
+			f.mu.Unlock()
+		}
 		for {
 			select {
 			case <-ctx.Done():
+				// The client stopped waiting; SAP did not. The request runs
+				// on, holding the session, until it times out or its
+				// listener is removed.
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					defer ended()
+					select {
+					case <-expired:
+					case <-gone:
+					}
+				}()
+				call.holdUntil = done
 				return nil, ctx.Err()
+			case <-expired:
+				ended()
+				return ok(""), nil // nobody stopped in this window
+			case <-gone:
+				ended()
+				return ok(""), nil
 			case <-fail:
+				ended()
 				return exception(500, "Internal Server Error", "kernelError", "The listener could not be registered"), nil
 			case <-f.runs:
 			}
@@ -178,6 +280,7 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 			}
 			f.line, f.inForm, f.cursor = 26, false, ""
 			f.mu.Unlock()
+			ended()
 			return ok(`<?xml version="1.0" encoding="utf-8"?><asx:abap version="1.0" xmlns:asx="http://www.sap.com/abapxml"><asx:values><DATA><STPDA_DEBUGGEE>` +
 				`<CLIENT>001</CLIENT><DEBUGGEE_ID>DBGEE1</DEBUGGEE_ID><DEBUGGEE_USER>TESTUSER</DEBUGGEE_USER><PRG_CURR>ZVSP_DEBUG_DEMO</PRG_CURR>` +
 				`<INCL_CURR>ZVSP_DEBUG_DEMO</INCL_CURR><LINE_CURR>26</LINE_CURR><DBGEE_KIND>DEBUGGEE</DBGEE_KIND><IS_ATTACH_IMPOSSIBLE>false</IS_ATTACH_IMPOSSIBLE>` +
@@ -203,6 +306,8 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		f.mu.Lock()
 		f.listenerDeleted = true
 		f.listening = false
+		close(f.deleted)
+		f.deleted = make(chan struct{})
 		f.mu.Unlock()
 		return ok(""), nil
 

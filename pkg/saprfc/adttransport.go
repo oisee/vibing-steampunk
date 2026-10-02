@@ -41,13 +41,27 @@ func (t rfcTunnel) Do(ctx context.Context, req ADTRequest) (*ADTResponse, error)
 // httpSession carries ADT requests over a stateful HTTPS session — the route
 // for systems where there is no RFC channel at all: a cookie, a single sign-on,
 // no gateway port and no RFC password.
-type httpSession struct{ transport *adt.Transport }
+type httpSession struct {
+	transport *adt.Transport
+	// stateless sends each request outside any session; see HTTPStateless.
+	stateless bool
+}
 
 // HTTPSession returns the transport that speaks to ADT directly. The caller
 // keeps it for the whole conversation: a new transport is a new session, and a
 // new session has no debuggee attached and no lock held.
 func HTTPSession(transport *adt.Transport) ADTTransport {
 	return httpSession{transport: transport}
+}
+
+// HTTPStateless returns a transport whose requests belong to no session. It
+// is for the side requests a session cannot carry while it is busy: removing
+// the listener while the listener request is still open on the session, where
+// SAP would queue the removal behind the very request it is meant to end.
+// Build it on an adt.Transport of its own, configured stateless, so that it
+// carries no sap-contextid of the session's.
+func HTTPStateless(transport *adt.Transport) ADTTransport {
+	return httpSession{transport: transport, stateless: true}
 }
 
 func (t httpSession) Do(ctx context.Context, req ADTRequest) (*ADTResponse, error) {
@@ -70,7 +84,7 @@ func (t httpSession) Do(ctx context.Context, req ADTRequest) (*ADTResponse, erro
 		Body:   req.Body,
 		// Everything the debugger does is session-bound; so is a lock. Stateless
 		// would work for a single read and fail for every sequence.
-		Stateful: true,
+		Stateful: !t.stateless,
 		Headers:  map[string]string{},
 	}
 	for _, h := range req.Headers {

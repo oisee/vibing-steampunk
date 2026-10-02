@@ -40,6 +40,10 @@ type Debugger struct {
 	// How this session registered its ADT listener, kept so the teardown can
 	// name the same triple back.
 	listenUser, ideID, terminalID string
+	// listenerStopped records that the listener registration was removed
+	// from another connection (ADTStopListenerVia), so the detach does not
+	// remove it again. A new listen clears it.
+	listenerStopped bool
 	// The breakpoints this session posted. ADT's breakpoint resource does not
 	// answer a GET, so the client is the only record of its own set — and one
 	// is needed, because a POST replaces the set rather than adding to it.

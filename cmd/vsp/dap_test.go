@@ -2,12 +2,66 @@ package main
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/oisee/vibing-steampunk/internal/dap"
+	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
+
+// The opener gives the session a side connection, and that connection is
+// stateless and joins no session: it sends no sap-contextid, even when the
+// logon's cookies carry one, so SAP does not queue it behind the debug
+// session's open listener.
+func TestDAPSideConnectionIsStateless(t *testing.T) {
+	dapConfigDir(t)
+	sess, err := dapOpener(dapCmd)(context.Background(), dap.LaunchArgs{ListenSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Aside == nil {
+		t.Fatal("no side connection")
+	}
+
+	var mu sync.Mutex
+	var sessionType, cookie string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.EqualFold(r.Header.Get("X-Csrf-Token"), "fetch") {
+			w.Header().Set("X-Csrf-Token", "token")
+			return
+		}
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+			sessionType, cookie = r.Header.Get("X-sap-adt-sessiontype"), r.Header.Get("Cookie")
+			mu.Unlock()
+		}
+	}))
+	defer srv.Close()
+
+	side, err := statelessADTTransport(&systemParams{URL: srv.URL, Client: "001",
+		CookieString: "sap-contextid=SID%3aANON%3aabc; MYSAPSSO2=ticket"}, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := side.Do(context.Background(), saprfc.ADTRequest{Method: "DELETE", URI: "/sap/bc/adt/debugger/listeners?debuggingMode=user&requestUser=X"})
+	if err != nil || res.Status != 200 {
+		t.Fatalf("delete: %v %v", res, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if sessionType != "stateless" {
+		t.Errorf("session type %q, want stateless", sessionType)
+	}
+	if strings.Contains(cookie, "sap-contextid") || !strings.Contains(cookie, "MYSAPSSO2") {
+		t.Errorf("cookies sent: %q", cookie)
+	}
+}
 
 // dapConfigDir puts a .vsp.json with two systems, one read-only, in an empty
 // working directory and home, so no real configuration is read. Opening a

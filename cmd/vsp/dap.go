@@ -56,6 +56,10 @@ cannot be changed.`,
 	RunE: runDAP,
 }
 
+// cleanupSideTimeout bounds a request on the side connection. It only ever
+// removes a listener registration, which answers at once.
+const cleanupSideTimeout = 30 * time.Second
+
 var (
 	dapUser     string
 	dapTimeout  int
@@ -120,6 +124,13 @@ func dapOpener(cmd *cobra.Command) dap.Opener {
 		if err != nil {
 			return nil, err
 		}
+		// The side connection: built now, used only at the release, to stop
+		// a listener still open on the session without queueing behind it.
+		// It opens no connection until then.
+		aside, err := statelessADTTransport(params, cleanupSideTimeout)
+		if err != nil {
+			return nil, err
+		}
 
 		user := strings.ToUpper(strings.TrimSpace(args.User))
 		if user == "" {
@@ -138,6 +149,7 @@ func dapOpener(cmd *cobra.Command) dap.Opener {
 		}
 		return &dap.Session{
 			Debugger: saprfc.NewADTDebugger(transport, user),
+			Aside:    aside,
 			User:     user,
 			System:   params.Name,
 			ReadOnly: cliReadOnly(params) || dapReadOnly,

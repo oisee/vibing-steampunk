@@ -225,7 +225,7 @@ func fakeOpener(fake *fakeADT, readOnly bool, opened *[]LaunchArgs) Opener {
 		if opened != nil {
 			*opened = append(*opened, args)
 		}
-		return &Session{Debugger: saprfc.NewADTDebugger(fake, "TESTUSER"), User: "TESTUSER", System: "FAKE", ReadOnly: readOnly}, nil
+		return &Session{Debugger: saprfc.NewADTDebugger(fake, "TESTUSER"), Aside: fake.aside(), User: "TESTUSER", System: "FAKE", ReadOnly: readOnly}, nil
 	}
 }
 

@@ -20,10 +20,20 @@ import (
 // process stopped at one place; DAP needs a thread to hang the stop on.
 const threadID = 1
 
-// defaultListenSeconds is how long one listener request waits server-side
-// before it is reissued. Short enough that a disconnect is honoured promptly
-// even on a transport that cannot cancel a request in flight.
+// defaultListenSeconds is the launch's listenSeconds when it names none. The
+// request itself is cut to listenSliceSeconds; see there.
 const defaultListenSeconds = 60
+
+// listenSliceSeconds caps the server-side wait of one listener request.
+//
+// A stateful ADT session answers one request at a time, and a client that
+// stops waiting for the listener does not end it on SAP: the request runs to
+// its timeout, and whatever is sent on the session meanwhile queues behind it.
+// So the longest a breakpoint update or the release can be held up is one
+// listener request. Measured on A4H with 60 s: a disconnect queued behind the
+// listener took 58 s. The listen loop reissues the request anyway, so a short
+// one costs a round trip per slice and nothing else.
+var listenSliceSeconds = 10
 
 // cleanupTimeout bounds the teardown: releasing a debuggee and deleting the
 // listener must reach SAP even when the client has gone, but must not hang the
@@ -92,7 +102,9 @@ type LaunchArgs struct {
 	SourceRoot string `json:"sourceRoot,omitempty"`
 	// SystemDebugging lets breakpoints in SAP standard code fire.
 	SystemDebugging bool `json:"systemDebugging,omitempty"`
-	// ListenSeconds is the server-side wait of one listener request.
+	// ListenSeconds is the longest server-side wait of one listener request;
+	// requests are cut to listenSliceSeconds when that is shorter. The listen
+	// is reissued until a debuggee stops either way.
 	ListenSeconds int `json:"listenSeconds,omitempty"`
 	// NoDebug is set by clients for "run without debugging", which vsp dap
 	// does not do: it never runs code.
@@ -103,6 +115,11 @@ type LaunchArgs struct {
 // adapter needs to know about how it was opened.
 type Session struct {
 	Debugger *saprfc.Debugger
+	// Aside is a connection of the same logon outside Debugger's session —
+	// in practice stateless HTTP. The release uses it for one request only:
+	// removing the listener while a listen is still open on the session, which
+	// SAP would otherwise queue behind that listen. Optional.
+	Aside saprfc.ADTTransport
 	// User is whose debuggees the listener catches. Required.
 	User string
 	// System is the system's name, for messages.
@@ -151,6 +168,10 @@ type Server struct {
 	pathURI    bool // the client names files as file:// URIs (pathFormat "uri")
 	worker     *worker
 	ended      bool
+	// listenOpen: the last listener request was abandoned by the client
+	// (its context ended) rather than answered, so SAP may still be running
+	// it on the session.
+	listenOpen bool
 
 	shutdownOnce sync.Once
 }
@@ -636,6 +657,12 @@ func (s *Server) applyBreakpoints(notify bool) {
 		placed, err = sess.Debugger.ADTSetBreakpoints(s.ctx, want)
 		rejected = sess.Debugger.Rejected()
 		s.dbgMu.Unlock()
+		if err == nil {
+			// SAP answered on the session, so no listen is open on it.
+			s.mu.Lock()
+			s.listenOpen = false
+			s.mu.Unlock()
+		}
 	} else {
 		relisten = false
 	}
@@ -825,10 +852,18 @@ func (s *Server) listen(ctx context.Context) {
 	if sess == nil {
 		return // released while the worker started
 	}
+	if seconds <= 0 || seconds > listenSliceSeconds {
+		seconds = listenSliceSeconds
+	}
 	failures := 0
 	for ctx.Err() == nil {
 		s.dbgMu.Lock()
 		who, err := sess.Debugger.ADTListen(ctx, sess.User, saprfc.IDEID, saprfc.TerminalID, seconds)
+		// A listen that failed because its context ended was abandoned, not
+		// answered: SAP may still be running it on the session.
+		s.mu.Lock()
+		s.listenOpen = err != nil && ctx.Err() != nil
+		s.mu.Unlock()
 		if who == nil || ctx.Err() != nil {
 			s.dbgMu.Unlock()
 			if ctx.Err() != nil {
@@ -1422,10 +1457,27 @@ func (s *Server) Shutdown() {
 // step that hangs must not spend the budget of the ones after it, and the
 // server's context may already be cancelled when the release is needed most.
 // A step that fails is reported and the next one still runs.
+//
+// A listen the worker abandoned may still be open on the session: cancelling
+// the request client-side does not end it on SAP, and SAP serialises a
+// stateful session, so everything below would queue behind it until it times
+// out. So the listener is removed first from the side connection, which no
+// open request holds up; then the session's own requests follow once the
+// listen has returned. Without a side connection, the wait is at most one
+// listener slice (listenSliceSeconds).
+//
+// "May still hold" is said only of what a check could not confirm released.
+// A breakpoint clear that fails is asked once more on a fresh budget — the
+// first may only have waited out the open listen — and only a second failure
+// is reported. ADT's breakpoint GET answers an empty body on every release
+// measured, so re-posting the empty set is the check: SAP accepting it is SAP
+// confirming that nothing is registered for this client.
 func (s *Server) release() {
 	s.mu.Lock()
 	sess := s.sess
 	hadBreakpoints := len(s.bps) > 0
+	listenOpen := s.listenOpen
+	s.listenOpen = false
 	s.sess = nil
 	s.stopped = false
 	s.mu.Unlock()
@@ -1440,10 +1492,21 @@ func (s *Server) release() {
 		defer cancel()
 		return fn(ctx)
 	}
+	if listenOpen && sess.Aside != nil {
+		// A failure here is not a held item: the detach below removes the
+		// listener on the session as before, only later.
+		if err := bounded(func(ctx context.Context) error {
+			return sess.Debugger.ADTStopListenerVia(ctx, sess.Aside)
+		}); err != nil {
+			s.output("console", fmt.Sprintf("vsp dap: could not stop the listener from a separate connection (%v); waiting for it to end\n", err))
+		}
+	}
 	var held []string
 	if hadBreakpoints {
 		if err := bounded(sess.Debugger.ADTClearBreakpoints); err != nil {
-			held = append(held, fmt.Sprintf("the breakpoints (%v)", err))
+			if verr := bounded(sess.Debugger.ADTClearBreakpoints); verr != nil {
+				held = append(held, fmt.Sprintf("the breakpoints (%v; could not verify their removal: %v)", err, verr))
+			}
 		}
 	}
 	// Detach releases the debuggee and deletes the listener. A first attempt

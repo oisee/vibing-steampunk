@@ -125,3 +125,55 @@ func TestDetachDebuggee(t *testing.T) {
 		})
 	}
 }
+
+// uriRecorder records each request's method and full URI, and answers 200.
+type uriRecorder struct{ sent []string }
+
+func (r *uriRecorder) Do(_ context.Context, req ADTRequest) (*ADTResponse, error) {
+	r.sent = append(r.sent, req.Method+" "+req.URI)
+	return &ADTResponse{Status: 200}, nil
+}
+
+// The listener stopped from a side connection is the very DELETE ADTDetach
+// sends, and once SAP confirmed it, the detach does not send it again: it
+// releases the debuggee alone. A new listen makes the deletion owed again.
+func TestADTStopListenerViaSendsTheDetachDelete(t *testing.T) {
+	session := &uriRecorder{}
+	d := NewADTDebugger(session, "TESTUSER")
+	d.engaged, d.listenUser = true, "TESTUSER"
+	if err := d.ADTDetach(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := session.sent[len(session.sent)-1]
+
+	session.sent = nil
+	d.engaged = true
+	side := &uriRecorder{}
+	if err := d.ADTStopListenerVia(context.Background(), side); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(side.sent, []string{want}) {
+		t.Errorf("side connection sent %v, want %v", side.sent, []string{want})
+	}
+	if len(session.sent) != 0 {
+		t.Errorf("the session was used: %v", session.sent)
+	}
+	if err := d.ADTDetach(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range session.sent {
+		if strings.HasPrefix(s, "DELETE ") {
+			t.Errorf("the detach deleted the listener again: %v", session.sent)
+		}
+	}
+
+	// A refusal is not a removal: the detach still owes the DELETE.
+	d.engaged, d.listenerStopped = true, false
+	refused := &detachTransport{answers: map[string]*ADTResponse{listenerDel: {Status: 500, ReasonPhrase: "Internal Server Error"}}}
+	if err := d.ADTStopListenerVia(context.Background(), refused); err == nil {
+		t.Error("a refused deletion reported success")
+	}
+	if d.listenerStopped {
+		t.Error("a refused deletion was recorded as done")
+	}
+}
