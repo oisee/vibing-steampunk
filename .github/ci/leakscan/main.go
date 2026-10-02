@@ -46,10 +46,13 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,6 +136,7 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	if err != nil {
 		return fail("%v", err)
 	}
+	redactIDs = ids
 	rules, err := loadAllow(*root, *allowFile, *allowRev)
 	if err != nil {
 		return fail("allow-file: %v", err)
@@ -207,7 +211,7 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 		if h.Commit != "" {
 			where = " [added in " + h.Commit + "]"
 		}
-		fmt.Fprintf(stdout, "%s:%d: %s (%s)%s\n", h.File, h.Line, h.Class, h.View, where)
+		fmt.Fprintf(stdout, "%s:%d: %s (%s)%s\n", showPath(h.File), h.Line, h.Class, h.View, where)
 	}
 
 	listNote := fmt.Sprintf("%d identifiers from %s", len(ids), idSource)
@@ -296,13 +300,40 @@ func loadAllow(root, file, rev string) ([]allowRule, error) {
 	return parseAllow(f)
 }
 
+// redactIDs is the identifier list of the current run, for showPath and
+// safeText: nothing this prints may carry a value the scan looks for.
+var redactIDs []Identifier
+
+// showPath is how a path appears in output. A path can carry a listed name or
+// a secret as much as a file can, and this prints to public CI logs: a path
+// that holds a control byte, or that the scan itself would flag, is shown as
+// a hash of its bytes (`printf %s "$path" | sha256sum` finds it again).
+func showPath(p string) string {
+	if safeText(p) && !strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return p
+	}
+	sum := sha256.Sum256([]byte(p))
+	return "<path sha256:" + hex.EncodeToString(sum[:])[:16] + ">"
+}
+
+// safeText reports whether text can be printed: the scan finds nothing in it.
+func safeText(s string) bool {
+	return len(scanBytes("", []byte(s), redactIDs)) == 0
+}
+
 func git(root string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		// git's message can quote a path; it is printed only when the scan
+		// finds nothing in it.
+		msg := strings.TrimSpace(errb.String())
+		if !safeText(msg) {
+			msg = "(git's message withheld: it holds what the scan looks for)"
+		}
+		return nil, fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, msg)
 	}
 	return out, nil
 }
@@ -315,18 +346,19 @@ func treeFiles(root, rev string) ([]source, error) {
 	if err != nil {
 		return nil, err
 	}
-	var paths, all []string
+	var blobs []blobRef
+	var all []string
 	for _, rec := range strings.Split(string(out), "\x00") {
 		meta, path, ok := strings.Cut(rec, "\t")
 		if !ok {
 			continue
 		}
 		all = append(all, path)
-		if f := strings.Fields(meta); len(f) >= 2 && f[1] == "blob" {
-			paths = append(paths, path)
+		if f := strings.Fields(meta); len(f) >= 3 && f[1] == "blob" {
+			blobs = append(blobs, blobRef{path: path, id: f[2]})
 		}
 	}
-	srcs, err := readBlobs(root, rev, paths)
+	srcs, err := readBlobs(root, blobs)
 	if err != nil {
 		return nil, err
 	}
@@ -385,17 +417,21 @@ func pushRange(root, spec, base string) (string, string) {
 // changedFiles is every file added or changed between base and rev, read as
 // it is at rev: the whole file, so a binary is read too.
 func changedFiles(root, base, rev string) ([]source, error) {
-	out, err := git(root, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=ACMRT", base, rev)
+	out, err := git(root, "diff", "-z", "--raw", "--no-abbrev", "--no-renames", "--diff-filter=ACMRT", base, rev)
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
-	for _, p := range strings.Split(string(out), "\x00") {
-		if p != "" {
-			paths = append(paths, p)
+	entries, err := parseRaw(out)
+	if err != nil {
+		return nil, err
+	}
+	var blobs []blobRef
+	for _, e := range entries {
+		if e.isBlob {
+			blobs = append(blobs, blobRef{path: e.dst, id: e.dstID})
 		}
 	}
-	return readBlobs(root, rev, paths)
+	return readBlobs(root, blobs)
 }
 
 // rangeSources is what every commit in a range adds, commit by commit: a value
@@ -441,12 +477,16 @@ func rangeSources(root, rng string) ([]source, error) {
 		}
 		// Every path the commit adds, and both names of a rename or copy: a
 		// name is published as much as the bytes behind it.
-		names, err := git(root, "-c", "core.quotePath=false", "show", "--format=", "--no-show-signature",
-			"--name-status", "-z", "-M", "-C", "--no-ext-diff", "--diff-merges=first-parent", c.full, "--")
+		raw, err := git(root, "show", "--format=", "--no-show-signature",
+			"--raw", "-z", "--no-abbrev", "-M", "-C", "--diff-merges=first-parent", c.full, "--")
 		if err != nil {
 			return nil, err
 		}
-		if paths := addedPaths(names); len(paths) > 0 {
+		entries, err := parseRaw(raw)
+		if err != nil {
+			return nil, fmt.Errorf("commit %s: %v", c.short, err)
+		}
+		if paths := addedPaths(entries); len(paths) > 0 {
 			srcs = append(srcs, pathsSource("commit "+c.short, paths))
 		}
 		patch, err := git(root, "-c", "core.quotePath=false", "show", "--format=", "--no-show-signature",
@@ -458,7 +498,21 @@ func rangeSources(root, rng string) ([]source, error) {
 		more, binaries := parsePatch(c.short, patch)
 		srcs = append(srcs, more...)
 		if len(binaries) > 0 {
-			blobs, err := readBlobs(root, c.full, binaries)
+			ids := map[string]string{}
+			for _, e := range entries {
+				if e.isBlob {
+					ids[e.dst] = e.dstID
+				}
+			}
+			var refs []blobRef
+			for n, b := range binaries {
+				id, ok := ids[b]
+				if !ok {
+					return nil, fmt.Errorf("commit %s: binary file %d of the patch is not in its raw diff", c.short, n+1)
+				}
+				refs = append(refs, blobRef{path: b, id: id})
+			}
+			blobs, err := readBlobs(root, refs)
 			if err != nil {
 				return nil, err
 			}
@@ -473,28 +527,57 @@ func rangeSources(root, rng string) ([]source, error) {
 
 type commitID struct{ full, short string }
 
-// addedPaths reads `--name-status -z` output: a status, then one path, or two
-// for a rename or copy (R100, C075). It keeps the paths of added files and
-// both names of renames and copies. Paths cannot hold NUL, so the split is
-// exact.
-func addedPaths(out []byte) []string {
-	var paths []string
+// rawEntry is one record of `--raw -z --no-abbrev` output.
+type rawEntry struct {
+	status   byte   // A, C, D, M, R, T, U, X
+	src, dst string // dst == src unless renamed or copied
+	dstID    string // the object id after the change
+	isBlob   bool   // the new side is a regular file or a symlink, not a submodule
+}
+
+// parseRaw reads `--raw -z` output: ":<mode> <mode> <id> <id> <status>", NUL,
+// then one path, or two for a rename or copy, each ended by NUL. Paths cannot
+// hold NUL, so the split is exact whatever the names hold (a newline, a tab).
+func parseRaw(out []byte) ([]rawEntry, error) {
+	var entries []rawEntry
 	f := strings.Split(string(out), "\x00")
 	for i := 0; i < len(f); i++ {
-		status := f[i]
-		if status == "" {
+		if f[i] == "" {
 			continue
 		}
+		meta := strings.Fields(strings.TrimPrefix(f[i], ":"))
+		if !strings.HasPrefix(f[i], ":") || len(meta) != 5 || meta[4] == "" {
+			return nil, fmt.Errorf("unexpected raw diff record %d", len(entries)+1)
+		}
+		e := rawEntry{status: meta[4][0], dstID: meta[3], isBlob: !strings.HasPrefix(meta[1], "16")}
 		n := 1
-		if status[0] == 'R' || status[0] == 'C' {
+		if e.status == 'R' || e.status == 'C' {
 			n = 2
 		}
-		for j := 1; j <= n && i+j < len(f); j++ {
-			if status[0] == 'A' || n == 2 {
-				paths = append(paths, f[i+j])
-			}
+		if i+n >= len(f) {
+			return nil, fmt.Errorf("truncated raw diff record %d", len(entries)+1)
 		}
+		e.src, e.dst = f[i+1], f[i+n]
+		if e.status == 'D' {
+			e.isBlob = false
+		}
+		entries = append(entries, e)
 		i += n
+	}
+	return entries, nil
+}
+
+// addedPaths is the paths of added files and both names of renames and
+// copies.
+func addedPaths(entries []rawEntry) []string {
+	var paths []string
+	for _, e := range entries {
+		switch e.status {
+		case 'A':
+			paths = append(paths, e.dst)
+		case 'R', 'C':
+			paths = append(paths, e.src, e.dst)
+		}
 	}
 	return paths
 }
@@ -665,18 +748,22 @@ func unquotePath(p string) string {
 	return p
 }
 
-// readBlobs reads rev:path for every path through one `git cat-file --batch`.
-func readBlobs(root, rev string, paths []string) ([]source, error) {
-	if len(paths) == 0 {
+type blobRef struct{ path, id string }
+
+// readBlobs reads every blob by its object id through one `git cat-file
+// --batch`: an id is hex, so a path with any byte in it (a newline) is read
+// like any other, and no path is ever handed to git or printed raw.
+func readBlobs(root string, blobs []blobRef) ([]source, error) {
+	if len(blobs) == 0 {
 		return nil, nil
 	}
 	cmd := exec.Command("git", "-C", root, "cat-file", "--batch")
 	var in bytes.Buffer
-	for _, p := range paths {
-		if strings.ContainsAny(p, "\n") {
-			return nil, fmt.Errorf("cannot read a path with a newline in it: %q", p)
+	for _, b := range blobs {
+		if !isHex(b.id) {
+			return nil, fmt.Errorf("%s: unexpected object id %q", showPath(b.path), b.id)
 		}
-		fmt.Fprintf(&in, "%s:%s\n", rev, p)
+		fmt.Fprintf(&in, "%s\n", b.id)
 	}
 	cmd.Stdin = &in
 	stdout, err := cmd.StdoutPipe()
@@ -688,16 +775,17 @@ func readBlobs(root, rev string, paths []string) ([]source, error) {
 	}
 	r := bufio.NewReader(stdout)
 	var out []source
-	for _, p := range paths {
+	for _, b := range blobs {
+		p := showPath(b.path)
 		header, err := r.ReadString('\n')
 		if err != nil {
 			stop(cmd)
-			return nil, fmt.Errorf("git cat-file %s: %v", p, err)
+			return nil, fmt.Errorf("git cat-file %s (%s): %v", b.id, p, err)
 		}
 		f := strings.Fields(header)
-		if len(f) != 3 || f[1] != "blob" {
+		if len(f) != 3 || f[0] != b.id || f[1] != "blob" {
 			stop(cmd)
-			return nil, fmt.Errorf("git cat-file %s:%s: %s", rev, p, strings.TrimSpace(header))
+			return nil, fmt.Errorf("git cat-file %s (%s): %s", b.id, p, strings.TrimSpace(header))
 		}
 		var size int
 		if _, err := fmt.Sscan(f[2], &size); err != nil || size > maxFileSize {
@@ -707,9 +795,9 @@ func readBlobs(root, rev string, paths []string) ([]source, error) {
 		data := make([]byte, size+1) // the blob, then a newline
 		if _, err := io.ReadFull(r, data); err != nil {
 			stop(cmd)
-			return nil, fmt.Errorf("git cat-file %s: %v", p, err)
+			return nil, fmt.Errorf("git cat-file %s (%s): %v", b.id, p, err)
 		}
-		out = append(out, source{name: p, path: p, data: data[:size]})
+		out = append(out, source{name: b.path, path: b.path, data: data[:size]})
 	}
 	return out, cmd.Wait()
 }
@@ -742,7 +830,7 @@ func diskFiles(root string, paths []string) ([]source, error) {
 				return err
 			}
 			if info.Size() > maxFileSize {
-				return fmt.Errorf("%s: %d bytes is over the %d-byte limit; it cannot be scanned, so it cannot pass", path, info.Size(), maxFileSize)
+				return fmt.Errorf("%s: %d bytes is over the %d-byte limit; it cannot be scanned, so it cannot pass", showPath(path), info.Size(), maxFileSize)
 			}
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -756,8 +844,18 @@ func diskFiles(root string, paths []string) ([]source, error) {
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, quietPathError(err)
 		}
 	}
 	return out, nil
+}
+
+// quietPathError is err with the path in an *fs.PathError shown through
+// showPath: the operating system's message names the path it failed on.
+func quietPathError(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("%s %s: %v", pe.Op, showPath(pe.Path), pe.Err)
+	}
+	return err
 }

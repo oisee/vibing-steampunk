@@ -26,23 +26,40 @@ permissions:
   actions: read
   checks: read
 
+# One report run at a time per head branch; a later one waits rather than
+# cancelling the one in progress. Each run reports the LATEST completed CI run
+# on the pull request's current head, whichever CI run triggered it, so the
+# order in which reports run or are cancelled does not matter: GitHub keeps
+# one pending run per group and cancels an older pending one when a newer
+# arrives, and the run that is left starts later and reads a state at least
+# as fresh as the one it replaced. A late report from an old run therefore
+# cannot be the reason the latest run goes unreported: it either reports the
+# latest run itself, or finds it still running and leaves it to its own
+# report, which queues behind it.
+concurrency:
+  group: ci-report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
 jobs:
-  # Reads the run and builds the report. It writes nothing: the write job
-  # below does, one at a time per pull request.
+  # Reads the latest CI run on the pull request's head and builds the report.
+  # It writes nothing: the write job below does.
   comment:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
       pr: ${{ steps.find.outputs.pr }}
+      run_id: ${{ steps.find.outputs.run_id }}
+      run_attempt: ${{ steps.report.outputs.run_attempt }}
       body: ${{ steps.report.outputs.body }}
     steps:
       # Same-repo pull requests arrive in run.pull_requests; fork ones do not,
-      # so look them up by head branch. Either way, only report when the pull
-      # request still points at the commit this run tested — a late run for an
-      # old commit must not overwrite a newer report (the last step checks this
-      # again, and that this is the latest run and attempt on the commit). The
-      # base is the last green push run on the pull request's base branch.
+      # so look them up by head branch. The run reported is not necessarily
+      # the one that triggered this: it is the latest CI run (highest run
+      # number, its current attempt) on the pull request's current head commit
+      # and branch, and only once it has completed; a run still in progress
+      # gets its own report when it completes. The base is the last green push
+      # run on the pull request's base branch.
       - name: Find the pull request and the base run
         id: find
         uses: actions/github-script@v7
@@ -56,12 +73,29 @@ jobs:
             } else {
               const open = await github.paginate(github.rest.pulls.list,
                 { owner, repo, state: 'open', head: `${run.head_repository.owner.login}:${run.head_branch}` });
-              pr = open.find((p) => p.head.sha === run.head_sha);
+              pr = open.find((p) => p.head.repo?.id === run.head_repository.id && p.head.ref === run.head_branch);
             }
-            if (!pr || pr.head.sha !== run.head_sha) {
-              core.info(`no open pull request at ${run.head_sha}; nothing to report`);
+            if (!pr || pr.state !== 'open') {
+              core.info(`no open pull request for ${run.head_branch}; nothing to report`);
               return;
             }
+            const onHead = await github.paginate(github.rest.actions.listWorkflowRuns,
+              { owner, repo, workflow_id: run.workflow_id, head_sha: pr.head.sha, event: 'pull_request', per_page: 100 });
+            const latest = onHead
+              .filter((r) => r.head_branch === pr.head.ref && r.head_repository?.id === pr.head.repo?.id)
+              .sort((a, b) => b.run_number - a.run_number || new Date(b.created_at) - new Date(a.created_at))[0];
+            if (!latest) {
+              core.info(`no CI run on #${pr.number}'s head ${pr.head.sha} yet; its own report will follow`);
+              return;
+            }
+            if (latest.status !== 'completed') {
+              core.info(`the latest CI run on #${pr.number}'s head (#${latest.run_number}, attempt ${latest.run_attempt}) is ${latest.status}; its own report will follow`);
+              return;
+            }
+            if (latest.id !== run.id || latest.run_attempt !== run.run_attempt) {
+              core.info(`triggered by run #${run.run_number} attempt ${run.run_attempt}; reporting the latest, #${latest.run_number} attempt ${latest.run_attempt}`);
+            }
+            core.setOutput('run_id', String(latest.id));
             core.setOutput('pr', String(pr.number));
             core.setOutput('base_ref', pr.base.ref);
             const base = await github.rest.actions.listWorkflowRuns({
@@ -87,6 +121,7 @@ jobs:
         continue-on-error: true
         uses: actions/github-script@v7
         env:
+          HEAD_RUN: ${{ steps.find.outputs.run_id }}
           BASE_RUN: ${{ steps.find.outputs.base_run }}
         with:
           script: |
@@ -99,7 +134,7 @@ jobs:
               { name: 'test-summary', file: 'test-summary.json', zip: 256 * KB, raw: 1 * MB, head: 'head', base: 'base' },
               { name: 'metrics', file: 'metrics.json', zip: 1 * MB, raw: 8 * MB, head: 'head-metrics', base: 'base-metrics' },
             ];
-            const runs = [{ id: context.payload.workflow_run.id, side: 'head' }];
+            const runs = [{ id: Number(process.env.HEAD_RUN), side: 'head' }];
             if (/^\d+$/.test(process.env.BASE_RUN || '')) runs.push({ id: Number(process.env.BASE_RUN), side: 'base' });
 
             // The central directory, read without running anything on the zip.
@@ -456,13 +491,16 @@ jobs:
         if: steps.find.outputs.pr != ''
         uses: actions/github-script@v7
         env:
+          HEAD_RUN: ${{ steps.find.outputs.run_id }}
           BASE_SHA: ${{ steps.find.outputs.base_sha }}
           BASE_REF: ${{ steps.find.outputs.base_ref }}
         with:
           script: |
             const fs = require('fs');
             const { owner, repo } = context.repo;
-            const run = context.payload.workflow_run;
+            // The run being reported, as it is now (its current attempt).
+            const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(process.env.HEAD_RUN) })).data;
+            core.setOutput('run_attempt', String(run.run_attempt));
 
             // Escaped for markdown, and defused: a zero-width space after `@`
             // stops a fork from pinging users or teams through the bot, and one
@@ -575,38 +613,36 @@ jobs:
             // A job output holds up to 1 MB; a comment, 65536 characters.
             core.setOutput('body', lines.join('\n').slice(0, 60000));
 
-  # Writes the report. One write job at a time per pull request
-  # (cancel-in-progress: false queues them), and each one, inside the group:
-  #   - stops unless the pull request is still at the run's commit, the run has
-  #     no newer attempt, and no later CI run exists for that commit and head
-  #     branch (a rerun, or a second run on the same commit, is fresher);
-  #   - stops if the comment already carries a report from a later run or
-  #     attempt: the first lines of the comment hold the run number and attempt
-  #     it was written from, and a report only replaces an older one.
-  # Since the group serialises them, the check and the write cannot interleave
-  # with another report's. GitHub keeps one pending job per group: a third
-  # report arriving while one runs and one waits cancels the waiting one, so a
-  # report can be lost to a newer one, never overwrite it.
+  # Writes the report, still inside the workflow's concurrency group, so no
+  # other report on this branch runs between the checks and the write. It
+  # stops when the state moved on while the report was built: the pull request
+  # is at another commit, the run has a newer attempt, or a later CI run on the
+  # same commit exists (each of those completes into a report of its own,
+  # queued behind this one). It also stops if the comment already carries a
+  # report from a later run or attempt: the comment's first lines hold the run
+  # number and attempt it was written from, and a report only replaces an
+  # older one.
   write:
     needs: comment
     if: needs.comment.outputs.pr != '' && needs.comment.outputs.body != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    concurrency:
-      group: ci-report-pr-${{ needs.comment.outputs.pr }}
-      cancel-in-progress: false
     steps:
       - name: Write the report, then ask Copilot to review
         uses: actions/github-script@v7
         env:
           PR: ${{ needs.comment.outputs.pr }}
+          RUN_ID: ${{ needs.comment.outputs.run_id }}
+          RUN_ATTEMPT: ${{ needs.comment.outputs.run_attempt }}
           BODY: ${{ needs.comment.outputs.body }}
         with:
           script: |
             const marker = '<!-- vsp-ci-report -->';
             const { owner, repo } = context.repo;
-            const run = context.payload.workflow_run;
             const prNumber = Number(process.env.PR);
+            const built = Number(process.env.RUN_ATTEMPT);
+            // The run the body was built from, as it is now.
+            const run = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(process.env.RUN_ID) })).data;
             const lines = [];
 
             // --- only the latest run and attempt on this commit writes ------
@@ -615,9 +651,8 @@ jobs:
               core.info(`#${prNumber} moved to ${now.head.sha}; this report for ${run.head_sha} is stale, not written`);
               return;
             }
-            const self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })).data;
-            if (self.run_attempt > run.run_attempt) {
-              core.info(`run ${run.id} has a newer attempt (${self.run_attempt} > ${run.run_attempt}); not written`);
+            if (run.run_attempt !== built) {
+              core.info(`run ${run.id} has a newer attempt (${run.run_attempt}, the report was built from ${built}); its own report follows`);
               return;
             }
             const sameCommit = await github.paginate(github.rest.actions.listWorkflowRuns,

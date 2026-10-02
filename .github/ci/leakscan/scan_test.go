@@ -738,6 +738,35 @@ func TestRunIdentifierInPath(t *testing.T) {
 	})
 }
 
+// A path is never printed when it could carry what the scan looks for: a
+// listed name in a file name, with a newline in it or not, is reported as a
+// hit (not a failure), and neither stdout nor stderr holds the name.
+func TestRunPathNeverPrinted(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, file := range map[string]string{
+		"newline in the name":  "notes\n" + hiddenHost + ".txt",
+		"tab and the name":     "x\t" + hiddenHost,
+		"plain name, dirty IP": hiddenHost + ".md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, file), "seen on "+ip("10", "9", "8", "7")+"\n")
+			g("add", ".")
+			g("commit", "-qm", "add")
+			for _, mode := range [][]string{{"-diff", "main"}, {"-all"}, {"-range", "main..topic"}} {
+				code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+				if strings.Contains(out+errs, "sapbox") {
+					t.Fatalf("%v: the output prints the name\n%s%s", mode, out, errs)
+				}
+				if code != exitHits || !strings.Contains(out, "identifier/host") || !strings.Contains(out, "private-ip") {
+					t.Fatalf("%v: exit %d, want the path hit and the content hit\n%s%s", mode, code, out, errs)
+				}
+			}
+		})
+	}
+}
+
 // An object over the size limit fails closed, and promptly: the scanner must
 // not wait on a git that is still writing the object it refused.
 func TestRunOversizedObjectsFailClosedPromptly(t *testing.T) {
