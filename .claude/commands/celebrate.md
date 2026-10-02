@@ -114,11 +114,13 @@ cd .local/worktrees/release-vX.Y.Z
 make release-dist TAG=vX.Y.Z           # build + verify + run this platform's binary
 ./.github/ci/release.sh notes vX.Y.Z /tmp/notes.md
 
-gh release create vX.Y.Z --draft --verify-tag \
+pre=(); case vX.Y.Z in *-*) pre=(--prerelease) ;; esac
+./.github/ci/release.sh tag-at vX.Y.Z "$(git rev-parse 'vX.Y.Z^{commit}')"
+gh release create vX.Y.Z --draft --verify-tag "${pre[@]}" \
   --title "vX.Y.Z: <title>" --notes-file /tmp/notes.md dist/*
 gh release download vX.Y.Z -D /tmp/served
 ./.github/ci/release.sh compare dist /tmp/served
-gh release edit vX.Y.Z --draft=false --latest
+./.github/ci/release.sh publish vX.Y.Z "$(git rev-parse 'vX.Y.Z^{commit}')" dist   # the same guarded publish CI runs
 
 cd - && git worktree remove .local/worktrees/release-vX.Y.Z
 ```

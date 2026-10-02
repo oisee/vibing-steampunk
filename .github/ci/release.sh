@@ -13,6 +13,7 @@
 #   release.sh tag-at  TAG SHA             the tag on origin still points at SHA
 #   release.sh digests TAG DIST            the release's asset set and GitHub sha256 digests match DIST
 #   release.sh latest  TAG                 "true" if TAG is a final version above every published final release
+#   release.sh publish TAG SHA DIST        guarded draft -> published (tag-at, digests, latest; back to draft on a late failure)
 #
 # Every check reads the files themselves. An exit 0 from `go build` says nothing
 # about which source went in or which platform came out: v2.58.0 nearly shipped
@@ -370,7 +371,23 @@ cmd_latest() { # prints true when TAG is final and above every published final r
 	if [ "v$top" = "$tag" ]; then echo true; else echo false; fi
 }
 
-[ $# -ge 1 ] || die "usage: release.sh build|verify|run|notes|compare|tag-at|digests|latest ..."
+# The one publish sequence, for CI and the manual fallback alike. The draft
+# must already exist and have passed `compare`.
+cmd_publish() {
+	local tag=$1 sha=$2 dist=$3 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} latest
+	"$0" tag-at "$tag" "$sha"
+	"$0" digests "$tag" "$dist"
+	latest=$("$0" latest "$tag")
+	gh release edit "$tag" --repo "$repo" --draft=false --latest="$latest"
+	if ! { "$0" tag-at "$tag" "$sha" && "$0" digests "$tag" "$dist"; }; then
+		gh release edit "$tag" --repo "$repo" --draft=true || true
+		die "publish $tag: the tag or an asset changed while publishing; the release is a draft again"
+	fi
+	gh release view "$tag" --repo "$repo" --json url,isDraft,isPrerelease,assets \
+		--jq '"\(.url) draft=\(.isDraft) prerelease=\(.isPrerelease) assets=\(.assets | length) latest='"$latest"'"'
+}
+
+[ $# -ge 1 ] || die "usage: release.sh build|verify|run|notes|compare|tag-at|digests|latest|publish ..."
 sub=$1; shift
 case $sub in
 build) [ $# -ge 1 ] || die "usage: release.sh build TAG [DIST]"; cmd_build "$@" ;;
@@ -381,5 +398,6 @@ compare) [ $# -eq 2 ] || die "usage: release.sh compare DIST DOWNLOADED"; cmd_co
 tag-at) [ $# -eq 2 ] || die "usage: release.sh tag-at TAG SHA"; cmd_tag_at "$@" ;;
 digests) [ $# -eq 2 ] || die "usage: release.sh digests TAG DIST"; cmd_digests "$@" ;;
 latest) [ $# -eq 1 ] || die "usage: release.sh latest TAG"; cmd_latest "$@" ;;
+publish) [ $# -eq 3 ] || die "usage: release.sh publish TAG SHA DIST"; cmd_publish "$@" ;;
 *) die "unknown subcommand $sub" ;;
 esac

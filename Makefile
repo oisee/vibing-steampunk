@@ -52,7 +52,7 @@ LOCAL_BINARY=$(BINARY_NAME)-$(CURRENT_OS)-$(CURRENT_ARCH)$(EXE)
 
 .PHONY: all build clean test lint lint-full metrics fmt deps tidy help install install-user link local-alias run
 .PHONY: build-all build-all-all build-linux build-darwin build-windows build-win sso-helper
-.PHONY: deploy-windows sync-embedded release release-dist refresh-deps fetch-deps check-deps
+.PHONY: deploy-windows sync-embedded release prep-release release-dist refresh-deps fetch-deps check-deps
 
 all: deps lint test build
 
@@ -172,7 +172,7 @@ deploy-windows: ## Build vsp.exe + vsp-sso.exe (amd64) and copy both to $(WINDOW
 sync-embedded: ## Copy the ZADT_VSP sources vsp install deploys from src/ into embedded/abap/
 	$(GOCMD) generate ./embedded/abap
 
-# SAP system for dependency refresh (override with: make release SAP_SYSTEM=prod)
+# SAP system for dependency refresh (override with: make prep-release SAP_SYSTEM=prod)
 SAP_SYSTEM ?= a4h
 
 fetch-deps: ## Build the embedded abapGit archive from upstream, reproducibly
@@ -198,8 +198,14 @@ refresh-deps: ## Refresh embedded ZIPs from SAP — prefer fetch-deps, which is 
 		echo "  abapgit-standalone.zip: kept existing (SAP export failed)"; \
 	fi
 
-release: build refresh-deps build-all ## Full release: build vsp, refresh deps from SAP, rebuild all platforms
-	@echo "Release build complete."
+prep-release: build refresh-deps build-all ## Before tagging: refresh embedded deps from SAP and build locally (not a release)
+	@echo "Prep done. Commit any refreshed deps; a release is cut by pushing a tag (.claude/commands/celebrate.md)."
+
+release: ## Not a release any more: see prep-release, release-dist and .claude/commands/celebrate.md
+	@echo "Releases are cut by pushing a vX.Y.Z tag; CI builds, verifies and publishes."; \
+	echo "  make prep-release              refresh deps from SAP and build locally"; \
+	echo "  make release-dist TAG=vX.Y.Z   the CI build and checks, as a dry run or manual fallback"; \
+	exit 1
 
 # The release workflow builds and checks through .github/ci/release.sh; this
 # runs the same script, so it is both the dry run and the manual fallback. It

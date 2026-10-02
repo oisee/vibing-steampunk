@@ -271,19 +271,6 @@ jobs:
       # The checks above ran against the draft as it was then. Right before and
       # right after publishing, the tag and every asset digest are read from
       # GitHub again; a release that fails the second check goes back to draft.
+      # Latest only above every published final release.
       - name: Publish
-        run: |
-          ./.github/ci/release.sh tag-at "$TAG" "$SHA"
-          ./.github/ci/release.sh digests "$TAG" dist
-          # Latest only above every published final release: a dispatch of an
-          # older tag must not take "latest" away from a newer release, and a
-          # higher tag whose release failed must not keep this one from it.
-          latest=$(./.github/ci/release.sh latest "$TAG")
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
-          if ! { ./.github/ci/release.sh tag-at "$TAG" "$SHA" && ./.github/ci/release.sh digests "$TAG" dist; }; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true
-            echo "::error title=release::$TAG changed while it was being published; it is a draft again"
-            exit 1
-          fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets \
-            --jq '"\(.url) draft=\(.isDraft) assets=\(.assets | length)"'
+        run: ./.github/ci/release.sh publish "$TAG" "$SHA" dist
