@@ -64,17 +64,6 @@ func (c *Client) lockOutstanding() bool {
 	return c.locks.outstanding()
 }
 
-// lockPresent reports whether this client still holds a lock record by the
-// transport's rule (present, up to lockRecordMaxAge), not the keep-alive's
-// thirty minutes. Only a request that must stay inside a held lock's context
-// uses it: a caller can keep a lock alive past lockWindowMaxAge with stateful
-// traffic, and the transport still isolates for it then. Everything else keeps
-// lockOutstanding, so a lost UNLOCK pins those requests for at most
-// lockWindowMaxAge.
-func (c *Client) lockPresent() bool {
-	return c.locks.present()
-}
-
 // outstanding reports a lock opened within lockWindowMaxAge -- the keep-alive
 // policy, which may err toward pinging after a while.
 func (w *lockWindow) outstanding() bool {

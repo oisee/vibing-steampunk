@@ -16,10 +16,11 @@ import (
 func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle string, transport string) error {
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpDelete,
-		OpName:    "DeleteObject",
-		ObjectURL: objectURL,
-		Transport: transport,
+		Op:         OpDelete,
+		OpName:     "DeleteObject",
+		ObjectURL:  objectURL,
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return err
 	}

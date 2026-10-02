@@ -18,13 +18,15 @@ func (c *Client) checkPackageSafety(pkg string) error {
 }
 
 // checkObjectPackageSafety resolves the package for an existing object and
-// validates it against the configured package whitelist.
-func (c *Client) checkObjectPackageSafety(ctx context.Context, objectURL string) error {
+// validates it against the configured package whitelist. inLockSession sends
+// the lookup in the session of the lock the calling write already holds (see
+// getObjectPackage).
+func (c *Client) checkObjectPackageSafety(ctx context.Context, objectURL string, inLockSession bool) error {
 	if len(c.config.Safety.AllowedPackages) == 0 {
 		return nil
 	}
 
-	pkg, err := c.getObjectPackage(ctx, objectURL)
+	pkg, err := c.getObjectPackage(ctx, objectURL, inLockSession)
 	if err != nil {
 		return fmt.Errorf("resolving package for %s: %w", normalizeObjectURLForPackageCheck(objectURL), err)
 	}
@@ -63,21 +65,20 @@ func (c *Client) checkTransportableEdit(transport, opName string) error {
 	return c.config.Safety.CheckTransportableEdit(transport, opName)
 }
 
-func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string, error) {
+func (c *Client) getObjectPackage(ctx context.Context, objectURL string, inLockSession bool) (string, error) {
 	normalized := normalizeObjectURLForPackageCheck(objectURL)
 	objectName, err := objectNameFromURL(normalized)
 	if err != nil {
 		return "", err
 	}
 
-	// This lookup runs inside DeleteObject/UpdateSource's own gate, which with a
-	// caller-supplied lock handle is after the LOCK. While this client holds a
-	// lock the lookup is sent stateful, so it joins the lock's context instead
-	// of relying on stateless-request isolation to leave that context alone.
-	// "Holds a lock" is the transport's record (lockPresent), not the
-	// keep-alive's thirty-minute window: a lock kept alive longer than that is
-	// still the lock this write needs.
-	results, err := c.searchObjectByType(ctx, objectName, "", 20, c.lockPresent())
+	// inLockSession is set when the write that runs this lookup carries a
+	// caller-supplied lock handle (MutationContext.LockHandle): its gate then
+	// runs after the LOCK, and the lookup is sent stateful so it joins that
+	// lock's context instead of relying on stateless-request isolation to leave
+	// the context alone. It follows the handle, not the age of any lock record,
+	// so neither a long-held lock nor a stale unrelated record changes it.
+	results, err := c.searchObjectByType(ctx, objectName, "", 20, inLockSession)
 	if err != nil {
 		return "", err
 	}

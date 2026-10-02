@@ -237,10 +237,11 @@ func (c *Client) UnlockObject(ctx context.Context, objectURL string, lockHandle 
 func (c *Client) UpdateSource(ctx context.Context, objectSourceURL string, source string, lockHandle string, transport string) error {
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpUpdate,
-		OpName:    "UpdateSource",
-		ObjectURL: objectSourceURL,
-		Transport: transport,
+		Op:         OpUpdate,
+		OpName:     "UpdateSource",
+		ObjectURL:  objectSourceURL,
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return err
 	}

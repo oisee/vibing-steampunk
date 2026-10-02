@@ -210,7 +210,7 @@ func TestClient_CheckObjectPackageSafety_NormalizesObjectURLs(t *testing.T) {
 			transport := NewTransportWithClient(cfg, mock)
 			client := NewClientWithTransport(cfg, transport)
 
-			if err := client.checkObjectPackageSafety(context.Background(), tt.objectURL); err != nil {
+			if err := client.checkObjectPackageSafety(context.Background(), tt.objectURL, false); err != nil {
 				t.Fatalf("checkObjectPackageSafety failed: %v", err)
 			}
 		})

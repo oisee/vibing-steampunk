@@ -157,10 +157,51 @@ func TestPrepareDelete_StillEnforcesOperationPolicy(t *testing.T) {
 	}
 }
 
+// A package lookup for a mutation that carries no lock handle stays stateless,
+// even while this client still has a lock record for something else (here an
+// unrelated lock whose UNLOCK was lost two hours ago). Only the write's own
+// lock may pull its lookup into a stateful session; a stale record must not
+// route every lookup through the context gate.
+func TestCheckMutation_NoHandleLookupStaysStatelessDespiteStaleLockRecord(t *testing.T) {
+	const objURL = "/sap/bc/adt/programs/programs/zdemo_upd"
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, deleteRoute(objURL, "ZDEMO_UPD", "$TMP"),
+		WithAllowedPackages("$TMP"))
+
+	client.locks.mu.Lock()
+	if client.locks.open == nil {
+		client.locks.open = make(map[string]time.Time)
+	}
+	client.locks.open["STALE-UNRELATED"] = time.Now().Add(-2 * time.Hour)
+	client.locks.mu.Unlock()
+	if !client.locks.present() {
+		t.Fatal("setup: want the stale lock record present")
+	}
+
+	if err := client.checkMutation(context.Background(), MutationContext{
+		Op:        OpUpdate,
+		OpName:    "UpdateSource",
+		ObjectURL: objURL + "/source/main",
+	}); err != nil {
+		t.Fatalf("checkMutation: %v", err)
+	}
+
+	calls := rec.snapshot()
+	searchAt := indexOfCall(calls, isSearch)
+	if searchAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("no package lookup was sent")
+	}
+	if calls[searchAt].sessionType != "stateless" {
+		t.Errorf("package lookup without a lock handle is not stateless: %s", calls[searchAt])
+		dumpCalls(t, calls)
+	}
+}
+
 // A caller-supplied handle whose lock is older than the keep-alive window
-// (lockWindowMaxAge) is still a lock the transport isolates for, up to
-// lockRecordMaxAge. DeleteObject's package lookup must then still go out in
-// the lock's stateful session, not fall back to stateless after thirty minutes.
+// (lockWindowMaxAge) is still a lock the write needs. DeleteObject's package
+// lookup must then still go out in the lock's stateful session, not fall back
+// to stateless after thirty minutes.
 func TestDeleteObject_SuppliedHandlePastKeepAliveWindowKeepsLookupStateful(t *testing.T) {
 	const objURL = "/sap/bc/adt/programs/programs/zdemo_del"
 	rec := &adtRecorder{}

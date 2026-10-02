@@ -96,10 +96,11 @@ func (c *Client) CreateTestInclude(ctx context.Context, className string, lockHa
 
 	// Unified mutation policy gate (op type + parent class package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpCreate,
-		OpName:    "CreateTestInclude",
-		ObjectURL: GetObjectURL(ObjectTypeClass, className, ""),
-		Transport: transport,
+		Op:         OpCreate,
+		OpName:     "CreateTestInclude",
+		ObjectURL:  GetObjectURL(ObjectTypeClass, className, ""),
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return err
 	}
@@ -152,10 +153,11 @@ func (c *Client) UpdateClassInclude(ctx context.Context, className string, inclu
 
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpUpdate,
-		OpName:    "UpdateClassInclude",
-		ObjectURL: sourceURL,
-		Transport: transport,
+		Op:         OpUpdate,
+		OpName:     "UpdateClassInclude",
+		ObjectURL:  sourceURL,
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return err
 	}

@@ -193,10 +193,11 @@ func (c *Client) AssignBusinessCatalogApps(ctx context.Context, catalogName stri
 	// session, or ADT ends the session, drops the lock, and this POST comes
 	// back 423 "is not locked".
 	if err := c.checkMutation(ctx, MutationContext{
-		Op:        OpUpdate,
-		OpName:    "AssignBusinessCatalogApps",
-		ObjectURL: BusinessCatalogURL(catalogID),
-		Transport: transport,
+		Op:         OpUpdate,
+		OpName:     "AssignBusinessCatalogApps",
+		ObjectURL:  BusinessCatalogURL(catalogID),
+		Transport:  transport,
+		LockHandle: lockHandle,
 	}); err != nil {
 		return "", err
 	}

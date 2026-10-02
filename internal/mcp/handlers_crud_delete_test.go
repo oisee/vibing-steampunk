@@ -400,7 +400,7 @@ func TestUniversalDeleteDEVCNotByName(t *testing.T) {
 // LockObject, then DeleteObject with that handle. With a handle supplied,
 // DeleteObject's own gate resolves the package between the LOCK and the
 // DELETE. This test pins the choice to send that lookup in the lock's
-// stateful session while this client holds a lock. It asserts the session
+// stateful session when the write carries a lock handle. It asserts the session
 // header, not that the handle survives: the fake does not model the
 // stateless-request isolation that already protects the lock's context on
 // SAP_BASIS 758. A report from 816 suggests that isolation alone may not be
