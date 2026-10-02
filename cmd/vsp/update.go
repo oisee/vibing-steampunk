@@ -348,7 +348,7 @@ func newerThan(a, b [3]int) bool {
 	return false
 }
 
-// assetName follows the archives.name_template in .goreleaser.yml.
+// assetName is the release asset name .github/ci/release.sh builds (asset_of).
 func assetName(goos, goarch string) string {
 	name := "vsp-" + goos + "-" + goarch
 	if goos == "windows" {

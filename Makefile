@@ -52,7 +52,7 @@ LOCAL_BINARY=$(BINARY_NAME)-$(CURRENT_OS)-$(CURRENT_ARCH)$(EXE)
 
 .PHONY: all build clean test lint lint-full metrics fmt deps tidy help install install-user link local-alias run
 .PHONY: build-all build-all-all build-linux build-darwin build-windows build-win sso-helper
-.PHONY: deploy-windows sync-embedded release refresh-deps fetch-deps check-deps
+.PHONY: deploy-windows sync-embedded release release-dist refresh-deps fetch-deps check-deps
 
 all: deps lint test build
 
@@ -200,6 +200,15 @@ refresh-deps: ## Refresh embedded ZIPs from SAP — prefer fetch-deps, which is 
 
 release: build refresh-deps build-all ## Full release: build vsp, refresh deps from SAP, rebuild all platforms
 	@echo "Release build complete."
+
+# The release workflow builds and checks through .github/ci/release.sh; this
+# runs the same script, so it is both the dry run and the manual fallback. It
+# refuses a dirty tree or a HEAD that is not the tag: use a fresh worktree.
+release-dist: ## Build + verify the 9 release assets for TAG into dist/ (what CI runs): make release-dist TAG=vX.Y.Z
+	@test -n "$(TAG)" || { echo "usage: make release-dist TAG=vX.Y.Z"; exit 1; }
+	./.github/ci/release.sh build $(TAG) dist
+	./.github/ci/release.sh verify $(TAG) dist
+	./.github/ci/release.sh run $(TAG) dist $(LOCAL_BINARY)
 
 # GOPATH is a Go environment value, not a make variable: left as $(GOPATH) it
 # expanded to nothing and this target installed to /bin.

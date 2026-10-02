@@ -1,148 +1,276 @@
 name: Release
 
+# Pushing a tag vX.Y.Z releases it. The workflow builds from the tag, checks the
+# binaries by what is in them, publishes a draft, downloads the draft back and
+# compares it byte for byte, and only then makes the release public.
+#
+# What a human does: merge the release-prep PR (README "What's New" vX.Y.Z,
+# CHANGELOG.md), then `git tag -a vX.Y.Z -m "Release vX.Y.Z: <title>"` on main and
+# push the tag. The tag's subject after "vX.Y.Z: " becomes the release title.
+# See .claude/commands/celebrate.md.
+#
+# This workflow never pushes to any branch and never creates or moves a tag. It
+# refuses a tag that already has a release (it cannot overwrite one) and a tag
+# whose commit is not on main.
+#
+# workflow_dispatch releases an existing tag, e.g. after fixing whatever made a
+# tag-push run fail. The checks are the same.
+#
+# The build and every check are .github/ci/release.sh, so a dry run on a laptop
+# is the same code: `make release-dist TAG=vX.Y.Z` in a clean checkout of the tag.
+
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      version:
-        description: >
-          Version to release (e.g. v2.28.0 or 2.28.0).
-          Leave empty to auto-bump from the latest tag.
-        required: false
-        default: ""
-      bump:
-        description: "Bump type used when version is not specified"
-        required: false
-        default: "minor"
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
+      tag:
+        description: "Existing tag to release (e.g. v2.60.0). It must not have a release yet."
+        required: true
 
-# Needed for goreleaser to create the GitHub release and push CHANGELOG
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: prepare
     runs-on: ubuntu-latest
-
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+      prev: ${{ steps.tag.outputs.prev }}
     steps:
-      # ------------------------------------------------------------------ #
-      # 1. Checkout — full history required by git-cliff and goreleaser
-      # ------------------------------------------------------------------ #
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Use a PAT if you need to push to a branch protected by
-          # "require status checks" rules. For most repos GITHUB_TOKEN works.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.inputs.tag && format('refs/tags/{0}', github.event.inputs.tag) || github.ref }}
 
-      # ------------------------------------------------------------------ #
-      # 2. Set up Go (version comes from go.mod toolchain directive)
-      # ------------------------------------------------------------------ #
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Resolve and check the tag
+        id: tag
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error title=release::'$TAG' is not a release tag (vMAJOR.MINOR.PATCH[-pre])"; exit 1
+          fi
+          # actions/checkout can leave an annotated tag lightweight; fetch it as it is.
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG" "refs/heads/main:refs/remotes/origin/main"
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error title=release::$TAG ($sha) is not on main. Release only what main has."; exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error title=release::$TAG already has a release. This workflow never modifies a published release; delete a failed draft by hand if that is what is there."; exit 1
+          fi
+          prev=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$sha^" 2>/dev/null || true)
+          {
+            echo "tag=$TAG"
+            echo "sha=$sha"
+            echo "prev=$prev"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG at $sha (previous: ${prev:-none})"
+
+  test:
+    name: test
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - name: Test
+        run: go test -race ./...
 
-      # ------------------------------------------------------------------ #
-      # 3. Run tests — abort the release if anything is red
-      # ------------------------------------------------------------------ #
-      - name: Run tests
-        run: go test ./...
-
-      # ------------------------------------------------------------------ #
-      # 4. Determine the release version
-      #    Priority: manual input > auto-bump from latest tag
-      # ------------------------------------------------------------------ #
-      - name: Determine version
-        id: version
+  # The same scanner and identifier list as ci.yml, over what this release
+  # publishes: every file in the tag's tree and the commits since the previous
+  # release. Fails closed without the identifier list.
+  leak-scan:
+    name: leak scan
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .github/ci/leakscan/go.mod
+          cache: false
+      - name: Build the scanner
+        working-directory: .github/ci/leakscan
+        run: go build -o "$RUNNER_TEMP/leakscan" .
+      - name: Scan
+        env:
+          VSP_LEAK_IDENTIFIERS: ${{ secrets.VSP_LEAK_IDENTIFIERS }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          PREV: ${{ needs.prepare.outputs.prev }}
         run: |
-          INPUT="${{ github.event.inputs.version }}"
+          while IFS= read -r line || [ -n "$line" ]; do
+            line=${line%$'\r'}
+            case $line in ''|'#'*) continue ;; esac
+            echo "::add-mask::$line"
+            value=$(printf '%s' "${line#*:}" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+            [ -n "$value" ] && echo "::add-mask::$value"
+          done <<< "$VSP_LEAK_IDENTIFIERS"
+          range=()
+          [ -n "$PREV" ] && range=(-range "$PREV..$SHA")
+          "$RUNNER_TEMP/leakscan" -root "$GITHUB_WORKSPACE" -require-identifiers -all -rev "$SHA" "${range[@]}"
 
-          if [[ -n "$INPUT" ]]; then
-            # Use the manually supplied version (add "v" prefix if missing)
-            VERSION="${INPUT#v}"
-            VERSION="v${VERSION}"
-          else
-            # Auto-bump: parse the latest semver tag
-            LATEST=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-            # Strip leading "v" and split into parts
-            VERSION_CORE="${LATEST#v}"
-            MAJOR=$(echo "$VERSION_CORE" | cut -d. -f1)
-            MINOR=$(echo "$VERSION_CORE" | cut -d. -f2)
-            PATCH=$(echo "$VERSION_CORE" | cut -d. -f3 | cut -d- -f1)
+  build:
+    name: build and verify
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Fetch the tag as it is
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install qemu (to run the arm binaries)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+      - name: Build
+        run: ./.github/ci/release.sh build "$TAG" dist
+      - name: Verify (names, headers, build info, checksums)
+        run: ./.github/ci/release.sh verify "$TAG" dist
+      - name: Run (each prints exactly the tag)
+        run: |
+          ./.github/ci/release.sh run "$TAG" dist \
+            vsp-linux-amd64 vsp-linux-386 \
+            vsp-linux-arm64@qemu-aarch64-static vsp-linux-arm@qemu-arm-static
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
 
-            case "${{ github.event.inputs.bump }}" in
-              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
-              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
-              patch) PATCH=$((PATCH + 1)) ;;
-            esac
+  # The binaries Linux cannot start, started where they can be.
+  run:
+    name: run (${{ matrix.os }})
+    needs: [prepare, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            # darwin-amd64 needs Rosetta; if the image lacks it, the run says so
+            # as a warning, and the header and build info checks still apply.
+            specs: vsp-darwin-arm64 ?vsp-darwin-amd64
+          - os: windows-latest
+            specs: vsp-windows-amd64.exe vsp-windows-386.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Fetch the tag as it is
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Run
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SPECS: ${{ matrix.specs }}
+        # SPECS is split on spaces on purpose: one asset per word.
+        run: |
+          # shellcheck disable=SC2086
+          ./.github/ci/release.sh run "$TAG" dist $SPECS
 
-            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-          fi
-
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Releasing ${VERSION}"
-
-      # ------------------------------------------------------------------ #
-      # 5. Install git-cliff (pinned to a known-good release)
-      # ------------------------------------------------------------------ #
-      - name: Install git-cliff
+  publish:
+    name: publish
+    needs: [prepare, test, leak-scan, build, run]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Fetch the tag as it is
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Install git-cliff (fallback notes)
         uses: taiki-e/install-action@v2
         with:
           tool: git-cliff@2.12.0
 
-      # ------------------------------------------------------------------ #
-      # 6. Generate CHANGELOG.md and commit it
-      #    --tag assigns all commits since the previous tag to the new version,
-      #    so the output contains only released versions (no [Unreleased] block)
-      # ------------------------------------------------------------------ #
-      - name: Generate CHANGELOG.md
+      - name: Notes and title
+        id: meta
         run: |
-          git-cliff --tag "${{ steps.version.outputs.version }}" --output CHANGELOG.md
-
-      - name: Commit CHANGELOG.md
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          # Only commit if CHANGELOG.md actually changed
-          if git diff --staged --quiet; then
-            echo "CHANGELOG.md unchanged — skipping commit"
-          else
-            git commit -m "chore: update CHANGELOG for ${{ steps.version.outputs.version }}"
+          ./.github/ci/release.sh notes "$TAG" "$RUNNER_TEMP/notes.md"
+          # The annotated tag's subject, "Release vX.Y.Z: <title>", names the release.
+          title=$TAG
+          if [ "$(git cat-file -t "refs/tags/$TAG")" = tag ]; then
+            subject=$(git for-each-ref "refs/tags/$TAG" --format='%(contents:subject)')
+            case $subject in
+              *"$TAG: "*) title="$TAG: ${subject#*"$TAG: "}" ;;
+            esac
           fi
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          if ! git show "$TAG:CHANGELOG.md" | grep -q "^## \[${TAG#v}\]"; then
+            echo "::warning title=release::CHANGELOG.md at $TAG has no [${TAG#v}] section. Regenerate it in the next PR: git-cliff -o CHANGELOG.md"
+          fi
+          {
+            echo "### $title"
+            echo
+            cat "$RUNNER_TEMP/notes.md"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # ------------------------------------------------------------------ #
-      # 7. Tag and push
-      #    Push the commit first, then the tag so goreleaser finds it
-      # ------------------------------------------------------------------ #
-      - name: Tag and push
-        run: |
-          git tag "${{ steps.version.outputs.version }}"
-          git push origin HEAD:main
-          git push origin "${{ steps.version.outputs.version }}"
-
-      # ------------------------------------------------------------------ #
-      # 8. Generate release notes for this version only (git-cliff --latest)
-      # ------------------------------------------------------------------ #
-      - name: Generate release notes
-        run: |
-          git-cliff --tag "${{ steps.version.outputs.version }}" --latest --strip header --output RELEASE_NOTES.md
-
-      # ------------------------------------------------------------------ #
-      # 9. GoReleaser — builds all 9 platform binaries, creates GitHub release
-      #    Release notes come from git-cliff (GoReleaser changelog is skipped)
-      # ------------------------------------------------------------------ #
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean --release-notes=RELEASE_NOTES.md
+      # A draft is invisible to `vsp update` (it reads releases/latest), so a
+      # failure from here on leaves nothing anyone can download.
+      - name: Create the release as a draft
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: ${{ steps.meta.outputs.title }}
+        run: |
+          pre=()
+          [[ $TAG == *-* ]] && pre=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" "${pre[@]}" dist/*
+
+      - name: Download the draft and compare
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/served"
+          ./.github/ci/release.sh compare dist "$RUNNER_TEMP/served"
+
+      - name: Publish
+        run: |
+          # Latest only if this is the highest final version: a dispatch of an
+          # older tag must not take "latest" away from a newer release.
+          highest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
+          latest=false
+          [ "$TAG" = "$highest" ] && latest=true
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets \
+            --jq '"\(.url) draft=\(.isDraft) assets=\(.assets | length)"'

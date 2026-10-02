@@ -122,4 +122,4 @@ Handlers return `(result, nil)` — never `(nil, error)`. Errors go through `mcp
 - **Integration tests** use build tag `integration` and require `SAP_URL`, `SAP_USER`, `SAP_PASSWORD`, `SAP_CLIENT` env vars. They create objects in the `$TMP` package and clean up after themselves.
 - **Never commit** `.env`, `cookies.txt`, or `.mcp.json` — all are in `.gitignore`.
 - **Reports** follow the naming convention `reports/YYYY-MM-DD-NNN-title.md` with sequential numbering per day.
-- **Releases** use GoReleaser (`.goreleaser.yml`) with git-cliff changelogs (`cliff.toml`), triggered via the `Release` workflow dispatch.
+- **Releases** are cut by pushing a `vX.Y.Z` tag: `.github/workflows/release.yml` builds and verifies through `.github/ci/release.sh` and publishes. Notes come from the README "What's New" section, else git-cliff (`cliff.toml`). See `.claude/commands/celebrate.md`.
