@@ -1,0 +1,2 @@
+# A local `go build` in the module directory writes the binary here.
+/leakscan
