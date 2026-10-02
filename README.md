@@ -1052,7 +1052,55 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.59.0 — only what you saw](https://github.com/oisee/vibing-steampunk/releases/tag/v2.59.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.59.1 — built by CI](https://github.com/oisee/vibing-steampunk/releases/tag/v2.59.1)**.
+
+### v2.59.1 — new since v2.59.0
+
+The first release built, checked and published by CI on the tag push
+(`.github/workflows/release.yml`), not by hand.
+
+**Release assets fixed**
+
+- **`vsp-linux-amd64` is static again.** v2.59.0's needed glibc 2.34 or later.
+  Every binary is now built with `CGO_ENABLED=0`.
+- **`LICENSE` and `NOTICE` ship with the binaries.** Apache-2.0 components are
+  embedded.
+- **The build info names the release commit.** CI refuses a binary whose Go
+  VCS stamp is not the tag's commit or comes from a modified tree. It runs
+  `--version` on Linux, macOS and Windows (x64 and ARM), and publishes only
+  after downloading the draft back and comparing it byte for byte (#329).
+
+**New**
+
+- **Has a transport been imported here, and how did it go?** MCP `system`
+  `import_status` reads a request's tp steps from TPALOG, read-only (#332,
+  ported from #297).
+- **Activation failures say why.** `vsp install`, `copy`, `source write` and
+  `source edit` print the activation messages: object, line and text,
+  capped at 20 (#333).
+- **Long writes take the call timeout.** WriteSource, EditSource and the
+  activations honour `--call-timeout` / `params.timeout`, so a large program
+  is no longer cut at 60 s. A lock taken before the time ran out is still
+  released. If vsp cannot confirm the release, it says the lock may still
+  be held (#333).
+
+**Fixed**
+
+- **Deleting or updating with your own lock handle on SAP_BASIS 816.** The
+  package check now runs inside that lock's session, so the write no longer
+  comes back 423 (#331, ported from #292).
+
+**Removed**
+
+- **Three MCP tools that did nothing useful.** `InstallAbapGit` deployed
+  nothing but reported success, `InstallDummyTest` was a test tool, and
+  `WriteDataElementLabels` always refused. abapGit's standalone edition still
+  installs with `vsp install abapgit --edition standalone` (#334, #277).
+
+**Coming in the next release: fewer platforms.** `vsp-linux-386`,
+`vsp-linux-arm` and `vsp-windows-386` will no longer be built. Together they
+were about 6% of downloads. The remaining six are linux, macOS and Windows,
+each on amd64 and arm64.
 
 ### v2.59.0 — new since v2.58.0
 
