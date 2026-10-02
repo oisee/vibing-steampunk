@@ -119,13 +119,17 @@ func views(data []byte) []view {
 		}
 	}
 	for _, loc := range hexRun.FindAllIndex(data, -1) {
-		run := data[loc[0]:loc[1]]
-		run = run[:len(run)/2*2]
-		b := make([]byte, len(run)/2)
-		if _, err := hex.Decode(b, run); err == nil {
-			// A 40- or 64-digit run is a SHA-1 or SHA-256 digest (a commit,
-			// a checksum): hashed bytes, which carry no address.
-			addDecoded("hex", b, loc[0], len(run) >= 32 && len(run) != 40 && len(run) != 64)
+		// Both nibble alignments: a run can start one digit early (a stray
+		// digit, a length prefix), which shifts every byte after it.
+		for shift := 0; shift < 2 && loc[1]-loc[0]-shift >= 8; shift++ {
+			run := data[loc[0]+shift : loc[1]]
+			run = run[:len(run)/2*2]
+			b := make([]byte, len(run)/2)
+			if _, err := hex.Decode(b, run); err == nil {
+				// A 40- or 64-digit run is a SHA-1 or SHA-256 digest (a
+				// commit, a checksum): hashed bytes, which carry no address.
+				addDecoded("hex", b, loc[0], shift == 0 && len(run) >= 32 && len(run) != 40 && len(run) != 64)
+			}
 		}
 	}
 	for _, loc := range b64Run.FindAllIndex(data, -1) {

@@ -350,10 +350,10 @@ func pushRange(root, spec, base string) (string, string) {
 		return base + ".." + after, ""
 	}
 	if _, err := git(root, "rev-parse", "--verify", "--quiet", before+"^{commit}"); err != nil {
-		return "", fmt.Sprintf("-push: the previous tip %s is not in this clone (a force push?), so the pushed commits cannot be told apart and are not scanned; this fails closed.\n"+
-			"  To clear it: scan the rewritten history where you still have it,\n"+
+		return "", fmt.Sprintf("-push: the previous tip %s is not in this clone, so this was a force push: the commits it replaced cannot be told from the ones it added, and none are scanned; this fails closed.\n"+
+			"  A force push to main is blocked by the repository's ruleset (non_fast_forward on the default branch), so this should not happen.\n"+
+			"  If it does, a maintainer scans the rewritten history by hand, where it is still available:\n"+
 			"    leakscan -root . -require-identifiers -range <last commit you trust>..%s\n"+
-			"  and, if it is clean, push any new commit (an empty one will do) so the next run has a BEFORE to compare with.\n"+
 			"  Re-running this job does not help: it gets the same BEFORE.", before, after)
 	}
 	return before + ".." + after, ""

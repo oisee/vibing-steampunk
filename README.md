@@ -2396,10 +2396,11 @@ names were not checked. A reviewed false positive of a generic pattern goes in
 list can never be excused. CI reads that file from the base branch, so a new
 rule takes effect only once merged: propose it in a pull request of its own.
 
-A push to main whose previous tip is gone (a force push) is red: the commits
-it replaced cannot be told from the ones it added. Scan the rewritten range
-locally with `-range <last trusted commit>..<new tip>`, then push any commit to
-give the next run a base. Known limitation: a pull request from a branch of
+A force push to main is refused by the repository's ruleset, so a push scan
+always has a previous tip to start from. If one ever got through, the job is
+red (the replaced commits cannot be told from the new ones), and the recovery
+is a maintainer scanning the rewritten history by hand with
+`-range <last trusted commit>..<new tip>`. Known limitation: a pull request from a branch of
 this repository runs its own copy of the workflow and the scanner, so it could
 weaken the gate it is judged by. Branch protection would close that and this
 repository does not use it, so the job warns, and the report row says so,

@@ -240,7 +240,8 @@ jobs:
   #     still caught: it is in the history), and every commit message;
   #   push to main: every file in the tree, plus the lines and messages of the
   #     pushed range (event.before..event.after; a new branch: every commit not
-  #     on main; a force push, whose before is gone: red, see the job's message).
+  #     on main; a force push, whose before is gone: red. The main ruleset refuses
+  #     force pushes; if one got through, a maintainer scans by hand, -range).
   # The allow-file is read from the base revision on a pull request, so a PR
   # cannot excuse its own hits; a PR that changes it gets a warning to review it.
   # Known limitation: a PR from a branch of this repository runs its own copy
@@ -320,8 +321,8 @@ jobs:
           else
             # A new branch (all-zero BEFORE) is read as every commit not on
             # main; a force push, whose BEFORE is gone, fails closed in the
-            # scanner with instructions, because the replaced commits cannot be
-            # told from the new ones.
+            # scanner, because the replaced commits cannot be told from the new
+            # ones (the main ruleset refuses force pushes; recovery is manual).
             mode=(-all -push "$BEFORE..$AFTER" -push-base origin/main)
             what="tree and the pushed commits"
           fi

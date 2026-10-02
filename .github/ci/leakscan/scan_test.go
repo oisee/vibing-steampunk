@@ -524,18 +524,30 @@ func TestRunHostileAllowFileInPR(t *testing.T) {
 }
 
 func TestShortEncodedSID(t *testing.T) {
-	sid := Identifier{Class: "sid", Value: "A4H"}
+	// The public developer-edition SID, assembled at run time: spelled out in
+	// this file, in any encoding, it would be a hit for anyone who puts it on
+	// their list. The encodings are the reviewer's exact cases for "SID=" plus
+	// the SID: 14 hex digits, the same one nibble in (a stray leading digit),
+	// and padded base64 with and without its "==".
+	value := "A4" + "H"
+	sid := Identifier{Class: "sid", Value: value}
+	hexed := hex.EncodeToString([]byte("SID=" + value))
+	b64 := base64.StdEncoding.EncodeToString([]byte("SID=" + value))
 	for name, data := range map[string]string{
-		"hex, 14 digits":          "id 5349443d413448 end",
-		"base64, padded":          "id U0lEPUE0SA== end",
-		"base64, padding dropped": "id U0lEPUE0SA end",
+		"hex, 14 digits":          "id " + hexed + " end",
+		"hex, one nibble in":      "id a" + hexed + " end",
+		"base64, padded":          "id " + b64 + " end",
+		"base64, padding dropped": "id " + strings.TrimRight(b64, "=") + " end",
 	} {
 		if hasHit(scanBytes("f", []byte(data), []Identifier{sid}), "identifier/sid", "") == nil {
 			t.Errorf("%s: %q not found", name, data)
 		}
 	}
+	if len(hexed) != 14 || !strings.HasSuffix(b64, "==") {
+		t.Fatalf("fixture drifted from the reviewer's cases: %s %s", hexed, b64)
+	}
 	// The token boundary still holds for short runs: inside a word, no hit.
-	inner := base64.StdEncoding.EncodeToString([]byte("xA4Hy"))
+	inner := base64.StdEncoding.EncodeToString([]byte("x" + value + "y"))
 	if hasHit(scanBytes("f", []byte("id "+inner+" end"), []Identifier{sid}), "identifier/sid", "") != nil {
 		t.Errorf("%q: SID matched inside a word", inner)
 	}
@@ -571,7 +583,8 @@ func TestRunPushEvent(t *testing.T) {
 	// A force push: BEFORE is gone from the clone. Fail closed, never "tip only".
 	gone := strings.Repeat("ab", 20)
 	code, _, errs := runScan(t, env, "-root", root, "-all", "-push", gone+".."+tip, "-push-base", "main")
-	if code != exitClosed || !strings.Contains(errs, "force push") || !strings.Contains(errs, "empty one will do") {
+	if code != exitClosed || !strings.Contains(errs, "force push") || !strings.Contains(errs, "ruleset") ||
+		!strings.Contains(errs, "-range <last commit you trust>") || strings.Contains(errs, "empty") {
 		t.Fatalf("force push: exit %d, want %d\n%s", code, exitClosed, errs)
 	}
 	// A clean push passes.
