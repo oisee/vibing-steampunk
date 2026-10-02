@@ -44,8 +44,14 @@ type fakeADT struct {
 	failListen  chan struct{} // closed: every listener request fails
 	failDeletes int           // this many listener deletions fail at the transport
 	rejected    []string      // requests refused because their context had ended
-	detachTried bool
-	log         []string
+	// holdAttach makes the next attach wait until its request is cancelled
+	// and then succeed: SAP attached, the client stopped waiting for the
+	// answer. attachStarted is closed when that attach arrives.
+	holdAttach    bool
+	attachStarted chan struct{}
+	failAttach    int // this many attaches are refused, nothing attached
+	detachTried   bool
+	log           []string
 }
 
 func newFakeADT() *fakeADT {
@@ -198,6 +204,19 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		return ok(""), nil
 
 	case u.Path == "/sap/bc/adt/debugger" && method == "attach":
+		f.mu.Lock()
+		if f.failAttach > 0 {
+			f.failAttach--
+			f.mu.Unlock()
+			return exception(500, "Internal Server Error", "invalidDebuggee", "The debuggee cannot be attached"), nil
+		}
+		hold := f.holdAttach
+		f.holdAttach = false
+		f.mu.Unlock()
+		if hold {
+			close(f.attachStarted)
+			<-ctx.Done()
+		}
 		f.mu.Lock()
 		f.attached = true
 		f.mu.Unlock()

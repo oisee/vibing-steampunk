@@ -23,6 +23,7 @@ func FuzzReadFrame(f *testing.F) {
 		strings.Repeat("A", 70000) + "\r\nContent-Length: 2\r\n\r\n{}",
 		strings.Repeat("H: v\r\n", 300) + "Content-Length: 2\r\n\r\n{}",
 		"Content-Length: 5\r\n\r\n{\"a\":",
+		"Content-Length: 99999999999\r\n\r\n" + strings.Repeat("x", 5000), // a claimed giant body, sent without newlines
 	} {
 		f.Add([]byte(seed))
 	}
@@ -81,5 +82,15 @@ func TestReadFrameBoundsTheHeader(t *testing.T) {
 	}
 	if !sawFrameErr {
 		t.Error("a thousand header lines were accepted as one header block")
+	}
+}
+
+// A body claimed beyond what can be drained is not a DAP peer: the stream is
+// ended with an error rather than read on, header-hunting through gigabytes.
+func TestAbsurdLengthEndsTheStream(t *testing.T) {
+	conn := NewConn(strings.NewReader("Content-Length: 99999999999\r\n\r\n"+strings.Repeat("x", 100000)+"Content-Length: 2\r\n\r\n{}"), io.Discard)
+	_, err := conn.Read()
+	if err == nil || IsFrameError(err) {
+		t.Fatalf("an absurd length should end the stream, got %v", err)
 	}
 }

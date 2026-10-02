@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +151,56 @@ func (c *client) event(name string) map[string]any {
 			c.t.Fatalf("no %s event", name)
 		}
 	}
+}
+
+// maybeEvent waits up to d for the named event and reports whether it came.
+func (c *client) maybeEvent(name string, d time.Duration) bool {
+	c.t.Helper()
+	for i, e := range c.events {
+		if e["event"] == name {
+			c.events = append(c.events[:i], c.events[i+1:]...)
+			return true
+		}
+	}
+	deadline := time.After(d)
+	for {
+		select {
+		case m, ok := <-c.msgs:
+			if !ok {
+				return false
+			}
+			if m["type"] != "event" {
+				continue
+			}
+			if m["event"] == name {
+				return true
+			}
+			c.events = append(c.events, m)
+		case <-deadline:
+			return false
+		}
+	}
+}
+
+// outputContaining waits for an output event whose text contains want.
+func (c *client) outputContaining(want string) string {
+	c.t.Helper()
+	for {
+		text := fmt.Sprint(c.event("output")["output"])
+		if strings.Contains(text, want) {
+			return text
+		}
+	}
+}
+
+func (f *fakeADT) callsAfter(marker string) []string {
+	calls := f.calls()
+	for i, c := range calls {
+		if c == marker {
+			return calls[i+1:]
+		}
+	}
+	return nil
 }
 
 // demoFile is ZVSP_DEBUG_DEMO checked out under vsp's file convention.
@@ -511,6 +562,155 @@ func TestReleaseReportsTheFinalState(t *testing.T) {
 	}
 }
 
+// A breakpoint update that interrupts the listener just as SAP attaches a
+// debuggee must not lose the stop: SAP has the program held in a work
+// process, so the editor has to hear about it, and the adapter must not go
+// back to listening as if nothing had happened.
+func TestCatchRacingABreakpointUpdateIsNotDropped(t *testing.T) {
+	fake := newFakeADT()
+	fake.holdAttach = true
+	fake.attachStarted = make(chan struct{})
+	c := armed(t, fake)
+	path := demoFile(t)
+
+	fake.run()
+	select {
+	case <-fake.attachStarted:
+	case <-time.After(waitFor):
+		t.Fatal("the adapter never attached")
+	}
+	// The attach is in flight; the breakpoint update cancels the listener.
+	c.ok("setBreakpoints", map[string]any{"source": map[string]any{"path": path},
+		"breakpoints": []any{map[string]any{"line": 26}, map[string]any{"line": 27}}})
+
+	if !c.maybeEvent("stopped", 2*time.Second) {
+		fake.mu.Lock()
+		attached := fake.attached
+		fake.mu.Unlock()
+		t.Fatalf("the stop was dropped while SAP holds the debuggee (attached=%v); calls: %v", attached, fake.calls())
+	}
+	frames := c.ok("stackTrace", map[string]any{"threadId": 1})["stackFrames"].([]any)
+	if len(frames) == 0 {
+		t.Fatal("no stack at the delivered stop")
+	}
+	for _, call := range fake.callsAfter("POST /sap/bc/adt/debugger?method=attach") {
+		if call == "POST /sap/bc/adt/debugger/listeners" {
+			t.Errorf("the adapter listened again with a debuggee attached; calls: %v", fake.calls())
+		}
+	}
+}
+
+// An attach that SAP refuses is not a stop. Reporting it as one sends the
+// editor to read a stack and variables that do not exist; the refusal is
+// reported and the adapter keeps listening.
+func TestAttachErrorKeepsListening(t *testing.T) {
+	fake := newFakeADT()
+	fake.failAttach = 1
+	c := armed(t, fake)
+
+	fake.run()
+	c.outputContaining("attach")
+	if c.maybeEvent("stopped", 300*time.Millisecond) {
+		t.Errorf("a refused attach was reported as a stop; calls: %v", fake.calls())
+	}
+
+	// Still listening: the next run stops normally, with a readable stack.
+	fake.run()
+	if !c.maybeEvent("stopped", waitFor) {
+		t.Fatalf("the adapter stopped listening after a refused attach; calls: %v", fake.calls())
+	}
+	c.ok("stackTrace", map[string]any{"threadId": 1})
+}
+
+// A client that names files as file:// URIs (pathFormat "uri") and counts
+// columns from 0 gets both honoured, in and out.
+func TestPathFormatURIAndZeroBasedColumns(t *testing.T) {
+	fake := newFakeADT()
+	c, _ := startAdapter(t, fakeOpener(fake, false, nil))
+	path := demoFile(t)
+	fileURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+
+	c.ok("initialize", map[string]any{"pathFormat": "uri", "linesStartAt1": true, "columnsStartAt1": false})
+	c.ok("attach", map[string]any{})
+	body := c.ok("setBreakpoints", map[string]any{"source": map[string]any{"path": fileURI},
+		"breakpoints": []any{map[string]any{"line": 26}}})
+	bp := body["breakpoints"].([]any)[0].(map[string]any)
+	if bp["verified"] != true {
+		t.Fatalf("a file:// source was not mapped: %v", bp)
+	}
+	if src, _ := bp["source"].(map[string]any); src["path"] != fileURI {
+		t.Errorf("breakpoint source should come back as a URI: %v", src)
+	}
+	c.ok("configurationDone", nil)
+	fake.run()
+	c.event("stopped")
+	top := c.ok("stackTrace", map[string]any{"threadId": 1})["stackFrames"].([]any)[0].(map[string]any)
+	if src := top["source"].(map[string]any); src["path"] != fileURI {
+		t.Errorf("frame source should be the URI %s: %v", fileURI, src)
+	}
+	if top["column"].(float64) != 0 {
+		t.Errorf("column should count from 0: %v", top["column"])
+	}
+}
+
+// Resolving a vsp:// object goes through the same session check as every
+// other request: once the session is released, nothing more reaches SAP.
+func TestResolveRefusesAReleasedSession(t *testing.T) {
+	savedBackoff := listenBackoff
+	listenBackoff = time.Millisecond
+	t.Cleanup(func() { listenBackoff = savedBackoff; beforeResolve = nil })
+
+	fake := newFakeADT()
+	fake.failListen = make(chan struct{})
+	c := armed(t, fake)
+
+	beforeResolve = func() {
+		beforeResolve = nil
+		close(fake.failListen)
+		deadline := time.Now().Add(waitFor)
+		for {
+			fake.mu.Lock()
+			released := fake.listenerDeleted
+			fake.mu.Unlock()
+			if released || time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	body := c.ok("setBreakpoints", map[string]any{"source": map[string]any{"path": "vsp://ZVSP_DEBUG_DEMO"},
+		"breakpoints": []any{map[string]any{"line": 26}}})
+	bp := body["breakpoints"].([]any)[0].(map[string]any)
+	if bp["verified"] != false || !strings.Contains(fmt.Sprint(bp["message"]), "session ended") {
+		t.Errorf("resolved through a released session: %v", bp)
+	}
+	for _, call := range fake.callsAfter("DELETE /sap/bc/adt/debugger/listeners") {
+		if strings.Contains(call, "/repository/informationsystem/search") {
+			t.Errorf("a repository search reached SAP after the release; calls: %v", fake.calls())
+		}
+	}
+}
+
+// Detach is retried until the last attempt; only a final failure is held.
+func TestReleaseReportsTheFinalStateAfterRetries(t *testing.T) {
+	fake := newFakeADT()
+	fake.failDeletes = 2
+	c := armed(t, fake)
+	c.ok("disconnect", map[string]any{})
+	fake.mu.Lock()
+	deleted := fake.listenerDeleted
+	fake.mu.Unlock()
+	if !deleted {
+		t.Fatalf("the listener was never deleted; calls: %v", fake.calls())
+	}
+	for _, e := range c.events {
+		body, _ := e["body"].(map[string]any)
+		if e["event"] == "output" && strings.Contains(fmt.Sprint(body["output"]), "SAP may still hold") {
+			t.Errorf("warned about something released on the last attempt: %v", body["output"])
+		}
+	}
+}
+
 // The stream ending without a disconnect — the editor crashed — still
 // releases the session.
 func TestEndOfStreamReleasesTheSession(t *testing.T) {
@@ -542,7 +742,6 @@ func TestMalformedFramesDoNotCrash(t *testing.T) {
 		"Content-Length: 7\r\n\r\n{nope!}",               // not JSON
 		"Content-Length: banana\r\n\r\n",                 // unreadable length
 		"X-Nothing: here\r\n\r\n",                        // no length at all
-		"Content-Length: 99999999999\r\n\r\n",            // absurd length (overflow)
 		"\r\n\r\n",                                       // blank lines
 		"Content-Length: 2\r\n\r\n[]",                    // JSON, wrong shape
 		frame(`{"seq":1,"type":"request","command":42}`), // wrong type

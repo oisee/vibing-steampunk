@@ -183,10 +183,13 @@ func (c *Conn) readFrame() ([]byte, error) {
 	case length == -2:
 		return nil, fmt.Errorf("%w: unreadable Content-Length", errFrame)
 	case length > maxFrameBytes:
-		if length <= maxDrainBytes {
-			if _, err := io.CopyN(io.Discard, c.r, int64(length)); err != nil {
-				return nil, err
-			}
+		if length > maxDrainBytes {
+			// Not a DAP peer. Reading on would mean hunting for the next
+			// header through whatever it sends, so the stream is ended.
+			return nil, fmt.Errorf("a frame claims %d bytes, beyond any DAP message; the stream is not usable", length)
+		}
+		if _, err := io.CopyN(io.Discard, c.r, int64(length)); err != nil {
+			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %d bytes exceeds the %d-byte limit", errFrame, length, maxFrameBytes)
 	}

@@ -181,7 +181,11 @@ func (x *sourceIndex) scan(root string) error {
 		}
 		name := strings.ToLower(d.Name())
 		if strings.HasSuffix(name, ".abap") {
-			if _, dup := x.byName[name]; !dup {
+			if _, dup := x.byName[name]; dup {
+				// Two files, one name: which one SAP runs is unknowable here,
+				// so neither is opened; the frame is read from SAP instead.
+				x.byName[name] = ""
+			} else {
 				x.byName[name] = p
 			}
 		}
@@ -200,7 +204,7 @@ func (x *sourceIndex) lookup(uri string) string {
 	}
 	for _, c := range candidateFiles(n) {
 		if p, ok := x.byName[c]; ok {
-			return p
+			return p // "" when the name is ambiguous
 		}
 	}
 	return ""

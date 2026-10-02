@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +41,10 @@ var listenBackoff = time.Second
 // breakpoint set. A test seam: it lets a test end the session in exactly the
 // window a request could otherwise post into a released one. Nil in use.
 var beforeBreakpointPost func()
+
+// beforeResolve runs between capturing the session and resolving a vsp://
+// object name through it. A test seam, like beforeBreakpointPost. Nil in use.
+var beforeResolve func()
 
 // errSessionEnded answers a request whose session was released while it waited.
 var errSessionEnded = errors.New("session ended: the debug session was released; start a new one")
@@ -141,7 +146,9 @@ type Server struct {
 	bpDirty    bool
 	nextBPID   int
 	src        *sourceIndex
-	lineBase   int // 1 unless the client counts lines from 0
+	lineBase   int  // 1 unless the client counts lines from 0
+	colBase    int  // 1 unless the client counts columns from 0
+	pathURI    bool // the client names files as file:// URIs (pathFormat "uri")
 	worker     *worker
 	ended      bool
 
@@ -187,6 +194,7 @@ func New(ctx context.Context, r io.Reader, w io.Writer, open Opener) *Server {
 		bps:      map[string]*sourceBreakpoints{},
 		src:      newSourceIndex(),
 		lineBase: 1,
+		colBase:  1,
 	}
 }
 
@@ -204,6 +212,7 @@ func (s *Server) Serve() error {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
+			s.output("stderr", "vsp dap: ending the session: "+err.Error()+"\n")
 			return err
 		}
 		if msg.Type != "request" {
@@ -305,16 +314,22 @@ func decode(msg *ProtocolMessage, v any) error {
 
 func (s *Server) initialize(msg *ProtocolMessage) (any, error) {
 	var args struct {
-		LinesStartAt1 *bool `json:"linesStartAt1"`
+		LinesStartAt1   *bool  `json:"linesStartAt1"`
+		ColumnsStartAt1 *bool  `json:"columnsStartAt1"`
+		PathFormat      string `json:"pathFormat"`
 	}
 	if err := decode(msg, &args); err != nil {
 		return nil, err
 	}
+	s.mu.Lock()
 	if args.LinesStartAt1 != nil && !*args.LinesStartAt1 {
-		s.mu.Lock()
 		s.lineBase = 0
-		s.mu.Unlock()
 	}
+	if args.ColumnsStartAt1 != nil && !*args.ColumnsStartAt1 {
+		s.colBase = 0
+	}
+	s.pathURI = strings.EqualFold(args.PathFormat, "uri")
+	s.mu.Unlock()
 	return map[string]any{
 		"supportsConfigurationDoneRequest":  true,
 		"supportsConditionalBreakpoints":    false,
@@ -460,7 +475,12 @@ func (s *Server) sourceURI(src dapSource) (string, error) {
 		if sess == nil {
 			return "", errors.New("pending: " + path + " is resolved when the session opens")
 		}
-		s.dbgMu.Lock()
+		if beforeResolve != nil {
+			beforeResolve()
+		}
+		if err := s.lockSession(sess); err != nil {
+			return "", err
+		}
 		uri, err := sess.Debugger.ResolveSourceURI(s.ctx, strings.Trim(ref, "/"))
 		s.dbgMu.Unlock()
 		if err != nil {
@@ -498,6 +518,7 @@ func (s *Server) setBreakpoints(msg *ProtocolMessage) (any, error) {
 	if err := decode(msg, &args); err != nil {
 		return nil, err
 	}
+	args.Source.Path = s.fromClientPath(args.Source.Path)
 	lines := make([]int, 0, len(args.Breakpoints))
 	for _, b := range args.Breakpoints {
 		lines = append(lines, b.Line)
@@ -556,7 +577,7 @@ func (s *Server) dapBreakpointLocked(set *sourceBreakpoints, b *breakpoint) map[
 		m["message"] = b.message
 	}
 	if set.path != "" {
-		m["source"] = dapSource{Name: filepath.Base(set.path), Path: set.path}
+		m["source"] = dapSource{Name: filepath.Base(set.path), Path: s.toClientPathLocked(set.path)}
 	}
 	return m
 }
@@ -660,7 +681,15 @@ func (s *Server) applyBreakpoints(notify bool) {
 		_ = s.conn.Emit("breakpoint", map[string]any{"reason": "changed", "breakpoint": e})
 	}
 	if relisten {
-		s.startWorker("", "")
+		// The listener may have caught a debuggee as it was interrupted; that
+		// stop was delivered, and listening again over it would leave the
+		// debuggee held with nobody watching.
+		s.mu.Lock()
+		idle := s.sess == sess && !s.stopped && !s.ended && s.worker == nil
+		s.mu.Unlock()
+		if idle {
+			s.startWorker("", "")
+		}
 	}
 }
 
@@ -799,36 +828,71 @@ func (s *Server) listen(ctx context.Context) {
 	failures := 0
 	for ctx.Err() == nil {
 		s.dbgMu.Lock()
-		who, _, err := sess.Debugger.ADTCatch(ctx, sess.User, saprfc.IDEID, saprfc.TerminalID, seconds)
-		s.dbgMu.Unlock()
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil && who == nil {
-			failures++
-			s.output("stderr", fmt.Sprintf("vsp dap: listening failed: %v\n", err))
-			if failures >= 3 {
-				s.terminate()
+		who, err := sess.Debugger.ADTListen(ctx, sess.User, saprfc.IDEID, saprfc.TerminalID, seconds)
+		if who == nil || ctx.Err() != nil {
+			s.dbgMu.Unlock()
+			if ctx.Err() != nil {
+				// Interrupted. A debuggee the listener already saw is not
+				// attached yet; it waits in SAP for the next listener.
 				return
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Duration(failures) * listenBackoff):
+			if err != nil {
+				failures++
+				s.output("stderr", fmt.Sprintf("vsp dap: listening failed: %v\n", err))
+				if failures >= 3 {
+					s.terminate()
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(failures) * listenBackoff):
+				}
 			}
-			continue
+			continue // an error retried, or nobody stopped in this window
 		}
 		failures = 0
-		if who == nil {
-			continue // nobody stopped in this window
+		attached, attachErr := s.attach(ctx, sess, who)
+		s.dbgMu.Unlock()
+
+		if attached {
+			// Once SAP has attached, the stop is delivered whatever happened
+			// to this worker's context meanwhile: the program is held in a
+			// work process, and dropping the stop would leave it there with
+			// nobody watching.
+			if attachErr != nil {
+				s.output("stderr", fmt.Sprintf("vsp dap: the attach to %s answered %v, but the debuggee is attached\n", who.Program, attachErr))
+			}
+			s.output("console", fmt.Sprintf("vsp dap: %s stopped in %s/%s line %d\n", who.User, who.Program, who.Include, who.Line))
+			s.halt("breakpoint")
+			return
 		}
-		if err != nil {
-			s.output("stderr", fmt.Sprintf("vsp dap: attached to %s, but: %v\n", who.Program, err))
-		}
-		s.output("console", fmt.Sprintf("vsp dap: %s stopped in %s/%s line %d\n", who.User, who.Program, who.Include, who.Line))
-		s.halt("breakpoint")
-		return
+		s.output("stderr", fmt.Sprintf("vsp dap: could not attach to %s at line %d: %v; listening on\n", who.Program, who.Line, attachErr))
 	}
+}
+
+// attach attaches to a debuggee the listener caught and reports whether the
+// session is now attached. An attach that answers with an error is checked
+// rather than believed: an interrupted or failed request may still have
+// attached on SAP's side, so the stack is read on a fresh context. Attached
+// after all, it is a stop; not attached, anything SAP may hold is let go on a
+// fresh context, and the caller listens on. Callers hold dbgMu.
+func (s *Server) attach(ctx context.Context, sess *Session, who *saprfc.ADTDebuggee) (bool, error) {
+	_, err := sess.Debugger.ADTAttach(ctx, who.ID, sess.User)
+	if err == nil {
+		return true, nil
+	}
+	fresh, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), releaseStepTimeout)
+	defer cancel()
+	if _, perr := sess.Debugger.StackInfo(fresh); perr == nil {
+		return true, err
+	}
+	// Not attached as far as the stack can tell. A detach on this session
+	// releases a half-made attachment if there is one and is harmless if
+	// there is not; it leaves the listener and the breakpoints in place.
+	_, _ = sess.Debugger.ADT(fresh, "POST", "/sap/bc/adt/debugger?method=detach",
+		[]saprfc.ADTHeader{{Name: "Accept", Value: "*/*"}}, nil)
+	return false, err
 }
 
 // halt records a stop, places any breakpoints that changed while the program
@@ -987,7 +1051,7 @@ func (s *Server) stackTrace(msg *ProtocolMessage) (any, error) {
 		if line == 0 {
 			line = e.Line
 		}
-		f := map[string]any{"id": i + 1, "name": frameName(e), "line": line + s.lineBase - 1, "column": 1}
+		f := map[string]any{"id": i + 1, "name": frameName(e), "line": line + s.lineBase - 1, "column": s.colBase}
 		abap := strings.EqualFold(e.StackType, "ABAP") && e.URI != "" && !strings.Contains(e.URI, "/vit/")
 		switch {
 		case !abap:
@@ -995,7 +1059,7 @@ func (s *Server) stackTrace(msg *ProtocolMessage) (any, error) {
 		default:
 			src := dapSource{}
 			if p := s.src.lookup(e.URI); p != "" {
-				src.Name, src.Path = filepath.Base(p), p
+				src.Name, src.Path = filepath.Base(p), s.toClientPathLocked(p)
 			} else {
 				src.Name = strings.TrimSpace(e.IncludeName)
 				if src.Name == "" {
@@ -1369,16 +1433,56 @@ func (s *Server) release() {
 	if err != nil {
 		err = bounded(sess.Debugger.ADTDetach)
 	}
+	if cerr := bounded(sess.Debugger.Close); cerr != nil {
+		held = append(held, fmt.Sprintf("the session (%v)", cerr))
+	}
+	if err != nil {
+		// Close tries the detach once more when it is still owed. Asking
+		// again settles what happened: a detach with nothing left to release
+		// answers at once without a request, so only a release that is still
+		// failing reports as held.
+		err = bounded(sess.Debugger.ADTDetach)
+	}
 	if err != nil {
 		held = append(held, fmt.Sprintf("the listener or the debuggee (%v)", err))
-	}
-	if err := bounded(sess.Debugger.Close); err != nil {
-		held = append(held, fmt.Sprintf("the session (%v)", err))
 	}
 	if len(held) > 0 {
 		s.output("stderr", "vsp dap: SAP may still hold "+strings.Join(held, "; ")+
 			"; see SM50/SM04 for a suspended work process and the user's external breakpoints\n")
 	}
+}
+
+// fromClientPath turns a client's file:// URI into a local path when the
+// client said it names files that way (pathFormat "uri").
+func (s *Server) fromClientPath(p string) string {
+	s.mu.Lock()
+	asURI := s.pathURI
+	s.mu.Unlock()
+	if !asURI || !strings.HasPrefix(strings.ToLower(p), "file://") {
+		return p
+	}
+	u, err := url.Parse(p)
+	if err != nil {
+		return p
+	}
+	path := u.Path
+	// file:///C:/x on Windows is the path C:/x.
+	if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	return filepath.FromSlash(path)
+}
+
+// toClientPathLocked is fromClientPath's inverse. Callers hold mu.
+func (s *Server) toClientPathLocked(p string) string {
+	if !s.pathURI || p == "" || strings.HasPrefix(p, vspScheme) {
+		return p
+	}
+	slash := filepath.ToSlash(p)
+	if !strings.HasPrefix(slash, "/") {
+		slash = "/" + slash
+	}
+	return (&url.URL{Scheme: "file", Path: slash}).String()
 }
 
 func (s *Server) output(category, text string) {

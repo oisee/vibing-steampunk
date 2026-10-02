@@ -102,3 +102,26 @@ func TestSourceIndex(t *testing.T) {
 		t.Errorf("remembered lookup: %q", got)
 	}
 }
+
+// Two files with one name under the source root: nobody can say which one SAP
+// is running, so neither is opened and the frame falls back to SAP's text.
+func TestSourceIndexAmbiguousNames(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"a", "b"} {
+		p := filepath.Join(root, dir, "zcl_x.clas.abap")
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		_ = os.WriteFile(p, []byte("CLASS zcl_x DEFINITION.\nENDCLASS.\n"), 0o644)
+	}
+	x := newSourceIndex()
+	if err := x.scan(root); err != nil {
+		t.Fatal(err)
+	}
+	if got := x.lookup("/sap/bc/adt/oo/classes/zcl_x/source/main"); got != "" {
+		t.Errorf("an ambiguous name resolved to %q", got)
+	}
+	// A file the client itself named still wins.
+	x.remember("/sap/bc/adt/oo/classes/zcl_x/source/main", "/work/zcl_x.clas.abap")
+	if got := x.lookup("/sap/bc/adt/oo/classes/zcl_x/source/main"); got != "/work/zcl_x.clas.abap" {
+		t.Errorf("remembered file: %q", got)
+	}
+}
