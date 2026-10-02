@@ -26,7 +26,9 @@ permissions:
   actions: read
   checks: read
 
-# One report run at a time per head branch; a later one waits rather than
+# One report run at a time per pull request (head repository, head branch
+# and the PR number the run carries; a fork's run carries none, so a fork's
+# reports share one group per head branch); a later one waits rather than
 # cancelling the one in progress. Each run reports the LATEST completed CI run
 # on the pull request's current head, whichever CI run triggered it, so the
 # order in which reports run or are cancelled does not matter: GitHub keeps
@@ -37,7 +39,7 @@ permissions:
 # latest run itself, or finds it still running and leaves it to its own
 # report, which queues behind it.
 concurrency:
-  group: ci-report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  group: ci-report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
 
 jobs:
@@ -76,13 +78,18 @@ jobs:
               pr = open.find((p) => p.head.repo?.id === run.head_repository.id && p.head.ref === run.head_branch);
             }
             if (!pr || pr.state !== 'open') {
-              core.info(`no open pull request for ${run.head_branch}; nothing to report`);
+              core.info(`no open pull request for run ${run.id}; nothing to report`);
               return;
             }
             const onHead = await github.paginate(github.rest.actions.listWorkflowRuns,
               { owner, repo, workflow_id: run.workflow_id, head_sha: pr.head.sha, event: 'pull_request', per_page: 100 });
+            // Two pull requests from one head branch (to different bases) share
+            // the commit, branch and repository; a run that names its pull
+            // requests is only taken for this one. A fork's run names none:
+            // then commit, branch and repository decide.
+            const forThisPR = (r) => !r.pull_requests?.length || r.pull_requests.some((p) => p.number === pr.number);
             const latest = onHead
-              .filter((r) => r.head_branch === pr.head.ref && r.head_repository?.id === pr.head.repo?.id)
+              .filter((r) => r.head_branch === pr.head.ref && r.head_repository?.id === pr.head.repo?.id && forThisPR(r))
               .sort((a, b) => b.run_number - a.run_number || new Date(b.created_at) - new Date(a.created_at))[0];
             if (!latest) {
               core.info(`no CI run on #${pr.number}'s head ${pr.head.sha} yet; its own report will follow`);
@@ -191,7 +198,8 @@ jobs:
                   fs.writeFileSync(path.join(k[run.side], k.file), data);
                   core.info(`${label}: ${buf.length} bytes zipped, ${data.length} unpacked`);
                 } catch (e) {
-                  core.warning(`${label}: not used: ${e.message}`);
+                  // First line only: unzip's own output can quote entry names.
+                  core.warning(`${label}: not used: ${String(e.message).split('\n')[0]}`);
                 }
               }
             }
@@ -302,7 +310,7 @@ jobs:
                     fs.writeFileSync(file, Buffer.from(zip.data));
                     const m = parse(execFileSync('unzip', ['-p', file, 'metrics.json'], { maxBuffer: MAX_BYTES }).toString('utf8'));
                     if (m) out.push(m.totals);
-                  } catch (e) { core.info(`trend: run ${r.id}: ${e.message}`); }
+                  } catch (e) { core.info(`trend: run ${r.id}: ${String(e.message).split('\n')[0]}`); }
                 }
               } catch (e) { core.info(`trend: ${e.message}`); }
               return out.reverse();
@@ -658,6 +666,7 @@ jobs:
             const sameCommit = await github.paginate(github.rest.actions.listWorkflowRuns,
               { owner, repo, workflow_id: run.workflow_id, head_sha: run.head_sha, event: run.event, per_page: 100 });
             const newer = sameCommit.find((r) => r.id !== run.id
+              && (!r.pull_requests?.length || r.pull_requests.some((p) => p.number === prNumber))
               && r.head_branch === run.head_branch
               && r.head_repository?.id === run.head_repository?.id
               && (r.run_number > run.run_number
