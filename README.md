@@ -1089,6 +1089,9 @@ The first release built, checked and published by CI on the tag push
 - **Deleting or updating with your own lock handle on SAP_BASIS 816.** The
   package check now runs inside that lock's session, so the write no longer
   comes back 423 (#331, ported from #292).
+- **No false "package does not exist".** The check before a create read
+  "404" anywhere in an error, including a port number in its URL, so a
+  timeout could be reported as a missing package (#338).
 
 **Removed**
 
