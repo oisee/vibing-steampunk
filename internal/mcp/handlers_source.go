@@ -39,6 +39,12 @@ func (s *Server) routeSourceAction(ctx context.Context, action, objectType, obje
 			if v, ok := getBoolParam(params, "include_hash"); ok {
 				args["include_hash"] = v
 			}
+			if v, ok := getBoolParam(params, "summary"); ok {
+				args["summary"] = v
+			}
+			if v := getStringParam(params, "if_none_match"); v != "" {
+				args["if_none_match"] = v
+			}
 			if v, ok := getFloatParam(params, "max_deps"); ok {
 				args["max_deps"] = v
 			}
@@ -134,7 +140,13 @@ func (s *Server) registerGetSource() {
 			mcp.Description("Maximum dependencies to resolve when include_context=true (default: 20)"),
 		),
 		mcp.WithBoolean("include_hash",
-			mcp.Description("Return JSON with the raw source and its sourceHash for a guarded later write. Default false preserves the text response."),
+			mcp.Description("Return JSON with the raw source, its sourceHash for a guarded later write, and its sha256 for a later if_none_match. Default false preserves the text response."),
+		),
+		mcp.WithBoolean("summary",
+			mcp.Description("Return JSON metadata instead of the source: objectType, name, uri, lines, bytes, sha256 (hex SHA-256 of the exact source text, not normalised) and sourceHash. Same single read, no body, no dependency context."),
+		),
+		mcp.WithString("if_none_match",
+			mcp.Description("The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged (sha256 ...)\" instead of the body; otherwise the normal read."),
 		),
 	), s.handleGetSource)
 }
@@ -207,9 +219,37 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		Method:  method,
 	}
 
+	summary, _ := request.GetArguments()["summary"].(bool)
+	ifNoneMatch := ""
+	if v, _ := request.GetArguments()["if_none_match"].(string); strings.TrimSpace(v) != "" {
+		// Checked before the read: a malformed digest costs no round trip.
+		d, err := adt.ParseIfNoneMatch(v)
+		if err != nil {
+			return newToolResultError(err.Error()), nil
+		}
+		ifNoneMatch = d
+	}
+
 	rawSource, err := s.adtClient.GetSource(ctx, objectType, name, opts)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
+	}
+
+	// Summary and if_none_match answer from the text just read, before the
+	// dependency context, which would cost a round trip per dependency.
+	if summary || ifNoneMatch != "" {
+		sum := adt.SummarizeSource(objectType, name, opts, rawSource)
+		unchanged := ifNoneMatch != "" && ifNoneMatch == sum.SHA256
+		if summary {
+			if ifNoneMatch != "" {
+				sum.Unchanged = &unchanged
+			}
+			output, _ := json.MarshalIndent(sum, "", "  ")
+			return mcp.NewToolResultText(string(output)), nil
+		}
+		if unchanged {
+			return mcp.NewToolResultText(adt.SourceUnchangedText(sum)), nil
+		}
 	}
 	source := rawSource
 	contextPrologue := ""
@@ -240,6 +280,9 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		payload := map[string]string{
 			"source":     rawSource,
 			"sourceHash": adt.SourceHash(rawSource),
+			// The digest if_none_match takes, so a full read can be
+			// followed by cheap "has it changed?" reads.
+			"sha256": adt.SourceSHA256(rawSource),
 		}
 		if contextPrologue != "" {
 			payload["context"] = contextPrologue

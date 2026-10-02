@@ -23,6 +23,8 @@ These tools replace 11 granular read/write operations with intelligent parameter
 
 **Guarded updates:** Call `GetSource(include_hash=true)` to receive `{source, sourceHash}`. Supply that hash as `expected_source_hash` to `WriteSource`, `EditSource`, `ImportFromFile`, or `DeployFromFile`; VSP checks it again after acquiring the write lock and rejects `SOURCE_DRIFT` rather than overwriting another editor's work. Guarded successes include the requested target and verified read-back hashes.
 
+**Summary reads:** `GetSource(summary=true)` returns `{objectType, name, uri, lines, bytes, sha256, sourceHash}` instead of the source, from the same single read. `sha256` is the lower-case hex SHA-256 of the exact text a read returns (not normalised). `GetSource(if_none_match="<sha256>")` answers `unchanged (sha256 ...)` while the source still has that digest, and the normal read otherwise. `GetSource(include_hash=true)` carries the same `sha256` next to the source.
+
 ---
 
 ## Search & Grep Tools (4 tools)

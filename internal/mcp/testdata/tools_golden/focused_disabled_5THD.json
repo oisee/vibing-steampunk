@@ -1567,6 +1567,10 @@
       "description": "Unified tool for reading ABAP source code across different object types. Replaces GetProgram, GetClass, GetInterface, GetFunction, GetInclude, GetFunctionGroup, GetClassInclude.",
       "inputSchema": {
         "properties": {
+          "if_none_match": {
+            "description": "The sha256 of a source read earlier (from summary=true). If the source still has it, return a one-line \"unchanged (sha256 ...)\" instead of the body; otherwise the normal read.",
+            "type": "string"
+          },
           "include": {
             "description": "Class include type for CLAS: definitions, implementations, macros, testclasses (optional)",
             "type": "string"
@@ -1576,7 +1580,7 @@
             "type": "boolean"
           },
           "include_hash": {
-            "description": "Return JSON with the raw source and its sourceHash for a guarded later write. Default false preserves the text response.",
+            "description": "Return JSON with the raw source, its sourceHash for a guarded later write, and its sha256 for a later if_none_match. Default false preserves the text response.",
             "type": "boolean"
           },
           "max_deps": {
@@ -1598,6 +1602,10 @@
           "parent": {
             "description": "Function group name (required only for FUNC type)",
             "type": "string"
+          },
+          "summary": {
+            "description": "Return JSON metadata instead of the source: objectType, name, uri, lines, bytes, sha256 (hex SHA-256 of the exact source text, not normalised) and sourceHash. Same single read, no body, no dependency context.",
+            "type": "boolean"
           }
         },
         "required": [

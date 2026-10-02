@@ -19,9 +19,17 @@ var sourceReadCmd = &cobra.Command{
 	Short: "Read ABAP source code",
 	Long: `Read source code for an ABAP object (same as 'vsp source <type> <name>').
 
+With --summary it prints JSON metadata instead of the source: lines, bytes,
+sha256 (lower-case hex SHA-256 of the exact text as read, not normalised),
+sourceHash (for a guarded write) and uri. With --if-none-match <sha256> it
+prints one "unchanged (sha256 ...)" line when the source still has that
+digest, and the source otherwise. Either is the same single read.
+
 Examples:
   vsp source read CLAS ZCL_MY_CLASS
-  vsp source read PROG ZTEST_PROGRAM`,
+  vsp source read PROG ZTEST_PROGRAM
+  vsp source read CLAS ZCL_MY_CLASS --summary
+  vsp source read CLAS ZCL_MY_CLASS --if-none-match 3f0a...`,
 	Args: cobra.ExactArgs(2),
 	RunE: runSource, // reuse existing handler
 }
@@ -298,6 +306,7 @@ func init() {
 	sourceCmd.AddCommand(sourceWriteCmd)
 	sourceCmd.AddCommand(sourceEditCmd)
 	sourceCmd.AddCommand(sourceContextCmd)
+	addSourceReadFlags(sourceReadCmd)
 
 	// Source write flags
 	sourceWriteCmd.Flags().String("transport", "", "Transport request number")

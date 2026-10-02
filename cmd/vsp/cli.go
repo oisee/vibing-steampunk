@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/oisee/vibing-steampunk/pkg/cache"
 	"os"
@@ -639,9 +640,18 @@ Examples:
 }
 
 func init() {
-	sourceCmd.Flags().String("parent", "", "Function group name (required for FUNC type)")
-	sourceCmd.Flags().String("include", "", "Class include type: definitions, implementations, macros, testclasses (CLAS only)")
-	sourceCmd.Flags().String("method", "", "Method name to retrieve only that METHOD...ENDMETHOD block (CLAS only)")
+	addSourceReadFlags(sourceCmd)
+}
+
+// addSourceReadFlags gives a command that runs runSource the flags it reads.
+func addSourceReadFlags(cmds ...*cobra.Command) {
+	for _, c := range cmds {
+		c.Flags().String("parent", "", "Function group name (required for FUNC type)")
+		c.Flags().String("include", "", "Class include type: definitions, implementations, macros, testclasses (CLAS only)")
+		c.Flags().String("method", "", "Method name to retrieve only that METHOD...ENDMETHOD block (CLAS only)")
+		c.Flags().Bool("summary", false, "Print JSON metadata instead of the source: lines, bytes, sha256 (exact text, not normalised), sourceHash, uri")
+		c.Flags().String("if-none-match", "", "sha256 from an earlier --summary: if the source still has it, print \"unchanged (sha256 ...)\" instead of the source")
+	}
 }
 
 func runSource(cmd *cobra.Command, args []string) error {
@@ -661,6 +671,14 @@ func runSource(cmd *cobra.Command, args []string) error {
 	include, _ := cmd.Flags().GetString("include")
 	method, _ := cmd.Flags().GetString("method")
 
+	summary, _ := cmd.Flags().GetBool("summary")
+	ifNoneMatch, _ := cmd.Flags().GetString("if-none-match")
+	if strings.TrimSpace(ifNoneMatch) != "" {
+		if ifNoneMatch, err = adt.ParseIfNoneMatch(ifNoneMatch); err != nil {
+			return err
+		}
+	}
+
 	opts := &adt.GetSourceOptions{
 		Parent:  parent,
 		Include: include,
@@ -673,8 +691,26 @@ func runSource(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get source: %w", err)
 	}
 
-	fmt.Print(source)
-	return nil
+	out := cmd.OutOrStdout()
+	if summary || ifNoneMatch != "" {
+		sum := adt.SummarizeSource(objType, name, opts, source)
+		unchanged := ifNoneMatch != "" && ifNoneMatch == sum.SHA256
+		if summary {
+			if ifNoneMatch != "" {
+				sum.Unchanged = &unchanged
+			}
+			data, _ := json.MarshalIndent(sum, "", "  ")
+			_, err := fmt.Fprintln(out, string(data))
+			return err
+		}
+		if unchanged {
+			_, err := fmt.Fprintln(out, adt.SourceUnchangedText(sum))
+			return err
+		}
+	}
+
+	_, err = fmt.Fprint(out, source)
+	return err
 }
 
 // --- systems command ---

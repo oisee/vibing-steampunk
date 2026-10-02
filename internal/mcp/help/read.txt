@@ -21,6 +21,18 @@ Read with options:
   SAP(action="read", target="CLAS ZCL_TEST", params={"method": "GET_DATA"})
   SAP(action="read", target="CLAS ZCL_TEST", params={"include_context": false})
 
+Summary instead of the source (saves tokens; same single read, no body, no context):
+  SAP(action="read", target="CLAS ZCL_TEST", params={"summary": true})
+      -> {objectType, name, uri, lines, bytes, sha256, sourceHash}
+      sha256: lower-case hex SHA-256 of the exact source text as a read returns it,
+      not normalised (CRLF stays CRLF). sourceHash is the normalised one for
+      expected_source_hash on a write. Neither equals git_delete_objects' expect
+      sha256, which covers the whole abapGit serialisation.
+  SAP(action="read", target="CLAS ZCL_TEST", params={"if_none_match": "<sha256>"})
+      the same digest still: one line "unchanged (sha256 ...)"; else the normal read.
+  SAP(action="read", target="CLAS ZCL_TEST", params={"include_hash": true})
+      -> {source, sourceHash, sha256}: a full read that also gives the sha256 to keep.
+
 Read metadata:
   SAP(action="read", target="TABL ZTABLE")          - Table definition
   SAP(action="read", target="TABL_CONTENTS ZTABLE") - Table data

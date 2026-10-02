@@ -1110,6 +1110,13 @@ The headline changes are in the **"New in the last three releases"** callout at 
 
 **New:** `vsp dap`, a Debug Adapter Protocol server. It lets you debug ABAP from VS Code, nvim-dap or JetBrains on a real system, with no Z code. See [Debug from your editor (DAP)](#debug-from-your-editor-dap).
 
+**New:** read summary. `SAP(action="read", ..., params={"summary": true})`
+(`vsp source read ... --summary`) returns the lines, bytes and `sha256` of
+the source instead of the source. `params={"if_none_match": "<sha256>"}`
+(`--if-none-match`) answers "unchanged (sha256 …)" while the source still
+has that digest. A read with `include_hash` now carries the same `sha256`. The digest is over the exact text, not normalised. See
+[Read Summary](#read-summary--is-this-the-version-i-already-have).
+
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
 
 **Platforms:** six binaries: linux-amd64, linux-arm64, darwin-amd64,
@@ -1408,6 +1415,31 @@ The AI only sends/receives the method block (~30 lines). vsp fetches the full cl
 
 > *Built-in ABAP parser based on [abaplint](https://github.com/abaplint/abaplint) by [Lars Hvam](https://github.com/larshp) — the same parser that powers abaplint's 392 ABAP statement types.*
 
+### Read Summary — Is This the Version I Already Have?
+
+A read can return what the source *is* instead of the source itself:
+
+```
+SAP(action="read", target="CLAS ZCL_CALCULATOR", params={"summary": true})
+→ {"objectType": "CLAS", "name": "ZCL_CALCULATOR",
+   "uri": "/sap/bc/adt/oo/classes/ZCL_CALCULATOR/source/main",
+   "lines": 412, "bytes": 15873, "sha256": "3f0a…", "sourceHash": "sha256:9c1e…"}
+
+# Later: only pay for the body if it changed
+SAP(action="read", target="CLAS ZCL_CALCULATOR", params={"if_none_match": "3f0a…"})
+→ unchanged (sha256 3f0a…): CLAS ZCL_CALCULATOR, 412 lines, 15873 bytes; the source was not returned
+```
+
+- **`sha256`** is the lower-case hex SHA-256 of the exact text a read returns, **not normalised**: CRLF stays CRLF and a final newline stays. `sha256sum` over the text you received gives the same value.
+- **`sourceHash`** is the normalised hash (CRLF→LF, trailing newlines dropped) for `expected_source_hash` on a guarded write.
+- Neither equals `git_delete_objects`' `expect` sha256: that one is computed on SAP over the object's whole abapGit serialisation (one `<file>=<sha256>` line per file, XML included), so it is never a single source's digest.
+- Both are the same single read as a normal one: no extra SAP round trip, and no dependency context (which costs one per dependency).
+- With `if_none_match` and a different digest you get the normal read, body and all. `summary` and `if_none_match` together report `"unchanged": true|false`.
+- `version` and last-changed author/date are not reported: a plain source GET does not say which version it served nor who changed it, and finding out would cost another round trip.
+- CLI: `vsp source read CLAS ZCL_CALCULATOR --summary`, `--if-none-match <sha256>`.
+
+> **Token-saving tip:** make the first full read with `params={"include_hash": true, "include_context": false}`: it returns the source together with its `sha256`. Keep that digest, and before re-reading the object ask with `if_none_match`: an unchanged 400-line class then costs one line instead of thousands of tokens.
+
 ### Native Go ABAP Lexer — abaplint in Go
 
 The [abaplint](https://github.com/abaplint/abaplint) lexer has been mechanically ported from TypeScript to native Go (`pkg/abaplint`). This is the same lexer that powers abaplint — 48 token types, all 6 lexer modes (normal, string, backtick, template, comment, pragma), with full whitespace-context encoding.
@@ -1643,6 +1675,8 @@ vsp works in two modes:
 # Source operations
 vsp -s a4h source CLAS ZCL_MY_CLASS              # read source
 vsp -s a4h source read CLAS ZCL_MY_CLASS          # same, explicit
+vsp -s a4h source read CLAS ZCL_MY_CLASS --summary              # lines, bytes, sha256 — no body
+vsp -s a4h source read CLAS ZCL_MY_CLASS --if-none-match <sha>  # "unchanged" or the source
 vsp -s a4h source write CLAS ZCL_FOO < file.abap  # write from stdin
 vsp -s a4h source edit CLAS ZCL_FOO --old "X" --new "Y"  # surgical edit
 vsp -s a4h source context CLAS ZCL_FOO            # source + dependency contracts
