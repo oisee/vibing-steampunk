@@ -41,6 +41,9 @@ type fakeADT struct {
 	failStep    string        // a step method that fails with a real error
 	hangBPClear bool          // posting the empty set hangs until its context ends
 	slowRelease time.Duration // deleting the listener takes this long
+	failListen  chan struct{} // closed: every listener request fails
+	failDeletes int           // this many listener deletions fail at the transport
+	rejected    []string      // requests refused because their context had ended
 	detachTried bool
 	log         []string
 }
@@ -82,6 +85,16 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 	}
 	q := u.Query()
 	method := q.Get("method")
+
+	// A request made on a context that has already ended never reaches SAP:
+	// the real transport refuses it before it is sent. Accepting it here
+	// would let a release running on a spent context pass for one that works.
+	if err := ctx.Err(); err != nil {
+		f.mu.Lock()
+		f.rejected = append(f.rejected, req.Method+" "+u.Path)
+		f.mu.Unlock()
+		return nil, err
+	}
 
 	f.mu.Lock()
 	entry := req.Method + " " + u.Path
@@ -138,10 +151,15 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 		f.mu.Lock()
 		f.listening = true
 		f.mu.Unlock()
+		f.mu.Lock()
+		fail := f.failListen
+		f.mu.Unlock()
 		for {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
+			case <-fail:
+				return exception(500, "Internal Server Error", "kernelError", "The listener could not be registered"), nil
 			case <-f.runs:
 			}
 			f.mu.Lock()
@@ -160,6 +178,11 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 	case u.Path == "/sap/bc/adt/debugger/listeners" && req.Method == "DELETE":
 		f.mu.Lock()
 		slow := f.slowRelease
+		if f.failDeletes > 0 {
+			f.failDeletes--
+			f.mu.Unlock()
+			return nil, fmt.Errorf("connection reset by peer")
+		}
 		f.mu.Unlock()
 		if slow > 0 {
 			select {

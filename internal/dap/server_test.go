@@ -439,6 +439,78 @@ func TestReleaseStepsAreBoundedSeparately(t *testing.T) {
 	}
 }
 
+// A breakpoint request that captured the session just before the session
+// was released must not post into it: what it set would stay armed on SAP
+// with nobody left to remove it. Here the listener fails for good while the
+// request is between capturing the session and posting, so the adapter
+// terminates and releases in that window.
+func TestBreakpointsAreNotPostedIntoAReleasedSession(t *testing.T) {
+	savedBackoff := listenBackoff
+	listenBackoff = time.Millisecond
+	t.Cleanup(func() { listenBackoff = savedBackoff; beforeBreakpointPost = nil })
+
+	fake := newFakeADT()
+	fake.failListen = make(chan struct{})
+	c := armed(t, fake)
+
+	beforeBreakpointPost = func() {
+		beforeBreakpointPost = nil // once
+		close(fake.failListen)
+		deadline := time.Now().Add(waitFor)
+		for {
+			fake.mu.Lock()
+			released := fake.listenerDeleted
+			fake.mu.Unlock()
+			if released {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Error("the session was never released")
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	body := c.ok("setBreakpoints", map[string]any{
+		"source":      map[string]any{"path": demoFile(t)},
+		"breakpoints": []any{map[string]any{"line": 26}, map[string]any{"line": 27}},
+	})
+	for _, b := range body["breakpoints"].([]any) {
+		bp := b.(map[string]any)
+		if bp["verified"] != false || !strings.Contains(fmt.Sprint(bp["message"]), "session ended") {
+			t.Errorf("a breakpoint answered after the release: %v", bp)
+		}
+	}
+	fake.mu.Lock()
+	left := fake.lastBPSet
+	fake.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d breakpoints left armed on SAP after the release; calls: %v", left, fake.calls())
+	}
+}
+
+// What is reported as still held is the final state: a listener deletion that
+// failed once and then succeeded is released, and no warning is given.
+func TestReleaseReportsTheFinalState(t *testing.T) {
+	fake := newFakeADT()
+	fake.failDeletes = 1
+	c := armed(t, fake)
+	c.ok("disconnect", map[string]any{})
+
+	fake.mu.Lock()
+	deleted := fake.listenerDeleted
+	fake.mu.Unlock()
+	if !deleted {
+		t.Fatalf("the listener was not deleted on the second attempt; calls: %v", fake.calls())
+	}
+	for _, e := range c.events {
+		body, _ := e["body"].(map[string]any)
+		if e["event"] == "output" && strings.Contains(fmt.Sprint(body["output"]), "SAP may still hold") {
+			t.Errorf("warned about something that was released in the end: %v", body["output"])
+		}
+	}
+}
+
 // The stream ending without a disconnect — the editor crashed — still
 // releases the session.
 func TestEndOfStreamReleasesTheSession(t *testing.T) {

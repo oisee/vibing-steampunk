@@ -32,6 +32,41 @@ const cleanupTimeout = 30 * time.Second
 // releaseStepTimeout bounds each step of the release on its own.
 var releaseStepTimeout = 15 * time.Second
 
+// listenBackoff is the wait after a failed listen, multiplied by the number of
+// failures in a row.
+var listenBackoff = time.Second
+
+// beforeBreakpointPost runs between capturing the session and posting a
+// breakpoint set. A test seam: it lets a test end the session in exactly the
+// window a request could otherwise post into a released one. Nil in use.
+var beforeBreakpointPost func()
+
+// errSessionEnded answers a request whose session was released while it waited.
+var errSessionEnded = errors.New("session ended: the debug session was released; start a new one")
+
+// lockSession takes the debugger for a request that captured sess earlier, and
+// refuses if that session has since been released (or replaced by a newer
+// launch). The check is made under dbgMu, the lock release takes before it
+// clears anything, and release drops the session before taking it. So a
+// request either reaches SAP before the release, which then cleans up after
+// it, or not at all; it can never post into a session that was already given
+// back, where what it set would stay armed with nobody to remove it.
+//
+// The alternative, making release wait for requests in flight, was not taken:
+// release runs on the worker and from signal handlers, and must not depend on
+// a request finishing.
+func (s *Server) lockSession(sess *Session) error {
+	s.dbgMu.Lock()
+	s.mu.Lock()
+	current := s.sess == sess && sess != nil
+	s.mu.Unlock()
+	if !current {
+		s.dbgMu.Unlock()
+		return errSessionEnded
+	}
+	return nil
+}
+
 // LaunchArgs are the arguments of launch and attach. They are the same for
 // both: vsp never starts the program itself, so "launch" also means "arm the
 // breakpoints and wait for the program to reach one".
@@ -567,12 +602,22 @@ func (s *Server) applyBreakpoints(notify bool) {
 
 	// A listener in flight holds the session; it is stopped, the set placed,
 	// and the listener reissued.
+	if beforeBreakpointPost != nil {
+		beforeBreakpointPost()
+	}
 	relisten := s.stopListening()
 
-	s.dbgMu.Lock()
-	placed, err := sess.Debugger.ADTSetBreakpoints(s.ctx, want)
-	rejected := sess.Debugger.Rejected()
-	s.dbgMu.Unlock()
+	var (
+		placed, rejected []adt.Breakpoint
+		err              error
+	)
+	if err = s.lockSession(sess); err == nil {
+		placed, err = sess.Debugger.ADTSetBreakpoints(s.ctx, want)
+		rejected = sess.Debugger.Rejected()
+		s.dbgMu.Unlock()
+	} else {
+		relisten = false
+	}
 
 	type key struct {
 		uri  string
@@ -719,6 +764,9 @@ func (s *Server) step(ctx context.Context, kind, reason string) (bool, string, e
 	s.mu.Lock()
 	sess := s.sess
 	s.mu.Unlock()
+	if sess == nil {
+		return false, "", errors.New("no debug session")
+	}
 	s.dbgMu.Lock()
 	res, err := sess.Debugger.ADTStep(ctx, kind)
 	s.dbgMu.Unlock()
@@ -745,6 +793,9 @@ func (s *Server) listen(ctx context.Context) {
 	s.mu.Lock()
 	sess, seconds := s.sess, s.args.ListenSeconds
 	s.mu.Unlock()
+	if sess == nil {
+		return // released while the worker started
+	}
 	failures := 0
 	for ctx.Err() == nil {
 		s.dbgMu.Lock()
@@ -763,7 +814,7 @@ func (s *Server) listen(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(time.Duration(failures) * time.Second):
+			case <-time.After(time.Duration(failures) * listenBackoff):
 			}
 			continue
 		}
@@ -861,7 +912,9 @@ func (s *Server) stack() ([]adt.DebugStackEntry, error) {
 	if frames != nil {
 		return frames, nil
 	}
-	s.dbgMu.Lock()
+	if err := s.lockSession(sess); err != nil {
+		return nil, err
+	}
 	info, err := sess.Debugger.StackInfo(s.ctx)
 	s.dbgMu.Unlock()
 	if err != nil {
@@ -1013,7 +1066,9 @@ func (s *Server) scopes(msg *ProtocolMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.dbgMu.Lock()
+	if err := s.lockSession(sess); err != nil {
+		return nil, err
+	}
 	err = s.onFrame(sess, i)
 	var roots *adt.DebugChildVariablesInfo
 	if err == nil {
@@ -1080,7 +1135,9 @@ func (s *Server) variables(msg *ProtocolMessage) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.dbgMu.Lock()
+	if err := s.lockSession(sess); err != nil {
+		return nil, err
+	}
 	err = s.onFrame(sess, ref.frame)
 	var info *adt.DebugChildVariablesInfo
 	var sample *saprfc.TableSample
@@ -1183,7 +1240,9 @@ func (s *Server) setVariable(msg *ProtocolMessage) (any, error) {
 	if ref == nil || id == "" {
 		return nil, fmt.Errorf("no variable %s here", args.Name)
 	}
-	s.dbgMu.Lock()
+	if err := s.lockSession(sess); err != nil {
+		return nil, err
+	}
 	defer s.dbgMu.Unlock()
 	if err := s.onFrame(sess, ref.frame); err != nil {
 		return nil, err
@@ -1223,7 +1282,9 @@ func (s *Server) source(msg *ProtocolMessage) (any, error) {
 	if busy {
 		return nil, errors.New("the debug session is busy; open the source again when the program stops")
 	}
-	s.dbgMu.Lock()
+	if err := s.lockSession(sess); err != nil {
+		return nil, err
+	}
 	res, err := sess.Debugger.ADT(s.ctx, "GET", uri, []saprfc.ADTHeader{{Name: "Accept", Value: "text/plain"}}, nil)
 	s.dbgMu.Unlock()
 	if err != nil {
@@ -1248,9 +1309,10 @@ func (s *Server) disconnect(msg *ProtocolMessage) {
 		s.mu.Unlock()
 		if stopped && sess != nil {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), cleanupTimeout)
-			s.dbgMu.Lock()
-			_, _ = sess.Debugger.ADTStep(ctx, "terminateDebuggee")
-			s.dbgMu.Unlock()
+			if s.lockSession(sess) == nil {
+				_, _ = sess.Debugger.ADTStep(ctx, "terminateDebuggee")
+				s.dbgMu.Unlock()
+			}
 			cancel()
 		}
 	}
@@ -1299,9 +1361,15 @@ func (s *Server) release() {
 			held = append(held, fmt.Sprintf("the breakpoints (%v)", err))
 		}
 	}
-	// Detach releases the debuggee and deletes the listener. Close repeats
-	// it on a fresh budget if it did not finish, and tidies the rest.
-	if err := bounded(sess.Debugger.ADTDetach); err != nil {
+	// Detach releases the debuggee and deletes the listener. A first attempt
+	// that fails gets one more on a fresh budget, and only the outcome of the
+	// last attempt counts: an item that was released in the end is not
+	// reported as held.
+	err := bounded(sess.Debugger.ADTDetach)
+	if err != nil {
+		err = bounded(sess.Debugger.ADTDetach)
+	}
+	if err != nil {
 		held = append(held, fmt.Sprintf("the listener or the debuggee (%v)", err))
 	}
 	if err := bounded(sess.Debugger.Close); err != nil {
