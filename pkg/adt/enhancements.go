@@ -87,17 +87,24 @@ type EnhancementRef struct {
 // the RFC fallback find HOOK_IMPL plug-in sources whose REPOSRC names use
 // `=`-padding rather than the simple <NAME>E convention.
 func (c *Client) GetEnhancement(ctx context.Context, name string) (string, error) {
+	src, _, err := c.getEnhancement(ctx, name)
+	return src, err
+}
+
+// getEnhancement is GetEnhancement that also says which ADT source served
+// the body (see getEnhancementByRef).
+func (c *Client) getEnhancement(ctx context.Context, name string) (string, string, error) {
 	name = strings.ToUpper(strings.TrimSpace(name))
 	if name == "" {
-		return "", fmt.Errorf("enhancement name is required")
+		return "", "", fmt.Errorf("enhancement name is required")
 	}
 
 	ref, err := c.resolveEnhancement(ctx, name)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return c.GetEnhancementByRef(ctx, ref)
+	return c.getEnhancementByRef(ctx, ref)
 }
 
 // GetEnhancementByRef returns the ABAP source for an already-resolved ENHO
@@ -116,14 +123,23 @@ func (c *Client) GetEnhancement(ctx context.Context, name string) (string, error
 // Returns the same step-4 metadata-only error as GetEnhancement when no path
 // resolves the body.
 func (c *Client) GetEnhancementByRef(ctx context.Context, ref *EnhancementRef) (string, error) {
+	src, _, err := c.getEnhancementByRef(ctx, ref)
+	return src, err
+}
+
+// getEnhancementByRef is GetEnhancementByRef that also returns the ADT URI
+// that served the body: the resolved URI's source, or the plural alternate.
+// A body read over RFC (step 3) has no ADT URI, and the uri is "".
+func (c *Client) getEnhancementByRef(ctx context.Context, ref *EnhancementRef) (string, string, error) {
 	if ref == nil || strings.TrimSpace(ref.Name) == "" {
-		return "", fmt.Errorf("enhancement ref is required")
+		return "", "", fmt.Errorf("enhancement ref is required")
 	}
 
 	// 1) Modern REST: try the URL the search/browser returned ("singular" form).
 	if uri := strings.TrimSpace(ref.URI); uri != "" {
-		if src, ok := c.tryFetchEnhancementSource(ctx, strings.TrimRight(uri, "/")+"/source/main"); ok {
-			return src, nil
+		u := strings.TrimRight(uri, "/") + "/source/main"
+		if src, ok := c.tryFetchEnhancementSource(ctx, u); ok {
+			return src, u, nil
 		}
 	}
 
@@ -132,7 +148,7 @@ func (c *Client) GetEnhancementByRef(ctx context.Context, ref *EnhancementRef) (
 		alt := fmt.Sprintf("/sap/bc/adt/enhancements/%s/%s/source/main",
 			plural, strings.ToLower(ref.Name))
 		if src, ok := c.tryFetchEnhancementSource(ctx, alt); ok {
-			return src, nil
+			return src, alt, nil
 		}
 	}
 
@@ -142,7 +158,7 @@ func (c *Client) GetEnhancementByRef(ctx context.Context, ref *EnhancementRef) (
 	// the authoritative REPOSRC entry name when populated; otherwise the
 	// `<name>E` convention is used as a best-effort guess.
 	if src, ok := c.tryFetchEnhancementSourceViaRFC(ctx, ref); ok {
-		return src, nil
+		return src, "", nil
 	}
 
 	// 4) No reachable source-body endpoint on this server. Surface a structured
@@ -152,7 +168,7 @@ func (c *Client) GetEnhancementByRef(ctx context.Context, ref *EnhancementRef) (
 	if hint == "" {
 		hint = ref.Name + "E"
 	}
-	return "", fmt.Errorf(
+	return "", "", fmt.Errorf(
 		"enhancement %s (%s, package %s): source body unavailable on this server "+
 			"— ADT REST does not expose HOOK_IMPL plug-ins on this NetWeaver release "+
 			"(SE80: see include %s). Install ZADT_VSP or grant the vsp cookie write "+

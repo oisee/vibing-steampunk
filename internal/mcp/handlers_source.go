@@ -230,7 +230,14 @@ func (s *Server) handleGetSource(ctx context.Context, request mcp.CallToolReques
 		ifNoneMatch = d
 	}
 
-	rawSource, readURI, err := s.adtClient.GetSourceWithURI(ctx, objectType, name, opts)
+	readCtx := ctx
+	if summary || ifNoneMatch != "" {
+		// The point of both is the current state: a cached body up to the
+		// cache TTL old would say "unchanged" about an object another
+		// client changed. This read goes to SAP and refreshes the cache.
+		readCtx = adt.WithFreshReads(ctx)
+	}
+	rawSource, readURI, err := s.adtClient.GetSourceWithURI(readCtx, objectType, name, opts)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("GetSource failed: %v", err)), nil
 	}

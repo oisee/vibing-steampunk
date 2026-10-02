@@ -1,6 +1,7 @@
 package adt
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"strings"
@@ -93,6 +94,26 @@ func (m *MemoryResponseStore) Len() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.entries)
+}
+
+// freshReadKey marks a context whose reads must not be answered from the
+// cache (see WithFreshReads).
+type freshReadKey struct{}
+
+// WithFreshReads returns a context whose reads go to SAP even when the
+// response cache holds an answer. The fresh answer still refreshes the
+// cache entry. It is for reads whose whole point is the current state --
+// a source summary, an if_none_match check -- where a cached body up to the
+// TTL old would say "unchanged" about an object another client changed.
+// It is per call: other reads of the same client keep using the cache.
+func WithFreshReads(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshReadKey{}, true)
+}
+
+// freshReads reports whether ctx asks for reads that bypass the cache.
+func freshReads(ctx context.Context) bool {
+	v, _ := ctx.Value(freshReadKey{}).(bool)
+	return v
 }
 
 // responseCache is the transport's view: a store, a TTL, and counters.

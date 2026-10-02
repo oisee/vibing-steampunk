@@ -686,6 +686,10 @@ func runSource(cmd *cobra.Command, args []string) error {
 	}
 
 	ctx := context.Background()
+	if summary || ifNoneMatch != "" {
+		// Never from the response cache: see adt.WithFreshReads.
+		ctx = adt.WithFreshReads(ctx)
+	}
 	source, readURI, err := client.GetSourceWithURI(ctx, objType, name, opts)
 	if err != nil {
 		return fmt.Errorf("failed to get source: %w", err)

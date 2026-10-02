@@ -246,8 +246,10 @@ func (t *Transport) Request(ctx context.Context, path string, opts *RequestOptio
 		return nil, fmt.Errorf("building URL: %w", err)
 	}
 	key += "\x00" + opts.Method + "\x00" + opts.Accept + "\x00" + fmt.Sprint(opts.Headers) + "\x00" + string(opts.Body)
-	if resp, ok := t.cache.get(key); ok {
-		return resp, nil
+	if !freshReads(ctx) {
+		if resp, ok := t.cache.get(key); ok {
+			return resp, nil
+		}
 	}
 	resp, err := t.request(ctx, path, opts)
 	if err == nil && resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {

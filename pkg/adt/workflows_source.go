@@ -149,7 +149,8 @@ func (c *Client) GetSource(ctx context.Context, objectType, name string, opts *G
 // that ADT knows only as an include is read from /programs/includes, and a
 // FUNC's group is resolved when the caller did not give it. It makes the
 // same requests as GetSource. uri is "" for types without one source
-// document (FUGR, SRVB, MSAG, ENHO).
+// document (FUGR, SRVB, MSAG), and for an ENHO body read over RFC; an ENHO
+// read over ADT reports which of its endpoints served it.
 func (c *Client) GetSourceWithURI(ctx context.Context, objectType, name string, opts *GetSourceOptions) (source, uri string, err error) {
 	if err := c.checkSafety(OpRead, "GetSource"); err != nil {
 		return "", "", err
@@ -160,6 +161,8 @@ func (c *Client) GetSourceWithURI(ctx context.Context, objectType, name string, 
 	switch strings.ToUpper(objectType) {
 	case "PROG":
 		return c.getProgram(ctx, name)
+	case "ENHO":
+		return c.getEnhancement(ctx, name)
 	case "FUNC":
 		group, err := c.functionGroupFor(ctx, opts.Parent, strings.ToUpper(name))
 		if err != nil {

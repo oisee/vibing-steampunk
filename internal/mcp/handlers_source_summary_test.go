@@ -202,3 +202,53 @@ func TestReadIfNoneMatchIgnoresChangedDependency(t *testing.T) {
 		t.Fatalf("include_context=false: %q", text)
 	}
 }
+
+// With the response cache on (VSP_CACHE=true), summary and if_none_match
+// must still read SAP: a cached v1 would say "unchanged" about an object
+// another client changed to v2. A plain read may keep using the cache.
+func TestReadIfNoneMatchAndSummaryBypassResponseCache(t *testing.T) {
+	const v2 = "REPORT zdemo_sum.\r\nWRITE 'v2'.\r\n"
+	const v2SHA256 = "9e50b6f4ab3edf6aa45a08e2ef74bb369e0e7d5a62d5482aaf3c10704828e370"
+	var mu sync.Mutex
+	body := summaryProgSource
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-CSRF-Token", "t")
+		if r.Method == http.MethodGet && r.URL.Path == summaryProgPath {
+			mu.Lock()
+			b := body
+			mu.Unlock()
+			_, _ = w.Write([]byte(b))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(ts.Close)
+	t.Setenv("VSP_CACHE", "true")
+	t.Setenv("VSP_CACHE_PATH", "")
+	s := NewServer(&Config{BaseURL: ts.URL, Username: "u", Password: "p", Client: "001", Language: "EN", Mode: "hyperfocused"})
+	plain := map[string]any{"include_context": false}
+
+	if text, _ := readProg(t, s, plain); text != summaryProgSource {
+		t.Fatalf("first read: %q", text)
+	}
+	mu.Lock()
+	body = v2
+	mu.Unlock()
+	// The control: the cache is on, and a plain read still gets v1 from it.
+	if text, _ := readProg(t, s, plain); text != summaryProgSource {
+		t.Fatalf("the response cache is not on in this test (plain read got %q)", text)
+	}
+
+	text, isErr := readProg(t, s, map[string]any{"if_none_match": summaryProgSHA256, "include_context": false})
+	if isErr || text != v2 {
+		t.Fatalf("v1's sha256 against a source now v2: want the v2 body, got %q", text)
+	}
+	text, _ = readProg(t, s, map[string]any{"summary": true})
+	if !strings.Contains(text, `"sha256": "`+v2SHA256+`"`) {
+		t.Fatalf("summary must be of v2:\n%s", text)
+	}
+	// The fresh read refreshed the cache: a plain read now has v2.
+	if text, _ := readProg(t, s, plain); text != v2 {
+		t.Fatalf("after a fresh read the cache should hold v2, got %q", text)
+	}
+}

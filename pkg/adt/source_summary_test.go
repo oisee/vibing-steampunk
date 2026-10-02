@@ -168,3 +168,31 @@ func TestSummarySourceHashOnlyWhereAGuardedWriteTakesIt(t *testing.T) {
 		}
 	}
 }
+
+// An ENHO body is read from the URI its search hit names or, failing that,
+// from the plural alternate. The summary reports the one that served it.
+func TestGetSourceWithURIReportsTheENHOEndpointThatServed(t *testing.T) {
+	const body = "ENHANCEMENT 2 Y_TEST.\nENDENHANCEMENT.\n"
+	const singular = "/sap/bc/adt/enhancements/enhoxh/y_test/source/main"
+	const plural = "/sap/bc/adt/enhancements/enhoxhs/y_test/source/main"
+	for _, served := range []string{singular, plural} {
+		mock := &routedMock{byPath: map[string]*http.Response{
+			"/sap/bc/adt/repository/informationsystem/search": newEnhancementSearchResponse("Y_TEST", "XH", "YSD"),
+			served:                  newBody(body),
+			"/sap/bc/adt/discovery": newBody("OK"),
+		}}
+		cfg := NewConfig("https://sap.example.com:44300", "u", "p")
+		c := NewClientWithTransport(cfg, NewTransportWithClient(cfg, mock))
+
+		src, uri, err := c.GetSourceWithURI(context.Background(), "ENHO", "Y_TEST", nil)
+		if err != nil || src != body {
+			t.Fatalf("served at %s: GetSourceWithURI = %q, %v", served, src, err)
+		}
+		if uri != served {
+			t.Fatalf("served at %s: uri = %q", served, uri)
+		}
+		if s := SummarizeSource("ENHO", "Y_TEST", nil, uri, src); s.URI != served || s.Requested != "" {
+			t.Fatalf("served at %s: summary uri/requested = %q/%q", served, s.URI, s.Requested)
+		}
+	}
+}

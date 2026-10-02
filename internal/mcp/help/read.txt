@@ -30,7 +30,10 @@ Summary instead of the source (saves tokens; same single read, no body, no conte
       where WriteSource refuses one, e.g. a method-level read. Neither equals
       git_delete_objects' expect sha256, which covers the whole abapGit serialisation.
       uri is the source that served the text; requested is set when that differs
-      (a PROG ADT knows only as an include is read from /programs/includes).
+      (a PROG ADT knows only as an include is read from /programs/includes; an ENHO
+      names whichever of its endpoints answered).
+      summary and if_none_match always read SAP, never the response cache
+      (VSP_CACHE), so "unchanged" is about the source as it is now.
   SAP(action="read", target="CLAS ZCL_TEST", params={"if_none_match": "<sha256>"})
       the same digest still: one line "unchanged: source sha256 ..."; else the normal read.
       Compares the object's own source only: the dependency context is not compared,
