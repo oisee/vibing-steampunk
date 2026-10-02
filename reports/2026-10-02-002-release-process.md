@@ -112,12 +112,14 @@ existing tag. Its jobs:
    `run` executes linux amd64, 386, and arm64/arm under qemu.
 5. **run**: macOS (darwin-arm64 required; darwin-amd64 best effort via
    Rosetta, reported as a warning if it cannot start) and Windows (amd64, 386).
-   windows-arm64 is never executed. Its header and build info are still
-   checked.
+   windows-arm64 runs on a Windows ARM runner.
 6. **publish**: README/git-cliff notes, with the title from the annotated
    tag's subject. Creates a draft, downloads it back, compares byte for byte,
-   then publishes. It is marked latest only if it is the highest final
-   version.
+   then publishes. Immediately before and after publishing it re-reads the
+   tag on origin (it must still be the built commit) and every asset's GitHub
+   sha256 digest; a failure after publishing turns the release back into a
+   draft. It is marked latest only above every published final release, so
+   a higher tag whose release failed does not block it.
 
 One script backs both CI and the fallback. `make release-dist TAG=vX.Y.Z`
 runs the same build/verify/run locally. `.goreleaser.yml` is removed, so there
@@ -157,7 +159,9 @@ the first full run. If it fails, it fails before anything is public.
 ### Residual risks
 
 - darwin-amd64 is only executed if the macOS image has Rosetta.
-  windows-arm64 is never executed.
+- A window remains between the last digest check and GitHub serving the
+  release. Release immutability (a repository setting) closes it for
+  published releases; enabling it is the owner's call.
 - The README section becomes the release body verbatim. v2.59.0's was a
   hand-condensed summary, and it can still be edited after publishing.
 - The leak scan needs the `VSP_LEAK_IDENTIFIERS` secret to be available to

@@ -176,6 +176,8 @@ jobs:
             specs: vsp-darwin-arm64 ?vsp-darwin-amd64
           - os: windows-latest
             specs: vsp-windows-amd64.exe vsp-windows-386.exe
+          - os: windows-11-arm
+            specs: vsp-windows-arm64.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -209,6 +211,7 @@ jobs:
       contents: write
     env:
       TAG: ${{ needs.prepare.outputs.tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -254,6 +257,7 @@ jobs:
         env:
           TITLE: ${{ steps.meta.outputs.title }}
         run: |
+          ./.github/ci/release.sh tag-at "$TAG" "$SHA"
           pre=()
           [[ $TAG == *-* ]] && pre=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
@@ -264,13 +268,22 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/served"
           ./.github/ci/release.sh compare dist "$RUNNER_TEMP/served"
 
+      # The checks above ran against the draft as it was then. Right before and
+      # right after publishing, the tag and every asset digest are read from
+      # GitHub again; a release that fails the second check goes back to draft.
       - name: Publish
         run: |
-          # Latest only if this is the highest final version: a dispatch of an
-          # older tag must not take "latest" away from a newer release.
-          highest=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1)
-          latest=false
-          [ "$TAG" = "$highest" ] && latest=true
+          ./.github/ci/release.sh tag-at "$TAG" "$SHA"
+          ./.github/ci/release.sh digests "$TAG" dist
+          # Latest only above every published final release: a dispatch of an
+          # older tag must not take "latest" away from a newer release, and a
+          # higher tag whose release failed must not keep this one from it.
+          latest=$(./.github/ci/release.sh latest "$TAG")
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$latest"
+          if ! { ./.github/ci/release.sh tag-at "$TAG" "$SHA" && ./.github/ci/release.sh digests "$TAG" dist; }; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+            echo "::error title=release::$TAG changed while it was being published; it is a draft again"
+            exit 1
+          fi
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,isDraft,assets \
             --jq '"\(.url) draft=\(.isDraft) assets=\(.assets | length)"'

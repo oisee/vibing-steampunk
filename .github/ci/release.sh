@@ -10,6 +10,9 @@
 #   release.sh run     TAG DIST SPEC...    execute binaries; each must print exactly TAG
 #   release.sh notes   TAG [OUT]           release notes: README "What's New", else git-cliff
 #   release.sh compare DIST DOWNLOADED     what the release serves is byte-identical to DIST
+#   release.sh tag-at  TAG SHA             the tag on origin still points at SHA
+#   release.sh digests TAG DIST            the release's asset set and GitHub sha256 digests match DIST
+#   release.sh latest  TAG                 "true" if TAG is a final version above every published final release
 #
 # Every check reads the files themselves. An exit 0 from `go build` says nothing
 # about which source went in or which platform came out: v2.58.0 nearly shipped
@@ -241,6 +244,7 @@ cmd_run() {
 }
 
 # ---------------------------------------------------------------------- notes
+# Headings inside a code fence are text, not section boundaries.
 # The README's "What's New" carries hand-written sections per release, headed
 # "### vX.Y.Z — ...". Every such section for TAG is taken, in order, up to the
 # next heading of the same or higher level that is not for TAG. Without one,
@@ -248,6 +252,8 @@ cmd_run() {
 readme_section() {
 	awk -v tag="$1" '
 	function is_tag_heading(s) { return index(s, "### " tag) == 1 && (length(s) == length("### " tag) || substr(s, length("### " tag) + 1, 1) == " ") }
+	/^(```|~~~)/ { fence = !fence; if (taking) print; next }
+	fence { if (taking) print; next }
 	/^## / { inside = ($0 ~ /^## What.s New/); taking = 0; next }
 	!inside { next }
 	/^### / { taking = is_tag_heading($0) }
@@ -318,7 +324,47 @@ cmd_compare() {
 	echo "compare: the release serves exactly what was built and verified"
 }
 
-[ $# -ge 1 ] || die "usage: release.sh build|verify|run|notes|compare ..."
+# ------------------------------------------------------------ publish guards
+# The build jobs check one commit; the publish job must release that commit and
+# those files, at the moment it acts. Each guard re-reads GitHub, not the runner.
+
+cmd_tag_at() { # the tag on origin, peeled to its commit, is still SHA
+	local tag=$1 sha=$2 remote
+	check_tag "$tag"
+	remote=$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}" | awk '
+		$2 ~ /\^\{\}$/ { peeled = $1 } { plain = $1 } END { print (peeled != "" ? peeled : plain) }')
+	[ -n "$remote" ] || die "tag $tag is gone from origin"
+	[ "$remote" = "$sha" ] || die "tag $tag moved on origin: it now points at $remote, the verified build is $sha"
+	ok "tag $tag on origin is still $sha"
+}
+
+cmd_digests() { # the release (draft or not) holds exactly DIST, by GitHub's own sha256
+	local tag=$1 dist=$2 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} id served a want got
+	check_tag "$tag"
+	id=$(gh release view "$tag" --repo "$repo" --json databaseId --jq .databaseId) || die "no release for $tag"
+	served=$(gh api "repos/$repo/releases/$id" --jq '.assets[] | "\(.name) \(.digest // "none")"' | LC_ALL=C sort)
+	want=$(cd "$dist" && ls -1A | LC_ALL=C sort)
+	got=$(echo "$served" | cut -d' ' -f1)
+	[ "$want" = "$got" ] || { bad "release $tag assets are not the built set:"; diff <(echo "$want") <(echo "$got") >&2 || true; }
+	for a in $want; do
+		[ -f "$dist/$a" ] || continue
+		got=$(echo "$served" | awk -v n="$a" '$1 == n { print $2 }')
+		[ "$got" = "sha256:$(sha256_of "$dist/$a")" ] || bad "$a on the release has digest ${got:-missing}, the build is sha256:$(sha256_of "$dist/$a")"
+	done
+	[ "$fail" = 0 ] || die "digests $tag: FAILED"
+	ok "release $tag holds exactly the built assets (GitHub sha256 digests)"
+}
+
+cmd_latest() { # prints true when TAG is final and above every published final release
+	local tag=$1 repo=${GITHUB_REPOSITORY:-oisee/vibing-steampunk} top
+	check_tag "$tag"
+	case $tag in *-*) echo false; return ;; esac
+	top=$( { gh release list --repo "$repo" --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName'; echo "$tag"; } |
+		grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+	if [ "v$top" = "$tag" ]; then echo true; else echo false; fi
+}
+
+[ $# -ge 1 ] || die "usage: release.sh build|verify|run|notes|compare|tag-at|digests|latest ..."
 sub=$1; shift
 case $sub in
 build) [ $# -ge 1 ] || die "usage: release.sh build TAG [DIST]"; cmd_build "$@" ;;
@@ -326,5 +372,8 @@ verify) [ $# -ge 1 ] || die "usage: release.sh verify TAG [DIST]"; cmd_verify "$
 run) [ $# -ge 3 ] || die "usage: release.sh run TAG DIST SPEC..."; cmd_run "$@" ;;
 notes) [ $# -ge 1 ] || die "usage: release.sh notes TAG [OUT]"; cmd_notes "$@" ;;
 compare) [ $# -eq 2 ] || die "usage: release.sh compare DIST DOWNLOADED"; cmd_compare "$@" ;;
+tag-at) [ $# -eq 2 ] || die "usage: release.sh tag-at TAG SHA"; cmd_tag_at "$@" ;;
+digests) [ $# -eq 2 ] || die "usage: release.sh digests TAG DIST"; cmd_digests "$@" ;;
+latest) [ $# -eq 1 ] || die "usage: release.sh latest TAG"; cmd_latest "$@" ;;
 *) die "unknown subcommand $sub" ;;
 esac

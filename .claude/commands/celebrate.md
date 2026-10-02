@@ -66,10 +66,14 @@ for an existing tag that has no release yet):
    - `--version` prints exactly `vsp version vX.Y.Z (commit: <sha>, …)` for
      linux amd64/386, and arm64/arm under qemu.
 5. **run**: the same `--version` check on macOS (darwin-arm64; darwin-amd64 if
-   Rosetta is there, else a warning) and Windows (amd64, 386).
+   Rosetta is there, else a warning) and Windows (amd64, 386; arm64 on a
+   Windows ARM runner).
 6. **publish**: notes from the README (else git-cliff), release created as a
-   **draft**, every asset downloaded back and compared byte for byte, then
-   published (and marked latest only if it is the highest version).
+   **draft**, every asset downloaded back and compared byte for byte. Just
+   before and after publishing, the tag on origin must still be the built
+   commit and every asset's GitHub sha256 digest must match the build; if the
+   check after publishing fails, the release goes back to draft. It is marked
+   latest only above every published final release.
 
 ## 5. What to check
 
