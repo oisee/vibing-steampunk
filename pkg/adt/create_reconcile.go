@@ -209,8 +209,10 @@ func isAlreadyExistsError(err error) bool {
 
 // cleanupPartialObject runs the best-effort compensating cleanup for a
 // zombie object: orphan-lock release, then acquire a fresh session-
-// scoped lock and delete. The result is a *PartialCreateError that
-// records what was attempted and whether the object is now gone.
+// scoped lock, delete, and release that lock. The result is a
+// *PartialCreateError that records what was attempted and whether the
+// object is now gone (CleanupOK); a lock it could not release is named in
+// ManualSteps, with the stranded-lock advice, even when the object is gone.
 // Callers that invoke it from an explicit recovery path — e.g. the
 // MCP `recover_failed_create` tool — leave OriginalErr nil; callers
 // that invoke it after a failed CreateObject attach the original
@@ -266,18 +268,37 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 	if delErr != nil {
 		// Delete failed despite holding a lock — release the lock
 		// so we do not add to the leak, then surface manual steps.
-		_ = c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle)
 		pce.CleanupActions = append(pce.CleanupActions,
 			fmt.Sprintf("delete failed: %v", delErr))
 		pce.ManualSteps = []string{
 			"manually delete the object via SE80",
 			"if transport-bound, remove from transport via SE09 first",
 		}
+		if uerr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); uerr != nil {
+			pce.CleanupActions = append(pce.CleanupActions, "could not release the delete lock")
+			pce.ManualSteps = append(pce.ManualSteps, strandedLockAdvice(objectURL, uerr))
+		}
 		return pce
 	}
 
 	pce.CleanupActions = append(pce.CleanupActions, "deleted partially-created object")
 	pce.CleanupOK = true
+
+	// The DELETE does not release the ENQUEUE the LOCK took, except behind a
+	// session-holding proxy, where DeleteObject retires the stateful context
+	// and the lock goes with it (the rule deleteGated follows). Released on a
+	// detached, bounded context: cleanup runs after a failure, often one
+	// caused by the caller's context running out. The object is gone either
+	// way; a lock left behind is reported, not hidden.
+	if deleteReleasesLock(c) {
+		return pce
+	}
+	if uerr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); uerr != nil {
+		pce.CleanupActions = append(pce.CleanupActions, "could not release the delete lock")
+		pce.ManualSteps = append(pce.ManualSteps, strandedLockAdvice(objectURL, uerr))
+		return pce
+	}
+	pce.CleanupActions = append(pce.CleanupActions, "released the delete lock")
 	return pce
 }
 

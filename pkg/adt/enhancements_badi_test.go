@@ -227,8 +227,8 @@ func TestCreateBadiImplementation_FailedPUTTakesTheContainerAway(t *testing.T) {
 		}
 	}
 	got := strings.Join(calls(), ",")
-	if !strings.HasPrefix(got, "POST,LOCK,PUT,UNLOCK,") || !strings.HasSuffix(got, "DELETE") {
-		t.Errorf("calls = %s, want the PUT's lock released, then the container deleted", got)
+	if !strings.HasPrefix(got, "POST,LOCK,PUT,UNLOCK,") || !strings.HasSuffix(got, "DELETE,UNLOCK") {
+		t.Errorf("calls = %s, want the PUT's lock released, then the container deleted and the delete lock released", got)
 	}
 }
 

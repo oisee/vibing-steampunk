@@ -53,6 +53,16 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 	return nil
 }
 
+// deleteReleasesLock reports whether a successful DeleteObject has already
+// released the lock its handle came from. Only behind a session-holding proxy
+// (ProxyContextIDGuard): DeleteObject retires the stateful context there and
+// the ENQUEUE goes with it, so an UNLOCK would land in a fresh context, fail,
+// and report a stranded lock that is not there. Everywhere else the ENQUEUE
+// outlives the DELETE and needs an UNLOCK.
+func deleteReleasesLock(c *Client) bool {
+	return c.transport != nil && c.transport.config != nil && c.transport.config.ProxyContextIDGuard
+}
+
 // DeleteObjectGated deletes an object in one call, taking and releasing its
 // own lock: DeleteObject's gate (read-only, operation, package whitelist,
 // transportable edit) before the LOCK, then LOCK, DELETE and UNLOCK, with the

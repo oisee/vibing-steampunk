@@ -149,8 +149,26 @@ func (c *Client) CreateBadiImplementation(ctx context.Context, opts BadiImplemen
 // implementation to it failed. It returns no URL when the container is gone
 // again, and the URL with what is left to do by hand when it is not. The
 // delete runs on a context of its own: the step may have failed because ctx
-// was cancelled.
+// was cancelled. A container in a transportable package whose request is not
+// known is kept: see below.
 func (c *Client) undoBadiContainer(ctx context.Context, objectURL string, opts BadiImplementationOptions, stepErr error) (string, error) {
+	if opts.Transport == "" && !strings.HasPrefix(opts.Package, "$") {
+		// A transportable package and no request known: SAP may have put the
+		// container in a request of its choosing during the POST. A DELETE
+		// sent without that request would write to it unchecked by
+		// --allowed-transports, so the container is kept.
+		return objectURL, &PartialCreateError{
+			ObjectURL: objectURL,
+			Package:   opts.Package,
+			OriginalErr: fmt.Errorf("created %s, but %w; the empty container was kept, not deleted: "+
+				"the request SAP recorded it in is not known, and a delete must not bypass --allowed-transports", opts.Name, stepErr),
+			CleanupActions: []string{"not deleted: the transport request the container was recorded in could not be established"},
+			ManualSteps: []string{
+				fmt.Sprintf("%s is an empty ENHO without its BAdI implementation in package %s: add the implementation in SE19 or Eclipse, "+
+					"or delete it in SE80 and remove its R3TR ENHO %s entry from the request SE09 shows it in", opts.Name, opts.Package, opts.Name),
+			},
+		}
+	}
 	cleanupCtx, cancel := failureCleanupContext(ctx)
 	defer cancel()
 	pce := c.cleanupPartialObject(cleanupCtx, objectURL, opts.Package, opts.Transport)

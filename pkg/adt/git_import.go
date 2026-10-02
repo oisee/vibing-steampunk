@@ -1410,11 +1410,9 @@ func (c *Client) deleteGatedChecked(ctx context.Context, objectURL, transport st
 		}
 		return "", true, derr
 	}
-	if c.transport != nil && c.transport.config != nil && c.transport.config.ProxyContextIDGuard {
+	if deleteReleasesLock(c) {
 		// Behind a session-holding proxy DeleteObject has already retired
-		// the stateful context, and the ENQUEUE went with it. An UNLOCK now
-		// lands in a fresh context that holds no lock, fails, and would
-		// report a stranded lock that is not there.
+		// the stateful context, and the ENQUEUE went with it.
 		return "", true, nil
 	}
 	if uerr := c.releaseLockAfterFailure(gctx, objectURL, lock.LockHandle); uerr != nil {
