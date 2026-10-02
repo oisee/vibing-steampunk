@@ -1060,9 +1060,12 @@ The headline changes are in the **"New in the last three releases"** callout at 
 
 **Platforms:** six binaries: linux-amd64, linux-arm64, darwin-amd64,
 darwin-arm64, windows-amd64 and windows-arm64. `vsp-linux-386`,
-`vsp-linux-arm` and `vsp-windows-386` are no longer built; on those platforms
-`vsp update` says so and points at
-`go install github.com/oisee/vibing-steampunk/cmd/vsp@latest`.
+`vsp-linux-arm` and `vsp-windows-386` are no longer built. On those platforms,
+install from source instead:
+`go install github.com/oisee/vibing-steampunk/cmd/vsp@latest`
+(`vsp update` from v2.59.x only reports that the release has no asset for
+the platform and leaves the installed binary alone; from v2.60.0 on it says
+why and gives this command).
 
 ### v2.59.1 — new since v2.59.0
 

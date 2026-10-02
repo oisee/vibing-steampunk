@@ -300,7 +300,7 @@ cmd_notes() {
 		echo "| Windows | x64 | vsp-windows-amd64.exe |"
 		echo "| Windows | ARM64 | vsp-windows-arm64.exe |"
 		echo
-		echo "Checksums: \`checksums.txt\`. Or run \`vsp update\` from an older version."
+		echo "Checksums: \`checksums.txt\`. Or run \`vsp update\` from an older version on one of these platforms; elsewhere: \`go install github.com/oisee/vibing-steampunk/cmd/vsp@latest\`."
 		echo "\`LICENSE\` and \`NOTICE\` travel with the binaries (Apache-2.0 components are embedded)."
 		echo
 		echo "**Changelog:** https://github.com/$repo/blob/$tag/CHANGELOG.md"
