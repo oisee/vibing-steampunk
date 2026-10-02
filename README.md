@@ -534,7 +534,11 @@ Whether a request has been imported, and how it went, is in TPALOG: MCP
 comma-separated list or an array; optional `since`, `YYYYMMDD[hhmmss]`) lists
 the tp steps each request has in this server's own system, oldest first, with
 the worst return code. No steps means tp has not touched the request there.
-It reads TPALOG over classic RFC (`RFC_READ_TABLE`, with a WHERE clause vsp
+Each step carries its client, step code, return code, time and target system
+(`TARSYSTEM`). Step times and `since` are UTC (`TRTIME` is a UTC time stamp).
+In the system the request was exported from, TPALOG also holds the export
+steps (`E`, `e`, `f`), and `maxRc` covers them too, so having steps there does
+not mean the request was imported. It reads TPALOG over classic RFC (`RFC_READ_TABLE`, with a WHERE clause vsp
 builds from the checked request numbers), so it needs the system's RFC
 settings, `--enable-transports` (or `--allow-transportable-edits`) and a
 request that `--allowed-transports` lets through, and it stays available under

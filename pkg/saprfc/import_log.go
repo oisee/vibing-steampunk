@@ -15,12 +15,16 @@ import (
 // with the step's return code and time. It answers "has this request been
 // imported here, and how did it go" without STMS, and it changes nothing.
 
-// ImportStep is one tp step, as TPALOG records it.
+// ImportStep is one tp step, as TPALOG records it. Time is TRTIME, a UTC
+// time stamp (YYYYMMDDhhmmss). Target is TARSYSTEM, the system (or
+// SID.client) the step ran for; in the source system TPALOG also holds the
+// export-side steps (E, e, f), so a step is not by itself an import.
 type ImportStep struct {
 	Client  string `json:"client"`
 	Step    string `json:"step"`
 	RetCode string `json:"retcode"`
 	Time    string `json:"time"`
+	Target  string `json:"target,omitempty"`
 }
 
 // ImportLog is what TPALOG holds for one request: its tp steps, oldest first,
@@ -39,7 +43,7 @@ var (
 
 // ReadImportLog reads the tp steps TPALOG holds for the requests in the
 // connected system, optionally only those at or after since (YYYYMMDD or
-// YYYYMMDDhhmmss).
+// YYYYMMDDhhmmss, UTC like TRTIME).
 func ReadImportLog(ctx context.Context, c *rfc.Client, requests []string, since string) ([]ImportLog, error) {
 	return importLogs(ctx, clientCall(c), requests, since)
 }
@@ -53,12 +57,18 @@ func CheckImportLogArgs(requests []string, since string) error {
 
 func importLogArgs(requests []string, since string) ([]string, string, error) {
 	var reqs []string
+	seen := map[string]bool{}
 	for _, r := range requests {
 		r = strings.ToUpper(strings.TrimSpace(r))
 		// The number goes into the WHERE clause: only a plain request number.
 		if !logRequestPattern.MatchString(r) {
 			return nil, "", fmt.Errorf("%q is not a request number", r)
 		}
+		// A request named twice is read and answered once.
+		if seen[r] {
+			continue
+		}
+		seen[r] = true
 		reqs = append(reqs, r)
 	}
 	if len(reqs) == 0 {
@@ -85,14 +95,14 @@ func importLogs(ctx context.Context, call callFn, requests []string, since strin
 	// only between tokens, and an unbroken list of six requests is one token
 	// too long.
 	rows, err := readTable(ctx, call, "TPALOG", "TRKORR IN ( "+strings.Join(quoted, ", ")+" )",
-		[]string{"TRKORR", "TRCLI", "TRSTEP", "RETCODE", "TRTIME"}, 0)
+		[]string{"TRKORR", "TRCLI", "TRSTEP", "RETCODE", "TRTIME", "TARSYSTEM"}, 0)
 	if err != nil {
 		return nil, fmt.Errorf("reading TPALOG: %w", err)
 	}
 	byReq := map[string][]ImportStep{}
 	for _, row := range rows {
 		byReq[row["TRKORR"]] = append(byReq[row["TRKORR"]],
-			ImportStep{Client: row["TRCLI"], Step: row["TRSTEP"], RetCode: row["RETCODE"], Time: row["TRTIME"]})
+			ImportStep{Client: row["TRCLI"], Step: row["TRSTEP"], RetCode: row["RETCODE"], Time: row["TRTIME"], Target: row["TARSYSTEM"]})
 	}
 
 	out := make([]ImportLog, 0, len(reqs))

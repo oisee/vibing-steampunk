@@ -3,6 +3,7 @@ package saprfc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -134,5 +135,31 @@ func TestImportLogs_ManyRequestsFitTheOptionsLines(t *testing.T) {
 	}
 	if joined := strings.Join(lines, " "); !strings.Contains(joined, "'XYZK900008'") {
 		t.Errorf("OPTIONS %q lost a request", joined)
+	}
+}
+
+// TARSYSTEM is read and returned per step, and a request named twice is
+// read and answered once.
+func TestImportLogs_TargetPerStepAndNoDuplicateRequests(t *testing.T) {
+	f := &fakeTPALOG{rows: []string{
+		"XYZK900001|100|I|0000|20260102100005|XYZ",
+		"XYZK900001|ALL|E|0000|20260101100000|XYZ.100",
+	}}
+	logs, err := importLogs(context.Background(), f.call, []string{"XYZK900001", "xyzk900001 "}, "")
+	if err != nil {
+		t.Fatalf("importLogs: %v", err)
+	}
+	var fields []string
+	for _, fl := range f.in["FIELDS"].([]map[string]any) {
+		fields = append(fields, fmt.Sprint(fl["FIELDNAME"]))
+	}
+	if !strings.Contains(strings.Join(fields, ","), "TARSYSTEM") {
+		t.Errorf("FIELDS = %v, want TARSYSTEM", fields)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("logs = %+v, want one entry for the twice-named request", logs)
+	}
+	if len(logs[0].Steps) != 2 || logs[0].Steps[0].Target != "XYZ.100" || logs[0].Steps[1].Target != "XYZ" {
+		t.Errorf("steps = %+v, want targets XYZ.100 then XYZ", logs[0].Steps)
 	}
 }
