@@ -27,10 +27,15 @@ permissions:
   checks: read
 
 jobs:
+  # Reads the run and builds the report. It writes nothing: the write job
+  # below does, one at a time per pull request.
   comment:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      pr: ${{ steps.find.outputs.pr }}
+      body: ${{ steps.report.outputs.body }}
     steps:
       # Same-repo pull requests arrive in run.pull_requests; fork ones do not,
       # so look them up by head branch. Either way, only report when the pull
@@ -446,52 +451,18 @@ jobs:
               + 'Observation only; nothing here fails a build._');
             fs.writeFileSync('complexity.md', out.join('\n'));
 
-      - name: Write the report, then ask Copilot to review
+      - name: Build the report
+        id: report
         if: steps.find.outputs.pr != ''
         uses: actions/github-script@v7
         env:
-          PR: ${{ steps.find.outputs.pr }}
           BASE_SHA: ${{ steps.find.outputs.base_sha }}
           BASE_REF: ${{ steps.find.outputs.base_ref }}
         with:
           script: |
             const fs = require('fs');
-            const marker = '<!-- vsp-ci-report -->';
             const { owner, repo } = context.repo;
             const run = context.payload.workflow_run;
-            const prNumber = Number(process.env.PR);
-
-            // --- only the latest run and attempt on this commit writes ------
-            // The first step checked that the pull request still points at
-            // this run's commit; that is not enough. A rerun, or a second run
-            // on the same commit, makes a fresher result for the same SHA, and
-            // a report from the older one that finishes (or is delivered) late
-            // would overwrite it. So, right before writing anything: the pull
-            // request must still be at this commit, no newer attempt of this
-            // run may exist, and no later run of this workflow for the same
-            // commit and head branch. Otherwise log and stop; the newer run
-            // writes its own report when it completes.
-            const now = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
-            if (now.head.sha !== run.head_sha) {
-              core.info(`#${prNumber} moved to ${now.head.sha}; this report for ${run.head_sha} is stale, not written`);
-              return;
-            }
-            const self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })).data;
-            if (self.run_attempt > run.run_attempt) {
-              core.info(`run ${run.id} has a newer attempt (${self.run_attempt} > ${run.run_attempt}); not written`);
-              return;
-            }
-            const sameCommit = await github.paginate(github.rest.actions.listWorkflowRuns,
-              { owner, repo, workflow_id: run.workflow_id, head_sha: run.head_sha, event: run.event, per_page: 100 });
-            const newer = sameCommit.find((r) => r.id !== run.id
-              && r.head_branch === run.head_branch
-              && r.head_repository?.id === run.head_repository?.id
-              && (r.run_number > run.run_number
-                || (r.run_number === run.run_number && new Date(r.created_at) > new Date(run.created_at))));
-            if (newer) {
-              core.info(`a later run on ${run.head_sha} exists (run ${newer.id}, #${newer.run_number}, attempt ${newer.run_attempt}, ${newer.status}); this report from #${run.run_number} attempt ${run.run_attempt} is not written`);
-              return;
-            }
 
             // Escaped for markdown, and defused: a zero-width space after `@`
             // stops a fork from pinging users or teams through the bot, and one
@@ -586,8 +557,8 @@ jobs:
                 ...head5, ...(moved.length ? moved : table).map((r) => r.row), '', '</details>');
             }
 
+            // The markers are added by the write job.
             const lines = [
-              marker,
               `### CI: ${icon(run.conclusion)}`,
               `Commit: \`${run.head_sha.slice(0, 8)}\` · [Full log](${run.html_url})`,
               '',
@@ -599,6 +570,83 @@ jobs:
               try { complexity = fs.readFileSync('complexity.md', 'utf8').slice(0, 30000); } catch { /* advisory */ }
               lines.push('| Check | Result | Detail | Time |', '| --- | --- | --- | --- |', ...rows, '', ...testLines);
               if (complexity) lines.push(complexity);
+            }
+
+            // A job output holds up to 1 MB; a comment, 65536 characters.
+            core.setOutput('body', lines.join('\n').slice(0, 60000));
+
+  # Writes the report. One write job at a time per pull request
+  # (cancel-in-progress: false queues them), and each one, inside the group:
+  #   - stops unless the pull request is still at the run's commit, the run has
+  #     no newer attempt, and no later CI run exists for that commit and head
+  #     branch (a rerun, or a second run on the same commit, is fresher);
+  #   - stops if the comment already carries a report from a later run or
+  #     attempt: the first lines of the comment hold the run number and attempt
+  #     it was written from, and a report only replaces an older one.
+  # Since the group serialises them, the check and the write cannot interleave
+  # with another report's. GitHub keeps one pending job per group: a third
+  # report arriving while one runs and one waits cancels the waiting one, so a
+  # report can be lost to a newer one, never overwrite it.
+  write:
+    needs: comment
+    if: needs.comment.outputs.pr != '' && needs.comment.outputs.body != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ci-report-pr-${{ needs.comment.outputs.pr }}
+      cancel-in-progress: false
+    steps:
+      - name: Write the report, then ask Copilot to review
+        uses: actions/github-script@v7
+        env:
+          PR: ${{ needs.comment.outputs.pr }}
+          BODY: ${{ needs.comment.outputs.body }}
+        with:
+          script: |
+            const marker = '<!-- vsp-ci-report -->';
+            const { owner, repo } = context.repo;
+            const run = context.payload.workflow_run;
+            const prNumber = Number(process.env.PR);
+            const lines = [];
+
+            // --- only the latest run and attempt on this commit writes ------
+            const now = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
+            if (now.head.sha !== run.head_sha) {
+              core.info(`#${prNumber} moved to ${now.head.sha}; this report for ${run.head_sha} is stale, not written`);
+              return;
+            }
+            const self = (await github.rest.actions.getWorkflowRun({ owner, repo, run_id: run.id })).data;
+            if (self.run_attempt > run.run_attempt) {
+              core.info(`run ${run.id} has a newer attempt (${self.run_attempt} > ${run.run_attempt}); not written`);
+              return;
+            }
+            const sameCommit = await github.paginate(github.rest.actions.listWorkflowRuns,
+              { owner, repo, workflow_id: run.workflow_id, head_sha: run.head_sha, event: run.event, per_page: 100 });
+            const newer = sameCommit.find((r) => r.id !== run.id
+              && r.head_branch === run.head_branch
+              && r.head_repository?.id === run.head_repository?.id
+              && (r.run_number > run.run_number
+                || (r.run_number === run.run_number && new Date(r.created_at) > new Date(run.created_at))));
+            if (newer) {
+              core.info(`a later run on ${run.head_sha} exists (run ${newer.id}, #${newer.run_number}, attempt ${newer.run_attempt}, ${newer.status}); this report from #${run.run_number} attempt ${run.run_attempt} is not written`);
+              return;
+            }
+
+            // --- and the comment does not already hold a later report --------
+            // The run marker is read only from the comment's first lines, which
+            // this job writes; the rest of the body carries escaped PR content.
+            const runMark = (b) => {
+              const m = /^<!-- vsp-ci-report -->\n<!-- vsp-ci-report-run: (\d+)\.(\d+) -->\n/.exec(b || '');
+              return m ? [Number(m[1]), Number(m[2])] : [0, 0];
+            };
+            const later = ([n1, a1], [n2, a2]) => n1 > n2 || (n1 === n2 && a1 > a2);
+            const mine = [run.run_number, run.run_attempt];
+            const comments = await github.paginate(github.rest.issues.listComments,
+              { owner, repo, issue_number: prNumber });
+            const existing = comments.find((c) => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+            if (existing && later(runMark(existing.body), mine)) {
+              core.info(`#${prNumber} already shows the report of run #${runMark(existing.body).join(' attempt ')}; this one from #${mine.join(' attempt ')} is older, not written`);
+              return;
             }
 
             // --- Copilot review, once per commit, only on a green run ----------
@@ -623,11 +671,8 @@ jobs:
                   : '_Tests passed, but the Copilot review could not be requested automatically._');
               }
             }
-            const body = lines.join('\n');
-
-            const comments = await github.paginate(github.rest.issues.listComments,
-              { owner, repo, issue_number: prNumber });
-            const existing = comments.find((c) => c.user?.login === 'github-actions[bot]' && c.body?.includes(marker));
+            const body = [marker, `<!-- vsp-ci-report-run: ${run.run_number}.${run.run_attempt} -->`,
+              process.env.BODY, ...lines].join('\n');
             if (existing) await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             else await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
             core.info(`${existing ? 'updated' : 'created'} report on #${prNumber}`);

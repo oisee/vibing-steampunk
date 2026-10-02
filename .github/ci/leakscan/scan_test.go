@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every test value is assembled at run time: this file is scanned like any
@@ -659,6 +660,127 @@ func TestRunNULInCommitMessage(t *testing.T) {
 	if code != exitHits || !strings.Contains(out, "(message)") {
 		t.Fatalf("exit %d, want a message hit\n%s%s", code, out, errs)
 	}
+}
+
+// A message in another encoding, declared in the commit's encoding header, is
+// what readers see recoded to UTF-8: a listed non-ASCII name written as
+// ISO-8859-1 bytes must still be a hit.
+func TestRunEncodedCommitMessage(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbøx.corp.invalid"}
+	tree := g("rev-parse", "HEAD^{tree}")
+	parent := g("rev-parse", "HEAD")
+	obj := "tree " + tree + "\nparent " + parent + "\nauthor t <t@example.invalid> 0 +0000\ncommitter t <t@example.invalid> 0 +0000\n" +
+		"encoding ISO-8859-1\n\nseen on sapb\xf8x.corp.invalid\n"
+	f := filepath.Join(t.TempDir(), "commit")
+	writeFile(t, f, obj)
+	sha := g("hash-object", "-t", "commit", "-w", "--literally", f)
+	g("update-ref", "refs/heads/topic", sha)
+	code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic")
+	if code != exitHits || !strings.Contains(out, "(message)") {
+		t.Fatalf("exit %d, want a message hit\n%s%s", code, out, errs)
+	}
+}
+
+// A path is published as much as the bytes in it: a listed name that appears
+// only in a file name is a hit, whether the file is added, or renamed away
+// from (the old name) or to (the new name), and in the tree mode.
+func TestRunIdentifierInPath(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	t.Run("added", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		writeFile(t, filepath.Join(root, "notes", hiddenHost+".md"), "clean\n")
+		g("add", ".")
+		g("commit", "-qm", "add notes")
+		for _, mode := range [][]string{{"-diff", "main"}, {"-range", "main..topic"}, {"-all"}} {
+			code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+			if code != exitHits || !strings.Contains(out, "(paths)") || !strings.Contains(out, "identifier/host") {
+				t.Fatalf("%v: exit %d, want a path hit\n%s%s", mode, code, out, errs)
+			}
+			if strings.Contains(out, "sapbox") {
+				t.Errorf("output prints the value:\n%s", out)
+			}
+		}
+	})
+	t.Run("added then deleted", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		writeFile(t, filepath.Join(root, hiddenHost+".log"), "clean\n")
+		g("add", ".")
+		g("commit", "-qm", "add")
+		g("rm", "-q", hiddenHost+".log")
+		g("commit", "-qm", "remove")
+		if code, out, errs := runScan(t, env, "-root", root, "-diff", "main"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a path hit\n%s%s", code, out, errs)
+		}
+	})
+	t.Run("renamed to", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		g("mv", "README.md", hiddenHost+".md")
+		g("commit", "-qm", "rename")
+		if code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a path hit\n%s%s", code, out, errs)
+		}
+	})
+	t.Run("renamed from", func(t *testing.T) {
+		root, g := newRepo(t)
+		writeFile(t, filepath.Join(root, hiddenHost+".md"), "some content that stays the same\n")
+		g("add", ".")
+		g("commit", "-qm", "base two")
+		g("checkout", "-qb", "topic")
+		g("mv", hiddenHost+".md", "notes.md")
+		g("commit", "-qm", "rename it away")
+		if code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a hit on the old name\n%s%s", code, out, errs)
+		}
+	})
+}
+
+// An object over the size limit fails closed, and promptly: the scanner must
+// not wait on a git that is still writing the object it refused.
+func TestRunOversizedObjectsFailClosedPromptly(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	big := strings.Repeat("x", maxFileSize+1<<20)
+	within := func(t *testing.T, args ...string) (int, string) {
+		t.Helper()
+		type res struct {
+			code int
+			errs string
+		}
+		done := make(chan res, 1)
+		go func() {
+			code, _, errs := runScan(t, env, args...)
+			done <- res{code, errs}
+		}()
+		select {
+		case r := <-done:
+			return r.code, r.errs
+		case <-time.After(60 * time.Second):
+			t.Fatalf("%v: still running after 60 s", args)
+		}
+		return 0, ""
+	}
+	t.Run("message", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		mf := filepath.Join(t.TempDir(), "msg")
+		writeFile(t, mf, "subject\n\n"+big+"\n")
+		g("commit", "-q", "--allow-empty", "-F", mf)
+		if code, errs := within(t, "-root", root, "-range", "main..topic"); code != exitClosed || !strings.Contains(errs, "limit") {
+			t.Fatalf("exit %d, want %d\n%s", code, exitClosed, errs)
+		}
+	})
+	t.Run("blob", func(t *testing.T) {
+		root, g := newRepo(t)
+		writeFile(t, filepath.Join(root, "big.txt"), big)
+		g("add", ".")
+		g("commit", "-qm", "big")
+		if code, errs := within(t, "-root", root, "-all"); code != exitClosed || !strings.Contains(errs, "limit") {
+			t.Fatalf("exit %d, want %d\n%s", code, exitClosed, errs)
+		}
+	})
 }
 
 func TestRunControlBytesInAddedLine(t *testing.T) {

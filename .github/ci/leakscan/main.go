@@ -214,7 +214,7 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 	if len(ids) == 0 {
 		listNote = "NO identifier list: generic patterns only, host/user/SID names NOT checked"
 	}
-	fmt.Fprintf(stderr, "leakscan: %d sources read (files, patches, commit messages), %d hits, %d excused by the allow-file; %s\n",
+	fmt.Fprintf(stderr, "leakscan: %d sources read (files, patches, commit messages, path lists), %d hits, %d excused by the allow-file; %s\n",
 		len(sources), len(hits), excused, listNote)
 
 	if len(sources) == 0 && explicit {
@@ -307,23 +307,46 @@ func git(root string, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// treeFiles is every blob in rev's tree (submodules have no content here).
+// treeFiles is every blob in rev's tree (submodules have no content here),
+// and one more source: every path in the tree, since a name is published as
+// much as the bytes behind it.
 func treeFiles(root, rev string) ([]source, error) {
 	out, err := git(root, "ls-tree", "-r", "-z", "--full-tree", rev)
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
+	var paths, all []string
 	for _, rec := range strings.Split(string(out), "\x00") {
 		meta, path, ok := strings.Cut(rec, "\t")
 		if !ok {
 			continue
 		}
+		all = append(all, path)
 		if f := strings.Fields(meta); len(f) >= 2 && f[1] == "blob" {
 			paths = append(paths, path)
 		}
 	}
-	return readBlobs(root, rev, paths)
+	srcs, err := readBlobs(root, rev, paths)
+	if err != nil {
+		return nil, err
+	}
+	if len(all) > 0 {
+		srcs = append(srcs, pathsSource("tree "+rev, all))
+	}
+	return srcs, nil
+}
+
+// pathsSource is a list of paths as a source of its own, one per line, so a
+// hit names the list and the line, never the path.
+func pathsSource(label string, paths []string) source {
+	return source{name: label + " (paths)", data: []byte(strings.Join(paths, "\n") + "\n")}
+}
+
+// stop ends a git that is still writing: a reader that refuses an object
+// stops reading, and git would block on the pipe, and Wait with it.
+func stop(cmd *exec.Cmd) {
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
 }
 
 // pushRange turns a push event's BEFORE..AFTER into the range of commits the
@@ -404,7 +427,28 @@ func rangeSources(root, rng string) ([]source, error) {
 	}
 	var srcs []source
 	for i, c := range commits {
-		srcs = append(srcs, source{name: "commit " + c.short + " (message)", data: msgs[i]})
+		name := "commit " + c.short + " (message)"
+		srcs = append(srcs, source{name: name, data: msgs[i].raw})
+		// A message in another encoding is read twice: as its bytes, and as
+		// git recodes it to UTF-8 for every reader. One commit per call, so
+		// there is no separator to trust.
+		if e := strings.ToLower(msgs[i].encoding); e != "" && e != "utf-8" && e != "utf8" {
+			recoded, err := git(root, "log", "-1", "--no-show-signature", "--no-notes", "--encoding=UTF-8", "--format=%B", c.full, "--")
+			if err != nil {
+				return nil, err
+			}
+			srcs = append(srcs, source{name: name, data: recoded})
+		}
+		// Every path the commit adds, and both names of a rename or copy: a
+		// name is published as much as the bytes behind it.
+		names, err := git(root, "-c", "core.quotePath=false", "show", "--format=", "--no-show-signature",
+			"--name-status", "-z", "-M", "-C", "--no-ext-diff", "--diff-merges=first-parent", c.full, "--")
+		if err != nil {
+			return nil, err
+		}
+		if paths := addedPaths(names); len(paths) > 0 {
+			srcs = append(srcs, pathsSource("commit "+c.short, paths))
+		}
 		patch, err := git(root, "-c", "core.quotePath=false", "show", "--format=", "--no-show-signature",
 			"-p", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
 			"--diff-merges=first-parent", "--src-prefix=a/", "--dst-prefix=b/", c.full, "--")
@@ -428,6 +472,32 @@ func rangeSources(root, rng string) ([]source, error) {
 }
 
 type commitID struct{ full, short string }
+
+// addedPaths reads `--name-status -z` output: a status, then one path, or two
+// for a rename or copy (R100, C075). It keeps the paths of added files and
+// both names of renames and copies. Paths cannot hold NUL, so the split is
+// exact.
+func addedPaths(out []byte) []string {
+	var paths []string
+	f := strings.Split(string(out), "\x00")
+	for i := 0; i < len(f); i++ {
+		status := f[i]
+		if status == "" {
+			continue
+		}
+		n := 1
+		if status[0] == 'R' || status[0] == 'C' {
+			n = 2
+		}
+		for j := 1; j <= n && i+j < len(f); j++ {
+			if status[0] == 'A' || n == 2 {
+				paths = append(paths, f[i+j])
+			}
+		}
+		i += n
+	}
+	return paths
+}
 
 // listCommits is every commit in rng. The format holds two hex placeholders
 // and nothing a commit can write, and every line is checked to be just that.
@@ -462,10 +532,16 @@ func isHex(s string) bool {
 	return true
 }
 
+type commitMsg struct {
+	raw      []byte // the message, byte for byte
+	encoding string // the commit's encoding header, "" when it has none (UTF-8)
+}
+
 // readMessages reads every commit object through one `git cat-file --batch`
 // and returns each one's message: the raw bytes after the header's blank line,
-// with nothing re-encoded, cut or stripped (a NUL included).
-func readMessages(root string, commits []commitID) ([][]byte, error) {
+// with nothing re-encoded, cut or stripped (a NUL included), and the encoding
+// the header declares for it.
+func readMessages(root string, commits []commitID) ([]commitMsg, error) {
 	if len(commits) == 0 {
 		return nil, nil
 	}
@@ -483,34 +559,40 @@ func readMessages(root string, commits []commitID) ([][]byte, error) {
 		return nil, err
 	}
 	r := bufio.NewReader(stdout)
-	msgs := make([][]byte, 0, len(commits))
+	msgs := make([]commitMsg, 0, len(commits))
 	for _, c := range commits {
 		header, err := r.ReadString('\n')
 		if err != nil {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s: %v", c.full, err)
 		}
 		f := strings.Fields(header)
 		if len(f) != 3 || f[0] != c.full || f[1] != "commit" {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s: %s", c.full, strings.TrimSpace(header))
 		}
 		var size int
 		if _, err := fmt.Sscan(f[2], &size); err != nil || size < 0 || size > maxFileSize {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("commit %s: %s bytes is over the %d-byte limit; it cannot be scanned, so it cannot pass", c.short, f[2], maxFileSize)
 		}
 		data := make([]byte, size+1) // the object, then a newline
 		if _, err := io.ReadFull(r, data); err != nil {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s: %v", c.full, err)
 		}
 		obj := data[:size]
-		msg := []byte(nil)
+		var m commitMsg
+		head := obj
 		if i := bytes.Index(obj, []byte("\n\n")); i >= 0 {
-			msg = obj[i+2:]
+			head, m.raw = obj[:i], obj[i+2:]
 		}
-		msgs = append(msgs, msg)
+		for _, line := range strings.Split(string(head), "\n") {
+			if v, ok := strings.CutPrefix(line, "encoding "); ok {
+				m.encoding = strings.TrimSpace(v)
+			}
+		}
+		msgs = append(msgs, m)
 	}
 	return msgs, cmd.Wait()
 }
@@ -609,22 +691,22 @@ func readBlobs(root, rev string, paths []string) ([]source, error) {
 	for _, p := range paths {
 		header, err := r.ReadString('\n')
 		if err != nil {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s: %v", p, err)
 		}
 		f := strings.Fields(header)
 		if len(f) != 3 || f[1] != "blob" {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s:%s: %s", rev, p, strings.TrimSpace(header))
 		}
 		var size int
 		if _, err := fmt.Sscan(f[2], &size); err != nil || size > maxFileSize {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("%s: %s bytes is over the %d-byte limit; it cannot be scanned, so it cannot pass", p, f[2], maxFileSize)
 		}
 		data := make([]byte, size+1) // the blob, then a newline
 		if _, err := io.ReadFull(r, data); err != nil {
-			_ = cmd.Wait()
+			stop(cmd)
 			return nil, fmt.Errorf("git cat-file %s: %v", p, err)
 		}
 		out = append(out, source{name: p, path: p, data: data[:size]})
