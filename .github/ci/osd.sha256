@@ -4,11 +4,11 @@
 #   gh release download <tag> -R oisee/open-steamgate -p 'osd-*' -p 'osgo-*' -D dl
 #   then hash every binary in dl (not the .sha256 files), check each against
 #   its release .sha256, and write the lines below with the new tag.
-34027578ada1f0ba6974a1801803bcb76b188bcfa6891b3e7b755cda487a5319  vscode-v0.5.1486/osd-darwin-arm64
-5e9b3aa5d10880e9ea532137aebff14939d11d231a3f44b7f5d3664622e7746a  vscode-v0.5.1486/osd-linux-arm64
-bd8a6d59aeb964c0080c3e3bb5923c7e57ed7af0c6398da36fe57f3e7082b19f  vscode-v0.5.1486/osd-linux-x64
-5335840552715462772a958b7a3b4e434ed2d25c442fb479a62e0223cc430869  vscode-v0.5.1486/osd-windows-x64.exe
-557dbcab819b2defd56ebcd720116893bca0a7ad553800f85e35efe203114560  vscode-v0.5.1486/osgo-darwin-arm64
-288ca0a05ec3cf1bedc8597a693c4846000d09d7bdbb85a6fa1769caca2b6f32  vscode-v0.5.1486/osgo-linux-arm64
-1075127894de40908037033a6129d0205f18caaac9fd83bb1115de90632fdd3a  vscode-v0.5.1486/osgo-linux-x64
-440d62aa1f309b74e90d167a3761384d69c0c46b39377a6bd2d1bec3095dc396  vscode-v0.5.1486/osgo-windows-x64.exe
+4b02c22a3c2497c0e58620c6cb17f3e3df33706ec4b466fe585d73e39f747f4c  vscode-v0.6.1504/osd-darwin-arm64
+2d491c56c93e2318f7eab0fffa9529bef01f658dfb0ef600cbb2f440b996d38b  vscode-v0.6.1504/osd-linux-arm64
+94f3e8ba44eaae5a3c4b8efc15da7d3eaf58e472c3ea327e93eef7be1233ad05  vscode-v0.6.1504/osd-linux-x64
+49b6f1a11d072b4348111cfbae7f33b0e7a064103e325208430e6b13ad9f6072  vscode-v0.6.1504/osd-windows-x64.exe
+2d9ca40a16326a2d3fb46c2f3758ac011e53b50ac21d6c75885d88a599c9949c  vscode-v0.6.1504/osgo-darwin-arm64
+ec49a7b5bf9eb9b7b414eb1698ffe3f1bda791b18378c05c797926fe3e091a69  vscode-v0.6.1504/osgo-linux-arm64
+73a9f0be052e17a8a998894871285de814abce764435cea9267ec7561e14767b  vscode-v0.6.1504/osgo-linux-x64
+9ec9f64e7a53c02cde5d45f41368cd88d3542b4177a4f34dbaac4cefc4a0bfce  vscode-v0.6.1504/osgo-windows-x64.exe

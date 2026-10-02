@@ -252,6 +252,91 @@ own messages. The redaction removes paths and the host, not object names or
 message text. A summary of a run against A4H or another real system must not
 be published.
 
+## Update: 0.6.1504
+
+dell released `vscode-v0.6.1504` (verified by content on their side). Both
+`.github/ci/osd.version` and `.github/ci/osgo.version` now pin it, and
+`.github/ci/osd.sha256` holds the new line for each of the 8 assets (`osd-*` and
+`osgo-*` for linux-x64, linux-arm64, darwin-arm64 and windows-x64.exe).
+Each asset was downloaded with `gh release download`, checked against its
+release `.sha256`, and hashed again locally before its line was written.
+`osd-up-test.sh` passes all six pin cases against the new pin.
+
+All local runs went through `osd-up.sh`, with a fresh `XDG_DATA_HOME`, `HOME`
+and `STG_DB_PATH` each time. The env was the same as before (`$ZOSD_TEST_SRC`,
+`120s`). The real `~/.local/share/open-steamgate` was not touched (same
+listing and mtimes before and after). The host was shared and under load
+(load average 4-7 on 16 cores), so read the times as relative, not absolute.
+
+**Matrix: unchanged.** 57 tests: 22 pass, 1 vacuous-pass, 14 missing-endpoint,
+7 missing-object, 3 different-answer, 2 environment, 8 skipped. Every test
+lands in the same class as on `vscode-v0.5.1486`. That holds for a local
+0.5.1486 run on the same host today, and for the runner's 0.5.1486 matrix
+(push to main, run 36974044881). That runner matrix reads 24/57 pass. The 2 extra
+passes are the `BrowserAuth` tests: the runner ships Chrome, and this host
+does not, so locally they are `environment`. On the runner, expect 24/57
+again.
+
+**Swap refused: 0.** None of the five 0.6 logs (two warm suites, one cold
+suite, the probe below, the osgo smoke) has a "swap was refused" line. The
+suite proves little here, though, because no activation in it takes the
+warm path (0 `swapped in` lines), as on 0.5.1486. The hand probe from
+update (2) is the real check. It ran on a fresh warm instance: three
+back-to-back edits of `ZCL_ZOSD_TEST_DEMO` (lock, PUT, unlock, activate).
+
+| Edit | Activate | `osd.log` |
+|---|---|---|
+| 1st | 200, 31 ms, `X-OSD-Build: warm` | `dev: warm, 2 objects … in 624 ms, swapped in 2 ms` |
+| 2nd | 200, 29 ms, `X-OSD-Build: warm` | `… in 790 ms, swapped in 1 ms` (on 0.5.1486 this one was refused) |
+| 3rd | 200, 27 ms, `X-OSD-Build: warm` | `… in 507 ms, swapped in 1 ms` |
+
+All three returned `activationExecuted="true"`. dell's fix #440 holds. Two
+things have changed:
+
+- The activate response now returns in about 30 ms. The warm build and the
+  swap land 0.5-0.8 s after the change, and `X-OSD-Swap-Ms` is no longer sent.
+- One new line: "warm: `<gen>` not verified: inconclusive the tree changed
+  while it was compared" (the edits were 3 s apart).
+
+**Warm vs cold: on this release, warm is slower for the suite.** The timing
+is per test, from `go test -json`:
+
+| | 0.6 warm (run 1) | 0.6 warm (run 2) | 0.6 cold | 0.5.1486 warm (same host, today) |
+|---|---|---|---|---|
+| Script start to ready (local asset, no download) | 43.0 s | 43.4 s | 29.7 s | 40.3 s |
+| `pkg/adt` integration package | 632.8 s | 652.7 s | **384.2 s** | 398.9 s |
+| EditSource | 165.5 s | 178.0 s | 121.1 s | 87.3 s |
+| WriteProgram | 68.5 s | 61.5 s | 35.6 s | 41.0 s |
+| WriteClass | 50.6 s | 73.8 s | 33.0 s | 24.6 s |
+| FindDefinition | 44.3 s | 48.0 s | 29.5 s | 20.3 s |
+| GetTypeHierarchy | 37.4 s | 51.8 s | 29.5 s | 25.4 s |
+| RAP_E2E_OData | 21.6 s | 22.2 s | 4.8 s | 4.9 s |
+| RSS after the suite (`osd up` + children) | 3.6 GB | 3.7 GB | 2.6 GB | 4.8 GB |
+
+On 0.6.1504, warm mode costs about 1.65x the cold time (two runs agree within
+3 %). On 0.5.1486, warm and cold were about level. The difference shows in
+the log. In warm mode every cold build is followed by an 11-17 s
+`warm: primed 1133-1138 files` pass. The rebuilds then come out as
+`dev: reused <gen> (? objects, 30 ms), nothing serving to recycle`: 9 and 12
+times in the two 0.6 warm runs, against 2 on 0.5.1486 warm and 0 cold. The
+test client waits through each of them. No test changed class, so this is
+cost only. A question for dell: is "nothing serving to recycle" after a
+reuse expected while a prime is running? The workflow keeps
+`OSD_WARM=1 STG_DEV=1` for now, because the warm path itself (the probe) is
+what dell asked to exercise. If the runner shows the same slowdown,
+`OSD_WARM=0` is a one-line change.
+
+**OSGo smoke (`vscode-v0.6.1504`):** `OSD_BINARY=osgo osd-up.sh`, 3.1 s
+from start to ready (local asset). `GET /health` →
+`{"status":"ready","version":"vscode-v0.6.1504","commit":"66c6dba3…"}`.
+From a cold start, it is ready in 451-484 ms over three fresh homes, with an
+RSS of 66 MB. **HEAD `/sap/bc/adt/core/discovery` is still 404** (GET too,
+and `/sap/bc/adt/discovery` as well). The log lists ICF services, push
+channels and OData, and no ADT. The osgo row therefore stays a smoke check.
+It switches to the full suite on its own once the start step writes
+`OSD_ADT=200` to `$GITHUB_ENV`, because the test step is gated on
+`env.OSD_ADT == '200'`. Nothing in the workflow needed to change for that.
+
 Sections 1-8 below are the original 2026-10-01 write-up against
 `vscode-v0.4.1444`, kept as the baseline. Section 8's answers marked
 "0.4.x" shipped in `vscode-v0.5.1486`.
