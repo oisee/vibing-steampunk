@@ -129,9 +129,10 @@ jobs:
           STG_PORT: ${{ matrix.target == 'osgo' && '3095' || '3030' }}
           # osd only (osgo ignores them): warm activation of content edits to
           # existing classes and interfaces; X-OSD-Build says warm or cold.
-          # Cold on 0.6.1504: warm mode was ~1.65x slower (633-653 s vs 384 s) and
-          # an activation may answer before its swap serves (open-steamgate is fixing
-          # it). Back to '1' once that fix ships.
+          # Cold: on 0.6.1511 warm mode is still ~1.5x slower (865 s vs 568 s on one
+          # machine), because each activation recycles the runtime and re-runs its boot
+          # (~22 s of cross-reference seed). An activation landing in that window fails
+          # after 60 s ("changing hands"). Reported to open-steamgate; back to '1' once fixed.
           OSD_WARM: '0'
           STG_DEV: '0'
           TAG: ${{ steps.latest.outputs.tag || steps.plan.outputs.tag }}
