@@ -845,18 +845,36 @@ func (t *Transport) applyProxyContextIDGuard(req *http.Request, opts *RequestOpt
 // injects its stored context and SAP ends it (verified: SM04 shows no
 // lingering ADT sessions afterwards). Failures are ignored: an already-dead
 // context answers ICMENOSESSION, which is the state this call wants anyway,
-// and the next LOCK opens a fresh context regardless.
+// and the next LOCK opens a fresh context regardless. retireProxyContext is
+// the same call for a caller that needs to know whether it worked.
 func (t *Transport) ReleaseProxyContext(ctx context.Context) {
+	_ = t.retireProxyContext(ctx)
+}
+
+// errProxyContextShared: the release went out while another chain held a
+// lock or a stateful request was under way, so do sent it without the
+// context id and the context was left alone.
+var errProxyContextShared = errors.New("another lock chain was using the context; it was not retired")
+
+// retireProxyContext is ReleaseProxyContext with its outcome. nil means the
+// guard is off (nothing to retire) or the chain answered 2xx to a release
+// that carried its context. Anything else -- the request never got an
+// answer, a non-2xx answer, or a release sent while another chain held the
+// context -- is an error: the context, and an ENQUEUE that lives in it, may
+// still be there. A HEAD answer has no body, so a 4xx cannot be told apart
+// from ICMENOSESSION here; a caller that must know releases the lock itself.
+func (t *Transport) retireProxyContext(ctx context.Context) error {
 	if !t.config.ProxyContextIDGuard {
-		return
+		return nil
 	}
+	shared := t.contextInFlight.Load() != 0 || (t.locks != nil && t.locks.present())
 	reqURL, err := t.buildURL("/sap/bc/adt/core/discovery", nil)
 	if err != nil {
-		return
+		return err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, reqURL, nil)
 	if err != nil {
-		return
+		return err
 	}
 	if t.config.HasBasicAuth() {
 		req.SetBasicAuth(t.config.Username, t.config.Password)
@@ -870,11 +888,18 @@ func (t *Transport) ReleaseProxyContext(ctx context.Context) {
 	// context id and leaves that chain's context alone.
 	resp, err := t.do(req)
 	if err != nil {
-		return
+		return err
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	traceHTTPResponse(resp, nil)
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("retiring the proxy context: status %d", resp.StatusCode)
+	}
+	if shared {
+		return errProxyContextShared
+	}
+	return nil
 }
 
 // CSRF token accessors with mutex protection

@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -14,6 +15,15 @@ import (
 // lockHandle is required (from LockObject)
 // transport is optional (for transportable objects)
 func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle string, transport string) error {
+	_, err := c.deleteObject(ctx, objectURL, lockHandle, transport)
+	return err
+}
+
+// deleteObject is DeleteObject that also says whether the lock went with the
+// DELETE: lockGone is true only behind a session-holding proxy whose context
+// retirement was confirmed. Everywhere else the ENQUEUE outlives the DELETE
+// and the caller must UNLOCK (releaseLockAfterDelete).
+func (c *Client) deleteObject(ctx context.Context, objectURL string, lockHandle string, transport string) (lockGone bool, err error) {
 	// Unified mutation policy gate (op type + package + transport)
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:         OpDelete,
@@ -22,7 +32,7 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 		Transport:  transport,
 		LockHandle: lockHandle,
 	}); err != nil {
-		return err
+		return false, err
 	}
 
 	params := url.Values{}
@@ -31,13 +41,12 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 		params.Set("corrNr", transport)
 	}
 
-	_, err := c.transport.Request(ctx, objectURL, &RequestOptions{
+	if _, err := c.transport.Request(ctx, objectURL, &RequestOptions{
 		Method:   http.MethodDelete,
 		Query:    params,
 		Stateful: true, // Lock handles are session-specific — must match the session that acquired the lock (issue #88)
-	})
-	if err != nil {
-		return fmt.Errorf("deleting object: %w", err)
+	}); err != nil {
+		return false, fmt.Errorf("deleting object: %w", err)
 	}
 
 	// A delete consumes the handle without an UNLOCK ever being sent, which is
@@ -48,19 +57,35 @@ func (c *Client) DeleteObject(ctx context.Context, objectURL string, lockHandle 
 	// with the stateful context. Behind a session-holding proxy that context
 	// outlives the chain, and SM12 keeps showing a lock on an object that no
 	// longer exists. Retire the context the way UnlockObject does.
-	c.transport.ReleaseProxyContext(ctx)
-
-	return nil
+	if c.transport.config == nil || !c.transport.config.ProxyContextIDGuard {
+		return false, nil
+	}
+	return c.transport.retireProxyContext(ctx) == nil, nil
 }
 
-// deleteReleasesLock reports whether a successful DeleteObject has already
-// released the lock its handle came from. Only behind a session-holding proxy
-// (ProxyContextIDGuard): DeleteObject retires the stateful context there and
-// the ENQUEUE goes with it, so an UNLOCK would land in a fresh context, fail,
-// and report a stranded lock that is not there. Everywhere else the ENQUEUE
-// outlives the DELETE and needs an UNLOCK.
-func deleteReleasesLock(c *Client) bool {
-	return c.transport != nil && c.transport.config != nil && c.transport.config.ProxyContextIDGuard
+// releaseLockAfterDelete releases the lock a successful deleteObject left,
+// on a detached, bounded context, and returns an error only for a lock that
+// may still be held. lockGone (the proxy context was retired, and the
+// ENQUEUE with it) means there is nothing to release.
+//
+// Behind the proxy, a retirement that was not confirmed may still have
+// happened; the UNLOCK then lands in a context that is gone or holds no
+// lock, and SAP's "session gone" or "invalid lock handle" answer means just
+// that, not a stranded lock.
+func (c *Client) releaseLockAfterDelete(ctx context.Context, objectURL, lockHandle string, lockGone bool) error {
+	if lockGone {
+		return nil
+	}
+	err := c.releaseLockAfterFailure(ctx, objectURL, lockHandle)
+	if err == nil {
+		return nil
+	}
+	var apiErr *APIError
+	if c.transport.config != nil && c.transport.config.ProxyContextIDGuard &&
+		errors.As(err, &apiErr) && (apiErr.IsSessionExpired() || isInvalidLockHandle(apiErr)) {
+		return nil
+	}
+	return err
 }
 
 // DeleteObjectGated deletes an object in one call, taking and releasing its

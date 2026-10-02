@@ -1404,18 +1404,14 @@ func (c *Client) deleteGatedChecked(ctx context.Context, objectURL, transport st
 			return "", retry, cerr
 		}
 	}
-	if derr := c.DeleteObject(gctx, objectURL, lock.LockHandle, transport); derr != nil {
+	lockGone, derr := c.deleteObject(gctx, objectURL, lock.LockHandle, transport)
+	if derr != nil {
 		if uerr := c.releaseLockAfterFailure(gctx, objectURL, lock.LockHandle); uerr != nil {
 			return "", false, fmt.Errorf("%w -- %s", derr, strandedLockAdvice(objectURL, uerr))
 		}
 		return "", true, derr
 	}
-	if deleteReleasesLock(c) {
-		// Behind a session-holding proxy DeleteObject has already retired
-		// the stateful context, and the ENQUEUE went with it.
-		return "", true, nil
-	}
-	if uerr := c.releaseLockAfterFailure(gctx, objectURL, lock.LockHandle); uerr != nil {
+	if uerr := c.releaseLockAfterDelete(gctx, objectURL, lock.LockHandle, lockGone); uerr != nil {
 		return "its lock entry may stay in SM12 until the ADT session ends: " + uerr.Error(), true, nil
 	}
 	return "", true, nil

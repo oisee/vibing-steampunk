@@ -264,7 +264,7 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 		return pce
 	}
 
-	delErr := c.DeleteObject(ctx, objectURL, lock.LockHandle, transport)
+	lockGone, delErr := c.deleteObject(ctx, objectURL, lock.LockHandle, transport)
 	if delErr != nil {
 		// Delete failed despite holding a lock — release the lock
 		// so we do not add to the leak, then surface manual steps.
@@ -285,15 +285,15 @@ func (c *Client) cleanupPartialObject(ctx context.Context, objectURL, pkg, trans
 	pce.CleanupOK = true
 
 	// The DELETE does not release the ENQUEUE the LOCK took, except behind a
-	// session-holding proxy, where DeleteObject retires the stateful context
-	// and the lock goes with it (the rule deleteGated follows). Released on a
-	// detached, bounded context: cleanup runs after a failure, often one
-	// caused by the caller's context running out. The object is gone either
-	// way; a lock left behind is reported, not hidden.
-	if deleteReleasesLock(c) {
+	// session-holding proxy whose context retirement was confirmed
+	// (lockGone; deleteGated follows the same rule). Released on a detached,
+	// bounded context: cleanup runs after a failure, often one caused by the
+	// caller's context running out. The object is gone either way; a lock
+	// left behind is reported, not hidden.
+	if lockGone {
 		return pce
 	}
-	if uerr := c.releaseLockAfterFailure(ctx, objectURL, lock.LockHandle); uerr != nil {
+	if uerr := c.releaseLockAfterDelete(ctx, objectURL, lock.LockHandle, false); uerr != nil {
 		pce.CleanupActions = append(pce.CleanupActions, "could not release the delete lock")
 		pce.ManualSteps = append(pce.ManualSteps, strandedLockAdvice(objectURL, uerr))
 		return pce
