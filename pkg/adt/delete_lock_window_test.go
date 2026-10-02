@@ -12,11 +12,12 @@ import (
 // --- DELETE inside the lock window (issue #238) ---
 //
 // DeleteObject runs the full mutation gate itself, and with AllowedPackages
-// configured that gate resolves the object's package through a stateless
-// search. Called under a lock, that search retires the session the handle
+// configured that gate resolves the object's package through a search. Sent
+// stateless under a lock, that search can retire the session the handle
 // belongs to and the DELETE comes back 423 ExceptionResourceInvalidLockHandle.
-// The fix is the one the update paths already use: gate above the LOCK, carry
-// the mark into the window.
+// Two fixes apply: the workflow's own path gates above the LOCK and carries the
+// mark into the window, and a delete with a caller-supplied handle sends the
+// lookup in the lock's stateful session (#292; the tests below).
 
 func isDelete(c wireCall) bool {
 	return c.method == http.MethodDelete

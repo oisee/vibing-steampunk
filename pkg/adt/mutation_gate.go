@@ -85,12 +85,14 @@ func (c *Client) checkMutation(ctx context.Context, m MutationContext) error {
 
 	// 2. Package ownership check.
 	//
-	// This is the only step that makes a network request, and inside a lock
-	// window that request is fatal: it goes out explicitly stateless, which
-	// retires the ADT session the lock handle is bound to, and the write that
-	// follows returns 423 ExceptionResourceInvalidLockHandle (issue #91).
-	// An outer workflow that already resolved and approved *this* object's
-	// package marks the context so the lookup is not repeated under the lock.
+	// This is the only step that makes a network request. Sent stateless
+	// inside a lock window, it can retire the ADT session the lock handle is
+	// bound to, and the write that follows returns 423
+	// ExceptionResourceInvalidLockHandle (issue #91). Two things prevent that:
+	//   - when the write carries the caller's lock handle (m.LockHandle), the
+	//     lookup is sent in the lock's stateful session instead (#292);
+	//   - an outer workflow that already resolved and approved *this* object's
+	//     package marks the context so the lookup is not repeated under the lock.
 	//
 	// The skip is deliberately narrow:
 	//   - it never applies when the caller supplied an explicit Package —
