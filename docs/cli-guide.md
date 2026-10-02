@@ -177,19 +177,9 @@ Oracle-verified: 100% match against TypeScript abaplint on 4 rules, 29 files.
 
 **Requirements:** `lint` works fully offline. `test`/`atc` need standard ADT.
 
-### Compile & Transpile
+### Parse
 
 ```bash
-# WASM → ABAP (fully offline)
-vsp compile wasm program.wasm                          # stdout
-vsp compile wasm program.wasm --class ZCL_MY_WASM      # custom class name
-vsp compile wasm program.wasm -o ./src/                # write to file
-vsp compile wasm program.wasm -o ./src/ --deploy '$TMP' # compile + deploy
-
-# TypeScript → ABAP (needs Node.js for TS parsing)
-vsp compile ts lexer.ts --prefix zcl_
-vsp compile ts lexer.ts -o ./src/ --deploy '$TMP'
-
 # Parse ABAP into structured statements (fully offline)
 vsp parse --file myclass.clas.abap --format summary    # statement type counts
 vsp parse --file source.abap --format json             # machine-readable
@@ -197,9 +187,9 @@ echo "DATA lv_x TYPE i. lv_x = 42." | vsp parse --stdin
 vsp parse CLAS ZCL_TEST --format json                  # fetch from SAP + parse
 ```
 
-**WASM compiler verified:** 3-way correctness proof on 12 functions (add, factorial, fibonacci, gcd, is_prime, abs, max, min, pow, sum_to, collatz, select) — Native WASM, Go compiler, and ABAP self-host on SAP all produce identical results.
+**Requirements:** `parse` is fully offline with `--file`/`--stdin`.
 
-**Requirements:** `compile wasm` and `parse` are fully offline. `compile ts` needs Node.js.
+The WASM/TypeScript/LLVM-to-ABAP transpilers (formerly `vsp compile`) moved to [ABAPiti](https://github.com/oisee/abapiti).
 
 ### Lua Scripting
 
@@ -397,35 +387,32 @@ rate limit but is not required.
 
 ## Feature Requirements Matrix
 
-| Command | Standard ADT | ZADT_VSP | Node.js | Offline |
-|---------|:---:|:---:|:---:|:---:|
-| `source read/write/edit` | ✅ | — | — | — |
-| `context` (+ `--depth`) | ✅ | — | — | — |
-| `graph` (+ WBCROSSGT fallback) | ✅ | — | — | — |
-| `deps` | ✅ | — | — | — |
-| `search` | ✅ | — | — | — |
-| `query` | ✅ | — | — | — |
-| `grep` | ✅ | — | — | — |
-| `system info` | ✅ | — | — | — |
-| `test` | ✅ | — | — | — |
-| `atc` | ✅ | — | — | — |
-| `deploy` | ✅ | — | — | — |
-| `transport` | ✅ | — | — | — |
-| `lua` (REPL + scripts) | ✅ | — | — | — |
-| `workflow` (YAML) | ✅ | — | — | — |
-| `lint` | — | — | — | ✅ |
-| `parse` | — | — | — | ✅ |
-| `compile wasm` | — | — | — | ✅ |
-| `compile ts` | — | — | ✅ | — |
-| `execute` | ✅ | optional | — | — |
-| `export` | — | ✅ | — | — |
-| `install` | ✅ | — | — | — |
-| `update` | — | — | — | ✅ |
+| Command | Standard ADT | ZADT_VSP | Offline |
+|---------|:---:|:---:|:---:|
+| `source read/write/edit` | ✅ | — | — |
+| `context` (+ `--depth`) | ✅ | — | — |
+| `graph` (+ WBCROSSGT fallback) | ✅ | — | — |
+| `deps` | ✅ | — | — |
+| `search` | ✅ | — | — |
+| `query` | ✅ | — | — |
+| `grep` | ✅ | — | — |
+| `system info` | ✅ | — | — |
+| `test` | ✅ | — | — |
+| `atc` | ✅ | — | — |
+| `deploy` | ✅ | — | — |
+| `transport` | ✅ | — | — |
+| `lua` (REPL + scripts) | ✅ | — | — |
+| `workflow` (YAML) | ✅ | — | — |
+| `lint` | — | — | ✅ |
+| `parse` | — | — | ✅ |
+| `execute` | ✅ | optional | — |
+| `export` | — | ✅ | — |
+| `install` | ✅ | — | — |
+| `update` | — | — | ✅ |
 
 **Legend:**
 - **Standard ADT** — works with any SAP system that has ADT enabled (default since 7.50)
 - **ZADT_VSP** — enhanced features via `vsp install zadt-vsp` (WebSocket, RFC, Git export)
-- **Node.js** — required for TypeScript parsing only
 - **Offline** — no SAP connection needed at all
 
 ---
@@ -434,7 +421,7 @@ rate limit but is not required.
 
 vsp is designed to work with what's available:
 
-1. **No SAP connection?** → `lint`, `parse`, `compile wasm` work fully offline
+1. **No SAP connection?** → `lint`, `parse` work fully offline
 2. **Standard ADT only?** → `source`, `search`, `query`, `grep`, `graph`, `deps`, `lua`, `workflow`, `test`, `atc`, `deploy` all work
 3. **ZADT_VSP installed?** → `export`, `execute` (via WebSocket), `debug` (via RFC) become available
 4. **Missing component?** → Clear error messages tell you what to install and how
@@ -495,8 +482,7 @@ find src/ -name "*.abap" -exec vsp lint --file {} \;
 # Export for backup
 vsp -s prod export '$ZPRODUCTION' -o "backup-$(date +%F).zip"
 
-# Compile WASM and deploy
-vsp compile wasm calculator.wasm -o ./build/
+# Deploy a generated class (e.g. from ABAPiti)
 vsp -s dev deploy ./build/zcl_wasm_calculator.clas.abap '$TMP'
 
 # Query and filter with Unix pipes

@@ -14,7 +14,7 @@ func TestBenchmarkApproaches(t *testing.T) {
 	sources := map[string]string{}
 
 	// Read from embedded abap sources
-	abapDir := "../ts2abap/testdata/abaplint_lexer"
+	abapDir := "testdata"
 	entries, err := os.ReadDir(abapDir)
 	if err != nil {
 		t.Skipf("No test data: %v", err)

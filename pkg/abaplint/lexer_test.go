@@ -311,8 +311,6 @@ func TestLexer_OracleBulk(t *testing.T) {
 
 	// Find all .abap files
 	var files []string
-	jseval, _ := filepath.Glob("../../embedded/abap/*jseval*.abap")
-	files = append(files, jseval...)
 	for _, dir := range []string{"testdata/corpus", "../../abap-adt-api/testdata/src", "../../abap/src"} {
 		matches, _ := filepath.Glob(filepath.Join(dir, "*.abap"))
 		files = append(files, matches...)

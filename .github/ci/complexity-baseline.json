@@ -17,12 +17,10 @@
   "pkg/scripting/bindings.go": 1207
  },
  "packages": {
-  "cmd/abapgit-pack": 166,
   "cmd/vsp": 25547,
   "cmd/vsp-sso": 122,
   "embedded/abap": 281,
   "embedded/deps": 417,
-  "fun": 72,
   "internal/fakesap": 796,
   "internal/install": 87,
   "internal/lsp": 806,

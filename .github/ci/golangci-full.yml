@@ -67,13 +67,6 @@ linters:
           - funlen
           - gocognit
           - gocyclo
-      # The research packages are experiments, not product; the complexity map
-      # and the metrics keep them out of the headline too.
-      - path: ^pkg/(llvm2abap|wasmcomp|ts2abap|ts2go|jseval)/
-        linters:
-          - funlen
-          - gocognit
-          - gocyclo
     paths:
       - third_party$
       - builtin$

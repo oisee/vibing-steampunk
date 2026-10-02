@@ -1,4 +1,0 @@
-CLASS zcl_tok_string_token DEFINITION PUBLIC FINAL CREATE PUBLIC INHERITING FROM zcl_abstract_token.
-ENDCLASS.
-CLASS zcl_tok_string_token IMPLEMENTATION.
-ENDCLASS.

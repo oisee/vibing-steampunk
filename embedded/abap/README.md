@@ -6,8 +6,8 @@ This directory contains optional ABAP objects that can be deployed to SAP system
 > [`src/`](../../src/), the abapGit repository. `go:embed` cannot reach a parent
 > directory, so `go generate ./embedded/abap` (or `make sync-embedded`) copies
 > the objects `vsp install` deploys, and `TestEmbeddedSourcesMatchSrc` fails when
-> a copy has drifted. The `zcl_jseval*` / `zif_jseval` files are not part of
-> ZADT_VSP and are maintained here.
+> a copy has drifted. (The `zcl_jseval*` / `zif_jseval` classes moved to
+> [ABAPiti](https://github.com/oisee/abapiti).)
 
 ---
 

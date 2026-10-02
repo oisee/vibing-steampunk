@@ -70,7 +70,7 @@ pkg/
   ctxcomp/            Context compression (dep resolution for read)
   abaplint/           ABAP lexer + parser + lint rules
   dsl/  cache/  scripting/   Fluent API and YAML workflows; caches; Lua
-  llvm2abap/  wasmcomp/      Research, not production
+  (the ABAP transpilers, ex-`vsp compile`, moved to github.com/oisee/abapiti)
 src/ + embedded/abap/ ZADT_VSP ABAP sources (embedded/ is generated from src/; CI fails on drift)
 ```
 
@@ -185,5 +185,5 @@ A numeric bucket (`ZCL_VSP_00_AMDP_TEST`) is used only for test fixtures. Older 
 | `pkg/adt/ui5.go` | Writes through the ADT filestore (upload, delete, create app) and is MCP-reachable. With `--allowed-packages` set, every UI5 mutation is refused, because app→package resolution is unimplemented |
 | `pkg/datacluster/` | Reverse-engineered format. A marker or type code not seen in `testdata/` fails loudly: add the fixture first, then the code |
 | `pkg/adt/sso*.go` | Under WSL the browser step must be a Windows process (PRT/WAM); needs `vsp-sso.exe` from `make sso-helper` |
-| `pkg/llvm2abap/`, `pkg/wasmcomp/` | Research, not stable |
+| ABAP transpilers (ex-`vsp compile`) | Moved to [ABAPiti](https://github.com/oisee/abapiti); fix them there, not here |
 | `docs/cli-agents/*` | Config drift: Codex TOML differs from the Claude/Gemini JSON docs |

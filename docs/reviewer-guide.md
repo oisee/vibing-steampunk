@@ -57,9 +57,6 @@ go test -v -run TestStatementMatcher_OracleDifferential ./pkg/abaplint/
 # ABAP linter — 100% match on 4 oracle-verified rules
 go test -v -run TestLinter_OracleDifferential ./pkg/abaplint/
 
-# WASM compiler
-go test -v -run TestWASMSuite ./pkg/wasmcomp/
-
 # Cache, DSL, scripting
 go test -v ./pkg/cache/ ./pkg/dsl/ ./pkg/scripting/
 
@@ -122,21 +119,9 @@ echo "DATA lv_x TYPE i. lv_x = 42." | ./vsp parse --stdin --format json
 
 ---
 
-## Task 5: WASM→ABAP Compiler — Fully Offline
+## Task 5: ABAP Transpilers — Moved
 
-```bash
-# Compile a WASM binary to ABAP (if you have one)
-./vsp compile wasm pkg/wasmcomp/testdata/quickjs_eval.wasm --class ZCL_QUICKJS 2>/dev/null | head -20
-
-# Or build the test suite WASM and compile it
-go test -v -run TestWASMSuite_CompileGo ./pkg/wasmcomp/
-cat /tmp/wasm_suite_go.abap | head -20
-```
-
-**What to spotlight:**
-- 225 bytes WASM → 117 lines ABAP
-- 3-way verified: Native WASM (51/51), Go compiler, ABAP self-host on SAP (11/11)
-- Functions: add, factorial, fibonacci, gcd, is_prime, abs, max, min, pow, sum_to, collatz, select
+The WASM/TypeScript/LLVM-to-ABAP transpilers (formerly `vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti); review them there.
 
 ---
 
@@ -321,8 +306,6 @@ go mod graph | wc -l          # dependency count
 | `pkg/abaplint/rules.go` | 8 lint rules | ~320 |
 | `pkg/scripting/bindings.go` | 50+ Lua→SAP bindings | ~1600 |
 | `pkg/dsl/workflow.go` | YAML workflow engine | ~600 |
-| `pkg/wasmcomp/compile.go` | WASM→ABAP compiler | ~500 |
-| `pkg/ts2go/ts2go.go` | TypeScript→Go transpiler | ~500 |
 | `cmd/vsp/devops.go` | CLI command handlers | ~1100 |
 
 ---
@@ -335,7 +318,6 @@ go mod graph | wc -l          # dependency count
 | Unit tests | `go test ./...` | — |
 | Lint ABAP | `./vsp lint --file x.abap` | — |
 | Parse ABAP | `./vsp parse --stdin` | — |
-| Compile WASM | `./vsp compile wasm x.wasm` | — |
 | Config | `./vsp config init/show` | — |
 | System info | `./vsp system info` | ✅ |
 | Search | `./vsp search "Z*"` | ✅ |

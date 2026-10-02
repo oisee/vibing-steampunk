@@ -60,9 +60,9 @@ const (
 	topN           = 10
 )
 
-var researchPrefixes = []string{
-	"pkg/llvm2abap", "pkg/wasmcomp", "pkg/ts2abap", "pkg/ts2go", "pkg/jseval",
-}
+// researchPrefixes is empty since the transpilers moved to ABAPiti
+// (github.com/oisee/abapiti); the mechanism stays for the next experiment.
+var researchPrefixes = []string{}
 
 type Thresholds struct {
 	Cyclomatic     int `json:"cyclomatic"`

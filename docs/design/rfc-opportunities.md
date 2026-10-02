@@ -563,7 +563,7 @@ ABAP-callable function module, and let vsp generate the ABAP proxy.
 
 Applied to vsp, the idea is genuinely new: **an ABAP program calls out to vsp**,
 and vsp answers with something ABAP cannot compute — an LLM completion, an
-abaplint run (vsp embeds `abaplint-lexer.zip`), a graph query, a Lua script.
+abaplint run (vsp's Go port in `pkg/abaplint`), a graph query, a Lua script.
 `Z_VSP_LINT(source) → findings`, `Z_VSP_ASK(prompt) → answer`, evaluated in Go.
 It inverts the whole tool: instead of an AI driving SAP, SAP consults the AI.
 

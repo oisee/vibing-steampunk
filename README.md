@@ -1054,6 +1054,10 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.59.1 — built by CI](https://github.com/oisee/vibing-steampunk/releases/tag/v2.59.1)**.
 
+### v2.60.0 — upcoming
+
+**Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
+
 ### v2.59.1 — new since v2.59.0
 
 The first release built, checked and published by CI on the tag push
@@ -1365,33 +1369,13 @@ Zero dependencies, zero FFI. Pure Go, ~3.5M tokens/sec, ready for lint rules in 
 
 See [LSP setup](#abap-lsp-for-claude-code) for configuration.
 
-### WASM-to-ABAP Compiler (Research)
+### ABAP Transpilers — Moved to ABAPiti
 
-Compile WebAssembly binaries to native ABAP — advanced prototype, verified on selected corpora. Three paths:
-
-```
-.wasm binary → pkg/wasmcomp (Go)  → ABAP source files     ← AOT compiler
-.ts source   → pkg/ts2abap (Go)   → clean OO ABAP classes  ← direct transpiler
-.wasm binary → zcl_wasm_compiler  → ABAP (on SAP itself!)  ← self-hosting, 785 lines
-```
-
-**Demonstrated on SAP A4H:** QuickJS (1,410 functions) compiled to 101K lines ABAP. abaplint parser (26.5MB) compiled to 396K lines. Self-hosting compiler parses WASM, generates ABAP, and executes via `GENERATE SUBROUTINE POOL` — all within SAP. This is research/prototype work, not a production-ready toolchain.
-
-| What | Size | Status |
-|------|:----:|:------:|
-| QuickJS → ABAP | 101K lines | Compiled |
-| abaplint → ABAP | 396K lines | Compiled |
-| abaplint lexer (TS→ABAP) | 495 lines | Running on SAP |
-| Self-hosting compiler | 785 lines | Running on SAP |
-| Batch deploy | `vsp deploy *.clas.abap` | 40 classes, 0 failures |
-
-> *On main: `pkg/wasmcomp/` and `embedded/abap/wasm_compiler/`. The original
-> branch `feat/wasm-abap` is kept for history. See
-> [reports/2026-03-20-001](reports/2026-03-20-001-wasm-abap-achievement.md).*
+The WASM/TypeScript/LLVM-to-ABAP transpilers (formerly `vsp compile`) now live in their own repo, **[ABAPiti](https://github.com/oisee/abapiti)**, with their history.
 
 ### Full CLI Toolchain — SAP from the Terminal
 
-35+ commands. No SAP GUI, no Eclipse, no IDE. Most work with standard ADT; `lint`/`parse`/`compile` work fully offline.
+35+ commands. No SAP GUI, no Eclipse, no IDE. Most work with standard ADT; `lint`/`parse` work fully offline.
 
 ```bash
 # Package analysis
@@ -1456,7 +1440,6 @@ vsp install zadt-vsp                             # install ZADT_VSP handler
 # Offline tools
 vsp lint --file myclass.clas.abap                # offline ABAP linter
 vsp parse --stdin --format json < source.abap    # ABAP parser
-vsp compile wasm program.wasm --class ZCL_DEMO   # WASM→ABAP compiler
 ```
 
 See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature requirements matrix.

@@ -94,9 +94,9 @@ func TestLinter_MaxOneStatement(t *testing.T) {
 // TestLinter_RealCorpus runs the linter on real ABAP files and reports findings.
 func TestLinter_RealCorpus(t *testing.T) {
 	l := NewLinter()
-	// The jseval classes live in embedded/abap; the ZADT_VSP files next to
-	// them are generated copies of src/ and already in the corpus.
-	patterns := []string{"testdata/corpus/*.abap", "../../embedded/abap/*jseval*.abap", "../../abap-adt-api/testdata/src/*.abap"}
+	// The corpus includes the jseval classes (kept as lexer/parser input
+	// after the transpilers moved to ABAPiti).
+	patterns := []string{"testdata/corpus/*.abap", "../../abap-adt-api/testdata/src/*.abap"}
 
 	totalIssues := 0
 	ruleCount := map[string]int{}
