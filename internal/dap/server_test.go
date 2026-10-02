@@ -711,6 +711,105 @@ func TestReleaseReportsTheFinalStateAfterRetries(t *testing.T) {
 	}
 }
 
+// waitFor polls the fake until cond holds or the wait runs out.
+func (f *fakeADT) waitFor(cond func(f *fakeADT) bool) bool {
+	deadline := time.Now().Add(waitFor)
+	for time.Now().Before(deadline) {
+		f.mu.Lock()
+		ok := cond(f)
+		f.mu.Unlock()
+		if ok {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
+func contains(calls []string, want string) int {
+	for i, c := range calls {
+		if c == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// SAP attached but its answer was lost, and the stack probe hangs past its
+// budget. The release must still reach SAP — on a context of its own, not the
+// probe's spent one — or the stop must be delivered. Either way the debuggee
+// is not left held while the adapter listens on.
+func TestHalfAttachWithAHungProbeIsReleased(t *testing.T) {
+	saved := releaseStepTimeout
+	releaseStepTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { releaseStepTimeout = saved })
+
+	fake := newFakeADT()
+	fake.halfAttach, fake.hangStack = 1, 1
+	c := armed(t, fake)
+	fake.run()
+
+	deadline := time.Now().Add(waitFor)
+	for time.Now().Before(deadline) {
+		if c.maybeEvent("stopped", 20*time.Millisecond) {
+			return // delivered
+		}
+		fake.mu.Lock()
+		attached := fake.attached
+		fake.mu.Unlock()
+		if !attached {
+			return // released
+		}
+	}
+	t.Fatalf("the debuggee stayed attached with no stop delivered; rejected on a spent context: %v; calls: %v", fake.rejected, fake.calls())
+}
+
+// A4H refuses the detach method; the release must fall back to letting the
+// debuggee run on, as saprfc's own detach does, before listening again.
+func TestRefusedDetachFallsBackToContinue(t *testing.T) {
+	fake := newFakeADT()
+	fake.halfAttach, fake.failStack = 1, 1
+	armed(t, fake)
+	fake.run()
+
+	// Wait until the adapter listens again after the attach.
+	resumed := fake.waitFor(func(f *fakeADT) bool {
+		after := f.log
+		if i := contains(after, "POST /sap/bc/adt/debugger?method=attach"); i >= 0 {
+			return contains(after[i+1:], "POST /sap/bc/adt/debugger/listeners") >= 0
+		}
+		return false
+	})
+	if !resumed {
+		t.Fatalf("the adapter never listened again; calls: %v", fake.calls())
+	}
+	after := fake.callsAfter("POST /sap/bc/adt/debugger?method=attach")
+	d, k := contains(after, "POST /sap/bc/adt/debugger?method=detach"), contains(after, "POST /sap/bc/adt/debugger?method=stepContinue")
+	l := contains(after, "POST /sap/bc/adt/debugger/listeners")
+	if d < 0 || k < 0 || !(d < k && k < l) {
+		t.Errorf("want detach, then the stepContinue fallback, then a new listener; calls after the attach: %v", after)
+	}
+	fake.mu.Lock()
+	attached := fake.attached
+	fake.mu.Unlock()
+	if attached {
+		t.Error("the adapter listens again while the debuggee is still attached")
+	}
+}
+
+// When neither the detach nor its fallback confirms the release, and a second
+// stack read cannot say either way, the adapter says so before listening on.
+func TestUnconfirmedReleaseWarns(t *testing.T) {
+	fake := newFakeADT()
+	fake.halfAttach, fake.failStack, fake.failStep = 1, 2, "stepContinue"
+	c := armed(t, fake)
+	fake.run()
+	text := c.outputContaining("SAP may still hold")
+	if !strings.Contains(text, "SM50") {
+		t.Errorf("the warning should point at SM50: %q", text)
+	}
+}
+
 // The stream ending without a disconnect — the editor crashed — still
 // releases the session.
 func TestEndOfStreamReleasesTheSession(t *testing.T) {

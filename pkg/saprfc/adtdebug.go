@@ -254,14 +254,9 @@ func (d *Debugger) ADTDetach(ctx context.Context) error {
 	if !d.engaged {
 		return nil
 	}
-	// SAP's own word for "let it go" is detach; a release that does not know it
-	// still has to release the debuggee, so continue is the fallback rather than
-	// terminateDebuggee, which would kill the user's session outright.
-	res, err := d.ADT(ctx, "POST", "/sap/bc/adt/debugger?method=detach",
-		[]ADTHeader{{Name: "Accept", Value: acceptAnything}}, nil)
-	if err != nil || res.Status < 200 || res.Status >= 300 {
-		_, _ = d.ADTStep(ctx, "stepContinue")
-	}
+	// Whether the debuggee half was confirmed does not change what comes
+	// next: the listener goes either way, and with it external debugging.
+	_ = d.DetachDebuggee(ctx)
 	if user := d.listenUser; user != "" {
 		// The listener is removed by naming the user and nothing else. In user
 		// debugging mode SAP does not store the ideId and terminalId it was
@@ -285,6 +280,39 @@ func (d *Debugger) ADTDetach(ctx context.Context) error {
 	}
 	d.engaged = false
 	return nil
+}
+
+// DetachDebuggee releases the debuggee attached to this session, if any, and
+// leaves the listener registration and the breakpoints alone: it is the
+// debuggee half of ADTDetach, for a caller that means to go on listening.
+//
+// SAP's own word for "let it go" is detach; a release that does not know it
+// (A4H answers 400, "Unknown method") still has to release the debuggee, so
+// continue is the fallback rather than terminateDebuggee, which would kill the
+// user's session outright.
+//
+// It returns nil only when SAP confirmed that nothing is attached any more:
+// the detach was accepted, or the fallback answered that the debuggee ended or
+// that no session is attached. A continue that answers 200 means the program
+// stopped again, at another breakpoint, and is still attached; that, and any
+// failure to get an answer, is an error.
+func (d *Debugger) DetachDebuggee(ctx context.Context) error {
+	res, err := d.ADT(ctx, "POST", "/sap/bc/adt/debugger?method=detach",
+		[]ADTHeader{{Name: "Accept", Value: acceptAnything}}, nil)
+	if err == nil && res.Status >= 200 && res.Status < 300 {
+		return nil
+	}
+	sres, serr := d.ADTStep(ctx, "stepContinue")
+	switch {
+	case serr == nil:
+		return fmt.Errorf("detach: the debuggee ran on and stopped again; it is still attached")
+	case strings.Contains(serr.Error(), "debuggeeEnded"), strings.Contains(serr.Error(), "noSessionAttached"):
+		return nil
+	case sres == nil:
+		return fmt.Errorf("detach: no answer from SAP: %w", serr)
+	default:
+		return fmt.Errorf("detach: %w", serr)
+	}
 }
 
 // ADTStep executes one step: stepInto, stepOver, stepReturn, stepContinue.

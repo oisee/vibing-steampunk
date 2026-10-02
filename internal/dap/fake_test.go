@@ -50,6 +50,9 @@ type fakeADT struct {
 	holdAttach    bool
 	attachStarted chan struct{}
 	failAttach    int // this many attaches are refused, nothing attached
+	halfAttach    int // this many attaches answer an error although SAP attached
+	hangStack     int // this many stack reads hang until their context ends
+	failStack     int // this many stack reads fail at once with a server error
 	detachTried   bool
 	log           []string
 }
@@ -210,6 +213,12 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 			f.mu.Unlock()
 			return exception(500, "Internal Server Error", "invalidDebuggee", "The debuggee cannot be attached"), nil
 		}
+		if f.halfAttach > 0 {
+			f.halfAttach--
+			f.attached = true
+			f.mu.Unlock()
+			return exception(500, "Internal Server Error", "kernelError", "The answer was lost after attaching"), nil
+		}
 		hold := f.holdAttach
 		f.holdAttach = false
 		f.mu.Unlock()
@@ -225,6 +234,17 @@ func (f *fakeADT) Do(ctx context.Context, req saprfc.ADTRequest) (*saprfc.ADTRes
 
 	case u.Path == "/sap/bc/adt/debugger/stack":
 		f.mu.Lock()
+		if f.hangStack > 0 {
+			f.hangStack--
+			f.mu.Unlock()
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+		if f.failStack > 0 {
+			f.failStack--
+			f.mu.Unlock()
+			return exception(500, "Internal Server Error", "kernelError", "The stack could not be read"), nil
+		}
 		defer f.mu.Unlock()
 		if !f.attached {
 			return exception(400, "Bad Request", "noSessionAttached", "No session attached"), nil

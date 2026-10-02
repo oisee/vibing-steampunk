@@ -872,27 +872,48 @@ func (s *Server) listen(ctx context.Context) {
 }
 
 // attach attaches to a debuggee the listener caught and reports whether the
-// session is now attached. An attach that answers with an error is checked
-// rather than believed: an interrupted or failed request may still have
-// attached on SAP's side, so the stack is read on a fresh context. Attached
-// after all, it is a stop; not attached, anything SAP may hold is let go on a
-// fresh context, and the caller listens on. Callers hold dbgMu.
+// session is now attached. Callers hold dbgMu.
+//
+// An attach that answers with an error is checked rather than believed: the
+// request may have attached on SAP's side and lost its answer. Each check and
+// the release run on a context of their own, detached from the worker's and
+// bounded, so a step that hangs never spends the budget of the next:
+//
+//  1. Read the stack. If it reads, the session is attached: that is a stop.
+//  2. Otherwise release whatever may be attached, with saprfc's own
+//     detach-then-continue (DetachDebuggee), which leaves the listener and
+//     the breakpoints in place. Confirmed released: listen on.
+//  3. Not confirmed: read the stack once more. Attached: a stop. Still
+//     unknown: say that SAP may still hold a debuggee, then listen on.
 func (s *Server) attach(ctx context.Context, sess *Session, who *saprfc.ADTDebuggee) (bool, error) {
 	_, err := sess.Debugger.ADTAttach(ctx, who.ID, sess.User)
 	if err == nil {
 		return true, nil
 	}
-	fresh, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), releaseStepTimeout)
-	defer cancel()
-	if _, perr := sess.Debugger.StackInfo(fresh); perr == nil {
+	if s.attachedNow(sess) {
 		return true, err
 	}
-	// Not attached as far as the stack can tell. A detach on this session
-	// releases a half-made attachment if there is one and is harmless if
-	// there is not; it leaves the listener and the breakpoints in place.
-	_, _ = sess.Debugger.ADT(fresh, "POST", "/sap/bc/adt/debugger?method=detach",
-		[]saprfc.ADTHeader{{Name: "Accept", Value: "*/*"}}, nil)
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), releaseStepTimeout)
+	rerr := sess.Debugger.DetachDebuggee(rctx)
+	cancel()
+	if rerr == nil {
+		return false, err
+	}
+	if s.attachedNow(sess) {
+		return true, err
+	}
+	s.output("stderr", fmt.Sprintf("vsp dap: SAP may still hold a debuggee of %s in %s: the attach failed (%v) and its release was not confirmed (%v); see SM50 for a work process in debugging, and SM04 for the session\n",
+		sess.User, who.Program, err, rerr))
 	return false, err
+}
+
+// attachedNow reads the stack on a context of its own and reports whether it
+// answered, which it does only for an attached session. Callers hold dbgMu.
+func (s *Server) attachedNow(sess *Session) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), releaseStepTimeout)
+	defer cancel()
+	_, err := sess.Debugger.StackInfo(ctx)
+	return err == nil
 }
 
 // halt records a stop, places any breakpoints that changed while the program
