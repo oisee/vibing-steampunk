@@ -20,6 +20,12 @@ package adt
 //     so is every request after it, for the life of the client.
 //
 // Without a pin none of this runs: no preflight, no extra request.
+//
+// Threat model: the pin guards against operator misconfiguration — the wrong
+// system, client or user from flags, the environment or .vsp.json, or a
+// re-authentication that switches identity. It does not defend against a
+// hostile SAP server: what the verified server issues itself (a reissued
+// session cookie, the cookie jar) is covered by that server's verdict.
 
 import (
 	"context"
@@ -283,11 +289,14 @@ func (t *Transport) checkIdentityGen(ctx context.Context) (uint64, error) {
 	return 0, fmt.Errorf("identity pin %s: the session kept changing during the preflight; nothing else was sent", g.pin)
 }
 
-// credentialsChanged says the transport now authenticates differently: new
-// cookies, a refreshed SSO session, a reloaded cookie file, a session cookie
-// the server reissued. The identity pin checks the new session before the next
-// request goes out. Callers hold cookiesMu for writing, so a reader holding it
-// sees cookies and generation change together.
+// credentialsChanged says the operator's side now authenticates differently:
+// cookies handed over (SetCookies), a refreshed SSO session, a reloaded cookie
+// file. The identity pin checks the new session before the next request goes
+// out. Cookies the verified system issues itself (Set-Cookie adoption, the
+// jar) are not changes: the pin guards against misconfiguration, not against
+// a hostile server, and that server's verdict covers what it issues. Callers
+// hold cookiesMu for writing, so a reader holding it sees cookies and
+// generation change together.
 func (t *Transport) credentialsChanged() {
 	t.authGen.Add(1)
 }

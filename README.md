@@ -1937,8 +1937,11 @@ A pin turns a connection that lands in the wrong place into a clear refusal:
   SID before any other call. A WebSocket opens only once the pin is confirmed,
   and with the session that was verified. Under a pin, a 401 on the WebSocket
   upgrade is not retried with the password.
-- **A session cookie the server reissues** counts as a credential change, so
-  the pin checks the new session before any work is sent with it.
+
+**Threat model:** the pin guards against misconfiguration: the wrong system,
+client or user from flags, the environment or `.vsp.json`, or a
+re-authentication that switches identity. It does not defend against a hostile
+SAP server. Cookies the verified server issues itself are covered by its verdict.
 
 `SAP()` shows the result (`pinned A4H.001/DEVELOPER ✓`). Without a pin,
 nothing changes and no extra request is sent.

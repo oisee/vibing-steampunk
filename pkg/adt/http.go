@@ -1104,9 +1104,11 @@ func (t *Transport) adoptServerCookies(resp *http.Response) {
 		}
 		if held, ok := t.config.Cookies[c.Name]; ok && held != c.Value {
 			t.config.Cookies[c.Name] = c.Value
-			// What is sent from now on changed: the identity pin's verdict
-			// was for the cookie this one replaced.
-			t.credentialsChanged()
+			// Not a credential change for the identity pin: the verified
+			// system issued this cookie itself, and its verdict covers it.
+			// The pin guards against operator misconfiguration, not a
+			// hostile server; re-verifying here would preflight on every
+			// answer of an SSO system that refreshes its cookie.
 			if t.config.Verbose {
 				fmt.Fprintf(os.Stderr, "[AUTH] server reissued %s — using the new one\n", c.Name)
 			}
