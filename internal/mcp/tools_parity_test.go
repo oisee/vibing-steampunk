@@ -16,8 +16,8 @@ import (
 // cmd/vsp/main.go (the --mode flag help and the long usage) and README.md.
 const (
 	wantHyperfocusedTools = 1
-	wantFocusedTools      = 100
-	wantExpertTools       = 151
+	wantFocusedTools      = 98
+	wantExpertTools       = 148
 )
 
 // serverForMode builds a server without touching a network. NewServer only

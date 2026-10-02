@@ -82,38 +82,6 @@ func (s *Server) registerI18NTools(shouldRegister func(string) bool) {
 		), s.handleWriteMessageClassTexts)
 	}
 
-	if shouldRegister("WriteDataElementLabels") {
-		s.mcpServer.AddTool(mcp.NewTool("WriteDataElementLabels",
-			mcp.WithDescription("Update data element labels (short/medium/long/heading) in a specific language. Requires a lock handle from LockObject."),
-			mcp.WithString("name",
-				mcp.Required(),
-				mcp.Description("Data element name"),
-			),
-			mcp.WithString("language",
-				mcp.Required(),
-				mcp.Description("ISO language code (e.g., EN, DE, FR)"),
-			),
-			mcp.WithString("lock_handle",
-				mcp.Description("Optional lock handle. Omit it and this call takes and releases its own lock (#169)."),
-			),
-			mcp.WithString("transport",
-				mcp.Description("Transport request number (optional for $TMP objects)"),
-			),
-			mcp.WithString("short",
-				mcp.Description("Short description (max 10 chars)"),
-			),
-			mcp.WithString("medium",
-				mcp.Description("Medium description (max 20 chars)"),
-			),
-			mcp.WithString("long",
-				mcp.Description("Long description (max 40 chars)"),
-			),
-			mcp.WithString("heading",
-				mcp.Description("Column heading (max 55 chars)"),
-			),
-		), s.handleWriteDataElementLabels)
-	}
-
 	if shouldRegister("GetTextPool") {
 		s.mcpServer.AddTool(mcp.NewTool("GetTextPool",
 			mcp.WithDescription("Get the text pool (text elements/symbols) of a program in a specific language. Returns ID, key, and text for each entry."),

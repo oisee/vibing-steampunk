@@ -115,19 +115,21 @@ func TestNothingLiveIsUnreachableAnyMore(t *testing.T) {
 	}
 	// Measured on 2026-08-25 and closed by this file. If one of these becomes
 	// reachable, or a new unreachable tool appears, this list is the place the
-	// change has to be argued.
+	// change has to be argued. WriteDataElementLabels was the twelfth name until
+	// it was unregistered (it refuses by design); i18n op=write_labels still
+	// answers with that refusal.
 	knownUnreachable := []string{
 		"AnalyzeABAPCode", "CompareLanguages", "CompareVersions",
 		"GetDataElementLabels", "GetMessageClassTexts", "GetObjectTextsInLanguage",
 		"GetRevisionSource", "GetRevisions", "GetTextPool",
-		"WriteDataElementLabels", "WriteMessageClassTexts",
+		"WriteMessageClassTexts",
 	}
 	for _, n := range knownUnreachable {
 		if !expert[n] {
 			t.Errorf("%s is no longer registered; the eleven were measured against a surface that has moved", n)
 		}
 	}
-	if len(knownUnreachable) != 11 {
-		t.Fatalf("the list holds %d, and the measurement said eleven", len(knownUnreachable))
+	if len(knownUnreachable) != 10 {
+		t.Fatalf("the list holds %d, and the measurement said eleven less the unregistered WriteDataElementLabels", len(knownUnreachable))
 	}
 }

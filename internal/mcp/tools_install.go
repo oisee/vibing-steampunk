@@ -25,35 +25,8 @@ func (s *Server) registerInstallTools(shouldRegister func(string) bool) {
 
 	if shouldRegister("ListDependencies") {
 		s.mcpServer.AddTool(mcp.NewTool("ListDependencies",
-			mcp.WithDescription("List available dependency packages that can be installed via InstallAbapGit. Shows abapGit editions and other optional dependencies."),
+			mcp.WithDescription("List embedded dependency packages (abapGit editions and other optional dependencies) and whether each is available for DeployZip or `vsp install abapgit`."),
 		), s.handleListDependencies)
-	}
-
-	if shouldRegister("InstallAbapGit") {
-		s.mcpServer.AddTool(mcp.NewTool("InstallAbapGit",
-			mcp.WithDescription("Deploy abapGit to SAP system from embedded ZIP. Supports standalone (single program) or developer edition (full package structure). Parses abapGit-format ZIP and deploys via WriteSource."),
-			mcp.WithString("edition",
-				mcp.Description("Edition to install: 'standalone' (single program ZABAPGIT) or 'dev' (full $ZGIT_DEV packages). Default: standalone"),
-			),
-			mcp.WithString("package",
-				mcp.Description("Target package name. Default: $ABAPGIT for standalone, $ZGIT_DEV for dev edition"),
-			),
-			mcp.WithBoolean("check_only",
-				mcp.Description("Only check prerequisites and show deployment plan without deploying (default: false)"),
-			),
-		), s.handleInstallAbapGit)
-	}
-
-	if shouldRegister("InstallDummyTest") {
-		s.mcpServer.AddTool(mcp.NewTool("InstallDummyTest",
-			mcp.WithDescription("Test tool that creates a simple interface and class to verify the Install* workflow (create, lock, update, unlock, activate, verify). Uses package $ZADT_INSTALL_TEST."),
-			mcp.WithBoolean("check_only",
-				mcp.Description("Only check prerequisites without deploying (default: false)"),
-			),
-			mcp.WithBoolean("cleanup",
-				mcp.Description("Delete test objects after verification (default: false)"),
-			),
-		), s.handleInstallDummyTest)
 	}
 
 	if shouldRegister("DeployZip") {

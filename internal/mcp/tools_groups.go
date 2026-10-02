@@ -37,9 +37,7 @@ func toolGroups() map[string][]string {
 		},
 		"I": { // Install/Setup tools
 			"InstallZADTVSP",
-			"InstallAbapGit",
 			"ListDependencies",
-			"InstallDummyTest",
 			"DeployZip",
 		},
 		"X": { // EXPERIMENTAL - Tools requiring special setup or with known limitations
@@ -55,7 +53,7 @@ func toolGroups() map[string][]string {
 		},
 		"N": { // i18n/Translation tools
 			"GetObjectTextsInLanguage", "GetDataElementLabels", "GetMessageClassTexts",
-			"WriteMessageClassTexts", "WriteDataElementLabels",
+			"WriteMessageClassTexts",
 			"GetTextPool", "CompareLanguages",
 		},
 	}

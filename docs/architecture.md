@@ -236,8 +236,8 @@ flowchart LR
 
     subgraph Install["Install (3)"]
         IV[InstallZADTVSP]
-        IA[InstallAbapGit]
         LDp[ListDependencies]
+        DZ[DeployZip]
     end
 ```
 

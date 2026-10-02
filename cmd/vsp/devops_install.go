@@ -22,13 +22,12 @@ var installCmd = &cobra.Command{
 
 Subcommands:
   zadt-vsp    Install ZADT_VSP WebSocket handler (12 ABAP objects)
-  abapgit     Install abapGit standalone or full edition
+  abapgit     Install abapGit (standalone edition)
   list        List available installable components
 
 Examples:
   vsp -s a4h install zadt-vsp
   vsp -s a4h install abapgit
-  vsp -s a4h install abapgit --edition full
   vsp -s a4h install list
   vsp -s a4h install zadt-vsp --dry-run`,
 }
@@ -67,12 +66,12 @@ var installAbapGitCmd = &cobra.Command{
 
 Editions:
   standalone  Single program ZABAPGIT (default)
-  full        Full $ZGIT + $ZGIT_DEV packages (576 objects)
+  full        The developer edition. Not installable yet: this build carries
+              no developer-edition ZIP, so it is refused (see #277).
 
 Examples:
   vsp -s a4h install abapgit
-  vsp -s a4h install abapgit --edition full
-  vsp -s a4h install abapgit --edition full --package '$ZGIT_CUSTOM'
+  vsp -s a4h install abapgit --package '$ZGIT_CUSTOM'
   vsp -s a4h install abapgit --dry-run`,
 	RunE: runInstallAbapGit,
 }
@@ -282,6 +281,22 @@ func runInstallZadtVsp(cmd *cobra.Command, args []string) error {
 }
 
 func runInstallAbapGit(cmd *cobra.Command, args []string) error {
+	edition, _ := cmd.Flags().GetString("edition")
+	edition = strings.ToLower(edition)
+	packageName, _ := cmd.Flags().GetString("package")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+	// Validate edition before touching the system. Only the standalone edition
+	// is installable: the developer-edition ZIP this build embeds is empty.
+	switch edition {
+	case "standalone":
+	case "full", "dev":
+		return fmt.Errorf("the developer edition is not installable yet; see #277. " +
+			"Use --edition standalone, or install the developer version from https://github.com/abapGit/abapGit")
+	default:
+		return fmt.Errorf("invalid edition '%s'. Use 'standalone'", edition)
+	}
+
 	params, err := resolveSystemParams(cmd)
 	if err != nil {
 		return err
@@ -292,29 +307,9 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	edition, _ := cmd.Flags().GetString("edition")
-	edition = strings.ToLower(edition)
-	packageName, _ := cmd.Flags().GetString("package")
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-
-	// Validate edition
-	if edition != "standalone" && edition != "full" {
-		return fmt.Errorf("invalid edition '%s'. Use 'standalone' or 'full'", edition)
-	}
-
-	// Map edition to dependency name
 	depName := "abapgit-standalone"
-	if edition == "full" {
-		depName = "abapgit-full"
-	}
-
-	// Set default package based on edition
 	if packageName == "" {
-		if edition == "standalone" {
-			packageName = "$ABAPGIT"
-		} else {
-			packageName = "$ZGIT"
-		}
+		packageName = "$ABAPGIT"
 	}
 	packageName = strings.ToUpper(packageName)
 
@@ -332,11 +327,7 @@ func runInstallAbapGit(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "ZIP not embedded for edition '%s'\n\n", edition)
 		fmt.Fprintf(os.Stderr, "To embed abapGit:\n")
 		fmt.Fprintf(os.Stderr, "1. On a system with abapGit installed, run:\n")
-		if edition == "standalone" {
-			fmt.Fprintf(os.Stderr, "   vsp export '$ABAPGIT' -o abapgit-standalone.zip\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "   vsp export '$ZGIT' -o abapgit-full.zip\n")
-		}
+		fmt.Fprintf(os.Stderr, "   vsp export '$ABAPGIT' -o abapgit-standalone.zip\n")
 		fmt.Fprintf(os.Stderr, "\n2. Place ZIP in embedded/deps/\n")
 		fmt.Fprintf(os.Stderr, "3. Update embedded/deps/embed.go with go:embed directive\n")
 		fmt.Fprintf(os.Stderr, "4. Rebuild vsp\n\n")
@@ -503,8 +494,8 @@ func init() {
 	installZadtVspCmd.Flags().Bool("dry-run", false, "Show what would be deployed without deploying")
 	installZadtVspCmd.Flags().Bool("skip-git-service", false, "Skip ZCL_VSP_GIT_SERVICE even if abapGit is detected")
 
-	installAbapGitCmd.Flags().String("edition", "standalone", "abapGit edition: standalone or full")
-	installAbapGitCmd.Flags().String("package", "", "Target package (default: $ABAPGIT for standalone, $ZGIT for full)")
+	installAbapGitCmd.Flags().String("edition", "standalone", "abapGit edition: standalone (the developer edition is not installable yet, #277)")
+	installAbapGitCmd.Flags().String("package", "", "Target package (default: $ABAPGIT)")
 	installAbapGitCmd.Flags().Bool("dry-run", false, "Show what would be deployed without deploying")
 
 	// Install subcommands

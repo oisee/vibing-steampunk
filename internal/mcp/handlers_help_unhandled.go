@@ -88,7 +88,7 @@ func getUnhandledErrorMessage(action, objectType, objectName string) string {
 		sb.WriteString("Types (params.type): system_info, components, connection, features,\n")
 		sb.WriteString("list_transports, get_transport, create_transport, release_transport, delete_transport,\n")
 		sb.WriteString("get_user_transports, get_transport_info, git_types, git_export, install_zadt_vsp,\n")
-		sb.WriteString("install_abapgit, install_dummy_test, list_dependencies, deploy_zip,\n")
+		sb.WriteString("list_dependencies, deploy_zip,\n")
 		sb.WriteString("save_to_file, deploy_from_file, rename\n")
 		sb.WriteString("Use SAP(action=\"help\", target=\"system\") for examples.")
 	case "delete":

@@ -335,14 +335,13 @@ src/
 
 ---
 
-## Install/Setup Tools (3 tools) - NEW v2.17.0
+## Install/Setup Tools - NEW v2.17.0
 
 Deploy VSP components and dependencies to SAP systems via ADT.
 
 | Tool | Description | Mode |
 |------|-------------|------|
 | `InstallZADTVSP` | Deploy ZADT_VSP WebSocket handler (6 ABAP objects) | Focused |
-| `InstallAbapGit` | Deploy abapGit from embedded ZIP (standalone or dev edition) | Focused |
 | `ListDependencies` | List available dependencies for installation | Focused |
 
 **InstallZADTVSP Parameters:**
@@ -350,10 +349,8 @@ Deploy VSP components and dependencies to SAP systems via ADT.
 - `skip_git_service` - Skip Git service if no abapGit (default: auto-detected)
 - `check_only` - Only check prerequisites, don't deploy
 
-**InstallAbapGit Parameters:**
-- `edition` - `standalone` (single program) or `dev` (full packages)
-- `package` - Target package (default: `$ABAPGIT` or `$ZGIT_DEV`)
-- `check_only` - Only show deployment plan
+**abapGit:** install is CLI-only (standalone edition) for now: `vsp install abapgit --edition standalone`.
+The MCP install tool is being rebuilt (#277); the developer edition is not installable yet.
 
 **Architecture:**
 ```
@@ -364,8 +361,8 @@ embedded/
 │   └── embed.go
 │
 └── deps/           # Dependencies (abapGit ZIP format)
-    ├── abapgit-standalone.zip  # Placeholder
-    ├── abapgit-dev.zip         # Placeholder
+    ├── abapgit-standalone.zip  # Embedded standalone ZABAPGIT
+    ├── abapgit-full.zip        # Empty placeholder (#277)
     └── embed.go                # Unzip + deploy logic
 ```
 

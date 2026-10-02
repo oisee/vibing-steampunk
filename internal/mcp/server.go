@@ -523,7 +523,7 @@ func (s *Server) requireActiveAMDPSession() *mcp.CallToolResult {
 // - handlers_ui5.go: UI5ListApps, UI5GetApp, etc.
 // - handlers_git.go: GitTypes, GitExport
 // - handlers_report.go: RunReport, GetVariants, etc.
-// - handlers_install.go: InstallZADTVSP, InstallAbapGit, etc.
+// - handlers_install.go: InstallZADTVSP, ListDependencies, DeployZip
 // - handlers_transport.go: ListTransports, GetTransport, etc.
 //
 // Tool registration is in:

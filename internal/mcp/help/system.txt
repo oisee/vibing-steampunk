@@ -74,11 +74,11 @@ Git/abapGit:
 
 Install tools:
   SAP(action="system", params={"type": "install_zadt_vsp"})
-  SAP(action="system", params={"type": "install_abapgit"})
-  SAP(action="system", params={"type": "install_dummy_test"})
   SAP(action="system", params={"type": "list_dependencies"})
   SAP(action="system", params={"type": "deploy_zip", "source": "abapgit-standalone", "package": "$ZGIT"})
       deploy_zip and deploy_from_file take "timeout" (seconds) for the whole call.
+  abapGit install is CLI-only for now (vsp install abapgit --edition standalone);
+  the MCP install tool is being rebuilt (#277).
 
 File operations:
   SAP(action="system", params={"type": "deploy_from_file", "file_path": "/path/to/file.prog.abap", "package_name": "$TMP"})

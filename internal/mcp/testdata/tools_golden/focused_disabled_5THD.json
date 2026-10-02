@@ -2019,64 +2019,6 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
-      "description": "Deploy abapGit to SAP system from embedded ZIP. Supports standalone (single program) or developer edition (full package structure). Parses abapGit-format ZIP and deploys via WriteSource.",
-      "inputSchema": {
-        "properties": {
-          "check_only": {
-            "description": "Only check prerequisites and show deployment plan without deploying (default: false)",
-            "type": "boolean"
-          },
-          "edition": {
-            "description": "Edition to install: 'standalone' (single program ZABAPGIT) or 'dev' (full $ZGIT_DEV packages). Default: standalone",
-            "type": "string"
-          },
-          "package": {
-            "description": "Target package name. Default: $ABAPGIT for standalone, $ZGIT_DEV for dev edition",
-            "type": "string"
-          }
-        },
-        "required": [],
-        "type": "object"
-      },
-      "name": "InstallAbapGit"
-    },
-    "handler": "github.com/oisee/vibing-steampunk/internal/mcp.(*Server).handleInstallAbapGit-fm"
-  },
-  {
-    "tool": {
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true
-      },
-      "description": "Test tool that creates a simple interface and class to verify the Install* workflow (create, lock, update, unlock, activate, verify). Uses package $ZADT_INSTALL_TEST.",
-      "inputSchema": {
-        "properties": {
-          "check_only": {
-            "description": "Only check prerequisites without deploying (default: false)",
-            "type": "boolean"
-          },
-          "cleanup": {
-            "description": "Delete test objects after verification (default: false)",
-            "type": "boolean"
-          }
-        },
-        "required": [],
-        "type": "object"
-      },
-      "name": "InstallDummyTest"
-    },
-    "handler": "github.com/oisee/vibing-steampunk/internal/mcp.(*Server).handleInstallDummyTest-fm"
-  },
-  {
-    "tool": {
-      "annotations": {
-        "readOnlyHint": false,
-        "destructiveHint": true,
-        "idempotentHint": false,
-        "openWorldHint": true
-      },
       "description": "Deploy ZADT_VSP WebSocket handler to SAP system. Creates package and deploys 6 ABAP objects (interface + 5 classes) that enable WebSocket debugging, RFC calls, and abapGit export. After deployment, manual SAPC and SICF setup is required.",
       "inputSchema": {
         "properties": {
@@ -2108,7 +2050,7 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
-      "description": "List available dependency packages that can be installed via InstallAbapGit. Shows abapGit editions and other optional dependencies.",
+      "description": "List embedded dependency packages (abapGit editions and other optional dependencies) and whether each is available for DeployZip or `vsp install abapgit`.",
       "inputSchema": {
         "properties": {},
         "required": [],
