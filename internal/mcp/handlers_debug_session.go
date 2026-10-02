@@ -94,6 +94,12 @@ func (s *Server) statefulADTTransport() (saprfc.ADTTransport, error) {
 	if s.config.InsecureSkipVerify {
 		opts = append(opts, adt.WithInsecureSkipVerify())
 	}
+	// The debug session is its own connection; it carries the server's pin.
+	if s.adtClient != nil {
+		if pin, _, _ := s.adtClient.IdentityStatus(); pin != nil {
+			opts = append(opts, adt.WithExpect(*pin))
+		}
+	}
 	user, password := s.config.Username, s.config.Password
 	if len(s.config.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(s.config.Cookies))

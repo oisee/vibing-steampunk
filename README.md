@@ -1112,6 +1112,14 @@ The headline changes are in the **"New in the last three releases"** callout at 
 
 **Moved out:** the ABAP transpilers (`vsp compile`) now live in [ABAPiti](https://github.com/oisee/abapiti).
 
+**New:** `--expect SID[.CLIENT][/USER]` (or `SAP_EXPECT`, or `"expect"` on a
+`.vsp.json` system) pins where vsp may work, e.g. `--expect A4H.001/DEVELOPER`.
+A configured user that differs is refused at startup, before any logon. On
+the first request, vsp asks the system for its SID, client and user and
+refuses everything when they differ. `SAP()` shows `pinned: A4H.001/DEVELOPER ✓`.
+Without a pin, nothing changes and no extra request is sent. The server's
+startup log and `vsp config show` now say where the logon came from.
+
 **Platforms:** six binaries: linux-amd64, linux-arm64, darwin-amd64,
 darwin-arm64, windows-amd64 and windows-arm64. `vsp-linux-386`,
 `vsp-linux-arm` and `vsp-windows-386` are no longer built. On those platforms,
@@ -1898,6 +1906,44 @@ vsp -v slim '$ZDEMO'      # 0.01 s — [cache] 28 hits, 0 misses
 Something changed on the system by someone else within the TTL is the one
 case the cache cannot see; delete the file, or wait it out.
 
+### Pin the system, client and user (`--expect`)
+
+```bash
+vsp --expect A4H.001/DEVELOPER          # SID.CLIENT/USER
+export SAP_EXPECT=A4H.001               # or SID.CLIENT, or just SID
+```
+
+In `.vsp.json`, put it on a system: `"expect": "A4H.001/DEVELOPER"`.
+
+A pin turns a connection that lands in the wrong place into a clear refusal:
+
+- **Before any logon**, the configured user and client are compared with the
+  pin. A different user (for example, a stale `SAP_USER` in the shell) is
+  refused at startup, so its password never reaches SAP and never counts
+  toward a lock.
+- **On the first request**, vsp asks the system for its SID, client and user
+  (`/sap/bc/adt/core/http/systeminformation`; on older releases T000 and the
+  transport organizer). If they differ, vsp refuses that request and every
+  later one: `connected to B4H.001 as DEVELOPER, expected A4H.001/DEVELOPER`.
+  A cookie or SSO session's user is known only then, so it is checked then.
+- **If SAP refuses the password** during that check (401), vsp does not
+  retry, then or on any later request: one wrong password costs one failed
+  logon.
+- **After a re-authentication** (SSO refresh, reloaded cookie file), the new
+  session is checked again before the work that triggered it is retried.
+- **Classic RFC and the ZADT_VSP WebSocket** follow the same pin. An RFC user
+  that contradicts it (`rfc_user`, `--rfc-user` or a per-call `user`) never
+  dials the gateway. After RFC logon, `RFC_SYSTEM_INFO` must report the pinned
+  SID before any other call. A WebSocket opens only once the pin is confirmed.
+
+`SAP()` shows the result (`pinned A4H.001/DEVELOPER ✓`). Without a pin,
+nothing changes and no extra request is sent.
+
+The MCP server takes its logon from flags and `SAP_*` only, not from
+`.vsp.json`. Its startup log names the source (`SAP logon: user DEVELOPER
+from SAP_USER (shell environment)`), and `vsp config show` lists the sources
+for the server and for CLI subcommands.
+
 ### .env File
 ```bash
 # .env (auto-loaded from current directory)
@@ -1912,6 +1958,7 @@ SAP_PASSWORD=secret
 | `--user` | `SAP_USER` | Username |
 | `--password` | `SAP_PASSWORD` | Password |
 | `--client` | `SAP_CLIENT` | Client (default: 001) |
+| `--expect` | `SAP_EXPECT` | Pin `SID[.CLIENT][/USER]`; refuse to work anywhere else (see above) |
 | `--mode` | `SAP_MODE` | `hyperfocused` (recommended), `focused`, or `expert` |
 | `--cookie-file` | `SAP_COOKIE_FILE` | Netscape cookie file |
 | `--sso` | `SAP_SSO` | Browser SSO; re-captures the session when it expires |

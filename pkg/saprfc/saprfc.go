@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/oisee/open-rfc-go/rfc"
+
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
 // Params is a resolved RFC destination.
@@ -25,6 +27,12 @@ type Params struct {
 	User     string
 	Password Secret
 	Language string
+
+	// Expect is the identity pin (see adt.IdentityPin). With one, Open
+	// refuses a logon user or client that contradicts it before dialling,
+	// and after logon refuses a system whose RFC_SYSTEM_INFO names another
+	// SID. Nil: no check and no extra call.
+	Expect *adt.IdentityPin
 }
 
 // Secret is a string that will not print itself. A logon password reaches a log
@@ -68,6 +76,9 @@ type Input struct {
 	SysnrFlag string
 	PortFlag  int
 	UserFlag  string
+
+	// Expect is carried into Params.Expect.
+	Expect *adt.IdentityPin
 }
 
 // Resolve turns an Input into RFC destination parameters.
@@ -120,6 +131,7 @@ func Resolve(in Input) (Params, error) {
 		User:     user,
 		Password: Secret(password),
 		Language: lang[:1],
+		Expect:   in.Expect,
 	}, nil
 }
 
@@ -133,6 +145,49 @@ func Open(ctx context.Context, p Params) (*rfc.Client, error) {
 // server-side on purpose — a debugger listener holds its conversation for as
 // long as it waits, and the client must not give up before the server does.
 func OpenWithTimeout(ctx context.Context, p Params, timeout time.Duration) (*rfc.Client, error) {
+	// The identity pin, before dialling: an RFC user or client that is not
+	// the pinned one (an rfc_user, --rfc-user or a per-call user) never logs on.
+	if p.Expect != nil {
+		if err := p.Expect.CheckConfigured(p.User, p.Client); err != nil {
+			return nil, fmt.Errorf("RFC logon: %w", err)
+		}
+	}
+	c, err := dialRFC(ctx, p, timeout)
+	if err != nil || p.Expect == nil {
+		return c, err
+	}
+	// After logon, before any other call: the gateway may belong to another
+	// system (another host or instance than the pin's). The logon itself
+	// fixes client and user; RFC_SYSTEM_INFO says which system this is.
+	sid, err := rfcSystemID(ctx, c)
+	if err != nil {
+		closeRFC(ctx, c)
+		return nil, fmt.Errorf("identity pin %s: RFC_SYSTEM_INFO after logon failed, nothing else was called: %w", p.Expect, err)
+	}
+	id := adt.Identity{SID: strings.ToUpper(strings.TrimSpace(sid)), Client: p.Client, User: strings.ToUpper(p.User), Source: "RFC_SYSTEM_INFO"}
+	if err := p.Expect.Check(id); err != nil {
+		closeRFC(ctx, c)
+		return nil, fmt.Errorf("RFC %s:%d: %w", p.Host, p.Port, err)
+	}
+	return c, nil
+}
+
+// The steps of a pinned logon, as variables so a test can stand in for a
+// gateway.
+var (
+	dialRFC     = openRFC
+	rfcSystemID = func(ctx context.Context, c *rfc.Client) (string, error) {
+		r, err := c.Call(ctx, "RFC_SYSTEM_INFO", nil)
+		if err != nil {
+			return "", err
+		}
+		m, _ := r.Get("RFCSI_EXPORT").(map[string]any)
+		return str(m["RFCSYSID"]), nil
+	}
+	closeRFC = func(ctx context.Context, c *rfc.Client) { _ = c.Close(ctx) }
+)
+
+func openRFC(ctx context.Context, p Params, timeout time.Duration) (*rfc.Client, error) {
 	n, _ := strconv.Atoi(p.Sysnr)
 	return rfc.Open(ctx, rfc.Destination{
 		OperationTimeout: timeout,

@@ -363,6 +363,14 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 	in.SysnrFlag = getStringParam(params, "sysnr")
 	in.UserFlag = getStringParam(params, "user")
 	in.PortFlag = intParam(params, "port", 0)
+	// The server's identity pin goes with the RFC logon: a per-call user that
+	// contradicts it is refused before dialling, and the system behind the
+	// gateway is checked after logon (saprfc.OpenWithTimeout).
+	if s.adtClient != nil {
+		if pin, _, _ := s.adtClient.IdentityStatus(); pin != nil {
+			in.Expect = pin
+		}
+	}
 
 	// The credentials above belong to this server's own gateway. A per-call
 	// host or sysnr that points anywhere else would carry them there, to a

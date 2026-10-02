@@ -99,6 +99,10 @@ type Config struct {
 	// UNLOCK or DELETE a stateless probe without the cookie retires the context.
 	// Also enabled via SAP_PROXY_CONTEXTID_GUARD=true.
 	ProxyContextIDGuard bool
+
+	// Expect pins the system, client and user this client must find on the
+	// other end (see identity.go). Nil: no pin, no preflight, no extra request.
+	Expect *IdentityPin
 }
 
 // Option is a functional option for configuring the ADT client.

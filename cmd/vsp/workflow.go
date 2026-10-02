@@ -291,6 +291,9 @@ func createADTClient() *adt.Client {
 	if len(cfg.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(cfg.Cookies))
 	}
+	if cfg.Expect != nil {
+		opts = append(opts, adt.WithExpect(*cfg.Expect))
+	}
 
 	return adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
 }

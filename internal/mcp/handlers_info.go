@@ -51,6 +51,9 @@ func (s *Server) handleInfo(ctx context.Context) *mcp.CallToolResult {
 	default:
 		fmt.Fprintf(&b, "  connection   NOT usable — %s\n", reason)
 	}
+	// The pin's verdict, which the reachability check above has just produced
+	// when there is a pin: it was the first request.
+	b.WriteString(s.identityLine())
 
 	if cs := s.adtClient.CacheStats(); cs.Enabled {
 		fmt.Fprintf(&b, "  cache        %d hits, %d misses, %d entries (GET answers kept %s, dropped on any write)\n", cs.Hits, cs.Misses, cs.Entries, cs.TTL)

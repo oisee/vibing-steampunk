@@ -56,6 +56,12 @@ type BaseWebSocketClient struct {
 	// closed is closed when the connection ends.
 	closed    chan struct{}
 	closeOnce sync.Once
+
+	// verify runs before the connection is opened: the identity pin of the
+	// ADT client this WebSocket was built from (see websocket_for_client.go).
+	// The WebSocket logs on by itself, to the same URL, client and user, so
+	// the pin that client verified covers it. Nil: nothing to check.
+	verify func(ctx context.Context) error
 }
 
 // ErrWebSocketClosed is returned to a waiter whose connection ended.
@@ -195,6 +201,11 @@ func NewBaseWebSocketClient(baseURL, client, user, password string, insecure boo
 
 // Connect establishes WebSocket connection to ZADT_VSP.
 func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
+	if c.verify != nil {
+		if err := c.verify(ctx); err != nil {
+			return err
+		}
+	}
 	c.mu.Lock()
 	if c.conn != nil {
 		c.mu.Unlock()

@@ -202,6 +202,18 @@ func statefulADTTransport(params *systemParams, timeout time.Duration) (saprfc.A
 	if params.Insecure {
 		opts = append(opts, adt.WithInsecureSkipVerify())
 	}
+	// The identity pin, as on every other client built from these params.
+	basicUser := params.User
+	if params.UsesSSO() || params.CookieFile != "" || params.CookieString != "" {
+		basicUser = ""
+	}
+	pinOpt, err := cliPinOption(params, basicUser)
+	if err != nil {
+		return nil, err
+	}
+	if pinOpt != nil {
+		opts = append(opts, pinOpt)
+	}
 
 	// Browser single sign-on, checked before the static cookie sources for the
 	// same reason as everywhere else — and needed here most of all. A debug

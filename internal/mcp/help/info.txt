@@ -18,3 +18,14 @@ gives it away.
 
 The instance number is derived from the port (80NN, 443NN, 5NN00), not
 read from the system, and the card says so.
+
+When the server is pinned (--expect A4H.001/DEVELOPER, SAP_EXPECT, or
+"expect" in .vsp.json), the card adds a line for the pin:
+
+  pinned       A4H.001/DEVELOPER ✓         the system confirmed it
+  pinned       A4H.001/DEVELOPER ✗ ...     refused, and why; every other
+                                           call is refused the same way
+
+The pin is checked on the first request to SAP, before anything else is
+sent, and a configured user that differs from it is refused at startup
+without a logon.

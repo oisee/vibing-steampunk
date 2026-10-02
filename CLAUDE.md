@@ -111,6 +111,7 @@ func (s *Server) handleX(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 ## Working against a live SAP system
 
 - **Use only the dedicated test user, and print it first.** A `.vsp.json` in the working directory beats environment variables. Run live CLI checks from an empty scratch directory and confirm the user with `vsp config show` before the first request.
+- **Pin the target with `--expect SID.CLIENT/USER`** (or `SAP_EXPECT`). A wrong user is then refused before any logon, and a wrong system or client before anything else is sent.
 - **Stop at the first 401. Don't retry.** A wrong password for a real user counts against `login/fails_to_user_lock`, and one sweep locks the account for a day. After that, even the correct password returns 401.
 - **To provoke a failure, use these in order:**
   1. a client-side refusal (`--block-free-sql`, `--disallowed-ops`);

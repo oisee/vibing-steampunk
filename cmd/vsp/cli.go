@@ -74,6 +74,11 @@ type systemParams struct {
 
 	Cache     bool
 	CachePath string
+
+	// Expect pins the identity (SID[.CLIENT][/USER]); ExpectSource says where
+	// the pin came from. Empty: no pin, and no preflight request.
+	Expect       string
+	ExpectSource string
 }
 
 // resolveSystemParams resolves system parameters from --system flag or env vars.
@@ -127,6 +132,10 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		if err != nil {
 			return nil, err
 		}
+		expect, expectSource := cliExpect(sys.Expect)
+		if expectSource == ".vsp.json" {
+			expectSource = fmt.Sprintf(".vsp.json system %q", effectiveName)
+		}
 
 		return &systemParams{
 			Name:               effectiveName,
@@ -154,6 +163,8 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			BlockFreeSQL:            sys.BlockFreeSQL || envFlag("SAP_BLOCK_FREE_SQL"),
 			Cache:                   sys.Cache,
 			CachePath:               sys.CachePath,
+			Expect:                  expect,
+			ExpectSource:            expectSource,
 		}, nil
 	}
 
@@ -179,6 +190,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 	if err != nil {
 		return nil, err
 	}
+	envExpect, envExpectSource := cliExpect("")
 
 	return &systemParams{
 		URL:                url,
@@ -203,6 +215,8 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		BlockFreeSQL:            envFlag("SAP_BLOCK_FREE_SQL"),
 		Cache:                   cacheEnabled,
 		CachePath:               cachePath,
+		Expect:                  envExpect,
+		ExpectSource:            envExpectSource,
 	}, nil
 }
 
@@ -311,6 +325,21 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 	opts := []adt.Option{
 		adt.WithClient(params.Client),
 		adt.WithLanguage(params.Language),
+	}
+
+	// The identity pin. The user a password logon would send is checked here,
+	// so a wrong one is refused before it ever reaches SAP; a cookie or single
+	// sign-on session has no user name until the system says it.
+	basicUser := params.User
+	if params.UsesSSO() || params.CookieFile != "" || params.CookieString != "" {
+		basicUser = ""
+	}
+	pinOpt, err := cliPinOption(params, basicUser)
+	if err != nil {
+		return nil, err
+	}
+	if pinOpt != nil {
+		opts = append(opts, pinOpt)
 	}
 
 	// Carry the system's declared safety into the client. Without this a
@@ -442,6 +471,10 @@ func getWSClient(ctx context.Context, params *systemParams) (*adt.AMDPWebSocketC
 	noCache.Cache, noCache.CachePath = false, ""
 	client, err := buildClient(&noCache)
 	if err != nil {
+		return nil, err
+	}
+	// The WebSocket logs on by itself; the pin is checked over ADT first.
+	if err := client.VerifyIdentity(ctx); err != nil {
 		return nil, err
 	}
 	wsClient := client.NewAMDPWebSocketClient()

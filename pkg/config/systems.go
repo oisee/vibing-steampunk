@@ -18,6 +18,12 @@ type SystemConfig struct {
 	Language string `json:"language,omitempty"`
 	Insecure bool   `json:"insecure,omitempty"`
 
+	// Expect pins where this system's connection must land, as
+	// SID[.CLIENT][/USER] (e.g. "A4H.001/DEVELOPER"). vsp refuses to work when
+	// the configured user differs, before any logon, and when the system
+	// reports another SID, client or user on the first request.
+	Expect string `json:"expect,omitempty"`
+
 	// Optional CTS correlation attribute (for CR-level grouping, e.g. SAPTEST/ZCR)
 	TransportAttribute string `json:"transport_attribute,omitempty"`
 
@@ -286,6 +292,7 @@ func ExampleConfig() string {
 				URL:             "https://prod.example.com:44300",
 				User:            "READONLY_USER",
 				Client:          "100",
+				Expect:          "PRD.100/READONLY_USER",
 				ReadOnly:        true,
 				AllowedPackages: []string{"Z*", "Y*"},
 			},

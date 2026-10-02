@@ -106,7 +106,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 
 	// Environment variables
 	fmt.Println("Environment Variables (SAP_* / VSP_*):")
-	envVars := []string{"SAP_URL", "SAP_USER", "SAP_CLIENT", "SAP_LANGUAGE", "SAP_INSECURE", "SAP_MODE", "VSP_TRANSPORT_ATTRIBUTE"}
+	envVars := []string{"SAP_URL", "SAP_USER", "SAP_CLIENT", "SAP_LANGUAGE", "SAP_INSECURE", "SAP_MODE", "SAP_EXPECT", "VSP_TRANSPORT_ATTRIBUTE"}
 	hasEnv := false
 	for _, key := range envVars {
 		if val := os.Getenv(key); val != "" {
@@ -177,9 +177,15 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 					cacheStatus = "on"
 				}
 			}
-			fmt.Printf("    %s: %s [%s@%s] pwd:%s attr:%s cache:%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, attrStatus, cacheStatus, marker)
+			expect := ""
+			if sys.Expect != "" {
+				expect = " expect:" + strings.ToUpper(sys.Expect)
+			}
+			fmt.Printf("    %s: %s [%s@%s] pwd:%s attr:%s cache:%s%s%s\n", name, sys.URL, sys.User, sys.Client, pwdStatus, attrStatus, cacheStatus, expect, marker)
 		}
 	}
+
+	printLogonSources(os.Stdout, cfg)
 
 	// MCP config
 	fmt.Println("\nMCP Config (.mcp.json):")

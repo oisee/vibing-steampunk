@@ -541,6 +541,12 @@ func rfcDestinationFor(cmd *cobra.Command) (saprfc.Params, error) {
 	in.SysnrFlag, _ = cmd.Flags().GetString("sysnr")
 	in.PortFlag, _ = cmd.Flags().GetInt("port")
 	in.UserFlag, _ = cmd.Flags().GetString("rfc-user")
+	// The identity pin travels with the destination: Open refuses an RFC
+	// user or client that contradicts it before dialling, and a gateway of
+	// another system after logon.
+	if in.Expect, err = params.pin(); err != nil {
+		return saprfc.Params{}, err
+	}
 
 	dest, err := saprfc.Resolve(in)
 	if err != nil {

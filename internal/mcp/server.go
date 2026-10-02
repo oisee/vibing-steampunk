@@ -79,6 +79,12 @@ type Config struct {
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
 
+	// Expect pins the system, client and user (--expect / SAP_EXPECT /
+	// "expect" in .vsp.json). Nil: no pin, and no preflight request.
+	Expect *adt.IdentityPin
+	// ExpectSource says where the pin came from, for the info card.
+	ExpectSource string
+
 	// Build names the binary, as "v2.52.0 (commit abc1234, built ...)".
 	//
 	// It is a string the caller composes rather than three fields, because the
@@ -205,6 +211,9 @@ func NewServer(cfg *Config) *Server {
 	if cfg.ReauthTimeout > 0 {
 		opts = append(opts, adt.WithReauthTimeout(cfg.ReauthTimeout))
 	}
+	if cfg.Expect != nil {
+		opts = append(opts, adt.WithExpect(*cfg.Expect))
+	}
 
 	// Configure safety settings
 	safety := adt.UnrestrictedSafetyConfig() // Default: unrestricted for backwards compatibility
@@ -299,10 +308,21 @@ func NewServerWithClient(cfg *Config, adtClient *adt.Client) *Server {
 	// Create feature prober
 	featureProber := adt.NewFeatureProber(adtClient, featureConfig, cfg.Verbose)
 
-	// Create MCP server
-	mcpServer := server.NewMCPServer("mcp-abap-adt-go", "1.0.0", mcpServerOptions()...)
+	// Create MCP server. The identity pin is checked ahead of every tool, so
+	// a tool that reaches SAP by another road than the ADT client (WebSocket,
+	// RFC) is held to it too.
+	var s *Server
+	serverOpts := append(mcpServerOptions(), server.WithToolHandlerMiddleware(func(next server.ToolHandlerFunc) server.ToolHandlerFunc {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			if refusal := s.identityRefusal(ctx, req); refusal != nil {
+				return refusal, nil
+			}
+			return next(ctx, req)
+		}
+	}))
+	mcpServer := server.NewMCPServer("mcp-abap-adt-go", "1.0.0", serverOpts...)
 
-	s := &Server{
+	s = &Server{
 		mcpServer:     mcpServer,
 		adtClient:     adtClient,
 		config:        cfg,

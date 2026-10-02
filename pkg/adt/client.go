@@ -47,6 +47,11 @@ func newClient(cfg *Config, transport *Transport) *Client {
 		// The transport keeps stateless requests out of the context a lock
 		// handle is bound to while one is outstanding (see Transport.do).
 		transport.locks = &c.locks
+		// The pin's preflight can fall back to SQL and the transport
+		// organizer, which only the client can ask.
+		if transport.identity != nil {
+			transport.identity.probe = c.probeIdentity
+		}
 	}
 	return c
 }

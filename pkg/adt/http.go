@@ -154,6 +154,12 @@ type Transport struct {
 	// client holds a lock handle. Cookie-file recovery is refused while it
 	// does: reloading would replace the session the lock belongs to.
 	lockOutstanding func() bool
+
+	// identity enforces Config.Expect: nil when nothing is pinned.
+	identity *identityGate
+	// authGen counts changes of the credentials the transport sends (see
+	// credentialsChanged); the identity pin's verdict belongs to one value.
+	authGen atomic.Uint64
 }
 
 // NewTransport creates a new Transport with the given configuration.
@@ -172,6 +178,9 @@ func NewTransportWithClient(cfg *Config, client HTTPDoer) *Transport {
 	}
 	if cfg.Cache {
 		t.cache = newResponseCache(cfg.CacheStore, cfg.CacheTTL)
+	}
+	if cfg.Expect != nil {
+		t.identity = &identityGate{pin: *cfg.Expect}
 	}
 	return t
 }
@@ -213,6 +222,11 @@ type RequestOptions struct {
 	// ends the context it arrives in, which is how a finished lock chain's
 	// context is retired instead of lingering until the session timeout.
 	ReleaseContext bool
+
+	// noBasicAuthRetry returns a 401 on a password logon at once, without the
+	// CSRF refresh and retry: the identity preflight, which must not turn one
+	// wrong password into several failed logons.
+	noBasicAuthRetry bool
 }
 
 // Response wraps an HTTP response with convenience methods.
@@ -395,6 +409,9 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 		// This happens after idle periods when the SAP session expires.
 		// We preserve apiErr so the original path/body is not lost if re-auth itself fails.
 		if resp.StatusCode == http.StatusUnauthorized {
+			if opts.noBasicAuthRetry && t.config.HasBasicAuth() {
+				return nil, apiErr
+			}
 			if err := t.requireSafeReauth(opts, path, apiErr); err != nil {
 				return nil, err
 			}
@@ -1027,6 +1044,9 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	t.cookiesMu.Lock()
 	t.config.Cookies = cloneCookies(cookies)
 	t.cookiesMu.Unlock()
+	// Another session now, perhaps another user's: the identity pin checks it
+	// again before the work that triggered this is retried.
+	t.credentialsChanged()
 	t.setCSRFToken("")
 	t.setSessionID("")
 	// The jar still holds what the expired session's server set — including its
@@ -1036,6 +1056,11 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	if t.cache != nil {
 		t.cache.invalidate()
 	}
+
+	// The token fetch is part of establishing the session, not work: it is
+	// not held to the identity pin (a 401 inside it would otherwise re-enter
+	// this function under reauthMu). The retried request is.
+	reauthCtx = context.WithValue(reauthCtx, preflightKey{}, t)
 
 	// Fetch CSRF token with the new cookies.
 	// Set lastReauth only after CSRF succeeds — if it fails, the next
@@ -1169,6 +1194,7 @@ func (t *Transport) SetCookies(cookies map[string]string) {
 	t.cookiesMu.Lock()
 	defer t.cookiesMu.Unlock()
 	t.config.Cookies = cloneCookies(cookies)
+	t.credentialsChanged()
 }
 
 func cloneCookies(cookies map[string]string) map[string]string {
@@ -1240,6 +1266,11 @@ func stripContextID(req *http.Request) {
 // holds it or waits for it, the stateless one goes isolated at once. Requests
 // into the context wait their turn only as long as their own context lasts.
 func (t *Transport) do(req *http.Request) (*http.Response, error) {
+	// The identity pin, before anything leaves: the first request runs the
+	// preflight, and after a mismatch nothing is sent at all.
+	if err := t.checkIdentity(req.Context()); err != nil {
+		return nil, err
+	}
 	if req.Header.Get("X-sap-adt-sessiontype") == "stateless" {
 		if t.contextGate.tryShared() {
 			if t.contextInFlight.Load() == 0 && (t.locks == nil || !t.locks.present()) {

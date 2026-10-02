@@ -256,6 +256,18 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}
 	cfg.CallTimeout = callTimeout
 
+	// The identity pin, against the configured logon, before any of the
+	// logon flows below can contact SAP: a wrong user or client is refused
+	// here, before a request carries anything anywhere. A browser, SAML or
+	// SSO logon has no user name yet; its user is checked after the preflight.
+	startupSystems, _, _ := config.LoadSystems()
+	userFlag := cmd.Flags().Changed("user")
+	if err := applyServerExpect(cfg, startupSystems, userFlag, interactiveLogon(cmd)); err != nil {
+		// A refusal, not a misspelt flag: the usage text would bury it.
+		cmd.SilenceUsage = true
+		return err
+	}
+
 	// Browser-based SSO authentication (must run before processCookieAuth)
 	if err := processBrowserAuth(cmd); err != nil {
 		return err
@@ -275,6 +287,8 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if err := processCookieAuth(cmd); err != nil {
 		return err
 	}
+
+	logServerLogon(os.Stderr, cfg, startupSystems, userFlag)
 
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "[VERBOSE] Starting vsp server\n")
