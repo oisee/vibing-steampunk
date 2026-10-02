@@ -74,7 +74,10 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string) (string
 	// caller-supplied lock handle is after the LOCK. While this client holds a
 	// lock the lookup is sent stateful, so it joins the lock's context instead
 	// of relying on stateless-request isolation to leave that context alone.
-	results, err := c.searchObjectByType(ctx, objectName, "", 20, c.lockOutstanding())
+	// "Holds a lock" is the transport's record (lockPresent), not the
+	// keep-alive's thirty-minute window: a lock kept alive longer than that is
+	// still the lock this write needs.
+	results, err := c.searchObjectByType(ctx, objectName, "", 20, c.lockPresent())
 	if err != nil {
 		return "", err
 	}

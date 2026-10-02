@@ -435,15 +435,17 @@ func TestHandleDeleteObject_SuppliedHandleKeepsLookupInLockSession(t *testing.T)
 		dumpDeleteCalls(t, calls)
 		t.Fatal("expected a LOCK followed by a DELETE")
 	}
-	between := calls[lockAt+1 : delAt]
-	if len(between) == 0 {
-		dumpDeleteCalls(t, calls)
-		t.Fatal("expected the package lookup between LOCK and DELETE")
-	}
-	for _, c := range between {
+	searches := 0
+	for _, c := range calls[lockAt+1 : delAt] {
+		if strings.Contains(c.path, "/informationsystem/search") {
+			searches++
+		}
 		if c.sessionType != "stateful" {
 			t.Errorf("request between LOCK and DELETE is not stateful: %s", c)
 		}
+	}
+	if searches == 0 {
+		t.Error("expected the package lookup (informationsystem/search) between LOCK and DELETE")
 	}
 	if t.Failed() {
 		dumpDeleteCalls(t, calls)

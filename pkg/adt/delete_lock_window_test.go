@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- DELETE inside the lock window (issue #238) ---
@@ -153,5 +154,57 @@ func TestPrepareDelete_StillEnforcesOperationPolicy(t *testing.T) {
 	if _, err := client.PrepareDelete(context.Background(),
 		"/sap/bc/adt/programs/programs/ZDEMO_RO", ""); err == nil {
 		t.Fatal("PrepareDelete accepted a delete in read-only mode")
+	}
+}
+
+// A caller-supplied handle whose lock is older than the keep-alive window
+// (lockWindowMaxAge) is still a lock the transport isolates for, up to
+// lockRecordMaxAge. DeleteObject's package lookup must then still go out in
+// the lock's stateful session, not fall back to stateless after thirty minutes.
+func TestDeleteObject_SuppliedHandlePastKeepAliveWindowKeepsLookupStateful(t *testing.T) {
+	const objURL = "/sap/bc/adt/programs/programs/zdemo_del"
+	rec := &adtRecorder{}
+	client := newStubbedClient(t, rec, deleteRoute(objURL, "ZDEMO_DEL", "$TMP"),
+		WithAllowedPackages("$TMP"))
+	ctx := context.Background()
+
+	lock, err := client.LockObject(ctx, objURL, "MODIFY")
+	if err != nil {
+		t.Fatalf("LockObject: %v", err)
+	}
+	// Age the lock past the keep-alive window, short of the transport's record.
+	client.locks.mu.Lock()
+	for h := range client.locks.open {
+		client.locks.open[h] = time.Now().Add(-lockWindowMaxAge - time.Minute)
+	}
+	client.locks.mu.Unlock()
+	if client.lockOutstanding() || !client.locks.present() {
+		t.Fatal("setup: want the lock outside the keep-alive window but still present")
+	}
+
+	if err := client.DeleteObject(ctx, objURL, lock.LockHandle, ""); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+
+	calls := rec.snapshot()
+	delAt := indexOfCall(calls, isDelete)
+	lockAt := lastIndexBefore(calls, delAt, isLock)
+	if delAt < 0 || lockAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("expected a LOCK followed by a DELETE")
+	}
+	searchAt := -1
+	for i := lockAt + 1; i < delAt; i++ {
+		if isSearch(calls[i]) {
+			searchAt = i
+		}
+	}
+	if searchAt < 0 {
+		dumpCalls(t, calls)
+		t.Fatal("no package lookup between LOCK and DELETE")
+	}
+	if calls[searchAt].sessionType != "stateful" {
+		t.Errorf("package lookup between LOCK and DELETE is not stateful: %s", calls[searchAt])
+		dumpCalls(t, calls)
 	}
 }
