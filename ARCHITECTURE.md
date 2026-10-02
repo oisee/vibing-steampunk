@@ -309,7 +309,7 @@ vibing-steampunk/
 │   ├── cookie-auth-implementation-guide.md  # Cookie auth research
 │   └── *.md                     # Discovery and analysis documents
 │
-├── build/                       # Cross-platform binaries (9 targets)
+├── build/                       # Cross-platform binaries (6 targets)
 ├── Makefile                     # Build automation
 └── .gitignore                   # Excludes .env, cookies.txt, .mcp.json
 ```

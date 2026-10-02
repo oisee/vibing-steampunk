@@ -82,7 +82,7 @@ gh run watch                                   # or: gh run list --workflow rele
 gh release view vX.Y.Z --json name,isDraft,assets -q '.name, .isDraft, [.assets[].name]'
 ```
 
-- 12 assets: 9 `vsp-*`, `checksums.txt`, `LICENSE`, `NOTICE`; not a draft.
+- 9 assets: 6 `vsp-*`, `checksums.txt`, `LICENSE`, `NOTICE`; not a draft.
 - Read the run's warnings: README section missing, CHANGELOG section missing,
   darwin-amd64 not executed. None blocks; each is something to know.
 - One look from outside, on your own platform:
