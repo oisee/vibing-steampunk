@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every test value is assembled at run time: this file is scanned like any
@@ -594,5 +595,246 @@ func TestRunPushEvent(t *testing.T) {
 	g("commit", "-qm", "fine")
 	if code, _, errs := runScan(t, env, "-root", root, "-all", "-push", main+".."+g("rev-parse", "HEAD")); code != exitClean {
 		t.Fatalf("clean push: exit %d\n%s", code, errs)
+	}
+}
+
+// --- control bytes cannot blind the history scan ----------------------------
+
+// The history scan once read `git log -p --format=%x01%h%x02%B%x03` and split
+// on those bytes; a commit message or an added line holding one of them moved
+// the cut, and what came after it was never matched. Each case below must be a
+// hit: every byte of every message and every added line is read, whatever
+// control bytes it holds.
+
+const hiddenHost = "sapbox.corp.invalid"
+
+func TestRunControlBytesInCommitMessage(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, msg := range map[string]string{
+		"only an identifier after 0x01": "\x01" + hiddenHost,
+		"only an identifier after 0x02": "\x02" + hiddenHost,
+		"only an identifier after 0x03": "\x03" + hiddenHost,
+		"0x01 in the subject":           "fix\x01 seen on " + hiddenHost,
+		"0x03 then the identifier":      "fix the logon\n\nsee \x03" + hiddenHost + "\n",
+		"0x01 0x02 0x03 around it":      "subject\n\n\x01abc\x02" + hiddenHost + "\x03tail\n",
+		"0x03 0x02 0x01 reversed":       "subject\n\n\x03\x02\x01" + hiddenHost + "\n",
+		"other control bytes":           "\x1b[2K\x7f\x04\x1f\x0b\x0c" + hiddenHost,
+		"a fake patch in the message":   "subject\n\n\x03\ndiff --git a/x b/x\n+++ b/x\n@@ -0,0 +1 @@\n+" + hiddenHost + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, "a.md"), "clean\n")
+			g("add", ".")
+			mf := filepath.Join(t.TempDir(), "msg")
+			writeFile(t, mf, msg)
+			g("commit", "-q", "--cleanup=verbatim", "-F", mf)
+			for _, mode := range [][]string{{"-diff", "main"}, {"-range", "main..topic"}} {
+				code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+				if code != exitHits || !strings.Contains(out, "(message)") || !strings.Contains(out, "identifier/host") {
+					t.Fatalf("%v: exit %d, want a message hit\n%s%s", mode, code, out, errs)
+				}
+				if strings.Contains(out, "sapbox") {
+					t.Errorf("output prints the value:\n%s", out)
+				}
+			}
+		})
+	}
+}
+
+// A NUL cannot be written into a message with `git commit`, but a commit
+// object can carry one (hash-object --literally), and a pushed object is what
+// is published.
+func TestRunNULInCommitMessage(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: " + hiddenHost}
+	tree := g("rev-parse", "HEAD^{tree}")
+	parent := g("rev-parse", "HEAD")
+	obj := "tree " + tree + "\nparent " + parent + "\nauthor t <t@example.invalid> 0 +0000\ncommitter t <t@example.invalid> 0 +0000\n\n" +
+		"subject\x00\x01" + hiddenHost + "\n"
+	f := filepath.Join(t.TempDir(), "commit")
+	writeFile(t, f, obj)
+	sha := g("hash-object", "-t", "commit", "-w", "--literally", f)
+	g("update-ref", "refs/heads/topic", sha)
+	code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic")
+	if code != exitHits || !strings.Contains(out, "(message)") {
+		t.Fatalf("exit %d, want a message hit\n%s%s", code, out, errs)
+	}
+}
+
+// A message in another encoding, declared in the commit's encoding header, is
+// what readers see recoded to UTF-8: a listed non-ASCII name written as
+// ISO-8859-1 bytes must still be a hit.
+func TestRunEncodedCommitMessage(t *testing.T) {
+	root, g := newRepo(t)
+	env := map[string]string{envList: "host: sapbøx.corp.invalid"}
+	tree := g("rev-parse", "HEAD^{tree}")
+	parent := g("rev-parse", "HEAD")
+	obj := "tree " + tree + "\nparent " + parent + "\nauthor t <t@example.invalid> 0 +0000\ncommitter t <t@example.invalid> 0 +0000\n" +
+		"encoding ISO-8859-1\n\nseen on sapb\xf8x.corp.invalid\n"
+	f := filepath.Join(t.TempDir(), "commit")
+	writeFile(t, f, obj)
+	sha := g("hash-object", "-t", "commit", "-w", "--literally", f)
+	g("update-ref", "refs/heads/topic", sha)
+	code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic")
+	if code != exitHits || !strings.Contains(out, "(message)") {
+		t.Fatalf("exit %d, want a message hit\n%s%s", code, out, errs)
+	}
+}
+
+// A path is published as much as the bytes in it: a listed name that appears
+// only in a file name is a hit, whether the file is added, or renamed away
+// from (the old name) or to (the new name), and in the tree mode.
+func TestRunIdentifierInPath(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	t.Run("added", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		writeFile(t, filepath.Join(root, "notes", hiddenHost+".md"), "clean\n")
+		g("add", ".")
+		g("commit", "-qm", "add notes")
+		for _, mode := range [][]string{{"-diff", "main"}, {"-range", "main..topic"}, {"-all"}} {
+			code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+			if code != exitHits || !strings.Contains(out, "(paths)") || !strings.Contains(out, "identifier/host") {
+				t.Fatalf("%v: exit %d, want a path hit\n%s%s", mode, code, out, errs)
+			}
+			if strings.Contains(out, "sapbox") {
+				t.Errorf("output prints the value:\n%s", out)
+			}
+		}
+	})
+	t.Run("added then deleted", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		writeFile(t, filepath.Join(root, hiddenHost+".log"), "clean\n")
+		g("add", ".")
+		g("commit", "-qm", "add")
+		g("rm", "-q", hiddenHost+".log")
+		g("commit", "-qm", "remove")
+		if code, out, errs := runScan(t, env, "-root", root, "-diff", "main"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a path hit\n%s%s", code, out, errs)
+		}
+	})
+	t.Run("renamed to", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		g("mv", "README.md", hiddenHost+".md")
+		g("commit", "-qm", "rename")
+		if code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a path hit\n%s%s", code, out, errs)
+		}
+	})
+	t.Run("renamed from", func(t *testing.T) {
+		root, g := newRepo(t)
+		writeFile(t, filepath.Join(root, hiddenHost+".md"), "some content that stays the same\n")
+		g("add", ".")
+		g("commit", "-qm", "base two")
+		g("checkout", "-qb", "topic")
+		g("mv", hiddenHost+".md", "notes.md")
+		g("commit", "-qm", "rename it away")
+		if code, out, errs := runScan(t, env, "-root", root, "-range", "main..topic"); code != exitHits || !strings.Contains(out, "(paths)") {
+			t.Fatalf("exit %d, want a hit on the old name\n%s%s", code, out, errs)
+		}
+	})
+}
+
+// A path is never printed when it could carry what the scan looks for: a
+// listed name in a file name, with a newline in it or not, is reported as a
+// hit (not a failure), and neither stdout nor stderr holds the name.
+func TestRunPathNeverPrinted(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, file := range map[string]string{
+		"newline in the name":  "notes\n" + hiddenHost + ".txt",
+		"tab and the name":     "x\t" + hiddenHost,
+		"plain name, dirty IP": hiddenHost + ".md",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, file), "seen on "+ip("10", "9", "8", "7")+"\n")
+			g("add", ".")
+			g("commit", "-qm", "add")
+			for _, mode := range [][]string{{"-diff", "main"}, {"-all"}, {"-range", "main..topic"}} {
+				code, out, errs := runScan(t, env, append([]string{"-root", root}, mode...)...)
+				if strings.Contains(out+errs, "sapbox") {
+					t.Fatalf("%v: the output prints the name\n%s%s", mode, out, errs)
+				}
+				if code != exitHits || !strings.Contains(out, "identifier/host") || !strings.Contains(out, "private-ip") {
+					t.Fatalf("%v: exit %d, want the path hit and the content hit\n%s%s", mode, code, out, errs)
+				}
+			}
+		})
+	}
+}
+
+// An object over the size limit fails closed, and promptly: the scanner must
+// not wait on a git that is still writing the object it refused.
+func TestRunOversizedObjectsFailClosedPromptly(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	big := strings.Repeat("x", maxFileSize+1<<20)
+	within := func(t *testing.T, args ...string) (int, string) {
+		t.Helper()
+		type res struct {
+			code int
+			errs string
+		}
+		done := make(chan res, 1)
+		go func() {
+			code, _, errs := runScan(t, env, args...)
+			done <- res{code, errs}
+		}()
+		select {
+		case r := <-done:
+			return r.code, r.errs
+		case <-time.After(60 * time.Second):
+			t.Fatalf("%v: still running after 60 s", args)
+		}
+		return 0, ""
+	}
+	t.Run("message", func(t *testing.T) {
+		root, g := newRepo(t)
+		g("checkout", "-qb", "topic")
+		mf := filepath.Join(t.TempDir(), "msg")
+		writeFile(t, mf, "subject\n\n"+big+"\n")
+		g("commit", "-q", "--allow-empty", "-F", mf)
+		if code, errs := within(t, "-root", root, "-range", "main..topic"); code != exitClosed || !strings.Contains(errs, "limit") {
+			t.Fatalf("exit %d, want %d\n%s", code, exitClosed, errs)
+		}
+	})
+	t.Run("blob", func(t *testing.T) {
+		root, g := newRepo(t)
+		writeFile(t, filepath.Join(root, "big.txt"), big)
+		g("add", ".")
+		g("commit", "-qm", "big")
+		if code, errs := within(t, "-root", root, "-all"); code != exitClosed || !strings.Contains(errs, "limit") {
+			t.Fatalf("exit %d, want %d\n%s", code, exitClosed, errs)
+		}
+	})
+}
+
+func TestRunControlBytesInAddedLine(t *testing.T) {
+	env := map[string]string{envList: "host: " + hiddenHost}
+	for name, content := range map[string]string{
+		"0x01 before":       "one\n\x01" + hiddenHost + "\n",
+		"0x02 before":       "one\n\x02" + hiddenHost + "\n",
+		"0x03 before":       "one\n\x03" + hiddenHost + "\n",
+		"all three":         "one\nx\x01\x02\x03" + hiddenHost + "\n",
+		"around":            "one\n\x01" + hiddenHost + "\x03\n",
+		"other control":     "one\n\x1b\x7f\x04" + hiddenHost + "\n",
+		"NUL (binary file)": "one\n\x00\x01" + hiddenHost + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, g := newRepo(t)
+			g("checkout", "-qb", "topic")
+			writeFile(t, filepath.Join(root, "capture.txt"), content)
+			g("add", ".")
+			g("commit", "-qm", "add")
+			g("rm", "-q", "capture.txt")
+			g("commit", "-qm", "remove it again")
+			code, out, errs := runScan(t, env, "-root", root, "-diff", "main")
+			if code != exitHits || !strings.Contains(out, "capture.txt:") || !strings.Contains(out, "identifier/host") {
+				t.Fatalf("exit %d, want a hit in capture.txt\n%s%s", code, out, errs)
+			}
+		})
 	}
 }
