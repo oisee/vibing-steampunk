@@ -62,7 +62,7 @@ func DeploySource(ctx context.Context, client Client, objectType, name, source s
 	if err != nil {
 		return result, err
 	}
-	if resultErr := adt.WriteSourceResultError(result); resultErr != nil {
+	if resultErr := adt.WriteSourceResultReport(result); resultErr != nil {
 		return result, resultErr
 	}
 	for _, syntax := range result.SyntaxErrors {

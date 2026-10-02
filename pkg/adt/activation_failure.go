@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // An activation that fails does not fail the request. SAP answers 200 with a
@@ -187,20 +189,38 @@ func (r *ActivationResult) MessageLines(limit int) []string {
 	return lines
 }
 
+// activationFieldLimit caps one field of a displayed message, in runes. The
+// count cap of MessageLines means little if one message can run to megabytes.
+const activationFieldLimit = 300
+
+// displayField makes s safe to show on one line: every control character
+// (newlines included) becomes a space, runs of spaces collapse, and anything
+// past limit runes is cut with "…".
+func displayField(s string, limit int) string {
+	s = strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}), " ")
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	runes := []rune(s)
+	return strings.TrimSpace(string(runes[:limit])) + "…"
+}
+
 // messageLine renders one message the way MessageLines shows it.
 func (m ActivationResultMessage) messageLine() string {
-	typ := strings.TrimSpace(m.Type)
+	typ := displayField(m.Type, 8)
 	if typ == "" {
 		typ = "?"
 	}
-	where := strings.TrimSpace(m.ObjDescr)
+	where := displayField(m.ObjDescr, activationFieldLimit)
 	if line := m.SourceLine(); line > 0 {
 		if where != "" {
 			where += ", "
 		}
 		where += "line " + strconv.Itoa(line)
 	}
-	text := strings.TrimSpace(m.ShortText)
+	text := displayField(m.ShortText, activationFieldLimit)
 	if text == "" {
 		text = "(SAP gave no text for this message)"
 	}

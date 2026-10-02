@@ -11,7 +11,7 @@ import (
 // result.Activation and dropped on the way to the error it printed. abapGit's
 // standalone install on a system missing some of the types it names failed
 // that way with 176 messages and no word of any of them.
-func TestWriteSourceResultErrorCarriesActivationMessages(t *testing.T) {
+func TestWriteSourceResultReportCarriesActivationMessages(t *testing.T) {
 	activation := &ActivationResult{Success: false}
 	activation.Messages = append(activation.Messages, ActivationResultMessage{
 		Type: "W", ShortText: "Activation was cancelled.",
@@ -31,11 +31,16 @@ func TestWriteSourceResultErrorCarriesActivationMessages(t *testing.T) {
 		Activation: activation,
 	}
 
-	err := WriteSourceResultError(result)
+	err := WriteSourceResultReport(result)
 	if err == nil {
 		t.Fatal("a refused activation must be an error")
 	}
 	text := err.Error()
+	// The verdict alone stays short: a caller that sends the structured
+	// result as well (MCP) must not send the messages twice.
+	if verdict := WriteSourceResultError(result).Error(); strings.Contains(verdict, "ZIF_UNKNOWN") {
+		t.Errorf("the verdict repeats the messages: %s", verdict)
+	}
 	for _, want := range []string{
 		"Activation failed - check activation messages",
 		"[E] Program ZABAPGIT_STANDALONE, line 101: Type ZIF_UNKNOWN_1 is unknown.",
@@ -80,5 +85,28 @@ func TestActivationMessageLines(t *testing.T) {
 	// No messages at all: still a reason, never silence.
 	if lines := (&ActivationResult{}).MessageLines(20); len(lines) != 1 || !strings.Contains(lines[0], "SAP named no reason") {
 		t.Fatalf("a refusal without messages must still say something, got %v", lines)
+	}
+}
+
+// One message cannot defeat the count cap by its size, nor break the
+// one-message-per-line shape with line breaks or terminal control codes.
+func TestActivationMessageFieldsAreBoundedAndOneLine(t *testing.T) {
+	huge := strings.Repeat("x", 100000)
+	r := &ActivationResult{Messages: []ActivationResultMessage{
+		{Type: "E", ObjDescr: "Program\nZX\x1b[31m", ShortText: "first\r\nsecond\tthird " + huge},
+	}}
+	lines := r.MessageLines(20)
+	if len(lines) != 1 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	line := lines[0]
+	if strings.ContainsAny(line, "\n\r\t\x1b") {
+		t.Fatalf("control characters survived: %q", line[:80])
+	}
+	if !strings.HasPrefix(line, "[E] Program ZX [31m: first second third x") {
+		t.Fatalf("got %q", line[:80])
+	}
+	if n := len([]rune(line)); n > 2*activationFieldLimit+20 || !strings.HasSuffix(line, "…") {
+		t.Fatalf("a %d-rune message was not cut: %d runes, ends %q", len(huge), n, line[len(line)-10:])
 	}
 }

@@ -303,7 +303,7 @@ func deployProgram(ctx context.Context, client *adt.Client, obj deps.DeploymentO
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }
 
 func deployClass(ctx context.Context, client *adt.Client, obj deps.DeploymentObject, packageName string) error {
@@ -322,7 +322,7 @@ func deployClass(ctx context.Context, client *adt.Client, obj deps.DeploymentObj
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }
 
 func deployInterface(ctx context.Context, client *adt.Client, obj deps.DeploymentObject, packageName string) error {
@@ -337,7 +337,7 @@ func deployInterface(ctx context.Context, client *adt.Client, obj deps.Deploymen
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }
 
 func deployDDLS(ctx context.Context, client *adt.Client, obj deps.DeploymentObject, packageName string) error {
@@ -352,7 +352,7 @@ func deployDDLS(ctx context.Context, client *adt.Client, obj deps.DeploymentObje
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }
 
 func deployBDEF(ctx context.Context, client *adt.Client, obj deps.DeploymentObject, packageName string) error {
@@ -367,7 +367,7 @@ func deployBDEF(ctx context.Context, client *adt.Client, obj deps.DeploymentObje
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }
 
 func deploySRVD(ctx context.Context, client *adt.Client, obj deps.DeploymentObject, packageName string) error {
@@ -382,5 +382,5 @@ func deploySRVD(ctx context.Context, client *adt.Client, obj deps.DeploymentObje
 	if err != nil {
 		return err
 	}
-	return adt.WriteSourceResultError(result)
+	return adt.WriteSourceResultReport(result)
 }

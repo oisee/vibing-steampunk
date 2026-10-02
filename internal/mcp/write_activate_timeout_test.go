@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,10 +16,20 @@ import (
 // slowWriteSAP stands in for SAP over WriteSource and Activate. Everything is
 // answered at once except the two requests that take long on a real system:
 // the PUT of the source and the activation, which answer after delay.
-func slowWriteSAP(t *testing.T, delay time.Duration) (*httptest.Server, *atomic.Int32) {
+func slowWriteSAP(t *testing.T, delay time.Duration) (*httptest.Server, *writeCounts) {
 	t.Helper()
-	var puts atomic.Int32
+	return writeSAP(t, delay, `<?xml version="1.0" encoding="utf-8"?><chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist">`+
+		`<chkl:properties checkExecuted="true" activationExecuted="true" generationExecuted="true"/></chkl:messages>`)
+}
+
+// writeSAP is slowWriteSAP answering the activation with activationXML.
+func writeSAP(t *testing.T, delay time.Duration, activationXML string) (*httptest.Server, *writeCounts) {
+	t.Helper()
+	counts := &writeCounts{}
+	puts, unlocks := &counts.puts, &counts.unlocks
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the body, so the server notices a client that gives up.
+		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("X-CSRF-Token", "t")
 		slow := func() bool {
 			select {
@@ -40,11 +51,13 @@ func slowWriteSAP(t *testing.T, delay time.Duration) (*httptest.Server, *atomic.
 				return
 			}
 			w.Header().Set("Content-Type", "application/xml")
-			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?><chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist">` +
-				`<chkl:properties checkExecuted="true" activationExecuted="true" generationExecuted="true"/></chkl:messages>`))
+			_, _ = w.Write([]byte(activationXML))
 		case strings.Contains(r.URL.Path, "/checkruns"):
 			w.Header().Set("Content-Type", "application/vnd.sap.adt.checkmessages+xml")
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><chkl:messages xmlns:chkl="http://www.sap.com/adt/checklist"/>`))
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "UNLOCK":
+			unlocks.Add(1)
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
 			w.Header().Set("Content-Type", "application/vnd.sap.as+xml")
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
@@ -61,7 +74,13 @@ func slowWriteSAP(t *testing.T, delay time.Duration) (*httptest.Server, *atomic.
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &puts
+	return srv, counts
+}
+
+// writeCounts is what the fake saw complete.
+type writeCounts struct {
+	puts    atomic.Int32
+	unlocks atomic.Int32
 }
 
 // The PUT of a source and its activation used to be cut at the client's
@@ -81,7 +100,7 @@ func TestWriteAndActivateHonourCallTimeout(t *testing.T) {
 	}
 
 	t.Run("WriteSource under the server budget", func(t *testing.T) {
-		srv, puts := slowWriteSAP(t, delay)
+		srv, counts := slowWriteSAP(t, delay)
 		s := newServer(srv.URL, 30*time.Second)
 		res, err := s.handleWriteSource(context.Background(), newRequest(map[string]any{
 			"object_type": "PROG", "name": "ZDEMO_SLOW", "source": "REPORT zdemo_slow.", "mode": "update",
@@ -92,8 +111,8 @@ func TestWriteAndActivateHonourCallTimeout(t *testing.T) {
 		if text := resultText(res); res.IsError || strings.Contains(text, "Timeout") || strings.Contains(text, "timed out") {
 			t.Fatalf("the write was cut at the per-request timeout despite its budget: %s", text)
 		}
-		if puts.Load() != 1 {
-			t.Fatalf("the source PUT completed %d times, want 1", puts.Load())
+		if counts.puts.Load() != 1 {
+			t.Fatalf("the source PUT completed %d times, want 1", counts.puts.Load())
 		}
 	})
 
@@ -141,4 +160,56 @@ func TestWriteAndActivateHonourCallTimeout(t *testing.T) {
 			t.Fatalf("want the per-request timeout to end an activation without a budget, got %s", text)
 		}
 	})
+}
+
+// A budget that runs out inside the lock window must not strand the lock.
+// LOCK is answered at once, the PUT outlasts the call's budget, and the
+// deferred UNLOCK used to run on the call's ended context: it failed before a
+// byte was sent and the ENQUEUE stayed on the object (#166). It must still
+// reach SAP.
+func TestWriteSourceReleasesTheLockWhenTheBudgetRunsOut(t *testing.T) {
+	srv, counts := slowWriteSAP(t, 5*time.Second)
+	s := &Server{config: &Config{}, adtClient: adt.NewClient(srv.URL, "u", "p")}
+	res, err := s.handleWriteSource(context.Background(), newRequest(map[string]any{
+		"object_type": "PROG", "name": "ZDEMO_SLOW", "source": "REPORT zdemo_slow.", "mode": "update",
+		"timeout": 0.5,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := resultText(res); !res.IsError || !strings.Contains(text, "WriteSource timed out") {
+		t.Fatalf("want a timeout, got %s", text)
+	}
+	if counts.puts.Load() != 0 {
+		t.Fatal("the PUT was meant to be cut off by the budget")
+	}
+	if counts.unlocks.Load() == 0 {
+		t.Fatal("the lock taken before the PUT was never released: no UNLOCK reached SAP")
+	}
+}
+
+// The MCP WriteSource failure hands over the structured result as JSON, which
+// holds every activation message. Its first line is the verdict only: the
+// messages must not come twice.
+func TestWriteSourceFailureSendsActivationMessagesOnce(t *testing.T) {
+	const msg = "Type ZIF_NOWHERE is unknown."
+	srv, _ := writeSAP(t, 0, `<?xml version="1.0" encoding="utf-8"?>`+
+		`<chkl:messages xmlns:chkl="http://www.sap.com/abapxml/checklist">`+
+		`<chkl:properties checkExecuted="true" activationExecuted="false" generationExecuted="false"/>`+
+		`<msg objDescr="Program ZDEMO_SLOW" type="E" line="3" href=""><shortText><txt>`+msg+`</txt></shortText></msg>`+
+		`</chkl:messages>`)
+	s := &Server{config: &Config{}, adtClient: adt.NewClient(srv.URL, "u", "p")}
+	res, err := s.handleWriteSource(context.Background(), newRequest(map[string]any{
+		"object_type": "PROG", "name": "ZDEMO_SLOW", "source": "REPORT zdemo_slow.", "mode": "update",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := resultText(res)
+	if !res.IsError || !strings.HasPrefix(text, "WriteSource failed: Activation failed") {
+		t.Fatalf("want the activation verdict, got %s", text)
+	}
+	if n := strings.Count(text, msg); n != 1 {
+		t.Fatalf("the activation message appears %d times, want once (in the JSON):\n%s", n, text)
+	}
 }

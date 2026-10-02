@@ -37,6 +37,49 @@ func (c *Client) releaseLockAfterFailure(ctx context.Context, objectURL, lockHan
 	return c.UnlockObject(releaseCtx, objectURL, lockHandle)
 }
 
+// heldLock is a lock a write workflow holds from its LOCK to its own UNLOCK
+// before activation. The workflow defers releaseOnReturn right after the LOCK
+// and calls unlock where it means to release; any return in between, the
+// ones caused by its context running out included, releases the lock on a
+// detached, bounded context and says so when that fails too.
+//
+// The deferred release used to be c.UnlockObject(ctx, ...) on the workflow's
+// own ctx, with its error dropped. Under a call budget that is the common
+// failure: the PUT outlasts the budget, ctx is done, and the UNLOCK never
+// leaves the process — the ENQUEUE stays on the object and nobody is told.
+type heldLock struct {
+	c         *Client
+	objectURL string
+	handle    string
+	released  bool
+}
+
+func (c *Client) holdLock(objectURL, handle string) *heldLock {
+	return &heldLock{c: c, objectURL: objectURL, handle: handle}
+}
+
+// unlock is the workflow's own UNLOCK. When it fails the lock counts as still
+// held, so releaseOnReturn tries again on a context of its own.
+func (h *heldLock) unlock(ctx context.Context) error {
+	if err := h.c.UnlockObject(ctx, h.objectURL, h.handle); err != nil {
+		return err
+	}
+	h.released = true
+	return nil
+}
+
+// releaseOnReturn releases the lock if the workflow did not, and appends the
+// stranded-lock advice to *message when that release fails.
+func (h *heldLock) releaseOnReturn(ctx context.Context, message *string) {
+	if h.released {
+		return
+	}
+	h.released = true
+	if err := h.c.releaseLockAfterFailure(ctx, h.objectURL, h.handle); err != nil && message != nil {
+		*message += " — " + strandedLockAdvice(h.objectURL, err)
+	}
+}
+
 // failureCleanupContext keeps best-effort cleanup independent from the failed
 // operation's cancellation while still bounding how long that cleanup may run.
 // It deliberately keeps the caller's values, including mutation-policy marks.
