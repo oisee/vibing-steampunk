@@ -209,27 +209,38 @@ type preflightKey struct{}
 // checkIdentity runs before every request the transport sends. Without a pin
 // it does nothing at all.
 func (t *Transport) checkIdentity(ctx context.Context) error {
+	_, err := t.checkIdentityGen(ctx)
+	return err
+}
+
+// inPreflight reports whether ctx belongs to this transport's own preflight.
+func (t *Transport) inPreflight(ctx context.Context) bool {
+	owner, _ := ctx.Value(preflightKey{}).(*Transport)
+	return owner == t
+}
+
+// checkIdentityGen is checkIdentity that also returns the authentication
+// generation the verdict holds for: the credentials of exactly that
+// generation are the ones that may be sent.
+func (t *Transport) checkIdentityGen(ctx context.Context) (uint64, error) {
 	g := t.identity
-	if g == nil {
-		return nil
-	}
-	if owner, _ := ctx.Value(preflightKey{}).(*Transport); owner == t {
-		return nil
+	if g == nil || t.inPreflight(ctx) {
+		return t.authGen.Load(), nil
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.refused != nil {
-		return g.refused
+		return 0, g.refused
 	}
 	if g.verified != nil && g.verifiedGen == t.authGen.Load() {
-		return nil
+		return g.verifiedGen, nil
 	}
 	g.verified = nil
 	// The configured logon first: this costs nothing and keeps a wrong user
 	// from ever reaching SAP.
 	if err := g.pin.CheckConfigured(t.config.Username, t.config.Client); err != nil {
 		g.refused = err
-		return err
+		return 0, err
 	}
 	probe := g.probe
 	if probe == nil {
@@ -246,7 +257,7 @@ func (t *Transport) checkIdentity(ctx context.Context) error {
 		if err != nil {
 			if IsIdentityMismatch(err) {
 				g.refused = err
-				return err
+				return 0, err
 			}
 			// A password SAP refused is refused again on every retry, and each
 			// one counts toward locking the account: the first 401 is final.
@@ -254,29 +265,112 @@ func (t *Transport) checkIdentity(ctx context.Context) error {
 			if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnauthorized && t.config.HasBasicAuth() {
 				g.refused = fmt.Errorf("identity pin %s: SAP refused the logon of %s (401); not retried, because every failed logon counts toward locking the account — fix the password and restart: %w",
 					g.pin, strings.ToUpper(t.config.Username), err)
-				return g.refused
+				return 0, g.refused
 			}
 			// A network failure proves nothing about who is on the other end;
 			// the next request asks again.
-			return fmt.Errorf("identity pin %s: preflight failed, nothing else was sent: %w", g.pin, err)
+			return 0, fmt.Errorf("identity pin %s: preflight failed, nothing else was sent: %w", g.pin, err)
 		}
 		if err := g.pin.Check(*id); err != nil {
 			g.refused = err
-			return err
+			return 0, err
 		}
 		if t.authGen.Load() == gen {
 			g.verified, g.verifiedGen = id, gen
-			return nil
+			return gen, nil
 		}
 	}
-	return fmt.Errorf("identity pin %s: the session kept changing during the preflight; nothing else was sent", g.pin)
+	return 0, fmt.Errorf("identity pin %s: the session kept changing during the preflight; nothing else was sent", g.pin)
 }
 
 // credentialsChanged says the transport now authenticates differently: new
-// cookies, a refreshed SSO session, a reloaded cookie file. The identity pin
-// checks the new session before the next request goes out.
+// cookies, a refreshed SSO session, a reloaded cookie file, a session cookie
+// the server reissued. The identity pin checks the new session before the next
+// request goes out. Callers hold cookiesMu for writing, so a reader holding it
+// sees cookies and generation change together.
 func (t *Transport) credentialsChanged() {
 	t.authGen.Add(1)
+}
+
+// admit holds req to the identity pin: the pin must hold for the current
+// credentials, and req must carry exactly those. A request built before the
+// credentials changed (a reauth, a cookie the preflight's answer reissued) has
+// its configured cookies replaced with the verified ones before it goes out.
+// Without a pin it does nothing.
+func (t *Transport) admit(req *http.Request) error {
+	if t.identity == nil || t.inPreflight(req.Context()) {
+		return nil
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		gen, err := t.checkIdentityGen(req.Context())
+		if err != nil {
+			return err
+		}
+		if t.syncCookies(req, gen) {
+			return nil
+		}
+	}
+	return fmt.Errorf("identity pin %s: the session kept changing; nothing was sent", t.identity.pin)
+}
+
+// syncCookies puts the configured cookies of generation gen on req, and
+// reports false when the credentials have moved past gen.
+func (t *Transport) syncCookies(req *http.Request, gen uint64) bool {
+	t.cookiesMu.RLock()
+	defer t.cookiesMu.RUnlock()
+	if t.authGen.Load() != gen {
+		return false
+	}
+	if len(t.config.Cookies) == 0 {
+		return true
+	}
+	cookies := req.Cookies()
+	seen := map[string]bool{}
+	changed := false
+	for _, c := range cookies {
+		seen[c.Name] = true
+		if v, ok := t.config.Cookies[c.Name]; ok && c.Value != "" && v != c.Value {
+			c.Value, changed = v, true
+		}
+	}
+	for name, value := range t.config.Cookies {
+		if !seen[name] {
+			cookies, changed = append(cookies, &http.Cookie{Name: name, Value: value}), true
+		}
+	}
+	if changed {
+		req.Header.Del("Cookie")
+		for _, c := range cookies {
+			req.AddCookie(c)
+		}
+	}
+	return true
+}
+
+// verifiedCredentials is what a WebSocket built from c logs on with: the pin
+// is verified, and the credentials are those of the generation it was verified
+// for, read together under the lock that every change takes.
+func (c *Client) verifiedCredentials(ctx context.Context) (user, password string, cookies map[string]string, err error) {
+	t := c.transport
+	for attempt := 0; attempt < 3; attempt++ {
+		gen, verr := t.checkIdentityGen(ctx)
+		if verr != nil {
+			return "", "", nil, verr
+		}
+		t.cookiesMu.RLock()
+		if t.authGen.Load() == gen {
+			if len(t.config.Cookies) > 0 {
+				cookies = cloneCookies(t.config.Cookies)
+				user = c.config.Username
+			} else {
+				user, password = c.config.Username, c.config.Password
+			}
+			t.cookiesMu.RUnlock()
+			return user, password, cookies, nil
+		}
+		t.cookiesMu.RUnlock()
+	}
+	return "", "", nil, fmt.Errorf("identity pin %s: the session kept changing; the WebSocket was not opened", t.identity.pin)
 }
 
 // IdentityStatus reports the pin and its verdict so far: pinned is false when

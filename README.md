@@ -1934,7 +1934,11 @@ A pin turns a connection that lands in the wrong place into a clear refusal:
 - **Classic RFC and the ZADT_VSP WebSocket** follow the same pin. An RFC user
   that contradicts it (`rfc_user`, `--rfc-user` or a per-call `user`) never
   dials the gateway. After RFC logon, `RFC_SYSTEM_INFO` must report the pinned
-  SID before any other call. A WebSocket opens only once the pin is confirmed.
+  SID before any other call. A WebSocket opens only once the pin is confirmed,
+  and with the session that was verified. Under a pin, a 401 on the WebSocket
+  upgrade is not retried with the password.
+- **A session cookie the server reissues** counts as a credential change, so
+  the pin checks the new session before any work is sent with it.
 
 `SAP()` shows the result (`pinned A4H.001/DEVELOPER ✓`). Without a pin,
 nothing changes and no extra request is sent.

@@ -1043,10 +1043,10 @@ func (t *Transport) callReauthFunc(ctx context.Context) error {
 	// error before this point leaves the old session untouched.
 	t.cookiesMu.Lock()
 	t.config.Cookies = cloneCookies(cookies)
-	t.cookiesMu.Unlock()
 	// Another session now, perhaps another user's: the identity pin checks it
 	// again before the work that triggered this is retried.
 	t.credentialsChanged()
+	t.cookiesMu.Unlock()
 	t.setCSRFToken("")
 	t.setSessionID("")
 	// The jar still holds what the expired session's server set — including its
@@ -1104,6 +1104,9 @@ func (t *Transport) adoptServerCookies(resp *http.Response) {
 		}
 		if held, ok := t.config.Cookies[c.Name]; ok && held != c.Value {
 			t.config.Cookies[c.Name] = c.Value
+			// What is sent from now on changed: the identity pin's verdict
+			// was for the cookie this one replaced.
+			t.credentialsChanged()
 			if t.config.Verbose {
 				fmt.Fprintf(os.Stderr, "[AUTH] server reissued %s — using the new one\n", c.Name)
 			}
@@ -1268,7 +1271,7 @@ func stripContextID(req *http.Request) {
 func (t *Transport) do(req *http.Request) (*http.Response, error) {
 	// The identity pin, before anything leaves: the first request runs the
 	// preflight, and after a mismatch nothing is sent at all.
-	if err := t.checkIdentity(req.Context()); err != nil {
+	if err := t.admit(req); err != nil {
 		return nil, err
 	}
 	if req.Header.Get("X-sap-adt-sessiontype") == "stateless" {

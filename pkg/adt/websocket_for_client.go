@@ -36,7 +36,9 @@ func (c *Client) NewDebugWebSocketClient() *DebugWebSocketClient {
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
-	ws.verify = c.VerifyIdentity
+	if c.transport != nil && c.transport.identity != nil {
+		ws.credentials = c.verifiedCredentials
+	}
 	return ws
 }
 
@@ -48,6 +50,8 @@ func (c *Client) NewAMDPWebSocketClient() *AMDPWebSocketClient {
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
-	ws.verify = c.VerifyIdentity
+	if c.transport != nil && c.transport.identity != nil {
+		ws.credentials = c.verifiedCredentials
+	}
 	return ws
 }

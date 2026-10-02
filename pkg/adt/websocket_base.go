@@ -57,11 +57,12 @@ type BaseWebSocketClient struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 
-	// verify runs before the connection is opened: the identity pin of the
-	// ADT client this WebSocket was built from (see websocket_for_client.go).
-	// The WebSocket logs on by itself, to the same URL, client and user, so
-	// the pin that client verified covers it. Nil: nothing to check.
-	verify func(ctx context.Context) error
+	// credentials, when set, runs before the connection is opened: the ADT
+	// client this WebSocket was built from verifies its identity pin and
+	// hands over the credentials of exactly the session it verified (see
+	// websocket_for_client.go), which replace the ones copied at
+	// construction. Set only for a pinned client; nil: nothing to check.
+	credentials func(ctx context.Context) (user, password string, cookies map[string]string, err error)
 }
 
 // ErrWebSocketClosed is returned to a waiter whose connection ended.
@@ -201,8 +202,12 @@ func NewBaseWebSocketClient(baseURL, client, user, password string, insecure boo
 
 // Connect establishes WebSocket connection to ZADT_VSP.
 func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
-	if c.verify != nil {
-		if err := c.verify(ctx); err != nil {
+	pinned := c.credentials != nil
+	var user, password string
+	var cookies map[string]string
+	if pinned {
+		var err error
+		if user, password, cookies, err = c.credentials(ctx); err != nil {
 			return err
 		}
 	}
@@ -210,6 +215,9 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	if c.conn != nil {
 		c.mu.Unlock()
 		return fmt.Errorf("already connected")
+	}
+	if pinned {
+		c.user, c.password, c.cookies = user, password, cookies
 	}
 
 	// Build WebSocket URL
@@ -241,6 +249,14 @@ func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
 	// Try 2: If 401, pre-authenticate to get session cookies first.
 	// Some SAP systems reject standalone Basic Auth on WebSocket upgrade
 	// but accept it on regular HTTP to issue session cookies.
+	//
+	// Not under an identity pin: that second attempt sends the password again,
+	// and if the first 401 was the password's fault, it is a second failed
+	// logon toward the lock. Pinned, the first 401 is final.
+	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized && !c.hasCookieAuth() && pinned {
+		c.mu.Unlock()
+		return fmt.Errorf("WebSocket upgrade refused (HTTP 401) for %s; not retried with the password, because every failed logon counts toward locking the account (an identity pin is set). If this system refuses basic auth on the WebSocket upgrade, use a cookie or SSO session: %w", strings.ToUpper(c.user), err)
+	}
 	if err != nil && resp != nil && resp.StatusCode == http.StatusUnauthorized && !c.hasCookieAuth() {
 		jar, _ := cookiejar.New(nil)
 		preAuthClient := newPreAuthHTTPClient(jar, tlsConfig)
