@@ -125,8 +125,14 @@ func (s *Server) handleRunReport(ctx context.Context, request mcp.CallToolReques
 			sb.WriteString(spoolResult.Output)
 			sb.WriteString("\n")
 		}
-	} else {
+	} else if len(jobStatus.ALV) == 0 {
 		sb.WriteString("No spool output produced.\n")
+	}
+
+	if len(jobStatus.ALV) > 0 {
+		sb.WriteString("ALV Output:\n")
+		sb.Write(jobStatus.ALV)
+		sb.WriteString("\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -268,6 +274,7 @@ func (s *Server) handleRunReportAsync(ctx context.Context, request mcp.CallToolR
 			"job_status":   jobStatus.Status,
 			"spool_ids":    jobStatus.SpoolIDs,
 			"spool_output": spoolOutput.String(),
+			"alv":          jobStatus.ALV,
 		}
 		s.asyncTasksMu.Unlock()
 	}()

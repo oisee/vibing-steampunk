@@ -10,7 +10,7 @@ import (
 func (s *Server) registerReportTools(shouldRegister func(string) bool) {
 	if shouldRegister("RunReport") {
 		s.mcpServer.AddTool(mcp.NewTool("RunReport",
-			mcp.WithDescription("Execute an ABAP selection-screen report with parameters or variant. Runs as background job and returns spool output. Requires ZADT_VSP WebSocket handler deployed."),
+			mcp.WithDescription("Execute an ABAP selection-screen report with parameters or variant. Runs as background job and returns spool output, plus the rows as JSON for ALV reports. Requires ZADT_VSP WebSocket handler deployed."),
 			mcp.WithString("report",
 				mcp.Description("Report program name (e.g., 'RFITEMGL', 'ZREPORT_TEST')"),
 				mcp.Required(),

@@ -40,6 +40,9 @@ var ZclVspAmdpService string
 //go:embed zcl_vsp_git_service.clas.abap
 var ZclVspGitService string
 
+//go:embed zvsp_report_runner.prog.abap
+var ZvspReportRunner string
+
 //go:embed zcl_vsp_report_service.clas.abap
 var ZclVspReportService string
 
@@ -132,6 +135,13 @@ func GetObjects() []ObjectInfo {
 			Optional:    true, // Requires abapGit on SAP system
 			// The APC handler creates it dynamically, so ZADT_VSP runs without it.
 			RequiresAbapGit: true,
+		},
+		{
+			Type:        "PROG",
+			Name:        "ZVSP_REPORT_RUNNER",
+			Source:      ZvspReportRunner,
+			Description: "Report job step - SUBMIT with ALV capture",
+			Optional:    false,
 		},
 		{
 			Type:        "CLAS",
