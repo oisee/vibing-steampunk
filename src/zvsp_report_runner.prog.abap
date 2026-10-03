@@ -101,6 +101,16 @@ START-OF-SELECTION.
       ENDIF.
       CLEAR lt_fields.
       LOOP AT go_line->components INTO gs_comp.
+        CASE gs_comp-type_kind.
+          WHEN cl_abap_typedescr=>typekind_table   OR cl_abap_typedescr=>typekind_struct1
+            OR cl_abap_typedescr=>typekind_struct2 OR cl_abap_typedescr=>typekind_oref
+            OR cl_abap_typedescr=>typekind_dref.
+            " ALV colour and style columns are tables. A string template on a
+            " table, structure or reference ends the job with
+            " STRG_ILLEGAL_DATA_TYPE, which CATCH cannot stop.
+            APPEND |"{ gs_comp-name }":null| TO lt_fields.
+            CONTINUE.
+        ENDCASE.
         ASSIGN COMPONENT gs_comp-name OF STRUCTURE <gs_row> TO FIELD-SYMBOL(<gv_field>).
         CHECK sy-subrc = 0.
         TRY.
