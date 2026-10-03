@@ -22,6 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	openrfc "github.com/oisee/open-rfc-go/rfc"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/mcpext"
 )
 
 // AsyncTask represents a background task status.
@@ -64,10 +65,16 @@ type Server struct {
 	asyncTasks   map[string]*AsyncTask
 	asyncTasksMu sync.RWMutex
 	asyncTaskID  int64
+
+	// extActions are the extensions' actions by "action TYPE" (extensions.go).
+	extActions map[string]extAction
 }
 
 // Config holds MCP server configuration.
 type Config struct {
+	// Extensions add SAP() actions after the built-in ones (pkg/mcpext).
+	Extensions []mcpext.Extension
+
 	// SAP connection settings
 	BaseURL            string
 	Username           string
@@ -329,6 +336,7 @@ func NewServerWithClient(cfg *Config, adtClient *adt.Client) *Server {
 		featureProber: featureProber,
 		featureConfig: featureConfig,
 		asyncTasks:    make(map[string]*AsyncTask),
+		extActions:    indexExtensions(cfg.Extensions),
 	}
 
 	// Register tools based on mode, disabled groups, and granular tool config
