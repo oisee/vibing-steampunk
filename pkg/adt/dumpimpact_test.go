@@ -82,6 +82,26 @@ func TestUnitForFrame(t *testing.T) {
 			ok:    true,
 		},
 		{
+			// In a namespace SAPL and L come after it: /DEMO/SAPLLOG is the
+			// pool of /DEMO/LOG, not a program called /DEMO/SAPLLOG.
+			name:  "a namespaced FUNCTION frame resolves to the module",
+			frame: DumpFrame{Type: "FUNCTION", Program: "/DEMO/SAPLLOG", Include: "/DEMO/LLOGU01", Name: "/DEMO/LOG_WRITE"},
+			want:  repoUnit{"/DEMO/LOG_WRITE", "FUNC", "/sap/bc/adt/functions/groups/%2Fdemo%2Flog/fmodules/%2Fdemo%2Flog_write"},
+			ok:    true,
+		},
+		{
+			name:  "a namespaced function pool is never a program",
+			frame: DumpFrame{Type: "EVENT", Program: "/DEMO/SAPLLOG"},
+			want:  repoUnit{"/DEMO/LOG", "FUGR", "/sap/bc/adt/functions/groups/%2Fdemo%2Flog"},
+			ok:    true,
+		},
+		{
+			name:  "a namespaced pool include names its group",
+			frame: DumpFrame{Type: "FORM", Program: "/DEMO/LLOGF01", Include: "/DEMO/LLOGF01"},
+			want:  repoUnit{"/DEMO/LOG", "FUGR", "/sap/bc/adt/functions/groups/%2Fdemo%2Flog"},
+			ok:    true,
+		},
+		{
 			name:  "a namespaced name is escaped, not lost",
 			frame: DumpFrame{Type: "EVENT", Program: "/DEMO/ZREPORT"},
 			want:  repoUnit{"/DEMO/ZREPORT", "PROG", "/sap/bc/adt/programs/programs/%2Fdemo%2Fzreport"},
