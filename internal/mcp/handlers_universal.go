@@ -32,7 +32,7 @@ SAP(action="analyze", params={"type": "check_boundaries", "package": "$ZDEV"})
 SAP(action="rfc", params={"op":"info"}) — classic RFC to the same system (gateway, not ADT)
 SAP(action="rfc", target="Z_DOUBLE", params={"op":"call","args":{"N":21}}) — call any RFC-enabled FM
 SAP(action="rfc", target="STFC_CONNECTION") — describe an FM interface (JSON Schema)
-  rfc ops: info, ping, describe, call, search, read_table, run (report as background job: spool, job log), job; the server's own gateway only (param user picks the logon)
+  rfc ops: info, ping, describe, call, search, read_table, run (report as background job: spool, job log), job (poll one another process started: status, start_stamp, and its log so far, param joblog=false to omit); the server's own gateway only (param user picks the logon)
 SAP(action="help") — full docs; SAP(action="help", target="tips") — best practices`),
 		mcp.WithString("action",
 			mcp.Required(),

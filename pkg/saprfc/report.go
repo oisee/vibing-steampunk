@@ -3,6 +3,7 @@ package saprfc
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,9 +35,20 @@ type JobRun struct {
 	StatusFor string        `json:"status_text,omitempty"` // human reading of that letter
 	Spool     string        `json:"spool,omitempty"`       // spool list, when requested and available
 	JobLog    []JobLogEntry `json:"job_log,omitempty"`     // job log, when requested
-	// Started is set once BAPI_XBP_JOB_START_ASAP succeeded: from then on an
-	// error says nothing about the job, which may be queued or running.
+	// Started says the job has begun. op "run" sets it once
+	// BAPI_XBP_JOB_START_ASAP succeeded: from then on an error says nothing
+	// about the job, which may be queued or running. op "job" is a poller in
+	// another process and has no such flag to inherit, so it derives Started
+	// from the TBTCO status letter instead. The two are not the same fact --
+	// code that needs "has it begun" must read the letter (JobStarted).
 	Started bool `json:"started"`
+	// StartStamp is TBTCO's start stamp (STRTDATE/STRTTIME) exactly as the
+	// system wrote it, "YYYYMMDD HHMMSS". The poller reads it alongside the
+	// status letter and it is the system's own clock, not an instant in this
+	// process's zone, so it is carried verbatim and never parsed into a time --
+	// a typed instant would be read as UTC and be wrong by the offset. Empty
+	// when the job has not begun, or on a system that leaves the columns blank.
+	StartStamp string `json:"start_stamp,omitempty"`
 	// SpoolTruncated says Spool holds only the first part of the list.
 	SpoolTruncated bool `json:"spool_truncated,omitempty"`
 }
@@ -60,6 +72,60 @@ func jobStatusText(s string) string {
 		return ""
 	}
 	return "unknown"
+}
+
+// statusLetter normalises a TBTCO letter once, so the predicates below cannot
+// disagree about what "r", " A " or "" mean.
+func statusLetter(s string) string { return strings.ToUpper(strings.TrimSpace(s)) }
+
+// startedLetters are the letters that mean the job has begun: a job that is over
+// has begun, so F and A are in it. notEndedLetters are the letters a wait loop
+// keeps waiting on: the job has not begun (P, S, Y) or it is running (R).
+// Anything else is terminal, including a letter this code does not know -- which
+// is what the wait loop meant when it spelled the same four letters as one
+// string.
+var (
+	startedLetters  = []string{"R", "F", "A"}
+	notEndedLetters = []string{"P", "S", "R", "Y"}
+)
+
+// JobStarted reports whether a TBTCO status letter says the job has begun.
+// R (active), F (finished) and A (cancelled) all mean it ran; P (scheduled),
+// S (released) and Y (ready) mean it has not.
+//
+// A caller that learns a job's status later -- op "job" polls one that another
+// process started -- has only this letter to go on. A flag held in the process
+// that scheduled the job is true there and false everywhere else, which is how
+// a running job came to be reported as "started": false.
+func JobStarted(s string) bool { return slices.Contains(startedLetters, statusLetter(s)) }
+
+// PolledJobStatus is what a poller reads of a job another process started: the
+// TBTCO status letter, and the start stamp that comes with it. It carries no
+// reading of the letter, because that is derived from the letter in one place
+// (jobStatusText) and a second copy could only disagree with it.
+type PolledJobStatus struct {
+	Status     string // TBTCO STATUS: P, S, Y, R, F or A; "" when TBTCO has no such row
+	StartStamp string // STRTDATE/STRTTIME as written, "" until the job has begun
+}
+
+// PolledJob is the JobRun a poller reports for a job another process started.
+//
+// Building it here rather than at the call site is the point. Started means one
+// thing in the process that scheduled the job -- XBP accepted the start -- and
+// another in a poller, which has only the status letter. While the poller built
+// its JobRun as a literal it could forget Started entirely, and did: a job SM37
+// showed as Active came back as "started": false (#353). A constructor that
+// fills Started and StatusFor from the one letter, and takes the start stamp
+// the same read returned, is a place that cannot be forgotten.
+func PolledJob(jobName, jobCount string, st PolledJobStatus) *JobRun {
+	return &JobRun{
+		JobName:    strings.ToUpper(strings.TrimSpace(jobName)),
+		JobCount:   jobCount,
+		Status:     st.Status,
+		StatusFor:  jobStatusText(st.Status),
+		Started:    JobStarted(st.Status),
+		StartStamp: st.StartStamp,
+	}
 }
 
 // RunReport runs a report as a background job through the XBP interface.
@@ -162,13 +228,23 @@ func RunReportWith(ctx context.Context, c *rfc.Client, r ReportRequest) (*JobRun
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		status, err := jobStatus(ctx, c, run.JobName, run.JobCount)
+		st, err := JobStatusDetail(ctx, c, run.JobName, run.JobCount)
 		if err != nil {
 			return run, fmt.Errorf("job %s / %s started, but %w", run.JobName, run.JobCount, err)
 		}
-		run.Status, run.StatusFor = status, jobStatusText(status)
-		// P scheduled, S released, R running, Y ready — anything else is terminal.
-		if status != "" && !strings.Contains("PSRY", strings.ToUpper(status)) {
+		// The wait loop sees the same letters a poller would, so both the letter
+		// and its reading come from the one place that owns that mapping rather
+		// than being spelled again here. run.Started is left alone: it is the
+		// scheduler's own fact -- XBP accepted the start -- and not the letter's.
+		polled := PolledJob(run.JobName, run.JobCount, st)
+		run.Status, run.StatusFor = polled.Status, polled.StatusFor
+		if run.StartStamp == "" {
+			run.StartStamp = polled.StartStamp
+		}
+		// Not ended: P scheduled, S released, R running, Y ready. Anything else
+		// is terminal, as this loop already treated it when the same four
+		// letters were spelled as one string.
+		if st.Status != "" && !slices.Contains(notEndedLetters, statusLetter(st.Status)) {
 			return run, nil
 		}
 		if time.Now().After(deadline) {
@@ -330,23 +406,42 @@ func bapiError(call string, ret any) error {
 	return fmt.Errorf("%s: %s", call, msg)
 }
 
-// JobStatus reads one job's TBTCO status letter and its reading in words.
+// JobStatus reads one job's TBTCO status letter and its reading in words. It is
+// the two-value view of JobStatusDetail, for callers that have no use for the
+// start stamp.
 func JobStatus(ctx context.Context, c *rfc.Client, jobName, jobCount string) (string, string, error) {
-	status, err := jobStatus(ctx, c, jobName, jobCount)
-	return status, jobStatusText(status), err
+	st, err := JobStatusDetail(ctx, c, jobName, jobCount)
+	return st.Status, jobStatusText(st.Status), err
 }
 
-// jobStatus reads one job's TBTCO status.
-func jobStatus(ctx context.Context, c *rfc.Client, jobName, jobCount string) (string, error) {
+// JobStatusDetail reads a job's status letter and the start stamp that goes
+// with it, in one TBTCO row. A caller that has to report whether a job has begun
+// wants both: the letter says it, the stamp says since when (#353), and asking
+// twice could answer between two different states of the job.
+func JobStatusDetail(ctx context.Context, c *rfc.Client, jobName, jobCount string) (PolledJobStatus, error) {
+	status, stamp, err := jobStatus(ctx, c, jobName, jobCount)
+	return PolledJobStatus{Status: status, StartStamp: stamp}, err
+}
+
+// jobStatus reads one job's TBTCO status letter and start stamp. The stamp is
+// returned as the system wrote it: the columns are the system's own clock and
+// the row carries no zone, so parsing them into a time would invent one. A
+// blank or half-written pair is no stamp rather than a date with a clock.
+func jobStatus(ctx context.Context, c *rfc.Client, jobName, jobCount string) (string, string, error) {
 	where := fmt.Sprintf("JOBNAME = '%s' AND JOBCOUNT = '%s'", sqlLiteral(jobName), sqlLiteral(jobCount))
-	rows, err := ReadTable(ctx, c, "TBTCO", where, []string{"STATUS"}, 1)
+	rows, err := ReadTable(ctx, c, "TBTCO", where, []string{"STATUS", "STRTDATE", "STRTTIME"}, 1)
 	if err != nil {
-		return "", fmt.Errorf("reading job status: %w", err)
+		return "", "", fmt.Errorf("reading job status: %w", err)
 	}
 	if len(rows) == 0 {
-		return "", nil
+		return "", "", nil
 	}
-	return strings.TrimSpace(rows[0]["STATUS"]), nil
+	row := rows[0]
+	date, clock := strings.TrimSpace(row["STRTDATE"]), strings.TrimSpace(row["STRTTIME"])
+	if len(date) != 8 || len(clock) != 6 {
+		return strings.TrimSpace(row["STATUS"]), "", nil
+	}
+	return strings.TrimSpace(row["STATUS"]), date + " " + clock, nil
 }
 
 // printDestination is the spool device a step prints to. LP01 exists on every
