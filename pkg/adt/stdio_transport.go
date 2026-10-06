@@ -168,7 +168,7 @@ func (t *StdioTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	select {
 	case r = <-done:
 	case <-ctx.Done():
-		t.fail(fmt.Errorf("request %s %s abandoned mid-exchange: %v", req.Method, req.URL.Path, ctx.Err()), true)
+		_ = t.fail(fmt.Errorf("request %s %s abandoned mid-exchange: %v", req.Method, req.URL.Path, ctx.Err()), true)
 		return nil, ctx.Err()
 	}
 	if r.err != nil {
@@ -188,7 +188,11 @@ func (t *StdioTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, t.fail(fmt.Errorf("malformed response body: %w", err), true)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
-	resp.ContentLength = int64(len(respBody))
+	if req.Method != http.MethodHead {
+		// The body is read and de-chunked: describe what is held now.
+		resp.ContentLength = int64(len(respBody))
+		resp.TransferEncoding = nil
+	}
 	resp.Request = req
 	return resp, nil
 }
