@@ -116,3 +116,4 @@ quickjs.zip
 
 # response cache (VSP_CACHE)
 .vsp-cache/
+graft/
