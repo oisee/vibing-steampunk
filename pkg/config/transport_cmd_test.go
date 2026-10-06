@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,6 +23,7 @@ func isolateHome(t *testing.T) (home, work string) {
 	work = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Cleanup(SetTrustedHome(home))
 	t.Chdir(work)
 	return home, work
 }
@@ -101,5 +103,86 @@ func TestTransportCmd_InMemoryConfigRefused(t *testing.T) {
 	cfg := &SystemsConfig{Systems: map[string]SystemConfig{"side": {URL: "https://sidecar.invalid", TransportCmd: []string{"helper"}}}}
 	if _, err := cfg.GetSystem("side"); err == nil {
 		t.Fatal("a config not read from the home directory ran a transport command")
+	}
+}
+
+// A project .env with HOME=. fills HOME when the process had none. The
+// home-directory rule must go by what the process started with, so the
+// working directory's .vsp.json never passes for ~/.vsp.json.
+func TestTransportCmd_HomeFromDotEnvDoesNotCount(t *testing.T) {
+	_, work := isolateHome(t)
+	t.Cleanup(SetTrustedHome("")) // HOME was unset at start-up
+	t.Setenv("HOME", ".")         // ...and .env set it to the project
+	t.Setenv("USERPROFILE", ".")
+	if err := os.WriteFile(filepath.Join(work, ".vsp.json"), []byte(transportCmdSystems), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadSystems()
+	if err != nil || cfg == nil {
+		t.Fatalf("LoadSystems: %v", err)
+	}
+	if _, err := cfg.GetSystem("side"); err == nil {
+		t.Fatal("transport_cmd from ./.vsp.json accepted with HOME=. from .env")
+	}
+}
+
+func TestTransportCmd_RelativeHomeRefused(t *testing.T) {
+	_, work := isolateHome(t)
+	t.Cleanup(SetTrustedHome("."))
+	t.Setenv("HOME", ".")
+	t.Setenv("USERPROFILE", ".")
+	if err := os.WriteFile(filepath.Join(work, ".vsp.json"), []byte(transportCmdSystems), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadSystems()
+	if err != nil || cfg == nil {
+		t.Fatalf("LoadSystems: %v", err)
+	}
+	_, err = cfg.GetSystem("side")
+	if err == nil || !strings.Contains(err.Error(), "not an absolute path") {
+		t.Fatalf("relative home: want a refusal, got %v", err)
+	}
+}
+
+func TestTransportCmd_GroupWritableHomeFileRefused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("permission bits are not checked on Windows")
+	}
+	home, _ := isolateHome(t)
+	p := filepath.Join(home, ".vsp.json")
+	if err := os.WriteFile(p, []byte(transportCmdSystems), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p, 0o620); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadSystems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.GetSystem("side"); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+		t.Fatalf("group-writable ~/.vsp.json: want a refusal, got %v", err)
+	}
+}
+
+// ~/.vsp.json may itself be a symlink (dotfile managers); it still counts.
+func TestTransportCmd_SymlinkedHomeFileAccepted(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need privileges on Windows")
+	}
+	home, _ := isolateHome(t)
+	target := filepath.Join(t.TempDir(), "dotfiles-vsp.json")
+	if err := os.WriteFile(target, []byte(transportCmdSystems), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(home, ".vsp.json")); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := LoadSystems()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cfg.GetSystem("side"); err != nil {
+		t.Fatalf("symlinked ~/.vsp.json refused: %v", err)
 	}
 }

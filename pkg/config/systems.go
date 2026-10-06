@@ -144,36 +144,6 @@ type SystemsConfig struct {
 	source string
 }
 
-// homeConfigPaths are the systems files in the user's home directory.
-func homeConfigPaths() []string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return nil
-	}
-	return []string{
-		filepath.Join(home, ".vsp.json"),
-		filepath.Join(home, ".vsp", "systems.json"),
-	}
-}
-
-// IsHomeConfigPath reports whether path is one of the user's own systems
-// files, ~/.vsp.json or ~/.vsp/systems.json.
-func IsHomeConfigPath(path string) bool {
-	if path == "" {
-		return false
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false
-	}
-	for _, p := range homeConfigPaths() {
-		if hp, err := filepath.Abs(p); err == nil && hp == abs {
-			return true
-		}
-	}
-	return false
-}
-
 // checkTransportCmd decides whether a system's transport_cmd may be used.
 // It runs a program, so it is taken only from the user's home directory: a
 // .vsp.json checked into a repository and found in the working directory
@@ -183,12 +153,12 @@ func (c *SystemsConfig) checkTransportCmd(name string, sys *SystemConfig) error 
 	if len(sys.TransportCmd) == 0 {
 		return nil
 	}
-	if !IsHomeConfigPath(c.source) {
+	if err := checkTrustedHomeConfig(c.source); err != nil {
 		where := c.source
 		if where == "" {
 			where = "a config not read from a file"
 		}
-		return fmt.Errorf("system '%s': transport_cmd is refused in %s; it is honoured only in ~/.vsp.json or ~/.vsp/systems.json, because a project file must not be able to make vsp run a program", name, where)
+		return fmt.Errorf("system '%s': transport_cmd is refused in %s (%v); it is honoured only in ~/.vsp.json or ~/.vsp/systems.json, because a project file must not be able to make vsp run a program", name, where, err)
 	}
 	for _, a := range sys.TransportCmd {
 		if a == "" {

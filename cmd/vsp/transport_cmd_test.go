@@ -3,11 +3,13 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 )
 
@@ -166,6 +168,7 @@ func TestCLI_TransportCmdFromHomeConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Cleanup(config.SetTrustedHome(home))
 	if err := os.WriteFile(filepath.Join(home, ".vsp.json"), []byte(cliTransportCmdSystems), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +194,7 @@ func TestCLI_TransportCmdFromWorkingDirectoryRefused(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	t.Cleanup(config.SetTrustedHome(home))
 	// isolateServer made a fresh working directory current; the file goes there.
 	if err := os.WriteFile(".vsp.json", []byte(cliTransportCmdSystems), 0o600); err != nil {
 		t.Fatal(err)
@@ -199,4 +203,46 @@ func TestCLI_TransportCmdFromWorkingDirectoryRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "must not be able to make vsp run a program") {
 		t.Fatalf("want a refusal of transport_cmd from ./.vsp.json, got %v", err)
 	}
+}
+
+// The real start-up order, in a process of its own: HOME is unset, and the
+// working directory holds a .env with HOME=. next to a .vsp.json with a
+// transport_cmd. godotenv fills HOME during init; the home-directory rule must
+// still refuse, because HOME was not set when vsp started.
+func TestCLI_DotEnvHomeCannotVouchForProjectConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("HOME=.\nUSERPROFILE=.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".vsp.json"), []byte(cliTransportCmdSystems), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	child := exec.Command(os.Args[0], "-test.run=^TestDotEnvHomeChild$")
+	child.Dir = dir
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "USERPROFILE=") || strings.HasPrefix(kv, "SAP_") {
+			continue
+		}
+		child.Env = append(child.Env, kv)
+	}
+	child.Env = append(child.Env, "VSP_DOTENV_HOME_CHILD=1")
+	out, err := child.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "HOME=. REFUSED") {
+		t.Fatalf("transport_cmd from ./.vsp.json was not refused with HOME=. from .env:\n%s", out)
+	}
+}
+
+func TestDotEnvHomeChild(t *testing.T) {
+	if os.Getenv("VSP_DOTENV_HOME_CHILD") != "1" {
+		t.Skip("helper for TestCLI_DotEnvHomeCannotVouchForProjectConfig")
+	}
+	_, err := resolveSystemParams(&cobra.Command{Use: "x"})
+	verdict := "ACCEPTED"
+	if err != nil && strings.Contains(err.Error(), "transport_cmd is refused") {
+		verdict = "REFUSED"
+	}
+	os.Stdout.WriteString("HOME=" + os.Getenv("HOME") + " " + verdict + "\n")
 }
