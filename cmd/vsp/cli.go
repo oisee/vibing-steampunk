@@ -431,7 +431,9 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 			return nil, adt.ErrTransportCmdAuth
 		}
 		opts = append(opts, adt.WithTransportCmd(params.TransportCmd))
-		return adt.NewClient(params.URL, "", "", opts...), nil
+		client := adt.NewClient(params.URL, "", "", opts...)
+		trackTransportCmd(client.CloseTransport)
+		return client, nil
 	}
 
 	// Browser single sign-on: cookies are fetched on demand and refreshed

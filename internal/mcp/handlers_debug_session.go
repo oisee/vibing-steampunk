@@ -39,6 +39,10 @@ type debugSession struct {
 	// RFC — and a caller that cannot see which one it got cannot know that.
 	route string
 	user  string
+	// http is the session's own ADT transport on the HTTPS route, closed with
+	// the session: behind a transport command it owns a helper process. Nil
+	// on the RFC route.
+	http *adt.Transport
 }
 
 // debugger returns the server's debug session, opening one on first use.
@@ -64,7 +68,7 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 		_ = c.Close(ctx)
 	}
 
-	transport, err := s.statefulADTTransport()
+	transport, httpTransport, err := s.statefulADTSession()
 	if err != nil {
 		return nil, fmt.Errorf("no debug session: neither an RFC channel nor a stateful ADT session could be opened: %w", err)
 	}
@@ -72,6 +76,7 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 		dbg:   saprfc.NewADTDebugger(transport, user),
 		route: "https",
 		user:  user,
+		http:  httpTransport,
 	}
 	return s.debugSess, nil
 }
@@ -81,8 +86,15 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 // stateless by design, and a stateless session is exactly what cannot hold a
 // debuggee.
 func (s *Server) statefulADTTransport() (saprfc.ADTTransport, error) {
+	t, _, err := s.statefulADTSession()
+	return t, err
+}
+
+// statefulADTSession is statefulADTTransport plus the adt.Transport under it,
+// which the session closes when it ends.
+func (s *Server) statefulADTSession() (saprfc.ADTTransport, *adt.Transport, error) {
 	if s.config.BaseURL == "" {
-		return nil, fmt.Errorf("no system URL configured")
+		return nil, nil, fmt.Errorf("no system URL configured")
 	}
 	opts := []adt.Option{
 		adt.WithClient(s.config.Client),
@@ -111,7 +123,8 @@ func (s *Server) statefulADTTransport() (saprfc.ADTTransport, error) {
 		user, password = "", ""
 	}
 	cfg := adt.NewConfig(s.config.BaseURL, user, password, opts...)
-	return saprfc.HTTPSession(adt.NewTransport(cfg)), nil
+	t := adt.NewTransport(cfg)
+	return saprfc.HTTPSession(t), t, nil
 }
 
 // closeDebugSession releases the debuggee, removes the listener registration and
@@ -130,5 +143,10 @@ func (s *Server) closeDebugSession(ctx context.Context) {
 	_ = sess.dbg.Close(ctx)
 	if sess.conn != nil {
 		_ = sess.conn.Close(ctx)
+	}
+	// Last, after the detach above has gone over it: a transport command's
+	// helper is told to exit.
+	if sess.http != nil {
+		_ = sess.http.CloseTransport()
 	}
 }

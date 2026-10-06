@@ -296,6 +296,9 @@ func createADTClient() *adt.Client {
 	}
 	if len(cfg.TransportCmd) > 0 {
 		opts = append(opts, adt.WithTransportCmd(cfg.TransportCmd))
+		client := adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)
+		trackTransportCmd(client.CloseTransport)
+		return client
 	}
 
 	return adt.NewClient(cfg.BaseURL, cfg.Username, cfg.Password, opts...)

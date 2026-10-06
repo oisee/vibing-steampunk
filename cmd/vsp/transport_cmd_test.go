@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -245,4 +246,28 @@ func TestDotEnvHomeChild(t *testing.T) {
 		verdict = "REFUSED"
 	}
 	os.Stdout.WriteString("HOME=" + os.Getenv("HOME") + " " + verdict + "\n")
+}
+
+// Every client and debug transport the CLI builds with a transport command is
+// closed by closeTransportCmds (main calls it when the command returns).
+func TestCLI_TransportCmdHelpersAreClosed(t *testing.T) {
+	closeTransportCmds() // start from an empty registry
+	params := &systemParams{URL: "https://sidecar.invalid", Client: "001", Language: "EN",
+		TransportCmd: []string{"/nonexistent/adt-helper"}}
+	client, err := buildClient(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbgTransport, err := debugHTTPTransport(params, 0, adt.SessionStateful)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTransportCmds()
+	ctx := context.Background()
+	if _, err := client.GetSystemInfo(ctx); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("client after closeTransportCmds: want closed, got %v", err)
+	}
+	if _, err := dbgTransport.Request(ctx, "/sap/bc/adt/vsp/ping", nil); err == nil || !strings.Contains(err.Error(), "closed") {
+		t.Errorf("debug transport after closeTransportCmds: want closed, got %v", err)
+	}
 }

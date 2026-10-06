@@ -96,6 +96,7 @@ func runDAP(cmd *cobra.Command, _ []string) error {
 			return
 		}
 		srv.Shutdown()
+		closeTransportCmds()
 		os.Exit(130)
 	}()
 

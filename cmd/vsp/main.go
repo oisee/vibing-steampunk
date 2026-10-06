@@ -374,7 +374,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 		warnNamedSystemMismatch(os.Stderr, cfg, systemsCfg)
 
-		applyDefaultSystemSettings(cfg, systemsCfg)
+		applyDefaultSystemSettings(os.Stderr, cfg, systemsCfg)
 	}
 
 	// The binary's own identity, so SAP() can say which build answered. An
@@ -428,12 +428,16 @@ func warnNamedSystemMismatch(w io.Writer, c *mcp.Config, systemsCfg *config.Syst
 // empty from the default system in .vsp.json: transport_attribute, and where a
 // request vsp creates is filed, cts_project and transport_target. The CLI takes
 // the same keys from the system it runs against (resolveSystemParams).
-func applyDefaultSystemSettings(c *mcp.Config, systemsCfg *config.SystemsConfig) {
+func applyDefaultSystemSettings(w io.Writer, c *mcp.Config, systemsCfg *config.SystemsConfig) {
 	if systemsCfg == nil || systemsCfg.Default == "" {
 		return
 	}
 	sys, err := systemsCfg.GetSystem(systemsCfg.Default)
 	if err != nil {
+		// Not fatal for the server, which takes its logon elsewhere; but a
+		// default system that cannot be read (a refused transport_cmd, a
+		// default naming no system) should not pass in silence.
+		fmt.Fprintf(w, "[WARNING] default system settings from .vsp.json not applied: %v\n", err)
 		return
 	}
 	if c.TransportAttribute == "" && sys.TransportAttribute != "" {
@@ -1031,7 +1035,10 @@ func splitCommaSeparated(s string) []string {
 }
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
+	err := rootCmd.Execute()
+	// The CLI's transport-command helpers, on success and on error alike.
+	closeTransportCmds()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

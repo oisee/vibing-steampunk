@@ -156,6 +156,7 @@ function group — those are function modules and need an RFC channel:
 			defer cancel()
 			fmt.Fprintf(os.Stderr, "\n%v — releasing the debug session before exit\n", sig)
 			_ = dbg.Close(cleanup)
+			closeTransportCmds()
 			os.Exit(130)
 		}()
 
@@ -276,7 +277,9 @@ func debugHTTPTransport(params *systemParams, timeout time.Duration, session adt
 	// A transport command authenticates on its own: no credentials of ours.
 	if len(params.TransportCmd) > 0 {
 		opts = append(opts, adt.WithTransportCmd(params.TransportCmd))
-		return adt.NewTransport(adt.NewConfig(params.URL, "", "", opts...)), nil
+		t := adt.NewTransport(adt.NewConfig(params.URL, "", "", opts...))
+		trackTransportCmd(t.CloseTransport)
+		return t, nil
 	}
 
 	// Browser single sign-on, checked before the static cookie sources for the

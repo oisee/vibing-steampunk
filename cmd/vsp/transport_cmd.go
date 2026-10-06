@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/spf13/cobra"
@@ -117,4 +118,31 @@ func transportCmdConflicts(cmd *cobra.Command) error {
 		return nil
 	}
 	return fmt.Errorf("%w (found: %s)", adt.ErrTransportCmdAuth, strings.Join(found, ", "))
+}
+
+// transportCmdClosers are the helpers the CLI started, one per ADT client or
+// transport built with a transport command. main closes them when the command
+// returns, and the signal exits close them before os.Exit, so a helper is
+// told to exit (stdin EOF) rather than left to notice vsp has gone.
+var transportCmdClosers struct {
+	mu  sync.Mutex
+	fns []func() error
+}
+
+// trackTransportCmd registers a helper's close function.
+func trackTransportCmd(fn func() error) {
+	transportCmdClosers.mu.Lock()
+	defer transportCmdClosers.mu.Unlock()
+	transportCmdClosers.fns = append(transportCmdClosers.fns, fn)
+}
+
+// closeTransportCmds closes every registered helper, at most once each.
+func closeTransportCmds() {
+	transportCmdClosers.mu.Lock()
+	fns := transportCmdClosers.fns
+	transportCmdClosers.fns = nil
+	transportCmdClosers.mu.Unlock()
+	for _, fn := range fns {
+		_ = fn()
+	}
 }
