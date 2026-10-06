@@ -55,6 +55,13 @@ type SystemConfig struct {
 	RFCUser     string `json:"rfc_user,omitempty"`
 	RFCPassword string `json:"rfc_password,omitempty"`
 
+	// TransportCmd is the argv (no shell) of a helper process that carries
+	// every ADT request over its stdin/stdout instead of a TCP connection; the
+	// helper authenticates, so user/password/cookies must be absent. It is
+	// honoured only from a file in the user's home directory (see GetSystem):
+	// a project file must not be able to make vsp run a program.
+	TransportCmd []string `json:"transport_cmd,omitempty"`
+
 	// Optional safety settings per system
 	ReadOnly        bool     `json:"read_only,omitempty"`
 	AllowedPackages []string `json:"allowed_packages,omitempty"`
@@ -131,7 +138,71 @@ type SystemsConfig struct {
 	// Key: tool name, Value: true=enabled, false=disabled
 	// Tools not listed are enabled by default
 	Tools map[string]bool `json:"tools,omitempty"`
+
+	// source is the absolute path the config was read from; empty when it
+	// was built in memory.
+	source string
 }
+
+// homeConfigPaths are the systems files in the user's home directory.
+func homeConfigPaths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(home, ".vsp.json"),
+		filepath.Join(home, ".vsp", "systems.json"),
+	}
+}
+
+// IsHomeConfigPath reports whether path is one of the user's own systems
+// files, ~/.vsp.json or ~/.vsp/systems.json.
+func IsHomeConfigPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, p := range homeConfigPaths() {
+		if hp, err := filepath.Abs(p); err == nil && hp == abs {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTransportCmd decides whether a system's transport_cmd may be used.
+// It runs a program, so it is taken only from the user's home directory: a
+// .vsp.json checked into a repository and found in the working directory
+// would otherwise run whatever its author named the moment someone used vsp
+// there.
+func (c *SystemsConfig) checkTransportCmd(name string, sys *SystemConfig) error {
+	if len(sys.TransportCmd) == 0 {
+		return nil
+	}
+	if !IsHomeConfigPath(c.source) {
+		where := c.source
+		if where == "" {
+			where = "a config not read from a file"
+		}
+		return fmt.Errorf("system '%s': transport_cmd is refused in %s; it is honoured only in ~/.vsp.json or ~/.vsp/systems.json, because a project file must not be able to make vsp run a program", name, where)
+	}
+	for _, a := range sys.TransportCmd {
+		if a == "" {
+			return fmt.Errorf("system '%s': transport_cmd must be a list of non-empty strings", name)
+		}
+	}
+	if sys.User != "" || sys.Password != "" || sys.CookieFile != "" || sys.CookieString != "" || sys.UsesSSO() {
+		return fmt.Errorf("system '%s': transport_cmd carries its own authentication; remove user/password/cookies", name)
+	}
+	return nil
+}
+
+// Source is the path the config was read from; empty when built in memory.
+func (c *SystemsConfig) Source() string { return c.source }
 
 // ConfigPaths returns the list of paths to search for systems config.
 func ConfigPaths() []string {
@@ -176,6 +247,9 @@ func LoadSystemsFromFile(path string) (*SystemsConfig, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
+	if abs, err := filepath.Abs(path); err == nil {
+		cfg.source = abs
+	}
 
 	return &cfg, nil
 }
@@ -191,9 +265,13 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 		}
 		return nil, fmt.Errorf("system '%s' not found. Available: %s", name, strings.Join(available, ", "))
 	}
+	if err := c.checkTransportCmd(name, &sys); err != nil {
+		return nil, err
+	}
 
-	// Resolve password from environment variable if not set
-	if sys.Password == "" {
+	// Resolve password from environment variable if not set. A system behind
+	// a transport command has no password of vsp's to send.
+	if sys.Password == "" && len(sys.TransportCmd) == 0 {
 		// Try VSP_<SYSTEM>_PASSWORD (e.g., VSP_A4H_PASSWORD)
 		envKey := fmt.Sprintf("VSP_%s_PASSWORD", strings.ToUpper(name))
 		if pwd := os.Getenv(envKey); pwd != "" {
