@@ -103,6 +103,14 @@ type Config struct {
 	// Expect pins the system, client and user this client must find on the
 	// other end (see identity.go). Nil: no pin, no preflight, no extra request.
 	Expect *IdentityPin
+
+	// TransportCmd, when set, is the argv (no shell) of a helper process that
+	// carries every ADT request: vsp writes each request to its stdin and
+	// reads the answer from its stdout (see stdio_transport.go). The helper
+	// authenticates, so vsp sends no credentials of its own; BaseURL still
+	// names the system, for the ADT paths and the Host header, and may be a
+	// placeholder such as https://sidecar.invalid.
+	TransportCmd []string
 }
 
 // Option is a functional option for configuring the ADT client.
@@ -332,6 +340,14 @@ func WithReadOnlyReauth() Option {
 	}
 }
 
+// WithTransportCmd sends every ADT request through a helper process over its
+// stdin and stdout instead of a TCP connection (see Config.TransportCmd).
+func WithTransportCmd(argv []string) Option {
+	return func(c *Config) {
+		c.TransportCmd = append([]string(nil), argv...)
+	}
+}
+
 // WithTerminalID sets the debugger terminal ID.
 // Use the same ID as SAP GUI to enable cross-tool breakpoint sharing.
 // SAP GUI stores this in: Windows Registry HKCU\Software\SAP\ABAP Debugging\TerminalID
@@ -360,6 +376,16 @@ func (c *Config) NewHTTPClient() *http.Client {
 		Jar:       jar,
 		Transport: transport,
 		Timeout:   c.Timeout,
+	}
+	// A transport command replaces only the wire: the jar, the timeout and
+	// the redirect policy below stay as they are. Combined with credentials
+	// vsp would send itself, nothing is sent at all.
+	if len(c.TransportCmd) > 0 {
+		if err := c.CheckTransportCmd(); err != nil {
+			client.Transport = failingRoundTripper{err: err}
+		} else {
+			client.Transport = NewStdioTransport(c.TransportCmd)
+		}
 	}
 
 	// Preserve ADT-critical headers across redirects.

@@ -63,7 +63,17 @@ type BaseWebSocketClient struct {
 	// websocket_for_client.go), which replace the ones copied at
 	// construction. Set only for a pinned client; nil: nothing to check.
 	credentials func(ctx context.Context) (user, password string, cookies map[string]string, err error)
+
+	// transportCmd names the transport command of the ADT client this
+	// WebSocket was built from. Such a client reaches SAP only through a
+	// helper that carries ADT HTTP requests, so there is nothing to dial:
+	// BaseURL may be a placeholder. Non-empty: Connect refuses.
+	transportCmd string
 }
+
+// ErrWebSocketOverTransportCmd is returned by Connect for a client whose ADT
+// requests go through a transport command.
+var ErrWebSocketOverTransportCmd = errors.New("the ZADT_VSP WebSocket features are not available over a transport command, which carries ADT HTTP requests only")
 
 // ErrWebSocketClosed is returned to a waiter whose connection ended.
 var ErrWebSocketClosed = errors.New("the ZADT_VSP WebSocket connection was closed")
@@ -202,6 +212,9 @@ func NewBaseWebSocketClient(baseURL, client, user, password string, insecure boo
 
 // Connect establishes WebSocket connection to ZADT_VSP.
 func (c *BaseWebSocketClient) Connect(ctx context.Context) error {
+	if c.transportCmd != "" {
+		return fmt.Errorf("%w (%s)", ErrWebSocketOverTransportCmd, c.transportCmd)
+	}
 	pinned := c.credentials != nil
 	var user, password string
 	var cookies map[string]string

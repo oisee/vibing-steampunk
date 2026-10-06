@@ -356,6 +356,11 @@ func parseFeatureMode(s string) adt.FeatureMode {
 
 // ServeStdio starts the MCP server on stdin/stdout.
 func (s *Server) ServeStdio() error {
+	// Deferred first, so it runs last, after the debug session is released.
+	// A transport command's helper is told to exit (stdin EOF).
+	if s.adtClient != nil {
+		defer s.adtClient.CloseTransport()
+	}
 	// A debuggee left attached when the server exits stays suspended in a work
 	// process until its caller times out, so the session is released here as
 	// well as on an explicit detach.
@@ -402,6 +407,9 @@ func stdioShutdown(err error) bool {
 //
 // GET /health answers without either check, for liveness probes.
 func (s *Server) ServeHTTP(addr string) error {
+	if s.adtClient != nil {
+		defer s.adtClient.CloseTransport()
+	}
 	apiKey := strings.TrimSpace(os.Getenv("VSP_HTTP_API_KEY"))
 	if apiKey == "" && !isLoopbackAddr(addr) {
 		return fmt.Errorf("refusing to serve %s without authentication: set VSP_HTTP_API_KEY (it exposes every ADT tool under your SAP credentials)", addr)

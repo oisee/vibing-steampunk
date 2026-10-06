@@ -150,3 +150,14 @@ func (c *Client) Language() string {
 	}
 	return c.config.Language
 }
+
+// CloseTransport ends the helper process of a transport command, if this
+// client has one (see Config.TransportCmd): its stdin is closed, and it is
+// killed if it has not exited three seconds later. Every later request fails.
+// Without a transport command it does nothing.
+func (c *Client) CloseTransport() error {
+	if c == nil || c.transport == nil {
+		return nil
+	}
+	return c.transport.CloseTransport()
+}

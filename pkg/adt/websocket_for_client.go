@@ -33,6 +33,7 @@ func (c *Client) wsCredentials() (user, password string, cookies map[string]stri
 func (c *Client) NewDebugWebSocketClient() *DebugWebSocketClient {
 	user, password, cookies := c.wsCredentials()
 	ws := NewDebugWebSocketClient(c.config.BaseURL, c.config.Client, user, password, c.config.InsecureSkipVerify)
+	ws.transportCmd = TransportCmdName(c.config.TransportCmd)
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
@@ -47,6 +48,7 @@ func (c *Client) NewDebugWebSocketClient() *DebugWebSocketClient {
 func (c *Client) NewAMDPWebSocketClient() *AMDPWebSocketClient {
 	user, password, cookies := c.wsCredentials()
 	ws := NewAMDPWebSocketClient(c.config.BaseURL, c.config.Client, user, password, c.config.InsecureSkipVerify)
+	ws.transportCmd = TransportCmdName(c.config.TransportCmd)
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
