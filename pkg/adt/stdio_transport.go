@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -287,6 +288,7 @@ func (t *StdioTransport) ensureStarted() error {
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = io.MultiWriter(stdioStderr, tail)
+	cmd.Env = helperEnv(os.Environ())
 	// A grandchild that keeps stderr open must not keep Wait from returning.
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
@@ -301,6 +303,9 @@ func (t *StdioTransport) ensureStarted() error {
 	inR.Close()
 	outW.Close()
 
+	// Windows: into a kill-on-close Job Object. This happens after the start;
+	// see attachKillOnClose for the window that leaves, and why the first
+	// frame is only written afterwards.
 	if closeJob, jerr := attachKillOnClose(cmd.Process); jerr != nil {
 		fmt.Fprintf(stdioStderr, "[transport-cmd] warning: %s will not be killed with vsp: %v\n", t.name, jerr)
 	} else {
@@ -368,6 +373,35 @@ func (t *StdioTransport) fail(cause error, kill bool) error {
 	t.broken = errors.New(msg)
 	t.releaseLocked()
 	return t.broken
+}
+
+// helperSecretName matches environment variable names that hold a secret.
+var helperSecretName = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|COOKIE)`)
+
+// helperEnv is vsp's environment minus what the helper has no business
+// seeing: anything that looks like a secret by its name, and vsp's own logon
+// and RFC settings (SAP_USER, SAP_USERNAME, SAP_PASS, SAP_SAML_USER, SAP_RFC_*;
+// SAP_PASSWORD and VSP_<SYSTEM>_PASSWORD go by the pattern). The helper does
+// its own sign-on. Everything else stays: PATH, SystemRoot, TEMP, proxies and
+// the like are what a helper needs to run at all.
+func helperEnv(environ []string) []string {
+	out := make([]string, 0, len(environ))
+	for _, kv := range environ {
+		name, _, _ := strings.Cut(kv, "=")
+		if name == "" { // Windows' per-drive "=C:=C:\..." entries
+			out = append(out, kv)
+			continue
+		}
+		upper := strings.ToUpper(name)
+		switch {
+		case helperSecretName.MatchString(name),
+			upper == "SAP_USER", upper == "SAP_USERNAME", upper == "SAP_PASS",
+			upper == "SAP_SAML_USER", strings.HasPrefix(upper, "SAP_RFC_"):
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // startCause strips the program's path from a start failure: errors name

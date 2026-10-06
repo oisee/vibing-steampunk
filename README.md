@@ -1967,9 +1967,14 @@ export SAP_TRANSPORT_CMD='["/opt/tools/adt-helper", "--profile", "dev"]'   # sam
 4. Only one request is in flight. vsp writes the next frame only after it has
    read the answer to the previous one.
 5. When its stdin reaches EOF, the helper exits. vsp closes stdin on shutdown and
-   kills the helper three seconds later. On Windows the helper runs in a Job
-   Object that ends it with vsp.
-6. The helper writes only frames to stdout. Logs go to stderr, which vsp passes
+   kills the helper three seconds later. On Windows the helper is put into a Job
+   Object that ends it with vsp. That happens just after the helper starts, so it
+   must start no child processes before the first frame arrives.
+6. The helper gets vsp's environment minus anything whose name looks like a
+   secret (`PASSWORD`, `PASSWD`, `SECRET`, `TOKEN`, `COOKIE`) and minus vsp's own
+   logon settings (`SAP_USER`, `SAP_PASSWORD`, `VSP_*_PASSWORD`, `SAP_RFC_*`).
+   It brings its own configuration.
+7. The helper writes only frames to stdout. Logs go to stderr, which vsp passes
    through and quotes (the last 20 lines) when the helper fails. Secrets such as
    tokens, cookies and passwords must never be printed there.
 

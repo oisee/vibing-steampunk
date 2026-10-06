@@ -116,6 +116,24 @@ func runStdioHelper(in io.Reader, out io.Writer, errOut io.Writer) int {
 			fmt.Fprintln(errOut, "helper: starting to fail")
 			fmt.Fprint(errOut, "boom: helper failed")
 			return 3
+		case req.URL.Path == "/head":
+			// A HEAD answer: the length of a body that is not sent.
+			msg := "HTTP/1.1 200 OK\r\nContent-Length: 1234\r\nX-Head: yes\r\n\r\n"
+			var lp [4]byte
+			binary.BigEndian.PutUint32(lp[:], uint32(len(msg)))
+			out.Write(lp[:])
+			out.Write([]byte(msg))
+		case req.URL.Path == "/short":
+			// A frame that promises more than it delivers, then death.
+			msg := "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc"
+			var lp [4]byte
+			binary.BigEndian.PutUint32(lp[:], uint32(len(msg)+100))
+			out.Write(lp[:])
+			out.Write([]byte(msg))
+			fmt.Fprintln(errOut, "helper: cut short")
+			return 4
+		case req.URL.Path == "/env":
+			reply(200, nil, []byte(strings.Join(os.Environ(), "\n")))
 		case req.URL.Path == "/cookie/set":
 			reply(200, map[string]string{"Set-Cookie": "c1=v1; Path=/"}, nil)
 		case req.URL.Path == "/cookie/echo":
@@ -396,6 +414,90 @@ func TestStdioTransport_WebSocketRefuses(t *testing.T) {
 		if !errors.Is(err, ErrWebSocketOverTransportCmd) {
 			t.Errorf("%s WebSocket over a transport command: want a refusal, got %v", name, err)
 		}
+	}
+}
+
+func TestStdioTransport_HelperEnvironmentFiltered(t *testing.T) {
+	for k, v := range map[string]string{
+		"SAP_USER": "TESTUSER", "SAP_PASSWORD": "x", "VSP_DEV_PASSWORD": "x",
+		"SAP_RFC_HOST": "gw.example.local", "MY_API_TOKEN": "x", "SOME_SECRET": "x",
+		"SAP_COOKIE_STRING": "a=b", "sap_passwd": "x",
+		"VSP_KEEP_ME": "kept",
+	} {
+		t.Setenv(k, v)
+	}
+	st := newTestStdioTransport(t)
+	resp, err := stdioGet(t, st, context.Background(), "/env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	got := map[string]bool{}
+	for _, kv := range strings.Split(string(body), "\n") {
+		name, _, _ := strings.Cut(kv, "=")
+		got[name] = true
+	}
+	for _, gone := range []string{"SAP_USER", "SAP_PASSWORD", "VSP_DEV_PASSWORD", "SAP_RFC_HOST", "MY_API_TOKEN", "SOME_SECRET", "SAP_COOKIE_STRING", "sap_passwd"} {
+		if got[gone] {
+			t.Errorf("the helper saw %s", gone)
+		}
+	}
+	for _, kept := range []string{"VSP_KEEP_ME", "PATH"} {
+		if !got[kept] {
+			t.Errorf("the helper lost %s", kept)
+		}
+	}
+}
+
+func TestStdioTransport_ClientTimeoutBreaksTransport(t *testing.T) {
+	st := newTestStdioTransport(t)
+	hc := &http.Client{Transport: st, Timeout: 300 * time.Millisecond}
+	start := time.Now()
+	_, err := hc.Get("https://sidecar.invalid/hang")
+	if err == nil {
+		t.Fatal("a stuck exchange outlived http.Client.Timeout")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("the timeout took %s", d)
+	}
+	select {
+	case <-st.exited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("helper still running after the timeout")
+	}
+	if _, err := hc.Get("https://sidecar.invalid/big"); err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("after a timeout: want broken, got %v", err)
+	}
+}
+
+func TestStdioTransport_HEADStaysInStep(t *testing.T) {
+	st := newTestStdioTransport(t)
+	req, _ := http.NewRequest(http.MethodHead, "https://sidecar.invalid/head", nil)
+	resp, err := st.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if len(body) != 0 || resp.ContentLength != 1234 || resp.Header.Get("X-Head") != "yes" {
+		t.Fatalf("HEAD: body %d bytes, ContentLength %d, X-Head %q", len(body), resp.ContentLength, resp.Header.Get("X-Head"))
+	}
+	resp, err = stdioGet(t, st, context.Background(), "/big")
+	if err != nil {
+		t.Fatalf("exchange after HEAD: %v", err)
+	}
+	if body, _ := io.ReadAll(resp.Body); len(body) != 300*1024 || resp.Header.Get("X-Got-Method") != "GET" {
+		t.Fatalf("exchange after HEAD out of step: %d bytes, method %q", len(body), resp.Header.Get("X-Got-Method"))
+	}
+}
+
+func TestStdioTransport_ShortFrameBreaks(t *testing.T) {
+	st := newTestStdioTransport(t)
+	_, err := stdioGet(t, st, context.Background(), "/short")
+	if err == nil || !strings.Contains(err.Error(), "broken") || !strings.Contains(err.Error(), "exit status 4") {
+		t.Fatalf("short frame: want a broken error with the exit status, got %v", err)
+	}
+	if _, err2 := stdioGet(t, st, context.Background(), "/big"); err2 == nil || err2.Error() != err.Error() {
+		t.Fatalf("after a short frame: want the same broken error, got %v", err2)
 	}
 }
 

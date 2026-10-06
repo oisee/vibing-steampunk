@@ -14,6 +14,14 @@ import (
 // in it when the job's last handle closes. vsp holds that handle, so the child
 // ends with vsp even when vsp is killed and never gets to close its stdin.
 // The returned func closes the handle (and so ends the child).
+//
+// The child is assigned after it has started, so there is a short window in
+// which it runs outside the job: a grandchild it starts in that window is not
+// in the job and does not end with vsp. The process is deliberately not
+// created suspended (that would need CreateProcess by hand instead of
+// os/exec); instead the helper contract says to start no children before the
+// first frame arrives, and by then the assignment has long happened, because
+// vsp writes the first frame only after attachKillOnClose has returned.
 func attachKillOnClose(p *os.Process) (func(), error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
