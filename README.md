@@ -1947,7 +1947,10 @@ export SAP_TRANSPORT_CMD='["/opt/tools/adt-helper", "--profile", "dev"]'   # sam
 - `transport_cmd` is honoured only in `~/.vsp.json` or `~/.vsp/systems.json`.
   The same key in a `.vsp.json` in the working directory is refused, and so is
   `SAP_TRANSPORT_CMD` from a `.env` file, because a project file must not be
-  able to make vsp run a program.
+  able to make vsp run a program. "Home" means `HOME` (`USERPROFILE` on
+  Windows) as the vsp process received it, before any `.env` is read. It must
+  be an absolute path. Outside Windows, the file must not be writable by group
+  or others.
 - The ZADT_VSP WebSocket features can't go through the pipe, and they refuse
   with "not available over a transport command". Classic RFC needs an explicit
   `rfc_host` (or `--rfc-host`) rather than the placeholder URL.
