@@ -525,6 +525,7 @@ func rfcDestinationFor(cmd *cobra.Command) (saprfc.Params, error) {
 	in := saprfc.Input{
 		URL: params.URL, User: params.User, Password: params.Password,
 		Client: params.Client, Language: params.Language,
+		TransportCmd: len(params.TransportCmd) > 0,
 	}
 	// Per-system RFC settings, when the system came from .vsp.json.
 	if params.Name != "" {

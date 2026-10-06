@@ -79,6 +79,10 @@ type Input struct {
 
 	// Expect is carried into Params.Expect.
 	Expect *adt.IdentityPin
+
+	// TransportCmd says the system's ADT requests go through a transport
+	// command: its URL may be a placeholder, so no RFC host is taken from it.
+	TransportCmd bool
 }
 
 // Resolve turns an Input into RFC destination parameters.
@@ -88,6 +92,9 @@ func Resolve(in Input) (Params, error) {
 
 	if host == "" || sysnr == "" {
 		uHost, uSysnr := fromURL(in.URL)
+		if host == "" && uHost != "" && (in.TransportCmd || placeholderHost(uHost)) {
+			return Params{}, fmt.Errorf("no RFC host: this system's ADT requests go through a transport command, and its URL host %q is not a gateway to dial; set rfc_host in .vsp.json or pass --rfc-host", uHost)
+		}
 		if host == "" {
 			host = uHost
 		}
@@ -235,6 +242,14 @@ func fromURL(raw string) (host, sysnr string) {
 		sysnr = fmt.Sprintf("%02d", (port/100)%100)
 	}
 	return host, sysnr
+}
+
+// placeholderHost reports a host under the reserved .invalid top-level
+// domain (RFC 2606), such as the sidecar.invalid placeholder of a transport
+// command's URL: it never resolves, so it is never an RFC gateway.
+func placeholderHost(host string) bool {
+	h := strings.TrimSuffix(strings.ToLower(host), ".")
+	return h == "invalid" || strings.HasSuffix(h, ".invalid")
 }
 
 func firstNonEmpty(vals ...string) string {

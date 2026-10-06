@@ -244,6 +244,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
+	// A transport command is exclusive with every logon flow of vsp's own,
+	// and those below contact the URL: refuse the mix before any of them runs.
+	if transportCmdErr != nil {
+		return transportCmdErr
+	}
+	if err := transportCmdConflicts(cmd); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
+
 	// Validate configuration
 	if err := validateConfig(); err != nil {
 		return err
@@ -299,7 +309,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP URL: %s\n", cfg.BaseURL)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Client: %s\n", cfg.Client)
 		fmt.Fprintf(os.Stderr, "[VERBOSE] SAP Language: %s\n", cfg.Language)
-		if cfg.Username != "" {
+		if len(cfg.TransportCmd) > 0 {
+			fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: transport command %s (it authenticates; no local port)\n", adt.TransportCmdName(cfg.TransportCmd))
+		} else if cfg.Username != "" {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: Basic (user: %s)\n", cfg.Username)
 		} else if cfg.ReauthFunc != nil {
 			fmt.Fprintf(os.Stderr, "[VERBOSE] Auth: SSO/SAML (%d cookies, re-authenticates when the session expires)\n", len(cfg.Cookies))
@@ -441,6 +453,9 @@ func resolveConfig(cmd *cobra.Command) {
 	samlAuth, _ := cmd.Flags().GetBool("saml-auth")
 	hasSAMLAuth := samlAuth || viper.GetBool("SAML_AUTH")
 	hasCookieAuth := cookieAuthViaCLI || cookieAuthViaEnv || hasBrowserAuth || hasSAMLAuth || ssoRequested(cmd)
+
+	// Transport command: --transport-cmd/--transport-arg > SAP_TRANSPORT_CMD
+	cfg.TransportCmd, transportCmdErr = resolveTransportCmd(cmd)
 
 	// URL: flag > SAP_URL env
 	if cfg.BaseURL == "" {
@@ -900,6 +915,15 @@ func processSAMLAuth(cmd *cobra.Command) error {
 }
 
 func processCookieAuth(cmd *cobra.Command) error {
+	// A transport command authenticates on its own; it needs, and takes,
+	// no other method.
+	if transportCmdErr != nil {
+		return transportCmdErr
+	}
+	if len(cfg.TransportCmd) > 0 {
+		return transportCmdConflicts(cmd)
+	}
+
 	cookieFile, _ := cmd.Flags().GetString("cookie-file")
 	cookieString, _ := cmd.Flags().GetString("cookie-string")
 
@@ -932,7 +956,7 @@ func processCookieAuth(cmd *cobra.Command) error {
 	}
 
 	if authMethods == 0 {
-		return fmt.Errorf("authentication required. Use --user/--password, --cookie-file, --cookie-string, --browser-auth, or --saml-auth")
+		return fmt.Errorf("authentication required. Use --user/--password, --cookie-file, --cookie-string, --browser-auth, --saml-auth, or --transport-cmd")
 	}
 
 	// If cookies already set by browser auth, we're done

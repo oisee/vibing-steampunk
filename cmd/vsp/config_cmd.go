@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 )
@@ -121,6 +122,16 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  SAP_PASSWORD=***\n")
 		hasEnv = true
 	}
+	if v := os.Getenv("SAP_TRANSPORT_CMD"); v != "" {
+		// The program's name only: its arguments may name a profile or a
+		// path that is nobody else's business.
+		name := "(malformed)"
+		if argv, err := parseTransportCmdEnv(v); err == nil {
+			name = adt.TransportCmdName(argv)
+		}
+		fmt.Printf("  SAP_TRANSPORT_CMD=transport-cmd:%s\n", name)
+		hasEnv = true
+	}
 	if !hasEnv {
 		fmt.Println("  (none set)")
 	}
@@ -147,7 +158,9 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		for name, sys := range cfg.Systems {
 			pwdStatus := "env"
 			envKey := fmt.Sprintf("VSP_%s_PASSWORD", strings.ToUpper(name))
-			if sys.Password != "" {
+			if len(sys.TransportCmd) > 0 {
+				pwdStatus = "- transport-cmd:" + adt.TransportCmdName(sys.TransportCmd)
+			} else if sys.Password != "" {
 				pwdStatus = "inline"
 			} else if os.Getenv(envKey) != "" {
 				pwdStatus = "env ✓"

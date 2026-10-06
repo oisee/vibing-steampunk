@@ -100,6 +100,11 @@ func (s *Server) statefulADTTransport() (saprfc.ADTTransport, error) {
 			opts = append(opts, adt.WithExpect(*pin))
 		}
 	}
+	// A transport command is a connection of its own too: the debug session
+	// gets its own helper process, and so its own session behind it.
+	if len(s.config.TransportCmd) > 0 {
+		opts = append(opts, adt.WithTransportCmd(s.config.TransportCmd))
+	}
 	user, password := s.config.Username, s.config.Password
 	if len(s.config.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(s.config.Cookies))

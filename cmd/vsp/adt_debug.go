@@ -273,6 +273,12 @@ func debugHTTPTransport(params *systemParams, timeout time.Duration, session adt
 		opts = append(opts, pinOpt)
 	}
 
+	// A transport command authenticates on its own: no credentials of ours.
+	if len(params.TransportCmd) > 0 {
+		opts = append(opts, adt.WithTransportCmd(params.TransportCmd))
+		return adt.NewTransport(adt.NewConfig(params.URL, "", "", opts...)), nil
+	}
+
 	// Browser single sign-on, checked before the static cookie sources for the
 	// same reason as everywhere else — and needed here most of all. A debug
 	// session is the longest-lived thing vsp holds: a listener waits minutes,

@@ -45,6 +45,10 @@ type systemParams struct {
 	CookieFile   string
 	CookieString string
 
+	// TransportCmd is the argv of a helper that carries every ADT request
+	// over its stdin/stdout and authenticates on its own.
+	TransportCmd []string
+
 	// Auth names the authentication method ("sso" for browser single sign-on).
 	Auth string
 	// SSO carries this system's single sign-on settings, if any.
@@ -118,9 +122,11 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 
 		// Require some way to authenticate. An SSO system needs no stored
 		// credential at all: the browser handshake produces one on demand.
+		// A transport command authenticates on its own (GetSystem has
+		// refused it next to any credential, and outside the home directory).
 		hasCookieAuth := sys.CookieFile != "" || sys.CookieString != ""
-		if sys.Password == "" && !hasCookieAuth && !sys.UsesSSO() {
-			return nil, fmt.Errorf("auth not found for system '%s'. Set VSP_%s_PASSWORD env var, use cookie_file/cookie_string, or set \"auth\": \"sso\"", effectiveName, strings.ToUpper(effectiveName))
+		if sys.Password == "" && !hasCookieAuth && !sys.UsesSSO() && len(sys.TransportCmd) == 0 {
+			return nil, fmt.Errorf("auth not found for system '%s'. Set VSP_%s_PASSWORD env var, use cookie_file/cookie_string, set \"auth\": \"sso\", or set transport_cmd in ~/.vsp.json", effectiveName, strings.ToUpper(effectiveName))
 		}
 
 		verbose, _ := cmd.Flags().GetBool("verbose")
@@ -148,6 +154,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			Insecure:           sys.Insecure,
 			CookieFile:         sys.CookieFile,
 			CookieString:       sys.CookieString,
+			TransportCmd:       sys.TransportCmd,
 			Auth:               sys.Auth,
 			SSO:                sys.SSO,
 			TransportAttribute: sys.TransportAttribute,
@@ -177,8 +184,18 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 
 	user := os.Getenv("SAP_USER")
 	password := os.Getenv("SAP_PASSWORD")
-	if user == "" || password == "" {
-		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required")
+	transportCmd, err := resolveTransportCmd(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if len(transportCmd) > 0 {
+		// The helper authenticates; credentials of ours are refused, not
+		// silently dropped.
+		if user != "" || password != "" {
+			return nil, fmt.Errorf("%w (found: SAP_USER/SAP_PASSWORD)", adt.ErrTransportCmdAuth)
+		}
+	} else if user == "" || password == "" {
+		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_TRANSPORT_CMD)")
 	}
 
 	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
@@ -197,6 +214,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		URL:                url,
 		User:               user,
 		Password:           password,
+		TransportCmd:       transportCmd,
 		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
 		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
 		Insecure:           os.Getenv("SAP_INSECURE") == "true",
@@ -332,7 +350,7 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 	// so a wrong one is refused before it ever reaches SAP; a cookie or single
 	// sign-on session has no user name until the system says it.
 	basicUser := params.User
-	if params.UsesSSO() || params.CookieFile != "" || params.CookieString != "" {
+	if params.UsesSSO() || params.CookieFile != "" || params.CookieString != "" || len(params.TransportCmd) > 0 {
 		basicUser = ""
 	}
 	pinOpt, err := cliPinOption(params, basicUser)
@@ -404,6 +422,16 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 		} else {
 			opts = append(opts, adt.WithCache(ttl))
 		}
+	}
+
+	// A transport command: the helper carries every request and
+	// authenticates, so vsp sends no credentials of its own.
+	if len(params.TransportCmd) > 0 {
+		if params.User != "" || params.Password != "" || params.CookieFile != "" || params.CookieString != "" || params.UsesSSO() {
+			return nil, adt.ErrTransportCmdAuth
+		}
+		opts = append(opts, adt.WithTransportCmd(params.TransportCmd))
+		return adt.NewClient(params.URL, "", "", opts...), nil
 	}
 
 	// Browser single sign-on: cookies are fetched on demand and refreshed
@@ -792,7 +820,9 @@ func runSystems(cmd *cobra.Command, args []string) error {
 
 		// Determine auth method
 		authStatus := ""
-		if sys.CookieFile != "" {
+		if len(sys.TransportCmd) > 0 {
+			authStatus = "transport-cmd:" + adt.TransportCmdName(sys.TransportCmd)
+		} else if sys.CookieFile != "" {
 			authStatus = fmt.Sprintf("cookie-file:%s", sys.CookieFile)
 		} else if sys.CookieString != "" {
 			authStatus = "cookie-string:***"

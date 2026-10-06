@@ -79,6 +79,11 @@ type Config struct {
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
 
+	// TransportCmd is the argv of a helper that carries every ADT request
+	// over its stdin/stdout (--transport-cmd / SAP_TRANSPORT_CMD). It
+	// authenticates itself; no user, password or cookies go with it.
+	TransportCmd []string
+
 	// Expect pins the system, client and user (--expect / SAP_EXPECT /
 	// "expect" in .vsp.json). Nil: no pin, and no preflight request.
 	Expect *adt.IdentityPin
@@ -213,6 +218,9 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.Expect != nil {
 		opts = append(opts, adt.WithExpect(*cfg.Expect))
+	}
+	if len(cfg.TransportCmd) > 0 {
+		opts = append(opts, adt.WithTransportCmd(cfg.TransportCmd))
 	}
 
 	// Configure safety settings

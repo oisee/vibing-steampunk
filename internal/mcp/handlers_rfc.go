@@ -337,6 +337,8 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 		Password: s.config.Password,
 		Client:   s.config.Client,
 		Language: s.config.Language,
+
+		TransportCmd: len(s.config.TransportCmd) > 0,
 	}
 	if in.User == "" && sameSystem(os.Getenv("SAP_URL"), os.Getenv("SAP_CLIENT"), s.config.BaseURL, s.config.Client) {
 		in.User, in.Password = os.Getenv("SAP_USER"), os.Getenv("SAP_PASSWORD")

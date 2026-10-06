@@ -106,6 +106,8 @@ func applyServerExpect(c *mcp.Config, systemsCfg *config.SystemsConfig, userFlag
 // userFlag is whether --user was given.
 func serverUserSource(c *mcp.Config, userFlag bool) string {
 	switch {
+	case c.Username == "" && len(c.TransportCmd) > 0:
+		return "no user name (the transport command authenticates)"
 	case c.Username == "":
 		return "no user name (cookie or single sign-on session)"
 	case userFlag:
@@ -122,7 +124,9 @@ func serverUserSource(c *mcp.Config, userFlag bool) string {
 // nothing until SAP answered 401.
 func logServerLogon(w io.Writer, c *mcp.Config, systemsCfg *config.SystemsConfig, userFlag bool) {
 	who := "a cookie or single sign-on session"
-	if c.Username != "" {
+	if len(c.TransportCmd) > 0 {
+		who = "transport command " + adt.TransportCmdName(c.TransportCmd)
+	} else if c.Username != "" {
 		who = "user " + strings.ToUpper(c.Username)
 	}
 	fmt.Fprintf(w, "[vsp] SAP logon: %s from %s, client %s, %s\n", who, serverUserSource(c, userFlag), c.Client, c.BaseURL)
