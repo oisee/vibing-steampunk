@@ -294,7 +294,7 @@ func (t *StdioTransport) ensureStarted() error {
 		inW.Close()
 		outR.Close()
 		outW.Close()
-		t.broken = fmt.Errorf("transport command %s is broken: could not start: %w", t.name, err)
+		t.broken = fmt.Errorf("transport command %s is broken: could not start: %w", t.name, startCause(err))
 		return t.broken
 	}
 	// The child holds its own ends now.
@@ -368,6 +368,20 @@ func (t *StdioTransport) fail(cause error, kill bool) error {
 	t.broken = errors.New(msg)
 	t.releaseLocked()
 	return t.broken
+}
+
+// startCause strips the program's path from a start failure: errors name
+// the command by its basename only.
+func startCause(err error) error {
+	var ee *exec.Error
+	if errors.As(err, &ee) {
+		return ee.Err
+	}
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
 }
 
 // exitDescription says how the child ended.

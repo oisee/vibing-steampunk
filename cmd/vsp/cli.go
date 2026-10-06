@@ -838,7 +838,9 @@ func runSystems(cmd *cobra.Command, args []string) error {
 		}
 
 		userInfo := sys.User
-		if userInfo == "" {
+		if userInfo == "" && len(sys.TransportCmd) > 0 {
+			userInfo = "(helper)"
+		} else if userInfo == "" {
 			userInfo = "(cookie)"
 		}
 		fmt.Printf("  %-12s %s [%s@%s] %s%s\n", name, sys.URL, userInfo, sys.Client, authStatus, defaultMark)

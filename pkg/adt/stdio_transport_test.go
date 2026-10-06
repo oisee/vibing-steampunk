@@ -372,6 +372,17 @@ func TestStdioTransport_RefusesCredentials(t *testing.T) {
 	}
 }
 
+func TestStdioTransport_StartFailureNamesBasenameOnly(t *testing.T) {
+	st := NewStdioTransport([]string{"/nonexistent/dir/adt-helper", "--x"})
+	_, err := stdioGet(t, st, context.Background(), "/big")
+	if err == nil || !strings.Contains(err.Error(), "adt-helper") || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("want a broken start error naming adt-helper, got %v", err)
+	}
+	if strings.Contains(err.Error(), "/nonexistent/dir") {
+		t.Errorf("error carries the command's path: %v", err)
+	}
+}
+
 func TestStdioTransport_WebSocketRefuses(t *testing.T) {
 	c := NewClient("https://sidecar.invalid", "", "", WithTransportCmd(stdioHelperArgv()))
 	defer c.CloseTransport()
