@@ -64,6 +64,11 @@ Quick start:
   vsp --allowed-packages 'Z*,$TMP' --block-free-sql  # sandbox AI to custom code
   vsp --disallowed-ops CDUA                           # block create/delete/update/activate
 
+  # 4. Through a helper that signs on itself and carries each ADT request
+  #    over its stdin/stdout (frames: 4-byte big-endian length + one raw
+  #    HTTP/1.1 message; one at a time; exit on stdin EOF; logs to stderr only)
+  vsp --url https://sidecar.invalid --transport-cmd /opt/tools/adt-helper
+
 Configuration files:
   .env          Default SAP connection (MCP server mode). SAP_URL, SAP_USER, etc.
   .vsp.json     Multi-system profiles for CLI mode (vsp -s dev, vsp -s prod).

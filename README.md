@@ -1916,6 +1916,68 @@ interop, and reads the cookies back over its stdout. Only cookies cross.
 ignored, because basic auth would win in the transport and take the automatic
 recovery down with it.
 
+### Transport command: ADT through a helper process
+
+Some systems are reachable only through a program that does the sign-in itself,
+for example a helper that logs on with a corporate SSO. With a transport command,
+vsp sends every ADT HTTP request to that helper over its stdin and stdout and
+opens no connection and no local port of its own. The helper reaches SAP however
+it can and answers each request.
+
+```bash
+vsp --url https://sidecar.invalid --transport-cmd /opt/tools/adt-helper --transport-arg --profile --transport-arg dev
+export SAP_TRANSPORT_CMD='["/opt/tools/adt-helper", "--profile", "dev"]'   # same, as a JSON array
+```
+
+```json
+{
+  "systems": {
+    "dev": { "url": "https://sidecar.invalid", "client": "100",
+             "transport_cmd": ["C:\\tools\\adt-helper.exe", "--profile", "dev"] }
+  }
+}
+```
+
+- The helper authenticates. A transport command next to user/password, cookies,
+  browser-auth, SAML or SSO is refused. This includes `SAP_USER`/`SAP_PASSWORD`
+  in the environment.
+- The URL is still required, because ADT paths and the `Host` header are built
+  from it. `https://sidecar.invalid` is a fine placeholder when only the helper
+  knows the real address.
+- `transport_cmd` is honoured only in `~/.vsp.json` or `~/.vsp/systems.json`.
+  The same key in a `.vsp.json` in the working directory is refused, and so is
+  `SAP_TRANSPORT_CMD` from a `.env` file, because a project file must not be
+  able to make vsp run a program.
+- The ZADT_VSP WebSocket features can't go through the pipe, and they refuse
+  with "not available over a transport command". Classic RFC needs an explicit
+  `rfc_host` (or `--rfc-host`) rather than the placeholder URL.
+
+**Writing a helper.** The protocol is the same in both directions:
+
+1. A frame is a 4-byte big-endian unsigned length followed by exactly that many
+   bytes. Those bytes are one raw HTTP/1.1 message. The limit is 64 MiB per frame.
+2. vsp writes a request in origin form (`GET /sap/bc/adt/...?sap-client=100 HTTP/1.1`)
+   with a `Host` header and its other headers (cookies, `X-CSRF-Token`,
+   `X-sap-adt-sessiontype`, ...). Its body always has a `Content-Length`; it is
+   never chunked.
+3. The helper sends the request on to SAP and writes back one frame holding the
+   complete response: status line, headers (including `Set-Cookie`, which vsp
+   keeps in its cookie jar) and the whole body, either with `Content-Length` or
+   chunked.
+4. Only one request is in flight. vsp writes the next frame only after it has
+   read the answer to the previous one.
+5. When its stdin reaches EOF, the helper exits. vsp closes stdin on shutdown and
+   kills the helper three seconds later. On Windows the helper runs in a Job
+   Object that ends it with vsp.
+6. The helper writes only frames to stdout. Logs go to stderr, which vsp passes
+   through and quotes (the last 20 lines) when the helper fails. Secrets such as
+   tokens, cookies and passwords must never be printed there.
+
+If the helper exits, writes a malformed or oversized frame, or a request is
+abandoned half-way (timeout, cancel), vsp kills the helper and reports the
+transport as broken. It does not restart it, because a new helper would mean a
+new session and the old session's locks would be lost. Restart vsp instead.
+
 <details>
 <summary><strong>MCP Server Configuration</strong></summary>
 
@@ -2026,6 +2088,7 @@ SAP_PASSWORD=secret
 | `--sso` | `SAP_SSO` | Browser SSO; re-captures the session when it expires |
 | `--sso-system` | `SAP_SSO_SYSTEM` | Name for the cached session (default: URL host) |
 | `--sso-on-expiry` | `SAP_SSO_ON_EXPIRY` | `window` (default) or `error` when a sign-in is due |
+| `--transport-cmd` + `--transport-arg` | `SAP_TRANSPORT_CMD` (JSON array) | Helper process that carries every ADT request over stdin/stdout and authenticates itself (see "Transport command") |
 | `--insecure` | `SAP_INSECURE` | Skip TLS verification. CLI subcommands on a `.vsp.json` system (`-s` or `default`) use that system's `insecure` setting instead, for ADT calls and the ZADT_VSP WebSocket alike |
 | `--terminal-id` | `SAP_TERMINAL_ID` | SAP GUI terminal ID for cross-tool debugging |
 | `--allow-transportable-edits` | `SAP_ALLOW_TRANSPORTABLE_EDITS` | Enable editing transportable objects |
