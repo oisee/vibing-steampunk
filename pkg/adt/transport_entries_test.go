@@ -125,6 +125,32 @@ func TestRemoveTransportObject_FromTheTaskThatHoldsIt(t *testing.T) {
 	}
 }
 
+// A method entry is found and deleted under the OBJ_NAME E071 holds -- the
+// class in 30 columns, then the method -- when the caller types the two
+// names with a single blank, and when the request lists it either way.
+func TestRemoveTransportObject_MethodEntry(t *testing.T) {
+	const e071Name = "ZCL_VSP_APC_HANDLER           CLASS_CONSTRUCTOR"
+	for _, listed := range []string{e071Name, "ZCL_VSP_APC_HANDLER CLASS_CONSTRUCTOR"} {
+		details := &TransportDetails{
+			TransportSummary: TransportSummary{Number: "TR-REQ"},
+			Tasks: []TransportTaskV2{{Number: "TR-TASK", Owner: "TESTUSER", Status: "D",
+				Objects: []TransportObjectV2{{PgmID: "LIMU", Type: "METH", Name: listed}}}},
+		}
+		key, err := ParseTransportObject("LIMU METH ZCL_VSP_APC_HANDLER CLASS_CONSTRUCTOR")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bridge := &fakeOrganizer{}
+		res, err := removeTransportObject(context.Background(), bridge, details, "TR-TASK", key)
+		if err != nil || !res.Removed || res.Task != "TR-TASK" {
+			t.Fatalf("listed as %q: %+v %v", listed, res, err)
+		}
+		if got := bridge.calls[0].params["IS_E071_DELETE"]; !reflect.DeepEqual(got, map[string]any{"PGMID": "LIMU", "OBJECT": "METH", "OBJ_NAME": e071Name}) {
+			t.Errorf("listed as %q: deleted %v", listed, got)
+		}
+	}
+}
+
 func TestRemoveTransportObject_RefusesAnEntryThatIsNotThere(t *testing.T) {
 	bridge := &fakeOrganizer{}
 	if _, err := removeTransportObject(context.Background(), bridge, entriesRequest(), "", TransportObjectKey{"R3TR", "PROG", "ZNOWHERE"}); err == nil {

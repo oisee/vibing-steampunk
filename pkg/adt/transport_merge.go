@@ -89,17 +89,56 @@ func (k TransportObjectKey) String() string {
 	return fmt.Sprintf("%s %s %s", k.PgmID, k.Object, k.Name)
 }
 
+// paddedNameTypes are the LIMU types whose OBJ_NAME is two names in fixed
+// columns: the owner padded to 30 characters, then the part -- a class and
+// its method (METH), a Web Dynpro component and its controller (WDYC) or
+// view (WDYV). E071 holds "ZCL_DEMO" + 22 blanks + "RUN".
+var paddedNameTypes = map[string]bool{"METH": true, "WDYC": true, "WDYV": true}
+
 // ParseTransportObject reads "PROG ZDEMO", "R3TR PROG ZDEMO" or
-// "LIMU METH ZCL_DEMO  RUN". Without a PGMID it is R3TR.
+// "LIMU METH ZCL_DEMO RUN". Without a PGMID it is R3TR.
+//
+// The name is the rest of the string as given, not re-joined from its
+// words: OBJ_NAME may hold blanks that matter. For a two-part LIMU name
+// (METH, WDYC, WDYV) given as two words, the owner is padded to its 30
+// columns, so "LIMU METH ZCL_DEMO RUN" names the entry E071 holds.
 func ParseTransportObject(s string) (TransportObjectKey, error) {
-	parts := strings.Fields(strings.ToUpper(strings.TrimSpace(s)))
+	upper := strings.ToUpper(strings.TrimSpace(s))
+	parts := strings.Fields(upper)
 	switch {
 	case len(parts) == 2:
 		return TransportObjectKey{PgmID: "R3TR", Object: parts[0], Name: parts[1]}, nil
 	case len(parts) >= 3 && (parts[0] == "R3TR" || parts[0] == "LIMU" || parts[0] == "LANG" || parts[0] == "CORR"):
-		return TransportObjectKey{PgmID: parts[0], Object: parts[1], Name: strings.Join(parts[2:], " ")}, nil
+		k := TransportObjectKey{PgmID: parts[0], Object: parts[1], Name: restAfterFields(upper, 2)}
+		if k.PgmID == "LIMU" && paddedNameTypes[k.Object] && len(parts) == 4 && len(parts[2]) <= 30 {
+			k.Name = fmt.Sprintf("%-30s%s", parts[2], parts[3])
+		}
+		return k, nil
 	}
 	return TransportObjectKey{}, fmt.Errorf("object %q: want TYPE NAME (PROG ZDEMO) or PGMID TYPE NAME (R3TR PROG ZDEMO)", s)
+}
+
+// restAfterFields is s from its (n+1)th word on, its inner blanks kept.
+func restAfterFields(s string, n int) string {
+	for i := 0; i < n; i++ {
+		s = strings.TrimLeft(s, " \t")
+		if j := strings.IndexAny(s, " \t"); j >= 0 {
+			s = s[j:]
+		} else {
+			return ""
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
+// sameObjectName compares OBJ_NAMEs as SAP does for an entry, blanks inside
+// included -- but a name read back from ADT may come with its blanks
+// collapsed, so a two-part name also matches word for word.
+func sameObjectName(a, b string) bool {
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	return strings.EqualFold(strings.Join(strings.Fields(a), " "), strings.Join(strings.Fields(b), " "))
 }
 
 // TransportMoveResult is what a move did.
@@ -201,7 +240,7 @@ func holderOf(details *TransportDetails, key TransportObjectKey) string {
 
 func holds(objects []TransportObjectV2, key TransportObjectKey) bool {
 	for _, o := range objects {
-		if strings.EqualFold(o.Name, key.Name) && strings.EqualFold(o.Type, key.Object) && (o.PgmID == "" || strings.EqualFold(o.PgmID, key.PgmID)) {
+		if sameObjectName(o.Name, key.Name) && strings.EqualFold(o.Type, key.Object) && (o.PgmID == "" || strings.EqualFold(o.PgmID, key.PgmID)) {
 			return true
 		}
 	}
