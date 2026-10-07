@@ -23,6 +23,23 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
 
+// jobStatusFor reads a job's TBTCO status letter and the start stamp that comes
+// with it. The seam it goes through is declared on Server, next to jobLogCall.
+func (s *Server) jobStatusFor(ctx context.Context, c *openrfc.Client, name, count string) (saprfc.PolledJobStatus, error) {
+	if s.jobStatusCall != nil {
+		return s.jobStatusCall(ctx, c, name, count)
+	}
+	return saprfc.JobStatusDetail(ctx, c, name, count)
+}
+
+// jobLogFor reads a job's log so far, which XBP answers for a running job too.
+func (s *Server) jobLogFor(ctx context.Context, c *openrfc.Client, name, count string) ([]saprfc.JobLogEntry, error) {
+	if s.jobLogCall != nil {
+		return s.jobLogCall(ctx, c, name, count)
+	}
+	return saprfc.ReadJobLog(ctx, c, name, count)
+}
+
 // routeRFCAction handles SAP(action="rfc", …).
 //
 //	SAP(action="rfc", params={"op":"info"})                       — RFC_SYSTEM_INFO
@@ -210,22 +227,25 @@ func (s *Server) routeRFCAction(ctx context.Context, action, objectType, objectN
 		if err != nil {
 			return nil, true, err
 		}
-		readJobOutput(ctx, c, run, params)
+		s.readJobOutput(ctx, c, run, params)
 		return rfcResult(run)
 	case "job":
 		count := strings.TrimSpace(getStringParam(params, "job_count"))
 		if name == "" || count == "" {
 			return nil, true, fmt.Errorf("job needs the job name in target and job_count")
 		}
-		status, text, err := saprfc.JobStatus(ctx, c, strings.ToUpper(name), count)
+		status, err := s.jobStatusFor(ctx, c, strings.ToUpper(name), count)
 		if err != nil {
 			return nil, true, err
 		}
-		if status == "" {
+		if status.Status == "" {
 			return nil, true, fmt.Errorf("no job %s / %s", strings.ToUpper(name), count)
 		}
-		run := &saprfc.JobRun{JobName: strings.ToUpper(name), JobCount: count, Status: status, StatusFor: text}
-		readJobOutput(ctx, c, run, params)
+		// The caller is not the process that scheduled the job, so the status
+		// letter is the only thing it can go on. PolledJob is the one place that
+		// turns that letter into Started, so there is nothing to forget here.
+		run := saprfc.PolledJob(name, count, status)
+		s.readJobOutput(ctx, c, run, params)
 		return rfcResult(run)
 	}
 	return nil, true, fmt.Errorf("unknown rfc op %q (info, ping, probe, describe, call, search, read_table, run, job)", op)
@@ -540,11 +560,25 @@ func intParam(params map[string]any, key string, def int) int {
 // longer is left running; op "job" picks up its outcome later.
 const maxReportWait = 5 * time.Minute
 
+// jobLogWanted reports whether XBP should be asked for the log now. XBP answers
+// with what it has while the job runs, so a job that has begun is asked, not
+// only one that has ended; a job still scheduled or released has no log yet and
+// asking would only produce an error.
+//
+// The gate is the status letter, not JobRun.Started. On op "run" that flag means
+// "XBP accepted the start" and is set before any status is known, so keying on
+// it asked for the log of a job with no status at all (wait 0) and turned the
+// refusal into a synthetic error entry in job_log. The letter means the same
+// thing on both paths; the flag does not.
+func jobLogWanted(params map[string]any, run *saprfc.JobRun) bool {
+	want, ok := getBoolParam(params, "joblog")
+	return (!ok || want) && saprfc.JobStarted(run.Status)
+}
+
 // readJobOutput adds what a job left behind to run: its log, and once it has
 // finished, its spool list. Neither is worth failing the call over -- the job
 // ran either way -- so a read that fails is reported in the result instead.
-func readJobOutput(ctx context.Context, c *openrfc.Client, run *saprfc.JobRun, params map[string]any) {
-	ended := run.Status == "F" || run.Status == "A"
+func (s *Server) readJobOutput(ctx context.Context, c *openrfc.Client, run *saprfc.JobRun, params map[string]any) {
 	if want, ok := getBoolParam(params, "spool"); (!ok || want) && run.Status == "F" {
 		if spool, err := saprfc.ReadSpool(ctx, c, run.JobName, run.JobCount); err != nil {
 			run.Spool = "spool unavailable: " + err.Error()
@@ -552,8 +586,8 @@ func readJobOutput(ctx context.Context, c *openrfc.Client, run *saprfc.JobRun, p
 			run.Spool, run.SpoolTruncated = truncateAtLine(spool, intParam(params, "spool_max_bytes", defaultSpoolMaxBytes))
 		}
 	}
-	if want, ok := getBoolParam(params, "joblog"); (!ok || want) && ended {
-		if log, err := saprfc.ReadJobLog(ctx, c, run.JobName, run.JobCount); err == nil {
+	if jobLogWanted(params, run) {
+		if log, err := s.jobLogFor(ctx, c, run.JobName, run.JobCount); err == nil {
 			run.JobLog = log
 		} else {
 			run.JobLog = []saprfc.JobLogEntry{{Type: "E", Text: "job log unavailable: " + err.Error()}}
