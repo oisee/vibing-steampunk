@@ -46,7 +46,8 @@ The WebSocket handler enables **stateful operations** not available through stan
 | `zcl_vsp_debug_service.clas.abap` | Class | Debug domain - TPDAPI integration |
 | `zcl_vsp_amdp_service.clas.abap` | Class | AMDP domain - HANA/SQLScript debugging |
 | `zcl_vsp_git_service.clas.abap` | Class | Git domain - abapGit integration (158 object types) |
-| `zcl_vsp_report_service.clas.abap` | Class | Report domain - runs a report synchronously (SUBMIT ... AND RETURN), optionally capturing its ALV output |
+| `zvsp_report_runner.prog.abap` | Program | Background job step: SUBMITs the requested report with ALV capture and hands the rows back through INDX |
+| `zcl_vsp_report_service.clas.abap` | Class | Report domain - schedules the report as an XBP background job (SUBMIT is forbidden in APC), then returns job status, spool and captured ALV |
 | `zcl_vsp_utils.clas.abap` | Class | Shared JSON and parameter helpers |
 | `zcl_vsp_tadir_move.clas.abap` | Class | TADIR package reassignment helper |
 
