@@ -531,7 +531,7 @@ func rfcDestinationFor(cmd *cobra.Command) (saprfc.Params, error) {
 	if params.Name != "" {
 		if cfg, _, cerr := config.LoadSystems(); cerr == nil && cfg != nil {
 			if sys, serr := cfg.GetSystem(params.Name); serr == nil {
-				in.RFCHost, in.RFCSysnr, in.RFCPort = sys.RFCHost, sys.RFCSysnr, sys.RFCPort
+				in.RFCHost, in.RFCSysnr, in.RFCPort, in.RFCRouter = sys.RFCHost, sys.RFCSysnr, sys.RFCPort, sys.RFCRouter
 				in.RFCUser, in.RFCPassword = sys.RFCUser, sys.RFCPassword
 			}
 		}
@@ -539,6 +539,7 @@ func rfcDestinationFor(cmd *cobra.Command) (saprfc.Params, error) {
 		in.RFCUser, in.RFCPassword = os.Getenv("SAP_USER"), os.Getenv("SAP_PASSWORD")
 	}
 	in.HostFlag, _ = cmd.Flags().GetString("rfc-host")
+	in.RouterFlag, _ = cmd.Flags().GetString("rfc-router")
 	in.SysnrFlag, _ = cmd.Flags().GetString("sysnr")
 	in.PortFlag, _ = cmd.Flags().GetInt("port")
 	in.UserFlag, _ = cmd.Flags().GetString("rfc-user")
@@ -584,7 +585,8 @@ func readAllStdin() ([]byte, error) {
 }
 
 func init() {
-	rfcCmd.PersistentFlags().String("rfc-host", "", "RFC gateway host (default: host from the system URL)")
+	rfcCmd.PersistentFlags().String("rfc-host", "", "RFC gateway host (default: host from the system URL); a SAProuter route /H/router/H/host is accepted")
+	rfcCmd.PersistentFlags().String("rfc-router", "", "SAProuter route to the gateway, e.g. /H/router/H/ (default: rfc_router in .vsp.json)")
 	rfcCmd.PersistentFlags().String("sysnr", "", "SAP system number, 00..99 (default: derived from the URL port)")
 	rfcCmd.PersistentFlags().Int("port", 0, "RFC gateway port (default: 3300 + system number)")
 	rfcCmd.PersistentFlags().String("rfc-user", "", "RFC logon user (default: rfc_user / SAP_USER / the system's user)")
