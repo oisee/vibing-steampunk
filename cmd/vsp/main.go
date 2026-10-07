@@ -170,7 +170,7 @@ func init() {
 
 	// Mode options
 	rootCmd.Flags().StringVar(&cfg.Mode, "mode", "hyperfocused", "Tool mode: hyperfocused (single universal SAP tool), focused (98 tools), or expert (148 tools)")
-	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups: 5/U=UI5, T=Tests, H=HANA, D=Debug, GC=gCTS, N=i18n")
+	rootCmd.Flags().StringVar(&cfg.DisabledGroups, "disabled-groups", "", "Disable tool groups (GC=gCTS; G,C=Git+CTS; also 5/U=UI5, T=Tests, H=HANA, D=Debug, N=i18n; packed single-character codes like 5THD remain supported)")
 
 	// Transport options
 	rootCmd.Flags().StringVar(&cfg.Transport, "transport", "stdio", "Transport mode: stdio (default) or http")

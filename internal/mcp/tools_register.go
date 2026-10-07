@@ -6,12 +6,14 @@ package mcp
 
 import (
 	"strings"
+	"unicode"
 )
 
 // registerTools registers ADT tools with the MCP server based on mode, disabled groups, and granular config.
 // Mode "focused" registers essential tools.
 // Mode "expert" registers all tools.
 // DisabledGroups can disable specific tool groups using short codes:
+//   - "GC" = gCTS; use "G,C" to disable Git and CTS together
 //   - "5" or "U" = UI5/BSP tools (3 tools, read-only)
 //   - "T" = Test tools: RunUnitTests, RunATCCheck (2 tools)
 //   - "H" = HANA/AMDP debugger (7 tools)
@@ -33,18 +35,9 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 		return
 	}
 
-	groups := toolGroups()
 	focusedTools := focusedToolSet()
 
-	// Build set of disabled tools based on disabledGroups string
-	disabledTools := make(map[string]bool)
-	for _, code := range strings.ToUpper(disabledGroups) {
-		if tools, ok := groups[string(code)]; ok {
-			for _, tool := range tools {
-				disabledTools[tool] = true
-			}
-		}
-	}
+	disabledTools := disabledToolSet(disabledGroups)
 
 	// Helper to check if tool should be registered
 	shouldRegister := func(toolName string) bool {
@@ -110,4 +103,47 @@ func (s *Server) registerTools(mode string, disabledGroups string, toolsConfig m
 
 	// Register tool aliases for common operations
 	s.registerToolAliases(shouldRegister)
+}
+
+func disabledToolSet(disabledGroups string) map[string]bool {
+	groups := toolGroups()
+	disabledTools := make(map[string]bool)
+	for _, code := range parseDisabledGroupCodes(disabledGroups, groups) {
+		for _, tool := range groups[code] {
+			disabledTools[tool] = true
+		}
+	}
+	return disabledTools
+}
+
+func parseDisabledGroupCodes(input string, groups map[string][]string) []string {
+	input = strings.ToUpper(strings.TrimSpace(input))
+	if input == "" {
+		return nil
+	}
+
+	// An exact code wins before packed single-character compatibility, so GC
+	// means the gCTS group rather than the Git (G) and CTS (C) groups together.
+	if _, ok := groups[input]; ok {
+		return []string{input}
+	}
+
+	// Delimiters make multi-code selections explicit: G,C disables Git and CTS.
+	isSeparator := func(r rune) bool {
+		return r == ',' || r == '/' || unicode.IsSpace(r)
+	}
+	if strings.IndexFunc(input, isSeparator) >= 0 {
+		return strings.FieldsFunc(input, isSeparator)
+	}
+
+	// Preserve compact legacy forms such as 5THD, which are sequences of
+	// single-character group codes.
+	codes := make([]string, 0, len(input))
+	for _, code := range input {
+		key := string(code)
+		if _, ok := groups[key]; ok {
+			codes = append(codes, key)
+		}
+	}
+	return codes
 }
