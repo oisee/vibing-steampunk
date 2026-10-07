@@ -27,6 +27,10 @@ type Params struct {
 	User     string
 	Password Secret
 	Language string
+	// Router is the SAProuter route prefix, ending in /H/ ("/H/router/H/"),
+	// for a gateway that is reachable only through a SAProuter. Empty: dial
+	// the gateway directly.
+	Router string
 
 	// Expect is the identity pin (see adt.IdentityPin). With one, Open
 	// refuses a logon user or client that contradicts it before dialling,
@@ -70,12 +74,14 @@ type Input struct {
 	RFCPort     int
 	RFCUser     string
 	RFCPassword string
+	RFCRouter   string
 
 	// Per-command overrides (flags).
-	HostFlag  string
-	SysnrFlag string
-	PortFlag  int
-	UserFlag  string
+	HostFlag   string
+	SysnrFlag  string
+	PortFlag   int
+	UserFlag   string
+	RouterFlag string
 
 	// Expect is carried into Params.Expect.
 	Expect *adt.IdentityPin
@@ -89,6 +95,23 @@ type Input struct {
 func Resolve(in Input) (Params, error) {
 	host := firstNonEmpty(in.HostFlag, in.RFCHost)
 	sysnr := firstNonEmpty(in.SysnrFlag, in.RFCSysnr)
+
+	// A gateway behind a SAProuter is named by a route, as SAP Logon writes it
+	// ("/H/router/H/host"). It may come whole in rfc_host, or as rfc_router
+	// beside a plain rfc_host; either way the route prefix goes to the
+	// transport and only the last hop's host is dialled through it.
+	router := firstNonEmpty(in.RouterFlag, in.RFCRouter)
+	routedHost, routedPort, hostRouter, err := splitRoute(host)
+	if err != nil {
+		return Params{}, err
+	}
+	if hostRouter != "" {
+		if router != "" && normalizeRouter(router) != hostRouter {
+			return Params{}, fmt.Errorf("rfc_host carries the route %q and rfc_router names %q; give the route once", hostRouter, router)
+		}
+		host, router = routedHost, hostRouter
+	}
+	router = normalizeRouter(router)
 
 	if host == "" || sysnr == "" {
 		uHost, uSysnr := fromURL(in.URL)
@@ -118,6 +141,9 @@ func Resolve(in Input) (Params, error) {
 		port = in.RFCPort
 	}
 	if port == 0 {
+		port = routedPort // a /S/<port> on the route's last hop
+	}
+	if port == 0 {
 		port = 3300 + n // the instance's gateway
 	}
 
@@ -138,6 +164,7 @@ func Resolve(in Input) (Params, error) {
 		User:     user,
 		Password: Secret(password),
 		Language: lang[:1],
+		Router:   router,
 		Expect:   in.Expect,
 	}, nil
 }
@@ -205,7 +232,65 @@ func openRFC(ctx context.Context, p Params, timeout time.Duration) (*rfc.Client,
 		User:             p.User,
 		Password:         p.Password.Reveal(),
 		Language:         p.Language,
+		Router:           p.Router,
 	})
+}
+
+// splitRoute takes an RFC host that may be a SAProuter route
+// ("/H/router/H/host", "/H/router/S/3299/H/host/S/3300") apart: the prefix up to
+// and including the last /H/ is the route through the routers, what follows is
+// the gateway host, and a /S/ after it its port. A plain host comes back as it
+// is, with no route. Passwords on route hops (/P/) are refused: a route string
+// ends up in logs and configuration files.
+func splitRoute(host string) (target string, port int, router string, err error) {
+	h := strings.TrimSpace(host)
+	if !strings.HasPrefix(strings.ToUpper(h), "/H/") {
+		return h, 0, "", nil
+	}
+	if strings.Contains(strings.ToUpper(h), "/P/") {
+		return "", 0, "", fmt.Errorf("SAProuter route with a password (/P/) is not accepted in rfc_host; use a route without it")
+	}
+	i := strings.LastIndex(strings.ToUpper(h), "/H/")
+	if i == 0 {
+		// "/H/host" alone: a route with no router in it is just the host.
+		return splitHostPort(h[3:])
+	}
+	target, port, err = splitHostPortErr(h[i+3:])
+	if err != nil {
+		return "", 0, "", err
+	}
+	return target, port, h[:i+3], nil
+}
+
+func splitHostPort(s string) (string, int, string, error) {
+	t, p, err := splitHostPortErr(s)
+	return t, p, "", err
+}
+
+func splitHostPortErr(s string) (string, int, error) {
+	upper := strings.ToUpper(s)
+	j := strings.Index(upper, "/S/")
+	if j < 0 {
+		return s, 0, nil
+	}
+	p, err := strconv.Atoi(s[j+3:])
+	if err != nil || p <= 0 || p > 65535 {
+		return "", 0, fmt.Errorf("invalid port %q in SAProuter route", s[j+3:])
+	}
+	return s[:j], p, nil
+}
+
+// normalizeRouter makes a router route end in /H/, the form the transport
+// expects ("/H/router" and "/H/router/H/" both name the same route).
+func normalizeRouter(r string) string {
+	r = strings.TrimSpace(r)
+	if r == "" {
+		return ""
+	}
+	if !strings.HasSuffix(strings.ToUpper(r), "/H/") {
+		r = strings.TrimSuffix(r, "/") + "/H/"
+	}
+	return r
 }
 
 // fromURL extracts the host and, where the port follows a standard AS ABAP

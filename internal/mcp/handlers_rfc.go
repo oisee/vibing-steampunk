@@ -352,7 +352,7 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 			return saprfc.Params{}, oerr
 		}
 		if ok {
-			in.RFCHost, in.RFCSysnr, in.RFCPort = sys.RFCHost, sys.RFCSysnr, sys.RFCPort
+			in.RFCHost, in.RFCSysnr, in.RFCPort, in.RFCRouter = sys.RFCHost, sys.RFCSysnr, sys.RFCPort, sys.RFCRouter
 			// The entry as written, not GetSystem's view of it, which fills an
 			// empty rfc_user/rfc_password from SAP_USER/SAP_PASSWORD.
 			in.RFCUser, in.RFCPassword = sys.RFCUser, sys.RFCPassword
