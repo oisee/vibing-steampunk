@@ -39,6 +39,11 @@ func (s *Server) routeATCAction(ctx context.Context, action, objectType, objectN
 // --- ATC Handlers ---
 
 func (s *Server) handleRunATCCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "ATC run", s.runATCCheck)
+}
+
+// runATCCheck is handleRunATCCheck without the call budget (see longCall).
+func (s *Server) runATCCheck(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil
