@@ -24,8 +24,14 @@ import (
 
 const stdioHelperMarker = "vsp-stdio-helper"
 
+// The program is named by its absolute path, as a transport command must be:
+// os.Args[0] is relative when the test binary is started as ./x.test.
 func stdioHelperArgv() []string {
-	return []string{os.Args[0], "-test.run=^TestStdioHelperProcess$", "--", stdioHelperMarker}
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	return []string{exe, "-test.run=^TestStdioHelperProcess$", "--", stdioHelperMarker}
 }
 
 func TestStdioHelperProcess(t *testing.T) {
@@ -395,12 +401,13 @@ func TestStdioTransport_RefusesCredentials(t *testing.T) {
 }
 
 func TestStdioTransport_StartFailureNamesBasenameOnly(t *testing.T) {
-	st := NewStdioTransport([]string{"/nonexistent/dir/adt-helper", "--x"})
+	dir := filepath.Join(t.TempDir(), "nonexistent")
+	st := NewStdioTransport([]string{filepath.Join(dir, "adt-helper"), "--x"})
 	_, err := stdioGet(t, st, context.Background(), "/big")
 	if err == nil || !strings.Contains(err.Error(), "adt-helper") || !strings.Contains(err.Error(), "broken") {
 		t.Fatalf("want a broken start error naming adt-helper, got %v", err)
 	}
-	if strings.Contains(err.Error(), "/nonexistent/dir") {
+	if strings.Contains(err.Error(), dir) {
 		t.Errorf("error carries the command's path: %v", err)
 	}
 }
@@ -438,8 +445,11 @@ func TestStdioTransport_HelperEnvironmentFiltered(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	got := map[string]bool{}
 	for _, kv := range strings.Split(string(body), "\n") {
-		name, _, _ := strings.Cut(kv, "=")
+		name, _, _ := strings.Cut(strings.TrimSpace(kv), "=")
 		got[name] = true
+		if strings.EqualFold(name, "PATH") { // Windows spells it Path
+			got["PATH"] = true
+		}
 	}
 	for _, gone := range []string{"SAP_USER", "SAP_PASSWORD", "VSP_DEV_PASSWORD", "SAP_RFC_HOST", "MY_API_TOKEN", "SOME_SECRET", "SAP_COOKIE_STRING", "sap_passwd"} {
 		if got[gone] {
@@ -578,7 +588,8 @@ func TestStdioTransport_HelperRunsInItsOwnDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	want, _ := filepath.EvalSymlinks(filepath.Dir(os.Args[0]))
+	exe, _ := os.Executable()
+	want, _ := filepath.EvalSymlinks(filepath.Dir(exe))
 	got, _ := filepath.EvalSymlinks(string(body))
 	if got != want {
 		t.Errorf("helper ran in %q, want its own directory %q", body, want)
