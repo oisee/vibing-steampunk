@@ -1986,6 +1986,93 @@ abandoned half-way (timeout, cancel), vsp kills the helper and reports the
 transport as broken. It does not restart it, because a new helper would mean a
 new session and the old session's locks would be lost. Restart vsp instead.
 
+### SNC single sign-on through sapnwrfc.dll (Windows)
+
+On Windows, vsp.exe can reach a system the way SAP GUI does: over RFC with SNC
+and Kerberos, using SAP's own NetWeaver RFC library. No password, cookie or
+browser is involved, and no extra program: vsp runs itself as its own transport
+command (`vsp snc-serve`) and carries ADT over RFC (`SADT_REST_RFC_ENDPOINT`).
+The library is loaded from pure Go, so the build stays `CGO_ENABLED=0`.
+
+What you need:
+
+- **sapnwrfc.dll**, from the SAP NW RFC SDK 7.50 for Windows x64. Download it
+  from the SAP Software Center (an S-user with download rights is needed; search
+  for "SAP NW RFC SDK"). vsp never ships the DLL. Keep the SDK's `lib` folder
+  together: its other DLLs are loaded from beside `sapnwrfc.dll` (and from
+  System32), never from the working directory or `PATH`.
+- **The SNC library** SAP GUI uses, usually `gx64krb5.dll` (Kerberos).
+- **A SAP Logon entry** for the system with SNC switched on. vsp reads it from
+  SAPUILandscape.xml, including its `<Include>`s, and takes only the exact entry
+  you name.
+
+```json
+{
+  "systems": {
+    "dev": {
+      "snc": {
+        "dll": "C:\\SAP\\nwrfcsdk\\lib\\sapnwrfc.dll",
+        "snc_lib": "C:\\Program Files\\SAP\\FrontEnd\\SecureLogin\\lib\\gx64krb5.dll",
+        "connection": "DEV - Development",
+        "system": "DEV",
+        "client": "100",
+        "user": "TESTUSER"
+      }
+    }
+  }
+}
+```
+
+```bash
+vsp -s dev search "ZCL_*"
+```
+
+Optional keys: `landscape` (an absolute path to SAPUILandscape.xml; default: SAP
+GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
+`logon_timeout` (default `45s`), `request_timeout` (default `60s`),
+`allow_data_preview` (also forward bounded data preview SELECTs) and `verbose`
+(one stderr line per request).
+
+- **Home directory only.** The `snc` block names a DLL that vsp loads, so it is
+  honoured only in `~/.vsp.json` or `~/.vsp/systems.json`, by the same rule as
+  `transport_cmd`. In a `.vsp.json` in the working directory it is refused.
+- **Windows only.** Elsewhere vsp refuses the block. On Linux or macOS, use
+  `transport_cmd` with an external helper instead.
+- **Exclusive.** It cannot be combined with `transport_cmd`, user/password,
+  cookies or `auth: sso`. vsp fills in the rest: `url` defaults to
+  `https://snc.invalid` (nothing connects to it), `client` comes from the block,
+  `expect` defaults to `SYSTEM.CLIENT/USER`, and the system is read-only.
+- **The identity is checked twice.** The logon is refused unless the
+  authenticated system, client and user match the block. vsp's own `expect`
+  check runs again on the first request.
+- **Read-only.** Only GET on an allowlist of ADT read paths goes to SAP:
+  discovery, repository, sources, DDIC, packages, transports and dumps. With
+  `allow_data_preview`, a row-capped data preview SELECT is also forwarded, but
+  never one that names a credential table. Everything else, including every
+  write, is answered 403 locally and never reaches SAP. Cookies, credentials and
+  session headers are not forwarded.
+- **No retries.** A failed logon or RFC call stops the channel. Nothing is retried,
+  because a retried Kerberos or SNC failure gains nothing. Restart vsp.
+- **No logs on disk, no secrets in errors.** The SDK runs in a separate worker
+  process (vsp.exe again) whose working directory holds only a `sapnwrfc.ini`
+  that turns tracing off and is locked against file creation. Its stderr is
+  discarded. Errors carry RFC return codes and fixed stage names, never SAP's
+  message text, hosts or partner names.
+
+The MCP server takes its logon from flags and the environment, not from
+`~/.vsp.json`. Give it the same command as `SAP_TRANSPORT_CMD`, a JSON array,
+in the MCP client's `env`:
+
+```json
+{
+  "command": "C:\\tools\\vsp.exe",
+  "args": ["--url", "https://snc.invalid", "--client", "100", "--read-only"],
+  "env": {
+    "SAP_TRANSPORT_CMD": "[\"C:\\\\tools\\\\vsp.exe\", \"snc-serve\", \"-system\", \"DEV\", \"-client\", \"100\", \"-user\", \"TESTUSER\", \"-connection\", \"DEV - Development\", \"-dll\", \"C:\\\\SAP\\\\nwrfcsdk\\\\lib\\\\sapnwrfc.dll\", \"-snc-lib\", \"C:\\\\Program Files\\\\SAP\\\\FrontEnd\\\\SecureLogin\\\\lib\\\\gx64krb5.dll\"]"
+  }
+}
+```
+
 <details>
 <summary><strong>MCP Server Configuration</strong></summary>
 

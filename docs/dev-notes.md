@@ -96,6 +96,41 @@ spool implementation in `src/zcl_vsp_report_service.clas.abap` with a bare
 #261 added running a report as a background job from the SAP tool. Contributor
 PR #293 restores the ZADT_VSP side with ALV capture.
 
+## SNC over sapnwrfc.dll (`pkg/sncrfc`)
+
+This was ported from a standalone sidecar that reached SNC-only systems from Windows.
+The code was copied rather than rewritten, so the reviewed safety properties
+carry over unchanged. vsp runs it as its own transport command
+(`vsp snc-serve`, `pkg/sncrfc/serve`). The SDK is loaded only in a worker
+child, `vsp snc-serve-worker`, for three reasons:
+
+- A native logon that hangs can't be cancelled from Go, so the supervisor kills
+  the whole worker on a deadline.
+- The worker's working directory is locked against file creation, because
+  trace level 0 still lets the SDK write `dev_rfc` logs (SAP KBA 2954209).
+- The worker's stdout is accepted only as well-formed frames.
+
+`loadNative` refuses to load unless the controlled `sapnwrfc.ini` is in place
+and the directory refuses a test write. It uses `LoadLibraryEx` with
+`LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|SYSTEM32`.
+
+The supervisor starts the worker only when the first request frame arrives. vsp
+puts its transport command into a kill-on-close Job Object just after starting
+it, and a child started before that would escape the job.
+
+Left behind in the sidecar: the ticket and reentrance research (getsso2,
+`RfcGetPartnerSSOTicket`), its `probe`, `adt-probe`, `doctor`, `mcp`, `hana`,
+`mssql` and `export` commands, and the landscape `Entries` listing.
+`pkg/sncrfc/landscape` duplicates part of `pkg/adt/landscape.go`. They do
+different jobs: the sncrfc copy resolves exactly one entry into RFC parameters,
+refuses anything ambiguous, and keeps no coordinates in its errors.
+`pkg/adt/landscape.go` turns entries into candidate HTTP URLs. Merging them is
+possible but would mean rewriting reviewed code.
+
+Writes over SNC are not supported. `SADT_REST_RFC_ENDPOINT` can carry them, but
+the allowlist, the read-only CSRF token, and the absence of stateful sessions
+and locks over this channel were all designed for reads.
+
 ## Closed and not ours
 
 #45 and #46 asked for a sync script (`scripts/sync-upstream.sh`) that never

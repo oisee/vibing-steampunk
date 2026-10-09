@@ -822,7 +822,9 @@ func runSystems(cmd *cobra.Command, args []string) error {
 
 		// Determine auth method
 		authStatus := ""
-		if len(sys.TransportCmd) > 0 {
+		if sys.SNC != nil {
+			authStatus = "snc:" + sys.SNC.System + "." + sys.SNC.Client + "/" + sys.SNC.User
+		} else if len(sys.TransportCmd) > 0 {
 			authStatus = "transport-cmd:" + adt.TransportCmdName(sys.TransportCmd)
 		} else if sys.CookieFile != "" {
 			authStatus = fmt.Sprintf("cookie-file:%s", sys.CookieFile)
@@ -840,7 +842,7 @@ func runSystems(cmd *cobra.Command, args []string) error {
 		}
 
 		userInfo := sys.User
-		if userInfo == "" && len(sys.TransportCmd) > 0 {
+		if userInfo == "" && (len(sys.TransportCmd) > 0 || sys.SNC != nil) {
 			userInfo = "(helper)"
 		} else if userInfo == "" {
 			userInfo = "(cookie)"

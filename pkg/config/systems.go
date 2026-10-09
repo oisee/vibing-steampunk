@@ -62,6 +62,11 @@ type SystemConfig struct {
 	// a project file must not be able to make vsp run a program.
 	TransportCmd []string `json:"transport_cmd,omitempty"`
 
+	// SNC reaches the system over SNC through SAP's sapnwrfc.dll (Windows
+	// only); GetSystem turns it into a transport command that runs this vsp
+	// as snc-serve. Honoured only from the home directory, like transport_cmd.
+	SNC *SNCSettings `json:"snc,omitempty"`
+
 	// Optional safety settings per system
 	ReadOnly        bool     `json:"read_only,omitempty"`
 	AllowedPackages []string `json:"allowed_packages,omitempty"`
@@ -237,6 +242,13 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 	}
 	if err := c.checkTransportCmd(name, &sys); err != nil {
 		return nil, err
+	}
+	if sys.SNC != nil {
+		snc := *sys.SNC
+		sys.SNC = &snc // GetSystem's result must not alias the loaded config
+		if err := c.applySNC(name, &sys); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve password from environment variable if not set. A system behind

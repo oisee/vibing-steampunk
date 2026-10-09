@@ -105,8 +105,11 @@ Ready-to-use configs for 8 AI agents: docs/cli-agents/`,
 }
 
 func init() {
-	// Load .env file if it exists
-	godotenv.Load()
+	// Load .env file if it exists. Not for the hidden SNC commands: vsp starts
+	// them itself, and their environment is the one it handed over.
+	if !sncServeInvocation(os.Args) {
+		_ = godotenv.Load()
+	}
 
 	// Service URL
 	rootCmd.Flags().StringVar(&cfg.BaseURL, "url", "", "SAP system URL (e.g., https://host:44300)")
@@ -1035,6 +1038,9 @@ func splitCommaSeparated(s string) []string {
 }
 
 func main() {
+	if sncServeInvocation(os.Args) {
+		os.Exit(runSNCServe(os.Args, os.Stdin, os.Stdout, os.Stderr))
+	}
 	err := rootCmd.Execute()
 	// The CLI's transport-command helpers, on success and on error alike.
 	closeTransportCmds()

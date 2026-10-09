@@ -158,7 +158,9 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 		for name, sys := range cfg.Systems {
 			pwdStatus := "env"
 			envKey := fmt.Sprintf("VSP_%s_PASSWORD", strings.ToUpper(name))
-			if len(sys.TransportCmd) > 0 {
+			if sys.SNC != nil {
+				pwdStatus = "- snc:" + sys.SNC.System + "." + sys.SNC.Client + "/" + sys.SNC.User
+			} else if len(sys.TransportCmd) > 0 {
 				pwdStatus = "- transport-cmd:" + adt.TransportCmdName(sys.TransportCmd)
 			} else if sys.Password != "" {
 				pwdStatus = "inline"
