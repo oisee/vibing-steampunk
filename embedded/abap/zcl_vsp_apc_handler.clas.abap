@@ -21,6 +21,14 @@ CLASS zcl_vsp_apc_handler DEFINITION
     DATA mv_session_id TYPE string.
 
     CLASS-DATA gt_services TYPE STANDARD TABLE OF REF TO zif_vsp_service WITH KEY table_line.
+    "! Set when two services claim one domain: the handler then refuses
+    "! every request, naming both classes, rather than pick one.
+    CLASS-DATA gv_services_error TYPE string.
+
+    CLASS-METHODS discover_services.
+
+    CLASS-METHODS add_service
+      IMPORTING io_service TYPE REF TO zif_vsp_service.
 
     METHODS parse_message
       IMPORTING iv_text           TYPE string
@@ -52,24 +60,63 @@ ENDCLASS.
 CLASS zcl_vsp_apc_handler IMPLEMENTATION.
 
   METHOD class_constructor.
-    APPEND NEW zcl_vsp_rfc_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
-    APPEND NEW zcl_vsp_report_service( ) TO gt_services.
-    " The git and transport services are optional: the git service exists
-    " only where abapGit does (vsp install skips it otherwise), and an
-    " administrator may deploy ZADT_VSP without the transport service. The
-    " handler must activate and run without either, so neither is named
-    " statically; a domain that is missing answers UNKNOWN_DOMAIN.
+    add_service( NEW zcl_vsp_rfc_service( ) ).
+    add_service( NEW zcl_vsp_debug_service( ) ).
+    add_service( NEW zcl_vsp_amdp_service( ) ).
+    add_service( NEW zcl_vsp_report_service( ) ).
+    discover_services( ).
+  ENDMETHOD.
+
+  METHOD discover_services.
+    " Every other service is found, not named: the git service exists only
+    " where abapGit does (vsp install skips it otherwise), an administrator
+    " may deploy ZADT_VSP without the transport service, and a service may
+    " come from a package of its own (the print forms). The handler must
+    " activate and run without any of them; a domain that is missing answers
+    " UNKNOWN_DOMAIN.
+    "
+    " Only an active class named ZCL_VSP_*_SERVICE that implements
+    " ZIF_VSP_SERVICE is taken, so an arbitrary class cannot put itself on
+    " the WebSocket.
     DATA lo_service TYPE REF TO zif_vsp_service.
-    DATA(lt_optional) = VALUE string_table( ( `ZCL_VSP_GIT_SERVICE` ) ( `ZCL_VSP_TRANSPORT_SERVICE` ) ).
-    LOOP AT lt_optional INTO DATA(lv_class).
+
+    SELECT clsname FROM seometarel
+      WHERE refclsname = 'ZIF_VSP_SERVICE'
+        AND reltype    = '1'
+        AND version    = '1'
+        AND clsname    LIKE 'ZCL\_VSP\_%\_SERVICE' ESCAPE '\'
+      ORDER BY clsname
+      INTO TABLE @DATA(lt_classes).
+
+    LOOP AT lt_classes INTO DATA(ls_class).
+      CASE ls_class-clsname.
+        WHEN 'ZCL_VSP_RFC_SERVICE' OR 'ZCL_VSP_DEBUG_SERVICE'
+          OR 'ZCL_VSP_AMDP_SERVICE' OR 'ZCL_VSP_REPORT_SERVICE'.
+          CONTINUE.
+      ENDCASE.
       TRY.
-          CREATE OBJECT lo_service TYPE (lv_class).
-          APPEND lo_service TO gt_services.
+          CREATE OBJECT lo_service TYPE (ls_class-clsname).
+          add_service( lo_service ).
         CATCH cx_sy_create_object_error ##NO_HANDLER.
       ENDTRY.
     ENDLOOP.
+  ENDMETHOD.
+
+  METHOD add_service.
+    " Two services on one domain are an installation error. Neither wins:
+    " which one did would depend on class names, and nobody would notice.
+    DATA(lv_domain) = io_service->get_domain( ).
+    LOOP AT gt_services INTO DATA(lo_known).
+      IF lo_known->get_domain( ) = lv_domain.
+        DATA(lv_entry) = |domain '{ lv_domain }' is served by both {
+          replace( val = cl_abap_classdescr=>get_class_name( lo_known ) sub = '\CLASS=' with = `` ) } and {
+          replace( val = cl_abap_classdescr=>get_class_name( io_service ) sub = '\CLASS=' with = `` ) }|.
+        gv_services_error = COND #( WHEN gv_services_error IS INITIAL THEN lv_entry
+                                    ELSE |{ gv_services_error }; { lv_entry }| ).
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    APPEND io_service TO gt_services.
   ENDMETHOD.
 
   METHOD if_apc_wsp_extension~on_start.
@@ -125,6 +172,11 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
       ( zcl_vsp_utils=>json_bool( iv_key = 'push' iv_value = lv_push ) )
       ( zcl_vsp_utils=>json_bool( iv_key = 'git_push' iv_value = lv_git_push ) )
     ) ) ).
+
+    IF gv_services_error IS NOT INITIAL.
+      send_error( iv_id = 'welcome' iv_code = 'DUPLICATE_DOMAIN' iv_message = gv_services_error ).
+      RETURN.
+    ENDIF.
 
     send_response( VALUE #(
       id      = 'welcome'
@@ -252,6 +304,15 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD route_message.
+    IF gv_services_error IS NOT INITIAL.
+      rs_response = zcl_vsp_utils=>build_error(
+        iv_id      = is_message-id
+        iv_code    = 'DUPLICATE_DOMAIN'
+        iv_message = |ZADT_VSP is misinstalled: { gv_services_error }|
+      ).
+      RETURN.
+    ENDIF.
+
     IF is_message-domain = 'system'.
       CASE is_message-action.
         WHEN 'ping'.

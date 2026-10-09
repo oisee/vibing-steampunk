@@ -52,6 +52,13 @@ The WebSocket handler enables **stateful operations** not available through stan
 
 **Note:** The Git service requires abapGit to be installed (optional dependency, handled gracefully).
 
+**Services are discovered.** Besides the RFC, debug, AMDP and report services,
+`ZCL_VSP_APC_HANDLER` serves every active class named `ZCL_VSP_*_SERVICE` that
+implements `ZIF_VSP_SERVICE`, whatever package it is in. A service of your own
+(an extension's) is installed by deploying such a class; the handler needs no
+change. Two services on one domain are refused: the welcome answers
+`DUPLICATE_DOMAIN` and every request fails, naming both classes.
+
 ### Deployment
 
 #### Option 1: Using vsp WriteSource
