@@ -235,7 +235,8 @@ func CompareCallGraphs(staticEdges, actualEdges []CallGraphEdge) *CallGraphCompa
 
 // ExtractCallEdgesFromTrace converts trace entries to call graph edges. A
 // hit-list or call-tree entry names both its calling and its called program,
-// so each entry whose two differ is one edge.
+// so each entry whose two differ is one edge. Edges are between programs, as
+// they were before: a call inside one class pool yields none.
 func ExtractCallEdgesFromTrace(entries []TraceEntry) []CallGraphEdge {
 	var edges []CallGraphEdge
 	seen := make(map[string]bool)
@@ -394,10 +395,16 @@ func (c *Client) TraceExecution(ctx context.Context, opts *TraceExecutionOptions
 
 		// Get hitlist analysis
 		analysis, err := c.GetTrace(ctx, latestTrace.ID, "hitlist")
-		if err != nil {
+		switch {
+		case err != nil:
 			result.Unsearched = append(result.Unsearched, Unsearched{
 				Object: "trace " + latestTrace.ID, Reason: err.Error()})
-		} else {
+		case analysis.Note != "" && len(analysis.Entries) == 0:
+			// Nothing parsed is not nothing ran, so nothing is compared.
+			result.Trace = analysis
+			result.Unsearched = append(result.Unsearched, Unsearched{
+				Object: "trace " + latestTrace.ID, Reason: analysis.Note})
+		default:
 			result.Trace = analysis
 			result.ExecutionTime = analysis.TotalTime
 

@@ -143,7 +143,7 @@ func TestNormalizeTraceID(t *testing.T) {
 		" " + id + " ",
 		"/sap/bc/adt/runtime/traces/abaptraces/" + id,
 		"/sap/bc/adt/runtime/traces/abaptraces/" + id + "/dbAccesses",
-		"adt://A4H/sap/bc/adt/runtime/traces/abaptraces/" + id + "#traceTime=1791550873000",
+		"adt://DEV/sap/bc/adt/runtime/traces/abaptraces/" + id + "#traceTime=1791550873000",
 	} {
 		got, err := NormalizeTraceID(in)
 		if err != nil || got != id {
@@ -197,6 +197,10 @@ func traceServer(t *testing.T) *Client {
 		switch {
 		case strings.Contains(r.URL.Path, "/discovery"):
 			w.Header().Set("X-CSRF-Token", "TOKEN")
+		case r.URL.Path == abapTracesPath:
+			_, _ = w.Write([]byte(list))
+		case id == "6B952F02C3D211F1B8A20242AC110011" && tool == "dbAccesses":
+			w.WriteHeader(http.StatusForbidden)
 		case tool == "":
 			if e := entryFor(id); e != "" {
 				_, _ = w.Write([]byte(e))
@@ -223,7 +227,7 @@ func traceServer(t *testing.T) *Client {
 func TestGetTraceAnalysis_SortsByOwnTimeAndCuts(t *testing.T) {
 	c := traceServer(t)
 	a, err := c.GetTraceAnalysis(context.Background(),
-		"adt://A4H/sap/bc/adt/runtime/traces/abaptraces/81BE5D12C3E111F1B8A20242AC110011#traceTime=1",
+		"adt://DEV/sap/bc/adt/runtime/traces/abaptraces/81BE5D12C3E111F1B8A20242AC110011#traceTime=1",
 		TraceGetOptions{Top: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -267,5 +271,26 @@ func TestGetTraceAnalysis_RefusesUnknownOptions(t *testing.T) {
 	}
 	if _, err := c.GetTraceAnalysis(context.Background(), "X1", TraceGetOptions{SortBy: "name"}); err == nil {
 		t.Error("unknown sort accepted")
+	}
+}
+
+// The feed is oldest first; a caller asking for one trace wants the latest.
+func TestListTraces_NewestFirstBeforeTheCap(t *testing.T) {
+	c := traceServer(t)
+	traces, err := c.ListTraces(context.Background(), &TraceQueryOptions{MaxResults: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(traces) != 1 || traces[0].ID != "81BE5D12C3E111F1B8A20242AC110011" {
+		t.Errorf("got %+v, want only the latest trace", traces)
+	}
+}
+
+// A refusal that is not about the recording must not be blamed on it.
+func TestGetTraceAnalysis_ForbiddenIsNotIncomplete(t *testing.T) {
+	c := traceServer(t)
+	_, err := c.GetTraceAnalysis(context.Background(), "6B952F02C3D211F1B8A20242AC110011", TraceGetOptions{ToolType: "dbAccesses"})
+	if err == nil || strings.Contains(err.Error(), "incomplete") || !strings.Contains(err.Error(), "403") {
+		t.Errorf("err = %v", err)
 	}
 }

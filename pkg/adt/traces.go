@@ -181,7 +181,10 @@ func (c *Client) ListTraces(ctx context.Context, opts *TraceQueryOptions) ([]ABA
 	if err != nil {
 		return nil, err
 	}
-	// The collection ignores $top, so the cap is applied here.
+	// The feed comes oldest first and the collection ignores $top, so the
+	// order and the cap are applied here: callers asking for one want the
+	// latest.
+	sort.SliceStable(traces, func(i, j int) bool { return traces[i].StartTime > traces[j].StartTime })
 	if opts.MaxResults > 0 && len(traces) > opts.MaxResults {
 		traces = traces[:opts.MaxResults]
 	}
@@ -345,7 +348,9 @@ func explainTraceError(err error, id, toolType string, info *ABAPTrace) error {
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("getting trace %s (%s): %w", id, toolType, err)
 	}
-	if info != nil && !info.Complete {
+	recordingRefused := apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable ||
+		apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode >= 500
+	if info != nil && !info.Complete && recordingRefused {
 		return fmt.Errorf("trace %s is incomplete (state %s %q): ADT cannot evaluate it, and Eclipse reports it as \"Trace has errors\". "+
 			"Record it again with Hit List aggregation, or a larger maximum file size: %w", id, info.State, info.StateText, err)
 	}
