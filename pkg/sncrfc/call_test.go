@@ -53,3 +53,32 @@ func TestDiscoveryRejectsWritesAndExtraHeadersBeforeSDK(t *testing.T) {
 		}
 	}
 }
+
+// vsp puts sap-client and sap-language on every request: a data preview and
+// the identity check must pass with them, and nothing else may ride along.
+func TestPreviewAndIdentityAcceptSessionParams(t *testing.T) {
+	const fs = "/sap/bc/adt/datapreview/freestyle"
+	id := []byte("SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '122'")
+	for _, c := range []struct {
+		uri  string
+		body []byte
+		id   bool
+		prev bool
+	}{
+		{fs + "?rowNumber=1&sap-client=122&sap-language=EN", id, true, true},
+		{fs + "?rowNumber=1", id, true, true},
+		{fs + "?rowNumber=5&sap-client=122", id, false, true},
+		{fs + "?rowNumber=1&sap-client=122&evil=1", id, false, false},
+		{fs + "?rowNumber=1&sap-client=12x", id, false, false},
+		{fs + "?rowNumber=1&sap-client=122", []byte("SELECT * FROM T000"), false, true},
+		{fs + "?rowNumber=1&sap-client=122", []byte("SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '122' OR 1 = 1"), false, true},
+		{fs + "?rowNumber=1&sap-client=122", []byte("SELECT BNAME, PASSCODE FROM USR02"), false, false},
+	} {
+		if got := ADTIdentityQueryAllowed(c.uri, c.body); got != c.id {
+			t.Errorf("identity %q %q = %v, want %v", c.uri, c.body, got, c.id)
+		}
+		if got := ADTDataPreviewAllowed(c.uri, c.body); got != c.prev {
+			t.Errorf("preview %q %q = %v, want %v", c.uri, c.body, got, c.prev)
+		}
+	}
+}

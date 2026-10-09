@@ -45,7 +45,14 @@ type SNCSettings struct {
 	LogonTimeout   string `json:"logon_timeout,omitempty"`
 	RequestTimeout string `json:"request_timeout,omitempty"`
 
-	// AllowDataPreview also forwards bounded ADT data preview SELECTs.
+	// Production marks a production system. snc-serve then forwards only
+	// GETs on its read allowlist, plus vsp's own identity check; elsewhere it
+	// also forwards bounded ADT data preview SELECTs (credential tables
+	// refused). Writes are never forwarded: the channel has no stateful
+	// session and no locks.
+	Production bool `json:"production,omitempty"`
+	// AllowDataPreview forwards data preview SELECTs on a production system
+	// too. On any other system they are forwarded anyway.
 	AllowDataPreview bool `json:"allow_data_preview,omitempty"`
 	// Verbose writes one stderr line per request.
 	Verbose bool `json:"verbose,omitempty"`
@@ -181,7 +188,7 @@ func (s *SNCSettings) argv() ([]string, error) {
 		}
 		args = append(args, d.flag, v.String())
 	}
-	if s.AllowDataPreview {
+	if s.AllowDataPreview || !s.Production {
 		args = append(args, "-allow-data-preview")
 	}
 	if s.Verbose {

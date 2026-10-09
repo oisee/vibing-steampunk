@@ -197,3 +197,38 @@ func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
 		t.Errorf("err = %v, want a refusal naming SNC_LIB_64 (SNC_LIB must not be used)", err)
 	}
 }
+
+// A production snc system forwards GETs only; any other forwards bounded data
+// preview SELECTs as well, unless nothing says otherwise.
+func TestSNC_ProductionDecidesDataPreview(t *testing.T) {
+	for _, c := range []struct {
+		production, allow, want bool
+	}{
+		{false, false, true},
+		{true, false, false},
+		{true, true, true},
+	} {
+		home, _ := isolateHome(t)
+		asWindows(t, abs("/opt/vsp/vsp.exe"))
+		writeSystems(t, home, sncSystems(t, func(sys map[string]any) {
+			snc := sys["snc"].(map[string]any)
+			delete(snc, "allow_data_preview")
+			if c.production {
+				snc["production"] = true
+			}
+			if c.allow {
+				snc["allow_data_preview"] = true
+			}
+		}))
+		sys, err := loadDev(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(strings.Join(sys.TransportCmd, " "), "-allow-data-preview"); got != c.want {
+			t.Errorf("production=%v allow=%v: data preview %v, want %v", c.production, c.allow, got, c.want)
+		}
+		if !sys.ReadOnly {
+			t.Error("an snc system must stay read-only")
+		}
+	}
+}

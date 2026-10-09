@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -290,5 +291,34 @@ func TestMainRefusesBeforeStartingTheWorker(t *testing.T) {
 	r, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
 	if err != nil || r.StatusCode != http.StatusForbidden {
 		t.Fatalf("response %v, err %v; want a local 403", r, err)
+	}
+}
+
+// On a production system (no data preview) only vsp's identity check may be
+// posted; elsewhere a bounded SELECT passes too. Writes never do.
+func TestCheckRequestProductionAndIdentity(t *testing.T) {
+	post := func(uri, body string) []byte {
+		return []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: snc.invalid\r\nContent-Length: %d\r\n\r\n%s", uri, len(body), body))
+	}
+	const fs = "/sap/bc/adt/datapreview/freestyle?rowNumber=1&sap-client=122&sap-language=EN"
+	identity := post(fs, "SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '122'")
+	query := post(fs, "SELECT MATNR FROM MARA")
+	write := post("/sap/bc/adt/oo/classes?sap-client=122", "<class/>")
+	for _, c := range []struct {
+		name    string
+		frame   []byte
+		preview bool
+		ok      bool
+	}{
+		{"identity on production", identity, false, true},
+		{"query on production", query, false, false},
+		{"query elsewhere", query, true, true},
+		{"write on production", write, false, false},
+		{"write elsewhere", write, true, false},
+	} {
+		_, refusal := checkRequest(c.frame, c.preview)
+		if (refusal == nil) != c.ok {
+			t.Errorf("%s: refused=%v, want allowed=%v", c.name, refusal != nil, c.ok)
+		}
 	}
 }

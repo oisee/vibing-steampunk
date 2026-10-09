@@ -2037,8 +2037,8 @@ names the 32-bit library, which a 64-bit `vsp.exe` cannot load.
 Optional keys: `landscape` (an absolute path to SAPUILandscape.xml; default: SAP
 GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
 `logon_timeout` (default `45s`), `request_timeout` (default `60s`),
-`allow_data_preview` (also forward bounded data preview SELECTs) and `verbose`
-(one stderr line per request).
+`production` (see below), `allow_data_preview` (forward data preview SELECTs on
+a production system too) and `verbose` (one stderr line per request).
 
 - **Home directory only.** The `snc` block names a DLL that vsp loads, so it is
   honoured only in `~/.vsp.json` or `~/.vsp/systems.json`, by the same rule as
@@ -2052,12 +2052,16 @@ GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
 - **The identity is checked twice.** The logon is refused unless the
   authenticated system, client and user match the block. vsp's own `expect`
   check runs again on the first request.
-- **Read-only.** Only GET on an allowlist of ADT read paths goes to SAP:
-  discovery, repository, sources, DDIC, packages, transports and dumps. With
-  `allow_data_preview`, a row-capped data preview SELECT is also forwarded, but
-  never one that names a credential table. Everything else, including every
-  write, is answered 403 locally and never reaches SAP. Cookies, credentials and
-  session headers are not forwarded.
+- **Read-only, stricter on production.** GET on an allowlist of ADT read
+  paths goes to SAP: discovery, repository, sources, DDIC, packages, transports
+  and dumps. On a system without `"production": true`, a row-capped data
+  preview SELECT is also forwarded, but never one that names a credential
+  table. On a production system it is forwarded only with `allow_data_preview`.
+  vsp's own identity check (one row of T000, for releases without the system
+  information resource) is always forwarded. Everything else, including every
+  write, is answered 403 locally and never reaches SAP: the channel has no
+  stateful session and no locks. Cookies, credentials and session headers are
+  not forwarded.
 - **No retries.** A failed logon or RFC call stops the channel. Nothing is retried,
   because a retried Kerberos or SNC failure gains nothing. Restart vsp.
 - **No logs on disk, no secrets in errors.** The SDK runs in a separate worker

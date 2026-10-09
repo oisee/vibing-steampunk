@@ -138,6 +138,8 @@ func checkRequest(b []byte, dataPreview bool) (*adtCall, []byte) {
 		if !sncrfc.ADTReadAllowed(req.RequestURI) {
 			return c, localResponse(http.StatusForbidden, "path is outside the snc-serve read allowlist", false)
 		}
+	case req.Method == http.MethodPost && sncrfc.ADTIdentityQueryAllowed(req.RequestURI, body):
+		// vsp's identity check; see ADTIdentityQueryAllowed.
 	case req.Method == http.MethodPost && dataPreview:
 		if !sncrfc.ADTDataPreviewAllowed(req.RequestURI, body) {
 			return c, localResponse(http.StatusForbidden, "only a bounded data preview SELECT may be posted", false)

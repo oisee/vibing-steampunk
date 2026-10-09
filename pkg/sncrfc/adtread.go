@@ -1,6 +1,7 @@
 package sncrfc
 
 import (
+	"bytes"
 	"errors"
 	"net/url"
 	"regexp"
@@ -118,7 +119,7 @@ func ADTDataPreviewAllowed(uri string, body []byte) bool {
 		return false
 	}
 	for k, v := range q {
-		if len(v) != 1 || (k != "rowNumber" && k != "ddicEntityName") {
+		if len(v) != 1 || (k != "rowNumber" && k != "ddicEntityName" && !sessionParam(k, v[0])) {
 			return false
 		}
 	}
@@ -135,6 +136,46 @@ func ADTDataPreviewAllowed(uri string, body []byte) bool {
 	}
 	return false
 }
+
+// identityQuery is vsp's own identity check on releases without the system
+// information resource: one row of T000 for the session's client.
+var identityQuery = regexp.MustCompile(`^SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '[0-9]{3}'$`)
+
+// ADTIdentityQueryAllowed reports whether a POST is exactly vsp's identity
+// check (pkg/adt probeIdentity), which is forwarded even where data preview
+// is off: without it a system older than the system information resource
+// cannot be pinned, so vsp refuses to work with it at all.
+func ADTIdentityQueryAllowed(uri string, body []byte) bool {
+	path, query, _ := strings.Cut(uri, "?")
+	q, err := url.ParseQuery(query)
+	if !safeURI(uri) || path != "/sap/bc/adt/datapreview/freestyle" || err != nil || q.Get("rowNumber") != "1" {
+		return false
+	}
+	for k, v := range q {
+		if len(v) != 1 || (k != "rowNumber" && !sessionParam(k, v[0])) {
+			return false
+		}
+	}
+	return identityQuery.Match(bytes.TrimSpace(body))
+}
+
+// sessionParam reports whether a query parameter is one vsp puts on every
+// request: the client and the logon language. Over RFC the session is fixed
+// at logon, so they change nothing, but refusing them refused every POST.
+func sessionParam(k, v string) bool {
+	switch k {
+	case "sap-client":
+		return sessionClient.MatchString(v)
+	case "sap-language":
+		return sessionLanguage.MatchString(v)
+	}
+	return false
+}
+
+var (
+	sessionClient   = regexp.MustCompile(`^[0-9]{3}$`)
+	sessionLanguage = regexp.MustCompile(`^[A-Za-z0-9]{1,2}$`)
+)
 
 // ADTReadHeaderAllowed reports whether a header name may be forwarded.
 func ADTReadHeaderAllowed(name string) bool { return adtReadHeaders[strings.ToLower(name)] }
@@ -158,6 +199,7 @@ func validateADTRead(input map[string]any, dataPreview bool) error {
 		if !ADTReadAllowed(uri) || len(body) != 0 {
 			return errors.New("ADT GET outside the read allowlist")
 		}
+	case l["METHOD"] == "POST" && ADTIdentityQueryAllowed(uri, body):
 	case l["METHOD"] == "POST" && dataPreview:
 		if !ADTDataPreviewAllowed(uri, body) {
 			return errors.New("POST is not a bounded data preview")
