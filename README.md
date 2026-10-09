@@ -1104,7 +1104,34 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.60.0 — debug, pin, summarise](https://github.com/oisee/vibing-steampunk/releases/tag/v2.60.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.61.0 — snc and traces](https://github.com/oisee/vibing-steampunk/releases/tag/v2.61.0)**.
+
+### v2.61.0 — new since v2.60.0
+
+Reach SNC-only systems from one `vsp.exe`, and read ABAP traces as they really are.
+
+**New:** SNC single sign-on through SAP's `sapnwrfc.dll` (Windows). A system with an `snc` block in `~/.vsp.json` logs on with Kerberos through the SAP NW RFC SDK and carries ADT over RFC, with no password and no browser. The block names the SAP Logon entry, system, client, user and `production`. `vsp.exe` runs itself as the helper (`vsp snc-serve`) and loads the SDK only in a guarded worker:
+- tracing is off and the worker's directory refuses files;
+- DLLs are searched only beside the SDK and in System32;
+- the logon is never retried;
+- the system, client and user are checked after logon.
+
+The channel is read-only. On `"production": true` it forwards GETs only; elsewhere it forwards bounded data preview SELECTs too. In `.mcp.json` it is just `["-s", "dev"]`. From WSL, a Linux vsp uses the Windows `vsp.exe` as its `transport_cmd`. The SDK itself is SAP's: download it from the SAP Software Center. See [SNC single sign-on through sapnwrfc.dll](#snc-single-sign-on-through-sapnwrfcdll-windows).
+
+**New:** transport command. `transport_cmd` in `~/.vsp.json` (or `--transport-cmd`, `SAP_TRANSPORT_CMD`) carries every ADT request over a helper process's stdin/stdout, and the helper does its own sign-on (#373). `-s NAME` gives the MCP server its logon from such a system. See [Transport command](#transport-command-adt-through-a-helper-process).
+
+**Fixed:**
+
+- **ABAP traces read as they are** (#376).
+  - `get_trace` returned empty hit-list entries on 7.58. It now parses the real format: event, program, line, calls, own and total time.
+  - It sorts by own time and returns the top 50 (`top`, `sort_by`). It also reads `dbAccesses` and the call tree, and returns `raw` XML on request.
+  - `list_traces` shows state, aggregation, size and runtime, newest first.
+  - A trace cut off at its size limit now says so instead of returning a bare 416.
+
+**Behaviour changes:**
+
+- **A `transport_cmd` program must be an absolute path.** The helper runs in its own directory and starts from vsp's environment as it was before `./.env` was loaded, so a project's files and `.env` cannot reach it.
+- **The `snc` block requires `"production"`.**
 
 ### v2.60.0 — new since v2.59.1
 

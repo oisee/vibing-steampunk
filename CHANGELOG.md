@@ -4,6 +4,147 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.61.0] - 2026-10-09
+### Bug Fixes
+
+- **traces:** Parse the 7.58 hit list and trace list; say why a trace cannot be read (#376) ([`134a9cc`](https://github.com/oisee/vibing-steampunk/commit/134a9cc585622c0d390d014da97bf7a4f63bd83b))
+
+
+### Features
+
+- **adt:** Transport command — ADT over a helper process's stdin/stdout (#373) ([`a479e3f`](https://github.com/oisee/vibing-steampunk/commit/a479e3f5df07913126d2b0c0e6c2fe1a5ac6392d))
+- **snc:** Vsp.exe reaches SAP over SNC through sapnwrfc.dll; transport_cmd hardening (#377) ([`3138131`](https://github.com/oisee/vibing-steampunk/commit/3138131856fe555733ed4ec40ee72c189e91ff47))
+
+
+
+## [2.60.0] - 2026-10-02
+### Bug Fixes
+
+- **dap:** Disconnect is not queued behind an open listen (#346) ([`784fbc9`](https://github.com/oisee/vibing-steampunk/commit/784fbc97c058e34709c03b329c9f02b639666402))
+- **enhancements:** A failed BADI_IMPL leaves no empty ENHO (port of #336) + cleanup releases its lock (#349) ([`bb848a4`](https://github.com/oisee/vibing-steampunk/commit/bb848a40131dd4ad1508a8e342471f1c13405488))
+
+
+### Features
+
+- **dap:** Vsp dap — debug ABAP from any DAP editor (#343) ([`57c989d`](https://github.com/oisee/vibing-steampunk/commit/57c989d6e2d8abc5bb6e4764dab8e41b66fa60de))
+- **read:** Summary mode and if_none_match: digest instead of the source (#344) ([`1939350`](https://github.com/oisee/vibing-steampunk/commit/19393507ca156f32adcc817ef2b4ee8004be5ead))
+- --expect pins the SAP system, client and user (#345) ([`8434b58`](https://github.com/oisee/vibing-steampunk/commit/8434b58da66dad634f6c4a536c01147026317125))
+
+
+
+## [2.59.1] - 2026-10-02
+### Bug Fixes
+
+- **adt:** Keep the package lookup inside a held lock's session (port of #292) (#331) ([`06cf0b8`](https://github.com/oisee/vibing-steampunk/commit/06cf0b8bbfcbdf63f453366d253638e9c415b141))
+- **cli,adt:** Show activation messages; write and activate honour the call timeout (#333) ([`6e19ac9`](https://github.com/oisee/vibing-steampunk/commit/6e19ac97f6b7e5257ca23340d2a85b9570cb7ba5))
+- **adt:** A package is missing only when SAP says so, not when a port has 404 in it (#338) ([`8ed12a9`](https://github.com/oisee/vibing-steampunk/commit/8ed12a9701c22207f9adea78e6be325a97b3faee))
+
+
+### Features
+
+- **system:** Import_status from TPALOG (port of #297) (#332) ([`84f841e`](https://github.com/oisee/vibing-steampunk/commit/84f841eb849ce8140c79d7d6c27f42875a13991a))
+
+
+
+## [2.59.0] - 2026-10-02
+### Bug Fixes
+
+- **celebrate:** The release procedure shipped stale binaries and a wrong version ([`e8c5391`](https://github.com/oisee/vibing-steampunk/commit/e8c5391033f0cfaebf6e1e3448f2d87c311fa459))
+- **functions:** Function modules in namespaced groups (#274) ([`ec9c3b3`](https://github.com/oisee/vibing-steampunk/commit/ec9c3b384f5ba4d8546ae7bec8c020ea5528e3ca))
+- **adt:** Retire the proxy context after DELETE, not only after UNLOCK (#217) ([`f052188`](https://github.com/oisee/vibing-steampunk/commit/f052188d27ca7c5758ed8e539af41d7aa370baa9))
+- **adt:** Read the session back after a retry, as Request does (#258) ([`c1c7cee`](https://github.com/oisee/vibing-steampunk/commit/c1c7cee713910568bf3bf1ca6a5963fa904c3f8d))
+- **adt:** Release the compensating unlock's ctx-cancellation leak at 3 more sites (#166) (#231) ([`0660a7d`](https://github.com/oisee/vibing-steampunk/commit/0660a7dab9351712c0c8aba1bb886f1fb14c20e2))
+- **adt:** Preserve cleanup outcome after execute failure (#227) ([`6a6900f`](https://github.com/oisee/vibing-steampunk/commit/6a6900f6afa6820fc98e60b6eee924055b7302b9))
+- **mcp:** Validate package access before self-locking source updates (#225) ([`f63ed02`](https://github.com/oisee/vibing-steampunk/commit/f63ed02f829a58e8fbfd443406a29f60cd699709))
+- **adt:** Resolve package access before updating source objects (#230) ([`061d8c9`](https://github.com/oisee/vibing-steampunk/commit/061d8c9152348c058c710b9c067235856a085cb6))
+- **adt,mcp:** Gate DeleteObject before the lock, not inside it (#238) (#243) ([`f610c13`](https://github.com/oisee/vibing-steampunk/commit/f610c1319b4e3077cb58b80f07e89530e229cfe6))
+- **transport:** Report a release ADT refused, and send relwithignlock its document (#248) ([`8ec37f0`](https://github.com/oisee/vibing-steampunk/commit/8ec37f092700cf8fef5ab7f2885d50fc63053871))
+- **rfc:** Refuse calls under --read-only (#280) ([`87a8a1f`](https://github.com/oisee/vibing-steampunk/commit/87a8a1fe44675b0fce308bc5425d9c1906a3f10c))
+- **activate:** Activate a group with its inactive parts; nothing to do is not a failure (#271) ([`9723323`](https://github.com/oisee/vibing-steampunk/commit/97233239af6fb48059c90153c820bf57f93d49db))
+- **execute:** A run ABAP Unit refused is not a success (#264) ([`245ce17`](https://github.com/oisee/vibing-steampunk/commit/245ce1782ddb867ac2740164bc4ede55749d53bf))
+- **mcp:** Normalize object_url to lowercase in EDITSOURCE (#118) (#221) ([`f802e49`](https://github.com/oisee/vibing-steampunk/commit/f802e4970807f506969584129b8ae2c9d392886a))
+- **adt:** Keep credentials and the CSRF token on the SAP host across redirects (#257) ([`f6b9418`](https://github.com/oisee/vibing-steampunk/commit/f6b9418d71234ba9ec0c83adb243cce32f67fcae))
+- **adt:** Namespace-object URL casing, and a premature WriteSource entry gate (#233) ([`b5a6efd`](https://github.com/oisee/vibing-steampunk/commit/b5a6efdf8a2b6270163c28631b873d4f2f804521))
+- **mcp:** Take the RFC settings of the server's own system, not the default's (#249) ([`1a26a33`](https://github.com/oisee/vibing-steampunk/commit/1a26a33906e0797a3ca049b7b7804464d4e01595))
+- **cli:** Propagate transportable edits opt-in (#228) ([`19a01e6`](https://github.com/oisee/vibing-steampunk/commit/19a01e64e17b06906e174a84cdc36204c12c9779))
+- **adt:** Reload cookie files only for safe session recovery (#229) ([`7ec6494`](https://github.com/oisee/vibing-steampunk/commit/7ec6494adbbab108925cc716c8e4b699827454d0))
+- **adt:** Keep concurrent callers of one client from breaking each other's locks (#251) ([`b196928`](https://github.com/oisee/vibing-steampunk/commit/b19692887ac4cd81ee2afebbb89ee6a732a43aae))
+- **adt:** Escape namespaced class names once (#282) ([`4f43e59`](https://github.com/oisee/vibing-steampunk/commit/4f43e596660c14f05a60c4459dc717c651f5e127))
+- Make --read-only cover every path that writes or runs code (#283) ([`a6865e1`](https://github.com/oisee/vibing-steampunk/commit/a6865e1a56c823bb19eddabca534989960135fde))
+- **rfc:** Serialize table-typed EXPORTING parameters instead of casting them (#151) (#244) ([`25429f9`](https://github.com/oisee/vibing-steampunk/commit/25429f92ead72bc8b239d09940363132dcafaf8e))
+- **transport:** A failed download call is an error, not an empty file (#302) ([`87e1eef`](https://github.com/oisee/vibing-steampunk/commit/87e1eef7b481fdbdc515ce002ea23a4ea258da11))
+- **git:** Follow-ups to the zip import from review (#304) ([`ca6912b`](https://github.com/oisee/vibing-steampunk/commit/ca6912b9e7d9df02762ff986ec8d8bf8e36442f2))
+- **ws:** Build every ZADT_VSP WebSocket from the ADT client's auth (#306) ([`9fad223`](https://github.com/oisee/vibing-steampunk/commit/9fad223a6fbb5d13d962c41eca1e61aecf1bb78c))
+- **mcp:** Write a class include to its own URL, never to the main source (#242) (#308) ([`608dfe2`](https://github.com/oisee/vibing-steampunk/commit/608dfe22c724dd7c8677694dcce37e76339e6e9f))
+- **adt:** Generic .abap files no longer crash the parser; includes export as .incl.abap (#305) ([`8e76ded`](https://github.com/oisee/vibing-steampunk/commit/8e76ded0b17107b4b7b7de392cac0bf7642c377f))
+- **adt:** Create TABL adds a client field only when the table needs one (#307) ([`d26518e`](https://github.com/oisee/vibing-steampunk/commit/d26518e56dd9cf83273cc833e4dd8660cf1b48db))
+- **callers:** Keep program callers filed under a package (#281) (#309) ([`95c039a`](https://github.com/oisee/vibing-steampunk/commit/95c039aef896d23112c6f219e968bc0350722600))
+- **mcp:** Hyperfocused routes match help; delete <TYPE> <NAME> (#240) (#310) ([`50b5c69`](https://github.com/oisee/vibing-steampunk/commit/50b5c69b897b82d6850849759e5f9dd4be329c22))
+- **adt:** Name typed files by their file name, never their content (#312) ([`1367e94`](https://github.com/oisee/vibing-steampunk/commit/1367e94589875e325ba04fd2e8f10507231e721a))
+- **graph:** Health finds classes; stable order; readable boundaries; where-used gaps (#325) ([`3f2f49b`](https://github.com/oisee/vibing-steampunk/commit/3f2f49b0fbf8adc011354e957ed5013da6b47e84))
+
+
+### Features
+
+- **update:** Vsp update follows the repository the binary was released from (#259) ([`9408bf1`](https://github.com/oisee/vibing-steampunk/commit/9408bf1e94c47e02886fdecc26ad6add920c86f3))
+- **idoc:** Read an IDoc as WE02 shows it (#268) ([`b5776e4`](https://github.com/oisee/vibing-steampunk/commit/b5776e46b637fb28bb459e80c2ccc2a296ab640c))
+- **transport:** Add entries to a request and take them out, as SE09 does (#262) ([`e45e142`](https://github.com/oisee/vibing-steampunk/commit/e45e14266ec5d972fadecf72736e6d99b5366446))
+- **adt:** Pass corrNr on the LOCK request (#256) ([`558ce8d`](https://github.com/oisee/vibing-steampunk/commit/558ce8d5b7b5c7d7c67e91581e262d41d084537a))
+- **query:** Accept the common ANSI spellings, explain what SAP refuses (#267) ([`9c40d6b`](https://github.com/oisee/vibing-steampunk/commit/9c40d6b6b62feb2dbec8a053fe30f1bc5face974))
+- **msag:** Create message classes; write messages in the language asked (#270) ([`a934798`](https://github.com/oisee/vibing-steampunk/commit/a934798afc02cc206bbd844b9671c0abde5c3aa1))
+- **ddic:** Create structures and append structures from DDL (#272) ([`837051a`](https://github.com/oisee/vibing-steampunk/commit/837051a81e4417b99b35687ffb1f0d6d415cd36f))
+- **transport:** File the requests vsp creates under a CTS project (#246) ([`1a3a053`](https://github.com/oisee/vibing-steampunk/commit/1a3a05350fc232ad9822b84d59b9d0f4daacfa13))
+- **ddic:** Create domains and data elements (#273) ([`c682143`](https://github.com/oisee/vibing-steampunk/commit/c682143ca53ac4e3abc20aa6d6fca46731689d9c))
+- **enhancements:** Create enhancement implementations (ENHO): source code plug-ins and BAdI implementations (#263) ([`038b439`](https://github.com/oisee/vibing-steampunk/commit/038b4396c2427d3ff0ee794afdc030c7b8bae23b))
+- **mcp:** Run a report as a background job from the SAP tool (#261) ([`842c7d1`](https://github.com/oisee/vibing-steampunk/commit/842c7d18fb44987b6e92ace3a32860209cdf5d21))
+- **transport:** Copy a request into a transport of copies, as SE01 does (#247) ([`2f2a7e0`](https://github.com/oisee/vibing-steampunk/commit/2f2a7e0daaa0e38b4fb8832e2b1ed7f95efaa6aa))
+- **transport:** Upload a released transport and add it to the import queue — never import (#296) ([`9789f00`](https://github.com/oisee/vibing-steampunk/commit/9789f006c0c9c23926583323999d5733b99079fc))
+- **execute,test:** Result_text and several values from execute_abap; lean ABAP Unit output (#298) ([`124dfb3`](https://github.com/oisee/vibing-steampunk/commit/124dfb357323fb0b4b18a18317b44890557d916f))
+- Call timeouts and a quiet shutdown, exact-name search, package inventory (#299) ([`76163ef`](https://github.com/oisee/vibing-steampunk/commit/76163efda53a54a0eb09042e833f452bf8b0ad0c))
+- Check an ABAP snippet for syntax errors without running it (#300) ([`38876f2`](https://github.com/oisee/vibing-steampunk/commit/38876f2d0930c7da87a3b971569fa530f635cd46))
+- Import an abapGit zip offline, check its status, delete what it brought (#301) ([`0a83078`](https://github.com/oisee/vibing-steampunk/commit/0a830786068d84403e6c8a55a4b26e647d1aa2be))
+- **git:** Delete only what is still the version you saw (#320) ([`1b917ee`](https://github.com/oisee/vibing-steampunk/commit/1b917eebf9e70761afdfb98a6648589e35f6c91f))
+- **git:** Delete users before what they use (#323) ([`ae8f064`](https://github.com/oisee/vibing-steampunk/commit/ae8f064a60829b8bcadc8cf72e18b22919957976))
+
+
+
+## [2.58.0] - 2026-09-14
+### Bug Fixes
+
+- **adt:** GetTypeInfo sent a generic Accept and had never worked ([`3c61368`](https://github.com/oisee/vibing-steampunk/commit/3c61368992e567b8e35e407d9f5ef6625e11660a))
+- **adt:** GetTypeInfo parsed the wrong half of the document too ([`3880b9e`](https://github.com/oisee/vibing-steampunk/commit/3880b9e338c6187dbb5a611eabe07f49ff80532b))
+
+
+### Features
+
+- **adt:** Read Enhancement Framework (ENHO) implementations ([`8a50b0c`](https://github.com/oisee/vibing-steampunk/commit/8a50b0ce832670f631f4e5a436bed2270faf1014))
+- **adt:** ActivateMultiple — batch activation with dependency resolution ([`c1a970e`](https://github.com/oisee/vibing-steampunk/commit/c1a970e2dd651b387132b493f2f2478d2b630f32))
+- **adt,iam:** Business catalogs, IAM apps and catalog assignments over ADT ([`d394d88`](https://github.com/oisee/vibing-steampunk/commit/d394d88aee9dcac70ace225cc058133d6831c5ba))
+- Guard source updates with version hashes ([`847f2bd`](https://github.com/oisee/vibing-steampunk/commit/847f2bd74cbcbb32d54c0581859d2b650b76feb4))
+- **w3mi:** Read binary objects out of the MIME repository (SMW0) ([`6a5f409`](https://github.com/oisee/vibing-steampunk/commit/6a5f4092c98e873b9eb34f647cbe7fd46bafb4df))
+
+
+
+## [2.57.0] - 2026-09-10
+### Bug Fixes
+
+- **texts:** Remove a key, count only ?... as a gap, untouched not uncommented ([`98b6a33`](https://github.com/oisee/vibing-steampunk/commit/98b6a33d5e20365e4e619f57eb35670216824c3c))
+- **adt:** Keep ADT headers across redirects and drop stale cookies on ICMENOSESSION ([`a6de3b2`](https://github.com/oisee/vibing-steampunk/commit/a6de3b2430ac67f57b12ac79d696a99a447d3bc2))
+- **adt:** Guard against session-holding proxy chains injecting a stale sap-contextid ([`72ea841`](https://github.com/oisee/vibing-steampunk/commit/72ea841f58f182b8b7de5a1480b4a74fab195211))
+
+
+### Features
+
+- **cache:** A response cache in the transport, and the flag finally does something ([`8313413`](https://github.com/oisee/vibing-steampunk/commit/831341367c7cc3da9ebea461cd400577f674ef1c))
+- **texts:** Write a program's text pool, and take selection texts from "~t: comments ([`5dfb583`](https://github.com/oisee/vibing-steampunk/commit/5dfb5831ce0ecae5849a5571e26103dd71e128e7))
+- **texts:** Activate what was written, set a description, update the binary ([`a0ebb75`](https://github.com/oisee/vibing-steampunk/commit/a0ebb75d5ffa68f43eb8b1fa48f29a2a08877786))
+- **cluster:** --names, for exported types DDIC does not have ([`5363b2b`](https://github.com/oisee/vibing-steampunk/commit/5363b2b5cd49a1190ef269f2ef486125f63b6eed))
+- **transport:** Choose the request a write goes under, the way the editor does ([`a3a0068`](https://github.com/oisee/vibing-steampunk/commit/a3a0068c1776637f7c0ec68eee7ee6cb39c5b44f))
+- **transport:** Ask the organizer tree for status and type explicitly ([`f39c1cb`](https://github.com/oisee/vibing-steampunk/commit/f39c1cb11d07f2efde4b0bf2d21f658144f9d00e))
+- **transport:** Merge requests and move an entry through ZADT_VSP's function bridge ([`316f727`](https://github.com/oisee/vibing-steampunk/commit/316f7271754dbc4e4783207281286b41fb9da061))
+
+
+
 ## [2.56.0] - 2026-09-05
 ### Bug Fixes
 
