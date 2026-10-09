@@ -2016,7 +2016,8 @@ What you need:
         "connection": "DEV - Development",
         "system": "DEV",
         "client": "100",
-        "user": "TESTUSER"
+        "user": "TESTUSER",
+        "production": false
       }
     }
   }
@@ -2037,7 +2038,7 @@ names the 32-bit library, which a 64-bit `vsp.exe` cannot load.
 Optional keys: `landscape` (an absolute path to SAPUILandscape.xml; default: SAP
 GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
 `logon_timeout` (default `45s`), `request_timeout` (default `60s`),
-`production` (see below), `allow_data_preview` (forward data preview SELECTs on
+`production` (required, see below), `allow_data_preview` (forward data preview SELECTs on
 a production system too) and `verbose` (one stderr line per request).
 
 - **Home directory only.** The `snc` block names a DLL that vsp loads, so it is
@@ -2051,10 +2052,14 @@ a production system too) and `verbose` (one stderr line per request).
   `expect` defaults to `SYSTEM.CLIENT/USER`, and the system is read-only.
 - **The identity is checked twice.** The logon is refused unless the
   authenticated system, client and user match the block. vsp's own `expect`
-  check runs again on the first request.
+  check runs again on the first request. On a release without ADT's system
+  information resource, snc-serve answers it from the RFC logon's identity,
+  marked `X-Vsp-Snc-Identity: rfc-logon`, because the T000 fallback cannot
+  always tell the system ID.
 - **Read-only, stricter on production.** GET on an allowlist of ADT read
   paths goes to SAP: discovery, repository, sources, DDIC, packages, transports
-  and dumps. On a system without `"production": true`, a row-capped data
+  and dumps. `production` must be given, so a forgotten flag cannot open a
+  production system. With `"production": false`, a row-capped data
   preview SELECT is also forwarded, but never one that names a credential
   table. On a production system it is forwarded only with `allow_data_preview`.
   vsp's own identity check (one row of T000, for releases without the system

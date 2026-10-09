@@ -20,7 +20,7 @@ func sncServerSetup(t *testing.T) {
 	t.Cleanup(config.SetSNCPlatform("windows",
 		func() (string, error) { return exe, nil },
 		func() string { return filepath.Join(home, "gx64krb5.dll") }))
-	data := `{"systems": {"dev": {"snc": {"connection": "DEV - Development", "system": "DEV", "client": "100", "user": "testuser"}}}}`
+	data := `{"systems": {"dev": {"snc": {"connection": "DEV - Development", "system": "DEV", "client": "100", "user": "testuser", "production": false}}}}`
 	if err := os.WriteFile(filepath.Join(home, ".vsp.json"), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}

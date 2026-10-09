@@ -45,12 +45,13 @@ type SNCSettings struct {
 	LogonTimeout   string `json:"logon_timeout,omitempty"`
 	RequestTimeout string `json:"request_timeout,omitempty"`
 
-	// Production marks a production system. snc-serve then forwards only
-	// GETs on its read allowlist, plus vsp's own identity check; elsewhere it
-	// also forwards bounded ADT data preview SELECTs (credential tables
-	// refused). Writes are never forwarded: the channel has no stateful
-	// session and no locks.
-	Production bool `json:"production,omitempty"`
+	// Production says whether this is a production system, and must be
+	// given: a forgotten flag must not open a production system to SQL. On
+	// production snc-serve forwards only GETs on its read allowlist, plus
+	// vsp's own identity check; elsewhere it also forwards bounded ADT data
+	// preview SELECTs (credential tables refused). Writes are never
+	// forwarded: the channel has no stateful session and no locks.
+	Production *bool `json:"production"`
 	// AllowDataPreview forwards data preview SELECTs on a production system
 	// too. On any other system they are forwarded anyway.
 	AllowDataPreview bool `json:"allow_data_preview,omitempty"`
@@ -188,7 +189,10 @@ func (s *SNCSettings) argv() ([]string, error) {
 		}
 		args = append(args, d.flag, v.String())
 	}
-	if s.AllowDataPreview || !s.Production {
+	if s.Production == nil {
+		return nil, errors.New(`production must be given: "production": true for a production system (GETs only), false for any other (data preview SELECTs too)`)
+	}
+	if s.AllowDataPreview || !*s.Production {
 		args = append(args, "-allow-data-preview")
 	}
 	if s.Verbose {

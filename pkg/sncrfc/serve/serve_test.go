@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -320,5 +321,43 @@ func TestCheckRequestProductionAndIdentity(t *testing.T) {
 		if (refusal == nil) != c.ok {
 			t.Errorf("%s: refused=%v, want allowed=%v", c.name, refusal != nil, c.ok)
 		}
+	}
+}
+
+// A release without the system information resource gets it answered from
+// the RFC logon's identity; any other answer, path or method is left alone.
+func TestSystemInformationFromLogon(t *testing.T) {
+	id := sncrfc.Identity{System: "OLD", Client: "300", User: "testuser"}
+	const si = "/sap/bc/adt/core/http/systeminformation?sap-client=300"
+	b := systemInformationFromLogon(http.MethodGet, si, http.StatusNotFound, id)
+	if b == nil {
+		t.Fatal("no local answer for a 404")
+	}
+	r, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
+	if err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("response %v, %v", r, err)
+	}
+	var got map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got["systemID"] != "OLD" || got["client"] != "300" || got["userName"] != "TESTUSER" {
+		t.Errorf("body %v", got)
+	}
+	for _, c := range []struct {
+		method, uri string
+		status      int
+	}{
+		{http.MethodGet, si, http.StatusOK},
+		{http.MethodGet, si, http.StatusForbidden},
+		{http.MethodPost, si, http.StatusNotFound},
+		{http.MethodGet, "/sap/bc/adt/core/discovery", http.StatusNotFound},
+	} {
+		if systemInformationFromLogon(c.method, c.uri, c.status, id) != nil {
+			t.Errorf("%s %s %d answered locally", c.method, c.uri, c.status)
+		}
+	}
+	if systemInformationFromLogon(http.MethodGet, si, http.StatusNotFound, sncrfc.Identity{}) != nil {
+		t.Error("answered without a logon identity")
 	}
 }

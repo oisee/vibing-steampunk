@@ -28,6 +28,7 @@ func sncSystems(t *testing.T, mutate func(sys map[string]any)) []byte {
 			"system":     "DEV",
 			"client":     "100",
 			"user":       "testuser",
+			"production": false,
 		},
 	}
 	if mutate != nil {
@@ -199,7 +200,7 @@ func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
 }
 
 // A production snc system forwards GETs only; any other forwards bounded data
-// preview SELECTs as well, unless nothing says otherwise.
+// preview SELECTs as well. The flag must be given.
 func TestSNC_ProductionDecidesDataPreview(t *testing.T) {
 	for _, c := range []struct {
 		production, allow, want bool
@@ -213,9 +214,7 @@ func TestSNC_ProductionDecidesDataPreview(t *testing.T) {
 		writeSystems(t, home, sncSystems(t, func(sys map[string]any) {
 			snc := sys["snc"].(map[string]any)
 			delete(snc, "allow_data_preview")
-			if c.production {
-				snc["production"] = true
-			}
+			snc["production"] = c.production
 			if c.allow {
 				snc["allow_data_preview"] = true
 			}
@@ -230,5 +229,17 @@ func TestSNC_ProductionDecidesDataPreview(t *testing.T) {
 		if !sys.ReadOnly {
 			t.Error("an snc system must stay read-only")
 		}
+	}
+}
+
+// A block that does not say whether it is production is refused.
+func TestSNC_ProductionMustBeGiven(t *testing.T) {
+	home, _ := isolateHome(t)
+	asWindows(t, abs("/opt/vsp/vsp.exe"))
+	writeSystems(t, home, sncSystems(t, func(sys map[string]any) {
+		delete(sys["snc"].(map[string]any), "production")
+	}))
+	if _, err := loadDev(t); err == nil || !strings.Contains(err.Error(), "production must be given") {
+		t.Errorf("err = %v", err)
 	}
 }

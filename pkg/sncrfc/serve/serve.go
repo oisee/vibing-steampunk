@@ -150,6 +150,37 @@ func checkRequest(b []byte, dataPreview bool) (*adtCall, []byte) {
 	return c, nil
 }
 
+// systemInformationPath is the ADT resource vsp reads its identity pin from.
+const systemInformationPath = "/sap/bc/adt/core/http/systeminformation"
+
+// systemInformationFromLogon answers the system information resource from
+// the logon when the release has none (404, 405, 406 or 501). Without it vsp
+// falls back to T000, whose logical system name need not carry the SID, and
+// cannot pin such a system at all. The identity given here is not taken from
+// the request: it is what RFC reported for this connection after logon,
+// already checked against the configured system, client and user.
+func systemInformationFromLogon(method, uri string, status int, id sncrfc.Identity) []byte {
+	path, _, _ := strings.Cut(uri, "?")
+	if method != http.MethodGet || path != systemInformationPath || id.System == "" {
+		return nil
+	}
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotAcceptable, http.StatusNotImplemented:
+	default:
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"systemID": id.System, "client": id.Client, "userName": strings.ToUpper(id.User)})
+	if err != nil {
+		return nil
+	}
+	r := &http.Response{StatusCode: http.StatusOK, ProtoMajor: 1, ProtoMinor: 1, Header: http.Header{}, ContentLength: int64(len(body)), Body: io.NopCloser(bytes.NewReader(body))}
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("X-Vsp-Snc-Identity", "rfc-logon") // said by snc-serve, not by SAP
+	var buf bytes.Buffer
+	_ = r.Write(&buf)
+	return buf.Bytes()
+}
+
 func localResponse(status int, text string, stopping bool) []byte {
 	r := &http.Response{StatusCode: status, ProtoMajor: 1, ProtoMinor: 1, Header: http.Header{}, ContentLength: int64(len(text)), Body: io.NopCloser(strings.NewReader(text))}
 	r.Header.Set("Content-Type", "text/plain; charset=utf-8")
@@ -400,6 +431,15 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 			return kill("worker response is not valid HTTP")
 		}
 		_ = parsed.Body.Close()
+		if w != nil {
+			if local := systemInformationFromLogon(method, uri, parsed.StatusCode, w.identity); local != nil {
+				resp = local
+				if parsed, err = http.ReadResponse(bufio.NewReader(bytes.NewReader(resp)), nil); err != nil {
+					return kill("local response is not valid HTTP")
+				}
+				_ = parsed.Body.Close()
+			}
+		}
 		if writeFrame(out, resp) != nil {
 			return kill("client is gone")
 		}
