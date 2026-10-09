@@ -342,14 +342,16 @@ func sortTraceEntries(entries []TraceEntry, by string) {
 }
 
 // explainTraceError turns ADT's answers for a trace it will not evaluate into
-// the reason. info may be nil.
+// the reason. info may be nil. Statuses outside 416 and 400 pass through:
+// a 401, 403, 404 or 5xx is not the recording's fault.
 func explainTraceError(err error, id, toolType string, info *ABAPTrace) error {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		return fmt.Errorf("getting trace %s (%s): %w", id, toolType, err)
 	}
+	// Only the answers seen for a cut-off recording: a 5xx may be the server.
 	recordingRefused := apiErr.StatusCode == http.StatusRequestedRangeNotSatisfiable ||
-		apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode >= 500
+		apiErr.StatusCode == http.StatusBadRequest
 	if info != nil && !info.Complete && recordingRefused {
 		return fmt.Errorf("trace %s is incomplete (state %s %q): ADT cannot evaluate it, and Eclipse reports it as \"Trace has errors\". "+
 			"Record it again with Hit List aggregation, or a larger maximum file size: %w", id, info.State, info.StateText, err)
