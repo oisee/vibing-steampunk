@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -134,6 +135,9 @@ func runStdioHelper(in io.Reader, out io.Writer, errOut io.Writer) int {
 			return 4
 		case req.URL.Path == "/env":
 			reply(200, nil, []byte(strings.Join(os.Environ(), "\n")))
+		case req.URL.Path == "/cwd":
+			wd, _ := os.Getwd()
+			reply(200, nil, []byte(wd))
 		case req.URL.Path == "/cookie/set":
 			reply(200, map[string]string{"Set-Cookie": "c1=v1; Path=/"}, nil)
 		case req.URL.Path == "/cookie/echo":
@@ -561,5 +565,34 @@ func TestStdioTransport_HelperStartsFromTheGivenEnviron(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "PATH=") {
 		t.Error("the helper lost PATH")
+	}
+}
+
+// The helper runs in its program's directory, not in the caller's working
+// directory, which may be an unvetted project.
+func TestStdioTransport_HelperRunsInItsOwnDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	st := newTestStdioTransport(t)
+	resp, err := stdioGet(t, st, context.Background(), "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	want, _ := filepath.EvalSymlinks(filepath.Dir(os.Args[0]))
+	got, _ := filepath.EvalSymlinks(string(body))
+	if got != want {
+		t.Errorf("helper ran in %q, want its own directory %q", body, want)
+	}
+}
+
+// A program that is not an absolute path is refused before anything starts.
+func TestStdioTransport_RelativeProgramRefused(t *testing.T) {
+	for _, prog := range []string{"helper", "./helper", "bin/helper"} {
+		st := NewStdioTransport([]string{prog})
+		hc := &http.Client{Transport: st}
+		_, err := hc.Get("https://sidecar.invalid/x")
+		if err == nil || !strings.Contains(err.Error(), "absolute path") {
+			t.Errorf("%q: err = %v", prog, err)
+		}
 	}
 }

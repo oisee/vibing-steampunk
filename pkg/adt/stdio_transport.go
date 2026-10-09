@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -270,6 +271,14 @@ func (t *StdioTransport) ensureStarted() error {
 		t.broken = errors.New("transport command is empty")
 		return t.broken
 	}
+	// The working directory may be a project nobody vetted. A program that
+	// is not an absolute path would be looked up from it (directly, or via a
+	// PATH entry or GODEBUG its .env set), so it is refused, wherever the
+	// command came from.
+	if !filepath.IsAbs(t.argv[0]) {
+		t.broken = fmt.Errorf("transport command %s: the program must be an absolute path", t.name)
+		return t.broken
+	}
 
 	inR, inW, err := os.Pipe()
 	if err != nil {
@@ -289,6 +298,10 @@ func (t *StdioTransport) ensureStarted() error {
 	cmd.Stdout = outW
 	cmd.Stderr = io.MultiWriter(stdioStderr, tail)
 	cmd.Env = helperEnv(helperEnviron())
+	// Run in the program's own directory, not the caller's: a relative
+	// argument ("helper.py") must not name a file of the project vsp was
+	// started in.
+	cmd.Dir = filepath.Dir(t.argv[0])
 	// A grandchild that keeps stderr open must not keep Wait from returning.
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
