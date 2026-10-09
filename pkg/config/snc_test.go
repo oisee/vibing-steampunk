@@ -163,3 +163,34 @@ func TestSNC_DoesNotAliasLoadedConfig(t *testing.T) {
 		t.Fatalf("GetSystem changed the loaded config or shares its snc block: %v", err)
 	}
 }
+
+// Without dll and snc_lib the block falls back to sapnwrfc.dll beside vsp.exe
+// and to SNC_LIB_64, SAP GUI's own variable. SNC_LIB, the 32-bit one, is not
+// read.
+func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
+	home, _ := isolateHome(t)
+	asWindows(t, abs("/opt/vsp/vsp.exe"))
+	writeSystems(t, home, sncSystems(t, func(sys map[string]any) {
+		snc := sys["snc"].(map[string]any)
+		delete(snc, "dll")
+		delete(snc, "snc_lib")
+	}))
+	old := sncGetenv
+	t.Cleanup(func() { sncGetenv = old })
+	env := map[string]string{"SNC_LIB": abs("/x86/sapsncencryption.dll"), "SNC_LIB_64": abs("/home/u/lib/gx64krb5.dll")}
+	sncGetenv = func(k string) string { return env[k] }
+
+	sys, err := loadDev(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(sys.TransportCmd, "|")
+	if !strings.Contains(joined, "-dll|"+abs("/opt/vsp/sapnwrfc.dll")) || !strings.Contains(joined, "-snc-lib|"+abs("/home/u/lib/gx64krb5.dll")) {
+		t.Errorf("TransportCmd = %q", sys.TransportCmd)
+	}
+
+	delete(env, "SNC_LIB_64")
+	if _, err := loadDev(t); err == nil || !strings.Contains(err.Error(), "SNC_LIB_64") {
+		t.Errorf("err = %v, want a refusal naming SNC_LIB_64 (SNC_LIB must not be used)", err)
+	}
+}

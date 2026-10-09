@@ -273,3 +273,22 @@ func TestWorkerMainRefusesWithoutSupervisor(t *testing.T) {
 		t.Fatalf("code %d, out %q", code, out.String())
 	}
 }
+
+// A request refused locally is answered without starting the worker, so it
+// costs no SNC logon (CLAUDE.md: safety refusals come before anything is sent).
+func TestMainRefusesBeforeStartingTheWorker(t *testing.T) {
+	post := "POST /sap/bc/adt/oo/classes HTTP/1.1\r\nHost: snc.invalid\r\nContent-Length: 0\r\n\r\n"
+	var out, errOut bytes.Buffer
+	code := Main(serveArgs, frames(t, post), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("code %d, stderr %q: a worker was started for a refused request", code, errOut.String())
+	}
+	b, err := readFrame(&out, maxResponseFrame)
+	if err != nil {
+		t.Fatalf("no response frame: %v", err)
+	}
+	r, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(b)), nil)
+	if err != nil || r.StatusCode != http.StatusForbidden {
+		t.Fatalf("response %v, err %v; want a local 403", r, err)
+	}
+}

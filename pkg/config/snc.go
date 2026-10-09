@@ -19,10 +19,13 @@ import (
 // The block names a DLL that vsp will load, so it is honoured only where
 // transport_cmd is: in ~/.vsp.json or ~/.vsp/systems.json.
 type SNCSettings struct {
-	// DLL is the absolute path to sapnwrfc.dll (SAP NW RFC SDK, x64).
-	DLL string `json:"dll"`
+	// DLL is the absolute path to sapnwrfc.dll (SAP NW RFC SDK, x64). Empty
+	// means sapnwrfc.dll beside vsp.exe.
+	DLL string `json:"dll,omitempty"`
 	// SNCLib is the absolute path to the SNC library, e.g. gx64krb5.dll.
-	SNCLib string `json:"snc_lib"`
+	// Empty means SNC_LIB_64, as SAP GUI sets it. SNC_LIB is not read: it
+	// names the 32-bit library, which a 64-bit vsp.exe cannot load.
+	SNCLib string `json:"snc_lib,omitempty"`
 	// Connection is the exact name of the SAP Logon entry to connect with.
 	Connection string `json:"connection"`
 	// Landscape is the SAPUILandscape.xml to read; empty means SAP GUI's own
@@ -57,6 +60,7 @@ const SNCPlaceholderURL = "https://snc.invalid"
 var (
 	sncGOOS       = runtime.GOOS
 	sncExecutable = os.Executable
+	sncGetenv     = os.Getenv
 )
 
 var (
@@ -90,16 +94,26 @@ func (c *SystemsConfig) applySNC(name string, sys *SystemConfig) error {
 	if sys.User != "" || sys.Password != "" || sys.CookieFile != "" || sys.CookieString != "" || sys.UsesSSO() {
 		return fmt.Errorf("system '%s': snc logs on with Kerberos single sign-on; remove user/password/cookies/auth", name)
 	}
-	argv, err := s.argv()
+	exe, err := sncExecutable()
+	if err != nil {
+		return fmt.Errorf("system '%s': snc: cannot locate the vsp executable: %w", name, err)
+	}
+	filled := *s // the loaded config keeps what the file said
+	if filled.DLL == "" {
+		filled.DLL = filepath.Join(filepath.Dir(exe), "sapnwrfc.dll")
+	}
+	if filled.SNCLib == "" {
+		filled.SNCLib = sncGetenv("SNC_LIB_64")
+		if filled.SNCLib == "" {
+			return fmt.Errorf("system '%s': snc: snc_lib is not set and SNC_LIB_64 is empty; name the 64-bit SNC library (e.g. gx64krb5.dll)", name)
+		}
+	}
+	argv, err := filled.argv()
 	if err != nil {
 		return fmt.Errorf("system '%s': snc: %w", name, err)
 	}
 	if sys.Client != "" && sys.Client != s.Client {
 		return fmt.Errorf("system '%s': client %q differs from snc.client %q", name, sys.Client, s.Client)
-	}
-	exe, err := sncExecutable()
-	if err != nil {
-		return fmt.Errorf("system '%s': snc: cannot locate the vsp executable: %w", name, err)
 	}
 	sys.TransportCmd = append([]string{exe}, argv...)
 	sys.Client = s.Client

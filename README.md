@@ -2027,6 +2027,11 @@ What you need:
 vsp -s dev search "ZCL_*"
 ```
 
+`dll` and `snc_lib` may be left out: `dll` then means `sapnwrfc.dll` beside
+`vsp.exe`, and `snc_lib` the `SNC_LIB_64` environment variable that SAP GUI
+sets. `SNC_LIB` is not read; it names the 32-bit library, which a 64-bit
+`vsp.exe` cannot load.
+
 Optional keys: `landscape` (an absolute path to SAPUILandscape.xml; default: SAP
 GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
 `logon_timeout` (default `45s`), `request_timeout` (default `60s`),

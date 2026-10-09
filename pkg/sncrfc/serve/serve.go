@@ -368,18 +368,11 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		if err != nil {
 			return kill("client framing error: " + err.Error())
 		}
-		if w == nil {
-			if w, err = startWorker(args, p); err != nil {
-				fmt.Fprintln(errOut, logPrefix, err)
-				return 1
-			}
-			if o.verbose {
-				fmt.Fprintf(errOut, "%s ready %s.%s as %s over SNC\n", logPrefix, w.identity.System, w.identity.Client, w.identity.User)
-			}
-		}
 		started := time.Now()
 		method, uri := "?", "?"
 		var resp []byte
+		// A refusal is answered here, before the worker exists: a request
+		// that is never sent must not cost an SNC logon.
 		if c, refusal := checkRequest(reqFrame, o.dataPreview); refusal != nil {
 			resp = refusal // never forwarded
 			if c != nil {
@@ -387,6 +380,15 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 			}
 		} else {
 			method, uri = c.req.Method, c.req.RequestURI
+			if w == nil {
+				if w, err = startWorker(args, p); err != nil {
+					fmt.Fprintln(errOut, logPrefix, err)
+					return 1
+				}
+				if o.verbose {
+					fmt.Fprintf(errOut, "%s ready %s.%s as %s over SNC\n", logPrefix, w.identity.System, w.identity.Client, w.identity.User)
+				}
+			}
 			if resp, err = w.roundTrip(reqFrame, o.requestTimeout); err != nil {
 				return kill(err.Error())
 			}
@@ -404,6 +406,11 @@ func Main(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		if parsed.Header.Get(stoppingHeader) == "1" {
 			return kill("RFC call failed; stopped, no retry performed")
+		}
+		// SAP refused the SNC identity: stop at the first 401, as everywhere
+		// in vsp, so nothing that follows can count against the user.
+		if parsed.StatusCode == http.StatusUnauthorized {
+			return kill("SAP answered 401; stopped, no retry performed")
 		}
 	}
 }
