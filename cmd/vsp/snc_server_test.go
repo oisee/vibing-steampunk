@@ -26,7 +26,7 @@ func sncServerSetup(t *testing.T) {
 	}
 	// isolateServer restores cfg afterwards but does not clear it; another
 	// test's logon must not leak in.
-	cfg.SystemName = "dev"
+	setSystemFlag(t, "dev")
 	cfg.BaseURL, cfg.Username, cfg.Password, cfg.TransportCmd = "", "", "", nil
 	cfg.ReadOnly = false
 }
@@ -70,9 +70,35 @@ func TestServer_NamedSNCSystemRefusesAnotherLogon(t *testing.T) {
 // A system without an snc block leaves the server's logon alone.
 func TestServer_NamedSystemWithoutSNCUntouched(t *testing.T) {
 	sncServerSetup(t)
-	cfg.SystemName = "other"
+	setSystemFlag(t, "other")
 	cfg.BaseURL = "https://dev.example.local"
 	if err := applyNamedSNCSystem(rootCmd, cfg); err != nil || len(cfg.TransportCmd) != 0 || cfg.BaseURL != "https://dev.example.local" {
 		t.Fatalf("err %v, transport %q, url %q", err, cfg.TransportCmd, cfg.BaseURL)
+	}
+}
+
+// setSystemFlag stands for -s NAME on the command line.
+func setSystemFlag(t *testing.T, name string) {
+	t.Helper()
+	f := rootCmd.Flag("system")
+	if f == nil {
+		t.Fatal("no -s flag")
+	}
+	if err := f.Value.Set(name); err != nil {
+		t.Fatal(err)
+	}
+	f.Changed = true
+	cfg.SystemName = name
+}
+
+// SAP_SYSTEM, which a project's .env can set, does not switch the server onto
+// an snc system: only -s does.
+func TestServer_SNCNotActivatedBySAPSystemEnv(t *testing.T) {
+	sncServerSetup(t)
+	systemName = ""
+	rootCmd.Flag("system").Changed = false
+	cfg.SystemName = "dev" // as resolveConfig sets it from SAP_SYSTEM
+	if err := applyNamedSNCSystem(rootCmd, cfg); err != nil || len(cfg.TransportCmd) != 0 {
+		t.Fatalf("err %v, transport %q: SAP_SYSTEM activated snc", err, cfg.TransportCmd)
 	}
 }

@@ -150,13 +150,17 @@ func closeTransportCmds() {
 }
 
 // applyNamedSNCSystem gives the MCP server its logon from an snc block: with
-// -s NAME (or SAP_SYSTEM) naming a system that has one, the server takes the
+// -s NAME naming a system that has one, the server takes the
 // transport command, client and placeholder URL from it and runs read-only,
 // so .mcp.json needs only ["-s", "NAME"]. The block is checked as the CLI
 // checks it (home-directory config only, Windows only). A URL, user,
 // password or transport command given as well is refused, not overridden.
+//
+// Only the -s flag counts, not SAP_SYSTEM: vsp loads ./.env into the
+// environment, and a project must not choose which system the server logs on
+// to, nor make it start a helper that loads a DLL.
 func applyNamedSNCSystem(cmd *cobra.Command, c *mcp.Config) error {
-	if c.SystemName == "" {
+	if f := cmd.Flag("system"); f == nil || !f.Changed || systemName == "" || systemName != c.SystemName {
 		return nil
 	}
 	systems, _, err := config.LoadSystems()
