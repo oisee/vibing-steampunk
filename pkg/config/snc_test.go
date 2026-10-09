@@ -165,8 +165,8 @@ func TestSNC_DoesNotAliasLoadedConfig(t *testing.T) {
 }
 
 // Without dll and snc_lib the block falls back to sapnwrfc.dll beside vsp.exe
-// and to SNC_LIB_64, SAP GUI's own variable. SNC_LIB, the 32-bit one, is not
-// read.
+// and to SNC_LIB_64 as SAP GUI sets it in the registry. Neither the process
+// environment (./.env) nor SNC_LIB, the 32-bit one, is read.
 func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
 	home, _ := isolateHome(t)
 	asWindows(t, abs("/opt/vsp/vsp.exe"))
@@ -175,10 +175,13 @@ func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
 		delete(snc, "dll")
 		delete(snc, "snc_lib")
 	}))
-	old := sncGetenv
-	t.Cleanup(func() { sncGetenv = old })
-	env := map[string]string{"SNC_LIB": abs("/x86/sapsncencryption.dll"), "SNC_LIB_64": abs("/home/u/lib/gx64krb5.dll")}
-	sncGetenv = func(k string) string { return env[k] }
+	old := sncLib64
+	t.Cleanup(func() { sncLib64 = old })
+	registryValue := abs("/home/u/lib/gx64krb5.dll")
+	sncLib64 = func() string { return registryValue }
+	// The process environment, which ./.env feeds, must not be read.
+	t.Setenv("SNC_LIB_64", abs("/project/evil.dll"))
+	t.Setenv("SNC_LIB", abs("/x86/sapsncencryption.dll"))
 
 	sys, err := loadDev(t)
 	if err != nil {
@@ -189,7 +192,7 @@ func TestSNC_DefaultsFromExeDirAndSNCLIB64(t *testing.T) {
 		t.Errorf("TransportCmd = %q", sys.TransportCmd)
 	}
 
-	delete(env, "SNC_LIB_64")
+	registryValue = ""
 	if _, err := loadDev(t); err == nil || !strings.Contains(err.Error(), "SNC_LIB_64") {
 		t.Errorf("err = %v, want a refusal naming SNC_LIB_64 (SNC_LIB must not be used)", err)
 	}

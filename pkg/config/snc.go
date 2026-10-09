@@ -23,8 +23,10 @@ type SNCSettings struct {
 	// means sapnwrfc.dll beside vsp.exe.
 	DLL string `json:"dll,omitempty"`
 	// SNCLib is the absolute path to the SNC library, e.g. gx64krb5.dll.
-	// Empty means SNC_LIB_64, as SAP GUI sets it. SNC_LIB is not read: it
-	// names the 32-bit library, which a 64-bit vsp.exe cannot load.
+	// Empty means SNC_LIB_64 as SAP GUI sets it, read from the user's or the
+	// machine's environment in the registry, never from the process: vsp
+	// loads ./.env into the process, and a project must not pick the DLL.
+	// SNC_LIB is not read: it names the 32-bit library.
 	SNCLib string `json:"snc_lib,omitempty"`
 	// Connection is the exact name of the SAP Logon entry to connect with.
 	Connection string `json:"connection"`
@@ -60,7 +62,7 @@ const SNCPlaceholderURL = "https://snc.invalid"
 var (
 	sncGOOS       = runtime.GOOS
 	sncExecutable = os.Executable
-	sncGetenv     = os.Getenv
+	sncLib64      = sncLib64FromRegistry
 )
 
 var (
@@ -103,9 +105,9 @@ func (c *SystemsConfig) applySNC(name string, sys *SystemConfig) error {
 		filled.DLL = filepath.Join(filepath.Dir(exe), "sapnwrfc.dll")
 	}
 	if filled.SNCLib == "" {
-		filled.SNCLib = sncGetenv("SNC_LIB_64")
+		filled.SNCLib = sncLib64()
 		if filled.SNCLib == "" {
-			return fmt.Errorf("system '%s': snc: snc_lib is not set and SNC_LIB_64 is empty; name the 64-bit SNC library (e.g. gx64krb5.dll)", name)
+			return fmt.Errorf("system '%s': snc: snc_lib is not set and SNC_LIB_64 is not in the user or machine environment as a plain path; name the 64-bit SNC library (e.g. gx64krb5.dll)", name)
 		}
 	}
 	argv, err := filled.argv()
