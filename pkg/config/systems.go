@@ -170,11 +170,12 @@ func (c *SystemsConfig) checkTransportCmd(name string, sys *SystemConfig) error 
 			return fmt.Errorf("system '%s': transport_cmd must be a list of non-empty strings", name)
 		}
 	}
-	// The file is trusted, but a relative program would resolve against the
-	// working directory, which is not: "./helper" would run the project's.
-	// An absolute path, or a bare name looked up on PATH, is required.
-	if prog := sys.TransportCmd[0]; !filepath.IsAbs(prog) && strings.ContainsAny(prog, `/\:`) {
-		return fmt.Errorf("system '%s': transport_cmd must start with an absolute path or a bare program name on PATH, not %q, which would resolve against the working directory", name, prog)
+	// The file is trusted, but the working directory is not, and a program
+	// that is not an absolute path is looked up there: "./helper" directly, a
+	// bare name through a relative PATH entry or GODEBUG=execerrdot=0 from a
+	// project .env. Only an absolute path names one program.
+	if prog := sys.TransportCmd[0]; !filepath.IsAbs(prog) {
+		return fmt.Errorf("system '%s': transport_cmd must start with the absolute path of the program, not %q, which would be looked up from the working directory or PATH", name, prog)
 	}
 	if sys.User != "" || sys.Password != "" || sys.CookieFile != "" || sys.CookieString != "" || sys.UsesSSO() {
 		return fmt.Errorf("system '%s': transport_cmd carries its own authentication; remove user/password/cookies", name)

@@ -9,12 +9,18 @@ import (
 	"testing"
 )
 
-const transportCmdSystems = `{
+// helperPath is the absolute helper program the fixtures name.
+var helperPath = abs("/opt/tools/helper")
+
+var transportCmdSystems = func() string {
+	prog, _ := json.Marshal(helperPath)
+	return `{
   "default": "side",
   "systems": {
-    "side": {"url": "https://sidecar.invalid", "client": "001", "transport_cmd": ["helper", "--profile", "x"]}
+    "side": {"url": "https://sidecar.invalid", "client": "001", "transport_cmd": [` + string(prog) + `, "--profile", "x"]}
   }
 }`
+}()
 
 // isolateHome points HOME (and USERPROFILE) at a fresh directory and makes a
 // separate, fresh working directory current.
@@ -74,7 +80,7 @@ func TestTransportCmd_AcceptedFromHome(t *testing.T) {
 			if err != nil {
 				t.Fatalf("transport_cmd from %s refused: %v", p, err)
 			}
-			if got := strings.Join(sys.TransportCmd, " "); got != "helper --profile x" {
+			if got := strings.Join(sys.TransportCmd, " "); got != helperPath+" --profile x" {
 				t.Errorf("TransportCmd = %q", got)
 			}
 			if sys.Password != "" {
@@ -87,7 +93,8 @@ func TestTransportCmd_AcceptedFromHome(t *testing.T) {
 func TestTransportCmd_RefusedWithCredentials(t *testing.T) {
 	home, _ := isolateHome(t)
 	p := filepath.Join(home, ".vsp.json")
-	data := `{"systems": {"side": {"url": "https://sidecar.invalid", "user": "TESTUSER", "transport_cmd": ["helper"]}}}`
+	prog, _ := json.Marshal(helperPath)
+	data := `{"systems": {"side": {"url": "https://sidecar.invalid", "user": "TESTUSER", "transport_cmd": [` + string(prog) + `]}}}`
 	if err := os.WriteFile(p, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -188,12 +195,12 @@ func TestTransportCmd_SymlinkedHomeFileAccepted(t *testing.T) {
 	}
 }
 
-// The file is trusted, the working directory is not: a relative program
-// would run the project's own "./helper". Absolute paths and bare PATH names
-// are accepted.
+// The file is trusted, the working directory is not: a program that is not an
+// absolute path could resolve to the project's own helper. Only absolute
+// paths are accepted.
 func TestTransportCmd_RelativeProgramRefused(t *testing.T) {
 	for prog, ok := range map[string]bool{
-		"helper":                 true,
+		"helper":                 false,
 		abs("/opt/tools/helper"): true,
 		"./helper":               false,
 		"bin/helper":             false,
