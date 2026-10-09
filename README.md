@@ -2066,17 +2066,32 @@ GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
   discarded. Errors carry RFC return codes and fixed stage names, never SAP's
   message text, hosts or partner names.
 
-The MCP server takes its logon from flags and the environment, not from
-`~/.vsp.json`. Give it the same command as `SAP_TRANSPORT_CMD`, a JSON array,
-in the MCP client's `env`:
+For the MCP server, name the system; it takes the logon, client, identity pin
+and read-only from the snc block, with the same checks as the CLI:
 
 ```json
 {
   "command": "C:\\tools\\vsp.exe",
-  "args": ["--url", "https://snc.invalid", "--client", "100", "--read-only"],
-  "env": {
-    "SAP_TRANSPORT_CMD": "[\"C:\\\\tools\\\\vsp.exe\", \"snc-serve\", \"-system\", \"DEV\", \"-client\", \"100\", \"-user\", \"TESTUSER\", \"-connection\", \"DEV - Development\", \"-dll\", \"C:\\\\SAP\\\\nwrfcsdk\\\\lib\\\\sapnwrfc.dll\", \"-snc-lib\", \"C:\\\\Program Files\\\\SAP\\\\FrontEnd\\\\SecureLogin\\\\lib\\\\gx64krb5.dll\"]"
-  }
+  "args": ["-s", "dev"]
+}
+```
+
+A URL, user, password or transport command given as well (flags or `SAP_*`)
+is refused rather than mixed in.
+
+From WSL, a Linux vsp can use the Windows build as its helper: the Windows
+process holds the Kerberos ticket of your Windows logon and reaches the
+network as Windows does. In `~/.vsp.json` on the Linux side:
+
+```json
+"dev": {
+  "url": "https://snc.invalid", "client": "100", "read_only": true,
+  "expect": "DEV.100/TESTUSER",
+  "transport_cmd": ["/mnt/c/tools/vsp.exe", "snc-serve",
+    "-system", "DEV", "-client", "100", "-user", "TESTUSER",
+    "-connection", "DEV - Development",
+    "-dll", "C:\\tools\\sapnwrfc.dll",
+    "-snc-lib", "C:\\Program Files\\SAP\\FrontEnd\\SecureLogin\\lib\\gx64krb5.dll"]
 }
 ```
 

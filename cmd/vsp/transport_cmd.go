@@ -11,7 +11,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/oisee/vibing-steampunk/internal/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/config"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -145,4 +147,49 @@ func closeTransportCmds() {
 	for _, fn := range fns {
 		_ = fn()
 	}
+}
+
+// applyNamedSNCSystem gives the MCP server its logon from an snc block: with
+// -s NAME (or SAP_SYSTEM) naming a system that has one, the server takes the
+// transport command, client and placeholder URL from it and runs read-only,
+// so .mcp.json needs only ["-s", "NAME"]. The block is checked as the CLI
+// checks it (home-directory config only, Windows only). A URL, user,
+// password or transport command given as well is refused, not overridden.
+func applyNamedSNCSystem(cmd *cobra.Command, c *mcp.Config) error {
+	if c.SystemName == "" {
+		return nil
+	}
+	systems, _, err := config.LoadSystems()
+	if err != nil || systems == nil {
+		return nil
+	}
+	raw, ok := systems.Systems[c.SystemName]
+	if !ok || raw.SNC == nil {
+		return nil
+	}
+	var given []string
+	if len(c.TransportCmd) > 0 {
+		given = append(given, "a transport command")
+	}
+	if c.BaseURL != "" {
+		given = append(given, "a URL (--url or SAP_URL)")
+	}
+	if c.Username != "" || c.Password != "" {
+		given = append(given, "user/password (--user, --password or SAP_USER/SAP_PASSWORD)")
+	}
+	if len(given) > 0 {
+		return fmt.Errorf("system %q logs on through its snc block; remove %s", c.SystemName, strings.Join(given, ", "))
+	}
+	sys, err := systems.GetSystem(c.SystemName)
+	if err != nil {
+		return err
+	}
+	if cmd.Flags().Changed("client") && c.Client != sys.Client {
+		return fmt.Errorf("system %q: --client %s differs from its snc client %s", c.SystemName, c.Client, sys.Client)
+	}
+	c.TransportCmd = sys.TransportCmd
+	c.BaseURL = sys.URL
+	c.Client = sys.Client
+	c.ReadOnly = true
+	return nil
 }

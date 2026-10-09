@@ -29,7 +29,9 @@ func sncLib64FromRegistry() string {
 			continue
 		}
 		// %VAR% would expand from the process environment, which is the
-		// thing not to trust; such a value needs snc_lib written out.
+		// thing not to trust; such a value needs snc_lib written out. The
+		// machine's value is not tried instead: the user's overrides it, as
+		// in Windows itself, and may name a different library.
 		if typ == registry.EXPAND_SZ && strings.Contains(v, "%") {
 			return ""
 		}

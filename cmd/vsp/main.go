@@ -252,6 +252,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
+	// -s NAME with an snc block supplies the logon itself.
+	if err := applyNamedSNCSystem(cmd, cfg); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
+
 	// A transport command is exclusive with every logon flow of vsp's own,
 	// and those below contact the URL: refuse the mix before any of them runs.
 	if transportCmdErr != nil {

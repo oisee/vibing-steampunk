@@ -123,10 +123,16 @@ func (c *SystemsConfig) applySNC(name string, sys *SystemConfig) error {
 		sys.URL = SNCPlaceholderURL
 	}
 	if sys.Expect == "" {
-		sys.Expect = s.System + "." + s.Client + "/" + strings.ToUpper(s.User)
+		sys.Expect = s.DefaultExpect()
 	}
 	sys.ReadOnly = true
 	return nil
+}
+
+// DefaultExpect is the pin an snc system gets when it names none: the
+// identity the logon must land on.
+func (s *SNCSettings) DefaultExpect() string {
+	return s.System + "." + s.Client + "/" + strings.ToUpper(s.User)
 }
 
 // argv validates the block and returns the snc-serve arguments (without the
@@ -182,4 +188,13 @@ func (s *SNCSettings) argv() ([]string, error) {
 		args = append(args, "-verbose")
 	}
 	return args, nil
+}
+
+// SetSNCPlatform replaces the operating system, the vsp executable and the
+// SNC_LIB_64 lookup that snc blocks are checked against, and returns a
+// function that restores them. It exists for tests outside this package.
+func SetSNCPlatform(goos string, executable func() (string, error), lib64 func() string) (restore func()) {
+	prevGOOS, prevExe, prevLib := sncGOOS, sncExecutable, sncLib64
+	sncGOOS, sncExecutable, sncLib64 = goos, executable, lib64
+	return func() { sncGOOS, sncExecutable, sncLib64 = prevGOOS, prevExe, prevLib }
 }
