@@ -149,17 +149,20 @@ func closeTransportCmds() {
 	}
 }
 
-// applyNamedSNCSystem gives the MCP server its logon from an snc block: with
-// -s NAME naming a system that has one, the server takes the
-// transport command, client and placeholder URL from it and runs read-only,
-// so .mcp.json needs only ["-s", "NAME"]. The block is checked as the CLI
-// checks it (home-directory config only, Windows only). A URL, user,
-// password or transport command given as well is refused, not overridden.
+// applyNamedTransportSystem gives the MCP server its logon from a system in
+// the home-directory config that carries its own: an snc block or a
+// transport_cmd. With -s NAME naming such a system, the server takes the
+// transport command, URL, client and read-only from it (an snc system is
+// always read-only), so .mcp.json needs only ["-s", "NAME"]. The system is
+// checked as the CLI checks it: GetSystem refuses a transport command or an
+// snc block that does not come from ~/.vsp.json or ~/.vsp/systems.json. A
+// URL, user, password or transport command given as well is refused, not
+// overridden.
 //
 // Only the -s flag counts, not SAP_SYSTEM: vsp loads ./.env into the
 // environment, and a project must not choose which system the server logs on
-// to, nor make it start a helper that loads a DLL.
-func applyNamedSNCSystem(cmd *cobra.Command, c *mcp.Config) error {
+// to, nor make it start a helper.
+func applyNamedTransportSystem(cmd *cobra.Command, c *mcp.Config) error {
 	if f := cmd.Flag("system"); f == nil || !f.Changed || systemName == "" || systemName != c.SystemName {
 		return nil
 	}
@@ -168,8 +171,12 @@ func applyNamedSNCSystem(cmd *cobra.Command, c *mcp.Config) error {
 		return nil
 	}
 	raw, ok := systems.Systems[c.SystemName]
-	if !ok || raw.SNC == nil {
+	if !ok || (raw.SNC == nil && len(raw.TransportCmd) == 0) {
 		return nil
+	}
+	via := "transport_cmd"
+	if raw.SNC != nil {
+		via = "snc block"
 	}
 	var given []string
 	if len(c.TransportCmd) > 0 {
@@ -182,18 +189,23 @@ func applyNamedSNCSystem(cmd *cobra.Command, c *mcp.Config) error {
 		given = append(given, "user/password (--user, --password or SAP_USER/SAP_PASSWORD)")
 	}
 	if len(given) > 0 {
-		return fmt.Errorf("system %q logs on through its snc block; remove %s", c.SystemName, strings.Join(given, ", "))
+		return fmt.Errorf("system %q logs on through its %s; remove %s", c.SystemName, via, strings.Join(given, ", "))
 	}
 	sys, err := systems.GetSystem(c.SystemName)
 	if err != nil {
 		return err
 	}
-	if cmd.Flags().Changed("client") && c.Client != sys.Client {
-		return fmt.Errorf("system %q: --client %s differs from its snc client %s", c.SystemName, c.Client, sys.Client)
+	if len(sys.TransportCmd) == 0 {
+		return fmt.Errorf("system %q: its %s gave no transport command", c.SystemName, via)
+	}
+	if sys.Client != "" {
+		if cmd.Flags().Changed("client") && c.Client != sys.Client {
+			return fmt.Errorf("system %q: --client %s differs from its client %s", c.SystemName, c.Client, sys.Client)
+		}
+		c.Client = sys.Client
 	}
 	c.TransportCmd = sys.TransportCmd
 	c.BaseURL = sys.URL
-	c.Client = sys.Client
-	c.ReadOnly = true
+	c.ReadOnly = c.ReadOnly || sys.ReadOnly
 	return nil
 }

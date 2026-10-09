@@ -252,8 +252,9 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
 
-	// -s NAME with an snc block supplies the logon itself.
-	if err := applyNamedSNCSystem(cmd, cfg); err != nil {
+	// -s NAME naming a home-config system with an snc block or a
+	// transport_cmd supplies the logon itself.
+	if err := applyNamedTransportSystem(cmd, cfg); err != nil {
 		cmd.SilenceUsage = true
 		return err
 	}
