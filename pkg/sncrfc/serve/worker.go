@@ -78,7 +78,14 @@ func startWorker(args []string, p probeFlags) (*workerProc, error) {
 		return fail("logon deadline exceeded; no retry performed")
 	}
 	if err != nil {
-		return fail("worker ended before logon completed")
+		// The worker's stderr is discarded (native output may carry hosts);
+		// its exit code is a number and says which way it went.
+		w.kill()
+		code := -1
+		if w.cmd.ProcessState != nil {
+			code = w.cmd.ProcessState.ExitCode()
+		}
+		return nil, fmt.Errorf("worker ended before logon completed (exit code %d)", code)
 	}
 	var r probeResult
 	d := json.NewDecoder(bytes.NewReader(b))

@@ -104,6 +104,22 @@ func loadNative(path string) (nativeAPI, error) {
 		_ = os.Remove(name)
 		return nil, errors.New("SDK runtime directory must refuse file creation")
 	}
+	// The SDK loads some of its own DLLs later, by name, with the process's
+	// default search, which starts in the executable's directory: with
+	// vsp.exe anywhere but beside the SDK they are not found and the worker
+	// dies in native code. Search, for the rest of this process, only the
+	// executable's directory, System32 and the SDK's own directory; never the
+	// working directory or PATH.
+	if err := windows.SetDefaultDllDirectories(windows.LOAD_LIBRARY_SEARCH_DEFAULT_DIRS); err != nil {
+		return nil, errors.New("restrict DLL search failed")
+	}
+	sdkDir, err := windows.UTF16PtrFromString(filepath.Dir(path))
+	if err != nil {
+		return nil, errors.New("require local x64 RFC DLL")
+	}
+	if _, err := windows.AddDllDirectory(sdkDir); err != nil {
+		return nil, errors.New("add SDK directory to DLL search failed")
+	}
 	// Search dependencies only beside the selected DLL and in Windows System32.
 	h, err := windows.LoadLibraryEx(path, 0, windows.LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|windows.LOAD_LIBRARY_SEARCH_SYSTEM32)
 	if err != nil {
