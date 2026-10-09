@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -184,5 +185,40 @@ func TestTransportCmd_SymlinkedHomeFileAccepted(t *testing.T) {
 	}
 	if _, err := cfg.GetSystem("side"); err != nil {
 		t.Fatalf("symlinked ~/.vsp.json refused: %v", err)
+	}
+}
+
+// The file is trusted, the working directory is not: a relative program
+// would run the project's own "./helper". Absolute paths and bare PATH names
+// are accepted.
+func TestTransportCmd_RelativeProgramRefused(t *testing.T) {
+	for prog, ok := range map[string]bool{
+		"helper":                 true,
+		abs("/opt/tools/helper"): true,
+		"./helper":               false,
+		"bin/helper":             false,
+		`bin\helper.exe`:         false,
+		"C:helper.exe":           false,
+		"../tools/helper":        false,
+	} {
+		t.Run(prog, func(t *testing.T) {
+			home, _ := isolateHome(t)
+			data, _ := json.Marshal(map[string]any{"systems": map[string]any{"side": map[string]any{
+				"url": "https://side.invalid", "transport_cmd": []string{prog}}}})
+			if err := os.WriteFile(filepath.Join(home, ".vsp.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, _, err := LoadSystems()
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = cfg.GetSystem("side")
+			if ok && err != nil {
+				t.Errorf("refused: %v", err)
+			}
+			if !ok && (err == nil || !strings.Contains(err.Error(), "absolute path")) {
+				t.Errorf("err = %v, want a refusal of the relative program", err)
+			}
+		})
 	}
 }
