@@ -233,38 +233,47 @@ func CompareCallGraphs(staticEdges, actualEdges []CallGraphEdge) *CallGraphCompa
 	return comp
 }
 
-// ExtractCallEdgesFromTrace converts trace entries to call graph edges.
-// It analyzes Program and Event fields to identify caller-callee relationships.
+// ExtractCallEdgesFromTrace converts trace entries to call graph edges. A
+// hit-list or call-tree entry names both its calling and its called program,
+// so each entry whose two differ is one edge.
 func ExtractCallEdgesFromTrace(entries []TraceEntry) []CallGraphEdge {
 	var edges []CallGraphEdge
 	seen := make(map[string]bool)
 
-	// Group entries by program to detect call relationships
-	var prevProgram string
 	for _, entry := range entries {
-		if entry.Program == "" {
+		caller, callerURI := traceProgramRef(entry.Program)
+		callee, calleeURI := traceProgramRef(entry.CalledProgram)
+		if caller == "" || callee == "" || caller == callee {
 			continue
 		}
-
-		// Event field contains call type info (PERFORM, CALL METHOD, etc.)
-		// When program changes, we have a call edge
-		if prevProgram != "" && prevProgram != entry.Program {
-			edgeKey := prevProgram + "->" + entry.Program
-			if !seen[edgeKey] {
-				seen[edgeKey] = true
-				edges = append(edges, CallGraphEdge{
-					CallerURI:  "/sap/bc/adt/programs/programs/" + strings.ToLower(prevProgram),
-					CallerName: prevProgram,
-					CalleeURI:  "/sap/bc/adt/programs/programs/" + strings.ToLower(entry.Program),
-					CalleeName: entry.Program,
-					Line:       entry.Line,
-				})
-			}
+		edgeKey := caller + "->" + callee
+		if seen[edgeKey] {
+			continue
 		}
-		prevProgram = entry.Program
+		seen[edgeKey] = true
+		edges = append(edges, CallGraphEdge{
+			CallerURI:  callerURI,
+			CallerName: caller,
+			CalleeURI:  calleeURI,
+			CalleeName: callee,
+			Line:       entry.Line,
+		})
 	}
 
 	return edges
+}
+
+// traceProgramRef turns a trace's main program (ZCL_X=====CP, ZREPORT) into
+// a name and an ADT URI.
+func traceProgramRef(mainProgram string) (string, string) {
+	name, kind, _ := strings.Cut(mainProgram, "=")
+	if name == "" {
+		return "", ""
+	}
+	if strings.HasSuffix(strings.TrimLeft(kind, "="), "CP") {
+		return name, "/sap/bc/adt/oo/classes/" + strings.ToLower(name)
+	}
+	return name, "/sap/bc/adt/programs/programs/" + strings.ToLower(name)
 }
 
 // TraceExecutionResult contains the result of a traced execution.

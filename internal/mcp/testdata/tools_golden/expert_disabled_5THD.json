@@ -2639,15 +2639,27 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
-      "description": "Get trace analysis (hitlist, statements, or database accesses) for a specific trace.",
+      "description": "Evaluate an ABAP runtime trace: hit list, call tree (statements) or database accesses, sorted by own time and cut to the top entries. A trace cut off at its size limit cannot be evaluated; ListTraces shows its state.",
       "inputSchema": {
         "properties": {
-          "tool_type": {
-            "description": "Analysis type: 'hitlist' (default), 'statements', 'dbAccesses'",
+          "raw": {
+            "description": "Return ADT's XML unparsed, capped at 256 KB",
+            "type": "boolean"
+          },
+          "sort_by": {
+            "description": "'net' (own time, default), 'gross', 'calls', or 'none' for SAP's order (the call tree's default)",
             "type": "string"
           },
+          "tool_type": {
+            "description": "Analysis type: 'hitlist' (default), 'statements' (call tree; non-aggregated traces only), 'dbAccesses'",
+            "type": "string"
+          },
+          "top": {
+            "description": "Entries to return after sorting (default 50, 0 for all)",
+            "type": "number"
+          },
           "trace_id": {
-            "description": "Trace ID from ListTraces result",
+            "description": "Trace ID from ListTraces, its ADT path, or an adt:// link",
             "type": "string"
           }
         },
@@ -3304,7 +3316,7 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
-      "description": "List ABAP runtime traces (profiler results) from the SAP system.",
+      "description": "List ABAP runtime traces (profiler results) with their state, aggregation, size and runtime. complete=false marks a trace ADT cannot evaluate, such as one cut off at its size limit.",
       "inputSchema": {
         "properties": {
           "max_results": {
