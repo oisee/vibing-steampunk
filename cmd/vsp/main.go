@@ -110,6 +110,7 @@ func init() {
 	if !sncServeInvocation(os.Args) {
 		_ = godotenv.Load()
 	}
+	adt.SetHelperEnviron(func() []string { return append([]string(nil), startupEnviron...) })
 
 	// Service URL
 	rootCmd.Flags().StringVar(&cfg.BaseURL, "url", "", "SAP system URL (e.g., https://host:44300)")

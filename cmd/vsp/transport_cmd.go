@@ -25,6 +25,11 @@ import (
 // SAP_TRANSPORT_CMD is taken from the real environment only.
 var transportCmdShellEnv, transportCmdInShellEnv = os.LookupEnv("SAP_TRANSPORT_CMD")
 
+// startupEnviron is the environment before init loads ./.env (package
+// variables are set before any init runs). A transport command starts from
+// it: a project's .env must not reach the helper, e.g. with LD_PRELOAD.
+var startupEnviron = os.Environ()
+
 // transportCmdErr is why the transport command could not be resolved;
 // resolveConfig has no error return, so the first auth step reports it.
 var transportCmdErr error

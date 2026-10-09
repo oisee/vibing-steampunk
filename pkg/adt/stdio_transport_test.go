@@ -539,3 +539,27 @@ func (s *syncBuffer) String() string {
 	defer s.mu.Unlock()
 	return s.b.String()
 }
+
+// A helper starts from the environment SetHelperEnviron names, not from the
+// process's current one: what a project's .env added later (LD_PRELOAD, say)
+// does not reach it.
+func TestStdioTransport_HelperStartsFromTheGivenEnviron(t *testing.T) {
+	base := append([]string(nil), os.Environ()...)  // as at start-up
+	t.Setenv("LD_PRELOAD_FROM_DOTENV", "./evil.so") // added afterwards
+	prev := helperEnviron
+	SetHelperEnviron(func() []string { return base })
+	t.Cleanup(func() { SetHelperEnviron(prev) })
+
+	st := newTestStdioTransport(t)
+	resp, err := stdioGet(t, st, context.Background(), "/env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "LD_PRELOAD_FROM_DOTENV") {
+		t.Error("a variable added after start-up reached the helper")
+	}
+	if !strings.Contains(string(body), "PATH=") {
+		t.Error("the helper lost PATH")
+	}
+}
