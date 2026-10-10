@@ -309,8 +309,8 @@ func segmentAfter(path, marker string) string {
 // section — ZCL_FOO=====CM001, =====CI, =====CU. LIKE 'ZCL_FOO%' catches all of
 // them and also catches ZCL_FOO_HELPER's, so every row is checked against
 // unitForFrame afterwards. A program is its own include. A function group is
-// L<group>*, and a function module is one specific include inside that, which
-// only TFDIR knows the number of.
+// L<group>* (/NS/L<group>* in a namespace), and a function module is one
+// specific include inside that, which only TFDIR knows the number of.
 func (c *Client) includePredicate(ctx context.Context, target calleeTarget) (string, error) {
 	name := strings.ToUpper(strings.TrimSpace(target.Name))
 	if err := checkSQLLiteral(name); err != nil {
@@ -323,7 +323,8 @@ func (c *Client) includePredicate(ctx context.Context, target calleeTarget) (str
 	case "PROG", "INCL":
 		return fmt.Sprintf("INCLUDE = '%s'", name), nil
 	case "FUGR":
-		return fmt.Sprintf("INCLUDE LIKE 'L%s%%'", name), nil
+		ns, group := splitNamespace(name)
+		return fmt.Sprintf("INCLUDE LIKE '%sL%s%%'", ns, group), nil
 	case "FUNC":
 		include, err := c.functionModuleInclude(ctx, target)
 		if err != nil {
@@ -337,7 +338,8 @@ func (c *Client) includePredicate(ctx context.Context, target calleeTarget) (str
 // functionModuleInclude resolves a module to the one include that holds its
 // body: TFDIR keeps the group in PNAME and the section number in INCLUDE, and
 // L<group>U<nn> is the include the tables are keyed by. Checked live:
-// BAL_LOG_CREATE is SAPLSBAL section 15, so LSBALU15.
+// BAL_LOG_CREATE is SAPLSBAL section 15, so LSBALU15; /DMO/FLIGHT_TRAVEL_CREATE
+// is /DMO/SAPLFLIGHT_TRAVEL_API section 3, so /DMO/LFLIGHT_TRAVEL_APIU03.
 //
 // Asking about the module rather than about its group is the whole point of
 // the round trip — a group's includes are every module in it, and "what does
@@ -358,11 +360,12 @@ func (c *Client) functionModuleInclude(ctx context.Context, target calleeTarget)
 	}
 	pool := strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", res.Rows[0]["PNAME"])))
 	section := strings.TrimSpace(fmt.Sprintf("%v", res.Rows[0]["INCLUDE"]))
-	group := strings.TrimPrefix(pool, "SAPL")
+	ns, rest := splitNamespace(pool)
+	group := strings.TrimPrefix(rest, "SAPL")
 	if group == "" || section == "" {
 		return "", fmt.Errorf("TFDIR names no group or no section for %s", name)
 	}
-	include := poolIncludeFor(group, section)
+	include := poolIncludeFor(ns+group, section)
 	if err := checkSQLLiteral(include); err != nil {
 		return "", err
 	}
@@ -371,14 +374,15 @@ func (c *Client) functionModuleInclude(ctx context.Context, target calleeTarget)
 
 // poolIncludeFor assembles the L<group>U<nn> include name. The padding is the
 // part worth having a name for: TFDIR keeps the section as a number, the
-// include wants two digits, and LZDEMO_LOGU5 matches nothing at all.
+// include wants two digits, and LZDEMO_LOGU5 matches nothing at all. A
+// namespace stays in front of the L: /DEMO/LOG's section 3 is /DEMO/LLOGU03.
 func poolIncludeFor(group, section string) string {
-	group = strings.ToUpper(strings.TrimSpace(group))
+	ns, group := splitNamespace(strings.ToUpper(strings.TrimSpace(group)))
 	section = strings.TrimSpace(section)
 	if len(section) < 2 {
 		section = strings.Repeat("0", 2-len(section)) + section
 	}
-	return "L" + group + "U" + section
+	return ns + "L" + group + "U" + section
 }
 
 // checkSQLLiteral refuses a name that would not survive being pasted into a
