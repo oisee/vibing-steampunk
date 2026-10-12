@@ -12,9 +12,11 @@ import (
 // method, and the number is not the answer on its own.
 //
 // The mapping is in TMDIR — (CLASSNAME, METHODINDX, METHODNAME) — and the CM
-// suffix is that index in **hexadecimal**. One class read today had CM001,
-// CM003, CM009 and CM00A, which decode to methods 1, 3, 9 and 10. Decimal would
-// have no A in it, so the base is not a guess.
+// suffix is that index in **base 36**, digits then letters. CL_DEP_TREE has
+// CM001 to CM009 and CM00A to CM00Z, and TMDIR gives CM00Z's method index as
+// 35 (HANDLE_EXPAND_NC), on 7.40 and on 7.50. It was first read as hexadecimal
+// from a class whose methods stopped at CM00A; that decodes the first sixteen
+// right, fails on CM00G and reads CM010 as 16 instead of 36.
 //
 // Two things this replaces, both of which looked reasonable and were wrong:
 // reading the include as a program (a class-pool include is not addressable
@@ -64,7 +66,13 @@ func methodIndexFromSection(section string) (int, bool) {
 	if !strings.HasPrefix(section, "CM") || len(section) != 5 {
 		return 0, false
 	}
-	n, err := strconv.ParseInt(section[2:], 16, 32)
+	// Include names are upper case; ParseInt would take cmxyz too.
+	for _, r := range section[2:] {
+		if (r < '0' || r > '9') && (r < 'A' || r > 'Z') {
+			return 0, false
+		}
+	}
+	n, err := strconv.ParseInt(section[2:], 36, 32)
 	if err != nil {
 		return 0, false
 	}
