@@ -43,9 +43,9 @@ const (
 )
 
 var (
-	cofileNameRe = regexp.MustCompile(`^K([0-9]{6})\.([A-Z0-9]{3})$`)
-	dataNameRe   = regexp.MustCompile(`^R([0-9]{6})\.([A-Z0-9]{3})$`)
-	requestRe    = regexp.MustCompile(`^([A-Z0-9]{3})K([0-9]{6})$`)
+	cofileNameRe = regexp.MustCompile(`^K([A-Z0-9]{6})\.([A-Z0-9]{3})$`)
+	dataNameRe   = regexp.MustCompile(`^R([A-Z0-9]{6})\.([A-Z0-9]{3})$`)
+	requestRe    = regexp.MustCompile(`^([A-Z0-9]{3})K([A-Z0-9]{6})$`)
 
 	cofileTargetRe = regexp.MustCompile(`^[A-Z0-9/_]{1,20}(\.[0-9]{3})?$`)
 	digitsRe       = regexp.MustCompile(`^[0-9]+$`)
@@ -76,11 +76,11 @@ func TransportRequestFromFileNames(cofileName, dataName string) (request, sid, n
 	}
 	c := cofileNameRe.FindStringSubmatch(cofileName)
 	if c == nil {
-		return "", "", "", fmt.Errorf("cofile name %q is not K<6 digits>.<SID> (e.g. K900123.DEV)", cofileName)
+		return "", "", "", fmt.Errorf("cofile name %q is not K<6 alphanum>.<SID> (e.g. K900123.DEV or K9A0ZSA.S4D)", cofileName)
 	}
 	d := dataNameRe.FindStringSubmatch(dataName)
 	if d == nil {
-		return "", "", "", fmt.Errorf("data file name %q is not R<6 digits>.<SID> (e.g. R900123.DEV)", dataName)
+		return "", "", "", fmt.Errorf("data file name %q is not R<6 alphanum>.<SID> (e.g. R900123.DEV or R9A0ZSA.S4D)", dataName)
 	}
 	if c[1] != d[1] || c[2] != d[2] {
 		return "", "", "", fmt.Errorf("%s and %s are not one request's files: number and SID must match", cofileName, dataName)
@@ -92,7 +92,7 @@ func TransportRequestFromFileNames(cofileName, dataName string) (request, sid, n
 func TransportFileNamesForRequest(request string) (cofileName, dataName string, err error) {
 	m := requestRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(request)))
 	if m == nil {
-		return "", "", fmt.Errorf("request %q is not <SID>K<6 digits>", request)
+		return "", "", fmt.Errorf("request %q is not <SID>K<6 alphanum>", request)
 	}
 	return "K" + m[2] + "." + m[1], "R" + m[2] + "." + m[1], nil
 }
@@ -282,7 +282,7 @@ func (c *Client) CheckTransportUpload(request string) error {
 		return err
 	}
 	if request != "" && !requestRe.MatchString(request) {
-		return fmt.Errorf("request %q is not <SID>K<6 digits>", request)
+		return fmt.Errorf("request %q is not <SID>K<6 alphanum>", request)
 	}
 	return nil
 }
@@ -297,7 +297,7 @@ func (c *Client) CheckTransportBufferRead(request, op string) error {
 		return err
 	}
 	if request != "" && !requestRe.MatchString(request) {
-		return fmt.Errorf("request %q is not <SID>K<6 digits>", request)
+		return fmt.Errorf("request %q is not <SID>K<6 alphanum>", request)
 	}
 	return nil
 }
