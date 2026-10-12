@@ -129,11 +129,27 @@ func (s *Server) handleDebuggerStep(ctx context.Context, request mcp.CallToolReq
 		return newToolResultError(fmt.Sprintf("Invalid step_type: %s. Valid values: stepInto, stepOver, stepReturn, stepContinue, stepRunToLine, stepJumpToLine", stepType)), nil
 	}
 
+	// The two steps that go somewhere need to be told where. Without the target
+	// SAP refuses with "Parameter uri could not be found", which reads like a
+	// server fault rather than a missing argument, so say it here instead.
+	uri, _ := request.GetArguments()["uri"].(string)
+	uri = strings.TrimSpace(uri)
+	if (stepType == "stepRunToLine" || stepType == "stepJumpToLine") && uri == "" {
+		return newToolResultError(stepType + " needs uri: the target line's source URI, e.g. /sap/bc/adt/oo/classes/zcl_demo/source/main#start=42"), nil
+	}
+
 	sess, err := s.debugger(ctx)
 	if err != nil {
 		return newToolResultError(err.Error()), nil
 	}
-	if _, err := sess.dbg.ADTStep(ctx, stepType); err != nil {
+	if _, err := sess.dbg.ADTStepTo(ctx, stepType, uri); err != nil {
+		// A continue or terminate that lets the program finish leaves nothing
+		// to step: SAP answers that the debuggee ended or that no session is
+		// attached. That is the step succeeding, not failing — DetachDebuggee
+		// and the DAP server read the same answers the same way.
+		if (stepType == "stepContinue" || stepType == "terminateDebuggee") && debuggeeGone(err) {
+			return mcp.NewToolResultText(stepType + " executed: the program ran to completion and the debuggee is no longer attached."), nil
+		}
 		return newToolResultError(fmt.Sprintf("DebuggerStep failed: %v", err)), nil
 	}
 	// Where it landed is the only part of a step worth reporting.
@@ -201,4 +217,16 @@ func (s *Server) handleDebuggerGetVariables(ctx context.Context, request mcp.Cal
 		return newToolResultError(fmt.Sprintf("DebuggerGetVariables failed: %v", err)), nil
 	}
 	return mcp.NewToolResultText(saprfc.FormatVariables(vars)), nil
+}
+
+// debuggeeGone reports whether a step failed only because there is nothing
+// left to step: the program ran to its end (debuggeeEnded) or the session has
+// no debuggee any more (noSessionAttached). SAP carries both in the exception
+// it answers with, on the RFC route and over HTTPS alike.
+func debuggeeGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "debuggeeEnded") || strings.Contains(msg, "noSessionAttached")
 }
