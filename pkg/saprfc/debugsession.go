@@ -102,6 +102,15 @@ func NewADTDebugger(transport ADTTransport, user string) *Debugger {
 	return &Debugger{adt: transport, user: strings.ToUpper(strings.TrimSpace(user))}
 }
 
+// UseTerminal sets the terminal id this session registers its breakpoints under
+// before it has listened. SAP scopes external breakpoints by terminal: a SAP GUI
+// session stops only at breakpoints registered under that GUI's own id (on
+// Windows, HKCU\Software\SAP\ABAP Debugging\TerminalID). An empty id keeps
+// vsp's own, TerminalID. A later listen registers under the id it is given.
+func (d *Debugger) UseTerminal(id string) {
+	d.terminalID = strings.TrimSpace(id)
+}
+
 // Close releases the pinned connection. It first tries to leave the system
 // tidy: an attached debuggee and a registered listener both outlive the
 // conversation otherwise, and a stale ABDBG_LISTENER row blocks the next attach.

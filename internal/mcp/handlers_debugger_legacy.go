@@ -62,7 +62,7 @@ func (s *Server) handleDebuggerListen(ctx context.Context, request mcp.CallToolR
 		}
 	}
 
-	who, _, err := sess.dbg.ADTCatch(ctx, user, saprfc.IDEID, saprfc.TerminalID, timeout)
+	who, _, err := sess.dbg.ADTCatch(ctx, user, saprfc.IDEID, s.debugTerminal(), timeout)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("DebuggerListen failed over %s: %v", sess.route, err)), nil
 	}

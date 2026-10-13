@@ -62,6 +62,7 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 	if c, err := s.dialRFC(ctx, nil); err == nil {
 		dbg, derr := saprfc.NewDebugger(ctx, c, user)
 		if derr == nil {
+			dbg.UseTerminal(s.debugTerminal())
 			s.debugSess = &debugSession{dbg: dbg, conn: c, route: "rfc", user: user}
 			return s.debugSess, nil
 		}
@@ -72,13 +73,27 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no debug session: neither an RFC channel nor a stateful ADT session could be opened: %w", err)
 	}
+	dbg := saprfc.NewADTDebugger(transport, user)
+	dbg.UseTerminal(s.debugTerminal())
 	s.debugSess = &debugSession{
-		dbg:   saprfc.NewADTDebugger(transport, user),
+		dbg:   dbg,
 		route: "https",
 		user:  user,
 		http:  httpTransport,
 	}
 	return s.debugSess, nil
+}
+
+// debugTerminal is the terminal the debug session registers its breakpoints and
+// its listener under. SAP scopes external breakpoints by terminal, so a SAP GUI
+// session only stops at breakpoints registered under that GUI's own terminal id.
+// --terminal-id (SAP_TERMINAL_ID) names it; without it vsp keeps its own id,
+// which RFC and HTTP requests reach, a SAP GUI session does not.
+func (s *Server) debugTerminal() string {
+	if s.config != nil && s.config.TerminalID != "" {
+		return s.config.TerminalID
+	}
+	return saprfc.TerminalID
 }
 
 // statefulADTTransport builds the HTTPS session the debugger holds for its whole
