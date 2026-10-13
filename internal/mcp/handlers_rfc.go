@@ -325,6 +325,36 @@ func (s *Server) dialRFC(ctx context.Context, params map[string]any) (*openrfc.C
 // rfcDestination resolves where an RFC call goes: this server's system, the RFC
 // settings of its .vsp.json entry, and any per-call override.
 func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
+	return s.rfcDestinationPinned(params, true)
+}
+
+// rfcIdentity is the identity pin's fallback (adt.SetIdentityFallback): an RFC
+// logon to this server's own gateway, with its configured user and client, and
+// RFC_SYSTEM_INFO for the SID. It runs inside the preflight with the pin's gate
+// held, so its destination leaves the pin out, and the preflight checks the
+// answer against the pin.
+func (s *Server) rfcIdentity(ctx context.Context) (*adt.Identity, error) {
+	dest, err := s.rfcDestinationPinned(nil, false)
+	if err != nil {
+		return nil, err
+	}
+	c, err := saprfc.Open(ctx, dest)
+	if err != nil {
+		return nil, fmt.Errorf("RFC logon to %s:%d: %w", dest.Host, dest.Port, err)
+	}
+	defer func() { _ = c.Close(ctx) }()
+	r, err := c.Call(ctx, "RFC_SYSTEM_INFO", nil)
+	if err != nil {
+		return nil, fmt.Errorf("RFC_SYSTEM_INFO on %s:%d: %w", dest.Host, dest.Port, err)
+	}
+	m, _ := r.Get("RFCSI_EXPORT").(map[string]any)
+	sid, _ := m["RFCSYSID"].(string)
+	return &adt.Identity{SID: strings.ToUpper(strings.TrimSpace(sid)), Source: fmt.Sprintf("RFC_SYSTEM_INFO on %s:%d", dest.Host, dest.Port)}, nil
+}
+
+// rfcDestinationPinned is rfcDestination, with the identity pin attached only
+// when pinned is set.
+func (s *Server) rfcDestinationPinned(params map[string]any, pinned bool) (saprfc.Params, error) {
 	// The RFC logon defaults to this server's own logon. SAP_USER/SAP_PASSWORD
 	// are consulted only for a server without one (cookie or SSO logon), and
 	// only when SAP_URL and SAP_CLIENT name this very system: a .env in the
@@ -368,7 +398,7 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 	// The server's identity pin goes with the RFC logon: a per-call user that
 	// contradicts it is refused before dialling, and the system behind the
 	// gateway is checked after logon (saprfc.OpenWithTimeout).
-	if s.adtClient != nil {
+	if pinned && s.adtClient != nil {
 		if pin, _, _ := s.adtClient.IdentityStatus(); pin != nil {
 			in.Expect = pin
 		}

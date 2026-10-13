@@ -205,6 +205,26 @@ type identityGate struct {
 	verifiedGen uint64
 	refused     error
 	probe       func(ctx context.Context) (*Identity, error)
+	// fallback names the SID where ADT cannot (SetIdentityFallback).
+	fallback IdentityFallback
+}
+
+// IdentityFallback asks the system for its SID by another route, for a release
+// where ADT has neither the system information resource nor a T000 row whose
+// logical system name carries the SID. It runs inside the preflight with the
+// gate held, so it must not ask the client for its pin or its verdict.
+type IdentityFallback func(ctx context.Context) (*Identity, error)
+
+// SetIdentityFallback installs f for the preflight. Without a pin it does
+// nothing.
+func (c *Client) SetIdentityFallback(f IdentityFallback) {
+	if c == nil || c.transport == nil || c.transport.identity == nil {
+		return
+	}
+	g := c.transport.identity
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.fallback = f
 }
 
 // preflightKey marks the context of the preflight's own requests, so they are
@@ -475,15 +495,16 @@ func (c *Client) probeIdentity(ctx context.Context) (*Identity, error) {
 		return nil, err
 	}
 	pin := c.transport.identity.pin
+	fallback := c.transport.identity.fallback
 	if id == nil {
 		id = &Identity{Source: "T000 and the transport organizer"}
 		// vsp's own fixed statement, not caller SQL: the free-SQL safety
 		// switch is about what an agent may run, so it is not consulted.
 		res, qerr := c.runQueryRaw(ctx, "SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '"+c.config.Client+"'", 1)
-		if qerr != nil {
+		if qerr != nil && fallback == nil {
 			return nil, fmt.Errorf("reading T000: %w", qerr)
 		}
-		if len(res.Rows) > 0 {
+		if qerr == nil && len(res.Rows) > 0 {
 			row := res.Rows[0]
 			if v, ok := row["MANDT"].(string); ok {
 				id.Client = strings.TrimSpace(v)
@@ -492,6 +513,27 @@ func (c *Client) probeIdentity(ctx context.Context) (*Identity, error) {
 				if m := logsysSIDRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(v))); m != nil {
 					id.SID = m[1]
 				}
+			}
+		}
+		// ADT named no SID: T000 could not be read (no data preview on low
+		// 7.40 support packages), or its logical system name does not carry
+		// one. The fallback names the SID only; client and user are checked as
+		// before. A SID that T000 did name is kept, so a mismatch there stands.
+		// A failed fallback is final, as a refused password is: retried on every
+		// request, an RFC logon with a wrong password would lock the account.
+		if id.SID == "" && fallback != nil {
+			fid, ferr := fallback(ctx)
+			if ferr != nil {
+				why := "T000 names no system ID"
+				if qerr != nil {
+					why = "reading T000: " + qerr.Error()
+				}
+				return nil, &IdentityMismatchError{Pin: pin, Detail: fmt.Sprintf(
+					"could not confirm the system ID (%s; the identity fallback failed: %v)", why, ferr)}
+			}
+			if fid != nil && fid.SID != "" {
+				id.SID = strings.ToUpper(strings.TrimSpace(fid.SID))
+				id.Source = fid.Source
 			}
 		}
 	}

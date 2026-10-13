@@ -339,6 +339,9 @@ func NewServerWithClient(cfg *Config, adtClient *adt.Client) *Server {
 		asyncTasks:    make(map[string]*AsyncTask),
 	}
 
+	// Where ADT cannot name the SID, the identity pin asks RFC_SYSTEM_INFO.
+	adtClient.SetIdentityFallback(s.rfcIdentity)
+
 	// Register tools based on mode, disabled groups, and granular tool config
 	s.registerTools(cfg.Mode, cfg.DisabledGroups, cfg.ToolsConfig)
 
