@@ -3644,6 +3644,35 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
+      "description": "Run the main method of a class that implements IF_OO_ADT_CLASSRUN, as F9 (Run as ABAP Application) does in Eclipse ADT, and return what it wrote to the console. It executes code: refused under --read-only, and with --allowed-packages the class must be in an allowed package. The run is an ADT request, so ADT breakpoints apply to it and to RFC sessions it starts; see the README recipe for debugging a report without SAP GUI.",
+      "inputSchema": {
+        "properties": {
+          "class_name": {
+            "description": "Class to run, e.g. ZCL_DEBUG_TRIGGER",
+            "type": "string"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
+          }
+        },
+        "required": [
+          "class_name"
+        ],
+        "type": "object"
+      },
+      "name": "RunClass"
+    },
+    "handler": "github.com/oisee/vibing-steampunk/internal/mcp.(*Server).handleRunClass-fm"
+  },
+  {
+    "tool": {
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
       "description": "Execute a freestyle SQL query against the SAP database. Uses ABAP SQL syntax, not standard SQL; common ANSI spellings are rewritten and noted (t.col to t~col, ASC/DESC to ASCENDING/DESCENDING, a closing period or semicolon dropped). Use max_rows instead of LIMIT. GROUP BY and WHERE work normally.",
       "inputSchema": {
         "properties": {
