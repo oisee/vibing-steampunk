@@ -172,6 +172,71 @@ ends with a stack read, every catch was thrown away. It serves the same document
 from the dispatcher instead. The shape is discovered once per session and
 remembered.
 
+#### Debugging a report without SAP GUI
+
+ADT breakpoints do not fire in stand-alone SAP GUI sessions (SAP Help,
+"Breakpoints Characteristics"; see #2). They do fire for ADT requests and for
+RFC sessions. So a report can be debugged without any GUI, and without a
+transaction code, by starting it in an RFC session a few seconds after an
+ADT request:
+
+1. `SetBreakpoint` on the report line.
+2. `RunClass` on a trigger class (below). It starts an asynchronous RFC and
+   returns at once.
+3. `DebuggerListen`. The RFC session runs the report and stops on the line.
+
+A remote-enabled function module that runs the report after a delay:
+
+```abap
+FUNCTION z_debug_submit_report
+  IMPORTING
+    VALUE(iv_report)  TYPE progname
+    VALUE(iv_variant) TYPE raldb_vari
+    VALUE(iv_delay)   TYPE i DEFAULT 8.
+
+  WAIT UP TO iv_delay SECONDS.
+  IF iv_variant IS INITIAL.
+    SUBMIT (iv_report) EXPORTING LIST TO MEMORY AND RETURN.
+  ELSE.
+    SUBMIT (iv_report) USING SELECTION-SET iv_variant
+           EXPORTING LIST TO MEMORY AND RETURN.
+  ENDIF.
+  CALL FUNCTION 'LIST_FREE_MEMORY'.
+ENDFUNCTION.
+```
+
+The trigger class:
+
+```abap
+CLASS zcl_debug_trigger DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_debug_trigger IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    CALL FUNCTION 'Z_DEBUG_SUBMIT_REPORT' STARTING NEW TASK 'ZDEBUG'
+      EXPORTING iv_report = 'ZDEMO_REPORT' iv_variant = 'DEMO' iv_delay = 8.
+    out->write( |started ZDEMO_REPORT in an RFC session, sy-subrc = { sy-subrc }| ).
+  ENDMETHOD.
+ENDCLASS.
+```
+
+`out` is `if_oo_adt_classrun_out` on newer releases and
+`if_oo_adt_intrnl_classrun` on older ones; the interface definition in your
+system decides, the `main` signature comes from it.
+
+Keep the delay longer than RunClass takes to return plus the start of
+DebuggerListen, and shorter than the listen timeout. Do not put a breakpoint
+in the trigger class: it would stop the classrun request itself and RunClass
+would wait until its timeout. Background jobs are not a substitute: ADT
+breakpoints do not stop them.
+
+If you want to debug a dialog in SAP GUI instead: entering
+`/n*SADT_START_TCODE D_AIE_TCODE=<tcode>;D_IDE_USER=<your user>` in the
+command field opens the transaction in a session that ADT breakpoints apply
+to (see #2).
+
 ### Debug from your editor (DAP)
 
 `vsp dap` is a Debug Adapter Protocol server on stdin/stdout. VS Code, nvim-dap,
@@ -2618,6 +2683,23 @@ prints the same object as the MCP tool.
 **Risk levels:** `harmless` (read-only), `dangerous` (write), `critical` (full access)
 
 See [ExecuteABAP Report](reports/2025-12-05-004-execute-abap-implementation.md) for details.
+
+## RunClass
+
+Run the `main` method of a class that implements `IF_OO_ADT_CLASSRUN`, the
+way F9 (Run as ABAP Application) does in Eclipse ADT. The answer is what the
+class wrote to the console.
+
+```
+RunClass:
+  class_name: ZCL_DEBUG_TRIGGER
+```
+
+RunClass executes code. `--read-only` and `--disallowed-ops W` refuse it, and
+with `--allowed-packages` the class has to be in an allowed package. Unlike
+ExecuteABAP it creates no temporary program and does not depend on ABAP Unit
+risk levels. In hyperfocused mode: `SAP(action="analyze", params={"type":
+"run_class", "class_name": "ZCL_DEBUG_TRIGGER"})`.
 
 ## ABAP Unit results
 
