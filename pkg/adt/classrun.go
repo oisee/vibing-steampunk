@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// classNamePattern accepts ABAP class names: letters, digits, underscores
-// and the slashes of a namespace (/NS/CL_X). The name becomes a URL path
+// classNamePattern accepts ABAP class names: letters, digits and underscores,
+// with at most one namespace in front (/NS/CL_X). The name becomes a URL path
 // segment, so nothing else may pass.
-var classNamePattern = regexp.MustCompile(`^[A-Z0-9_/]+$`)
+var classNamePattern = regexp.MustCompile(`^(/[A-Z0-9_]+/)?[A-Z0-9_]+$`)
 
 // RunClass runs the main method of a class that implements
 // IF_OO_ADT_CLASSRUN, as "Run as ABAP Application (Console)" (F9) does in
