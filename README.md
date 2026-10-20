@@ -185,7 +185,15 @@ ADT request:
    returns at once.
 3. `DebuggerListen`. The RFC session runs the report and stops on the line.
 
-A remote-enabled function module that runs the report after a delay:
+The report runs in an RFC session that was started by a request without SAP
+GUI, so it cannot show screens: no selection screen, no dialog box, no ALV
+grid. Dialog interactions over RFC need a caller with a SAP GUI window (ABAP
+Keyword Documentation, "RFC Dialog Interactions"). `SUBMIT ... AND RETURN`
+without `VIA SELECTION-SCREEN` skips the selection screen. When you are done,
+`DebuggerDetach` releases the stopped session.
+
+A remote-enabled function module (set *Remote-Enabled Module* in its
+attributes) that runs the report after a delay:
 
 ```abap
 FUNCTION z_debug_submit_report
@@ -216,15 +224,17 @@ ENDCLASS.
 CLASS zcl_debug_trigger IMPLEMENTATION.
   METHOD if_oo_adt_classrun~main.
     CALL FUNCTION 'Z_DEBUG_SUBMIT_REPORT' STARTING NEW TASK 'ZDEBUG'
-      EXPORTING iv_report = 'ZDEMO_REPORT' iv_variant = 'DEMO' iv_delay = 8.
+      EXPORTING  iv_report = 'ZDEMO_REPORT' iv_variant = 'DEMO' iv_delay = 8
+      EXCEPTIONS communication_failure = 1
+                 system_failure        = 2.
     out->write( |started ZDEMO_REPORT in an RFC session, sy-subrc = { sy-subrc }| ).
   ENDMETHOD.
 ENDCLASS.
 ```
 
-`out` is `if_oo_adt_classrun_out` on newer releases and
-`if_oo_adt_intrnl_classrun` on older ones; the interface definition in your
-system decides, the `main` signature comes from it.
+You do not declare `out`: it comes from the interface,
+`if_oo_adt_classrun_out` on newer releases and `if_oo_adt_intrnl_classrun` on
+older ones.
 
 Keep the delay longer than RunClass takes to return plus the start of
 DebuggerListen, and shorter than the listen timeout. Do not put a breakpoint
