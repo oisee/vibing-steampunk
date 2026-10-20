@@ -280,6 +280,13 @@ func renderMessage(text string, vars ...string) string {
 			i++
 			continue
 		}
+		// &5 to &9 have no variable and stay empty, as in ABAP. Message
+		// 00 001 is "&1&2&3&4&5&6&7&8"; taken as bare placeholders they
+		// repeated the first variable and kept the digit.
+		if i+1 < len(text) && text[i+1] >= '5' && text[i+1] <= '9' {
+			i++
+			continue
+		}
 		if next < len(vars) {
 			b.WriteString(vars[next])
 			next++
