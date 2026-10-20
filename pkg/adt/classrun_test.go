@@ -146,7 +146,7 @@ func TestRunClass_UnknownPackageFailsClosed(t *testing.T) {
 }
 
 func TestRunClass_InvalidNameSendsNothing(t *testing.T) {
-	for _, name := range []string{"", "   ", "ZCL DEMO", "ZCL_DEMO;DROP", "ZCL_DEMO?x=1", "../ZCL"} {
+	for _, name := range []string{"", "   ", "ZCL DEMO", "ZCL_DEMO;DROP", "ZCL_DEMO?x=1", "../ZCL", "/", "//", "/NS/", "/NS/CL/X"} {
 		rec := &adtRecorder{}
 		client := newStubbedClient(t, rec, classrunRoute(demoClassURI, "ZCL_DEMO_RUN", "$TMP", "x", http.StatusOK))
 		if _, err := client.RunClass(context.Background(), name); err == nil {
