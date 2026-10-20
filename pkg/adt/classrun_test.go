@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -101,8 +102,9 @@ func TestRunClass_DisallowedWorkflowRefuses(t *testing.T) {
 	if _, err := client.RunClass(context.Background(), "ZCL_DEMO_RUN"); err == nil {
 		t.Fatal("--disallowed-ops W must refuse RunClass")
 	}
-	if n := countClassruns(rec.snapshot()); n != 0 {
-		t.Fatalf("%d classrun POST(s) despite the refusal", n)
+	if calls := rec.snapshot(); len(calls) != 0 {
+		dumpCalls(t, calls)
+		t.Fatal("nothing may reach the server under --disallowed-ops W")
 	}
 }
 
@@ -158,21 +160,30 @@ func TestRunClass_InvalidNameSendsNothing(t *testing.T) {
 }
 
 func TestRunClass_NamespaceClassIsEscaped(t *testing.T) {
+	// wireCall.path is the decoded path, so the escaped form is taken here
+	// from the request as it arrived.
+	var mu sync.Mutex
+	var escaped []string
+	inner := classrunRoute("/sap/bc/adt/oo/classes/%2fns%2fcl_x", "/NS/CL_X", "$TMP", "ns", http.StatusOK)
+	route := func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/sap/bc/adt/oo/classrun/") {
+			mu.Lock()
+			escaped = append(escaped, r.URL.EscapedPath())
+			mu.Unlock()
+		}
+		inner(w, r)
+	}
 	rec := &adtRecorder{}
-	client := newStubbedClient(t, rec, classrunRoute("/sap/bc/adt/oo/classes/%2fns%2fcl_x", "/NS/CL_X", "$TMP", "ns", http.StatusOK))
+	client := newStubbedClient(t, rec, route)
 
 	if _, err := client.RunClass(context.Background(), "/NS/CL_X"); err != nil {
 		t.Fatalf("RunClass(/NS/CL_X): %v", err)
 	}
-	found := false
-	for _, c := range rec.snapshot() {
-		if isClassrun(c) && strings.HasSuffix(c.path, "/NS/CL_X") {
-			found = true
-		}
-	}
-	if !found {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(escaped) != 1 || escaped[0] != "/sap/bc/adt/oo/classrun/%2FNS%2FCL_X" {
 		dumpCalls(t, rec.snapshot())
-		t.Fatal("no classrun POST for the namespace class")
+		t.Fatalf("classrun POST paths = %q, want one POST to /sap/bc/adt/oo/classrun/%%2FNS%%2FCL_X", escaped)
 	}
 }
 
@@ -180,8 +191,13 @@ func TestRunClass_SAPErrorIsReturned(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
 		rec := &adtRecorder{}
 		client := newStubbedClient(t, rec, classrunRoute(demoClassURI, "ZCL_DEMO_RUN", "$TMP", "Class ZCL_DEMO_RUN does not exist", status))
-		if _, err := client.RunClass(context.Background(), "ZCL_DEMO_RUN"); err == nil {
+		_, err := client.RunClass(context.Background(), "ZCL_DEMO_RUN")
+		if err == nil {
 			t.Errorf("status %d: want an error", status)
+			continue
+		}
+		if !strings.Contains(err.Error(), "does not exist") {
+			t.Errorf("status %d: error %q lacks the SAP text", status, err)
 		}
 	}
 }
