@@ -99,7 +99,7 @@ func TestPublishedToolCountsMatchPinnedCounts(t *testing.T) {
 }
 
 // docs/cli-agents states the mode counts in two shapes the README matcher does
-// not read: "focused (98 tools) or expert (148)", plus its ES/RU/UA
+// not read: "focused (N tools) or expert (N)", plus its ES/RU/UA
 // translations where "tools" is not English, and codex.md's table rows
 // "| `focused` | 98 |". The expert count there sat at a stale 147 with nothing
 // checking it. Here each count is tied to the pin for its own mode.
