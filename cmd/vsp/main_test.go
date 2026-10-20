@@ -22,10 +22,11 @@ import (
 //
 // The one exception is the child process TestCLI_DotEnvHomeCannotVouchForProjectConfig
 // starts: it runs in a temporary directory whose .env set HOME to ".", which
-// is what it checks. A marker inherited from the shell alone, with a real
-// home, does not qualify.
+// is what it checks. It qualifies only outside the package directory, so the
+// marker and HOME=. from the shell or from cmd/vsp/.env do not turn the
+// isolation off.
 func TestMain(m *testing.M) {
-	if os.Getenv("VSP_DOTENV_HOME_CHILD") == "1" && os.Getenv("HOME") == "." {
+	if os.Getenv("VSP_DOTENV_HOME_CHILD") == "1" && os.Getenv("HOME") == "." && !inPackageDir() {
 		os.Exit(m.Run())
 	}
 	for _, f := range []string{".vsp.json", ".vsp/systems.json"} {
@@ -50,4 +51,11 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	os.RemoveAll(home)
 	os.Exit(code)
+}
+
+// inPackageDir reports whether the working directory is cmd/vsp itself, where
+// go test runs the package; the .env child runs in a temporary directory.
+func inPackageDir() bool {
+	_, err := os.Stat("main_test.go")
+	return err == nil
 }
