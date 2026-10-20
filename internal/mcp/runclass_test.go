@@ -45,7 +45,7 @@ func classrunSAP(t *testing.T, status int, body string) *Server {
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(srv.Close)
-	return NewServer(&Config{BaseURL: srv.URL, Username: "TESTUSER", Client: "001", Mode: "expert"})
+	return NewServer(&Config{BaseURL: srv.URL, Username: "u", Password: "p", Client: "001", Language: "EN", Mode: "expert"})
 }
 
 func TestRunClassTool_EmptyOutputIsNotAnError(t *testing.T) {
