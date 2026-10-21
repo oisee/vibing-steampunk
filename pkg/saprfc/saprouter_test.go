@@ -37,26 +37,26 @@ func TestResolve_RouteWithServicePorts(t *testing.T) {
 	}
 }
 
-// rfc_router beside a plain rfc_host, with or without the trailing /H/.
+// saprouter beside a plain rfc_host, with or without the trailing /H/.
 func TestResolve_RouterSetting(t *testing.T) {
 	for _, r := range []string{"/H/router.example.local/H/", "/H/router.example.local", " /H/router.example.local/ "} {
 		in := routeInput()
-		in.RFCHost, in.RFCRouter, in.RFCSysnr = "gw.example.local", r, "00"
+		in.RFCHost, in.SAProuter, in.RFCSysnr = "gw.example.local", r, "00"
 		p, err := Resolve(in)
 		if err != nil {
 			t.Fatalf("Resolve(%q): %v", r, err)
 		}
 		if p.Router != "/H/router.example.local/H/" || p.Host != "gw.example.local" {
-			t.Errorf("rfc_router %q: got router=%q host=%q", r, p.Router, p.Host)
+			t.Errorf("saprouter %q: got router=%q host=%q", r, p.Router, p.Host)
 		}
 	}
 }
 
-// The flag wins over the system's rfc_router, as the other flags do.
+// The flag wins over the system's saprouter, as the other flags do.
 func TestResolve_RouterFlagWins(t *testing.T) {
 	in := routeInput()
 	in.RFCHost, in.RFCSysnr = "gw.example.local", "00"
-	in.RFCRouter, in.RouterFlag = "/H/old.example.local/H/", "/H/new.example.local/H/"
+	in.SAProuter, in.SAProuterFlag = "/H/old.example.local/H/", "/H/new.example.local/H/"
 	p, err := Resolve(in)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -86,7 +86,7 @@ func TestResolve_RouteRefusals(t *testing.T) {
 		{"/H/router.example.local/H/gw.example.local/S/notaport", "", "invalid port"},
 	} {
 		in := routeInput()
-		in.RFCHost, in.RFCRouter = tc.host, tc.router
+		in.RFCHost, in.SAProuter = tc.host, tc.router
 		_, err := Resolve(in)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("Resolve(host=%q router=%q) err = %v, want one mentioning %q", tc.host, tc.router, err, tc.want)
@@ -97,7 +97,7 @@ func TestResolve_RouteRefusals(t *testing.T) {
 // A route repeated in both places is fine when it's the same route.
 func TestResolve_SameRouteTwiceIsFine(t *testing.T) {
 	in := routeInput()
-	in.RFCHost, in.RFCRouter, in.RFCSysnr = "/H/router.example.local/H/gw.example.local", "/H/router.example.local", "00"
+	in.RFCHost, in.SAProuter, in.RFCSysnr = "/H/router.example.local/H/gw.example.local", "/H/router.example.local", "00"
 	if _, err := Resolve(in); err != nil {
 		t.Errorf("same route twice: %v", err)
 	}

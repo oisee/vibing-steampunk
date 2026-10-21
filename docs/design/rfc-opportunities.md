@@ -740,7 +740,7 @@ Negative results worth recording, all ✅ checked today: no `RFC_ABAP_INSTALL_AN
 - **No SNC.** Classic RFC as implemented has exactly one auth mechanism: user +
   password, scrambled with a published table. Trusted segment, tunnel, or
   nothing. vsp should mark RFC-capable systems in `.vsp.json` and refuse
-  production without `rfc_router`/SOCKS5.
+  production without `saprouter`/SOCKS5.
 - **`S_RFC` is coarse.** Authorization is per *function group*, not per function
   module — granting `SDIFRUNTIME` for `RFC_READ_TABLE` grants the whole group.
   `RFC_SIMULATE_AUTH_CHECK` lets vsp tell the user exactly what they are about to

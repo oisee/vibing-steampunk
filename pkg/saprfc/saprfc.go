@@ -74,14 +74,14 @@ type Input struct {
 	RFCPort     int
 	RFCUser     string
 	RFCPassword string
-	RFCRouter   string
+	SAProuter   string
 
 	// Per-command overrides (flags).
-	HostFlag   string
-	SysnrFlag  string
-	PortFlag   int
-	UserFlag   string
-	RouterFlag string
+	HostFlag      string
+	SysnrFlag     string
+	PortFlag      int
+	UserFlag      string
+	SAProuterFlag string
 
 	// Expect is carried into Params.Expect.
 	Expect *adt.IdentityPin
@@ -97,17 +97,17 @@ func Resolve(in Input) (Params, error) {
 	sysnr := firstNonEmpty(in.SysnrFlag, in.RFCSysnr)
 
 	// A gateway behind a SAProuter is named by a route, as SAP Logon writes it
-	// ("/H/router/H/host"). It may come whole in rfc_host, or as rfc_router
+	// ("/H/router/H/host"). It may come whole in rfc_host, or as saprouter
 	// beside a plain rfc_host; either way the route prefix goes to the
 	// transport and only the last hop's host is dialled through it.
-	router := firstNonEmpty(in.RouterFlag, in.RFCRouter)
+	router := firstNonEmpty(in.SAProuterFlag, in.SAProuter)
 	routedHost, routedPort, hostRouter, err := splitRoute(host)
 	if err != nil {
 		return Params{}, err
 	}
 	if hostRouter != "" {
 		if router != "" && normalizeRouter(router) != hostRouter {
-			return Params{}, fmt.Errorf("rfc_host carries the route %q and rfc_router names %q; give the route once", hostRouter, router)
+			return Params{}, fmt.Errorf("rfc_host carries the route %q and saprouter names %q; give the route once", hostRouter, router)
 		}
 		host, router = routedHost, hostRouter
 	}
