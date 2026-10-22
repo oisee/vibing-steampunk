@@ -104,6 +104,9 @@ not QAS.100). Nothing is released unless --release is given.
 			for _, sk := range res.Skipped {
 				fmt.Fprintf(os.Stderr, "  skipped %s: %s\n", sk.Entry, sk.Reason)
 			}
+			for _, e := range res.PackageUnchecked {
+				fmt.Fprintf(os.Stderr, "  copied without a package check (table contents): %s\n", e)
+			}
 		}
 		return terr
 	},

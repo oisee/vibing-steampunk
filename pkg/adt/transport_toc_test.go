@@ -488,6 +488,40 @@ func TestCopyToTransportOfCopies_AllowedPackagesPass(t *testing.T) {
 	}
 }
 
+// Table contents have no package: the rows of an SAP table that SE19 records
+// for a PPF BAdI filter must not refuse the copy. They are copied without a
+// lookup and named in the result; the repository objects beside them are
+// still checked.
+func TestCopyToTransportOfCopies_TableContentsAreNotPackageChecked(t *testing.T) {
+	src := entriesXML("R3TR CLAS ZCL_DEMO", "R3TR TABU PPFTFLTCO1", "R3TR TDAT ZDEMO_V_CUST")
+	client, ts := newTocClient(t, src, WithAllowedPackages("ZDEMO*"))
+	ts.objects = map[string][2]string{"ZCL_DEMO": {"CLAS/OC", "ZDEMO_PKG"}}
+	res, err := client.copyToTransportOfCopies(context.Background(), &fakeBridge{}, "TR-SRC", TransportOfCopiesOptions{Target: "QAS"})
+	if err != nil {
+		t.Fatalf("refused a copy holding table contents: %v", err)
+	}
+	if len(ts.searches) != 1 {
+		t.Errorf("searched %v, want ZCL_DEMO only", ts.searches)
+	}
+	if got := strings.Join(res.PackageUnchecked, ", "); got != "R3TR TABU PPFTFLTCO1, R3TR TDAT ZDEMO_V_CUST" {
+		t.Errorf("packageUnchecked = %q", got)
+	}
+}
+
+// A repository object beside table contents is refused as before.
+func TestCopyToTransportOfCopies_TableContentsDoNotHideAForeignObject(t *testing.T) {
+	src := entriesXML("R3TR TABU PPFTFLTCO1", "R3TR PROG ZSAP_OTHER")
+	client, ts := newTocClient(t, src, WithAllowedPackages("ZDEMO*"))
+	ts.objects = map[string][2]string{"ZSAP_OTHER": {"PROG/P", "ZOTHER_PKG"}}
+	_, err := client.copyToTransportOfCopies(context.Background(), &fakeBridge{}, "TR-SRC", TransportOfCopiesOptions{Target: "QAS"})
+	if err == nil || !strings.Contains(err.Error(), "ZSAP_OTHER") || strings.Contains(err.Error(), "PPFTFLTCO1") {
+		t.Errorf("err = %v, want a refusal naming ZSAP_OTHER only", err)
+	}
+	if len(ts.created) != 0 {
+		t.Error("created the transport of copies before refusing")
+	}
+}
+
 // Without a whitelist nothing changes: no package lookup is sent.
 func TestCopyToTransportOfCopies_NoWhitelistSendsNoLookup(t *testing.T) {
 	client, ts := newTocClient(t, entriesXML("R3TR PROG ZSAP_OTHER", "LIMU FUNC Z_SOME_FM"))

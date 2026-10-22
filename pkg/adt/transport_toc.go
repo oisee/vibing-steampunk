@@ -49,6 +49,10 @@ type TransportOfCopiesResult struct {
 	// Skipped are the source's entries left out of the copy on purpose, with
 	// the reason: a modifiable request's own entries, outside its tasks.
 	Skipped []TransportOfCopiesSkip `json:"skipped,omitempty"`
+	// PackageUnchecked are the entries copied without a package check because
+	// they carry table contents (TABU, TDAT, VDAT, CDAT), which have no
+	// package of their own.
+	PackageUnchecked []string `json:"packageUnchecked,omitempty"`
 	// Failed are the lists TR_COPY_COMM did not copy, with the entries they
 	// hold and why.
 	Failed []TransportOfCopiesFailure `json:"failed,omitempty"`
@@ -141,7 +145,8 @@ func (c *Client) copyToTransportOfCopies(ctx context.Context, bridge functionBri
 	// Every object the copy would carry must pass the package policy, before
 	// anything is created: a transport of copies is a way to put objects
 	// into another system, and --allowed-packages bounds which ones.
-	if err = c.checkTransportOfCopiesPackages(ctx, source, from); err != nil {
+	unchecked, err := c.checkTransportOfCopiesPackages(ctx, source, from)
+	if err != nil {
 		return nil, err
 	}
 
@@ -164,7 +169,7 @@ func (c *Client) copyToTransportOfCopies(ctx context.Context, bridge functionBri
 	}
 
 	res := &TransportOfCopiesResult{Source: source, Transport: number, Target: target, Description: description,
-		ReleaseStatus: "not requested", Skipped: skipped}
+		ReleaseStatus: "not requested", Skipped: skipped, PackageUnchecked: unchecked}
 	// Every list is tried, so the result says of each whether it was copied;
 	// one that fails does not hide the state of the others.
 	for _, src := range from {
@@ -230,14 +235,16 @@ func (c *Client) CheckTransportOfCopies(source string) error {
 // resolved. An R3TR entry is looked up as it is; a LIMU entry by the object
 // it is part of, which is refused when that cannot be told from the entry
 // (a function module's group, say). Entries that name no object (CORR) have
-// no package. Without a whitelist it does nothing and sends nothing.
-func (c *Client) checkTransportOfCopiesPackages(ctx context.Context, source string, from []copySource) error {
+// no package. Entries of table contents are not repository objects either:
+// they are passed over and returned, so the result can name them. Without a
+// whitelist it does nothing and sends nothing.
+func (c *Client) checkTransportOfCopiesPackages(ctx context.Context, source string, from []copySource) ([]string, error) {
 	if len(c.config.Safety.AllowedPackages) == 0 {
-		return nil
+		return nil, nil
 	}
 	type parent struct{ typ, name string }
 	verdict := map[parent]error{}
-	var refused []string
+	var refused, unchecked []string
 	seen := map[string]bool{}
 	for _, src := range from {
 		for _, o := range src.Entries {
@@ -245,6 +252,10 @@ func (c *Client) checkTransportOfCopiesPackages(ctx context.Context, source stri
 				continue
 			}
 			seen[entryKey(o)] = true
+			if isTableContentsEntry(o) {
+				unchecked = append(unchecked, entryName(o))
+				continue
+			}
 			typ, name, ok := packageObjectOf(o)
 			if !ok {
 				refused = append(refused, fmt.Sprintf("%s: cannot tell which object it is part of, so its package cannot be checked", entryName(o)))
@@ -262,10 +273,28 @@ func (c *Client) checkTransportOfCopiesPackages(ctx context.Context, source stri
 		}
 	}
 	if len(refused) > 0 {
-		return fmt.Errorf("transport of copies of %s refused, nothing created: %d object(s) outside the allowed packages %v or not verifiable: %s",
+		return nil, fmt.Errorf("transport of copies of %s refused, nothing created: %d object(s) outside the allowed packages %v or not verifiable: %s",
 			source, len(refused), c.config.Safety.AllowedPackages, strings.Join(refused, "; "))
 	}
-	return nil
+	return unchecked, nil
+}
+
+// isTableContentsEntry reports whether an entry carries table contents --
+// rows named by keys in E071K -- rather than a repository object: R3TR TABU
+// (table entries), TDAT, VDAT and CDAT (customizing of a table, view or view
+// cluster). Such an entry has no package; the table it fills, often an SAP
+// table like PPFTFLTCO1 whose rows SE19 records for a PPF BAdI filter, has a
+// package the whitelist rightly does not hold, and checking that would refuse
+// every copy holding customizing.
+func isTableContentsEntry(o TransportObjectV2) bool {
+	if strings.ToUpper(strings.TrimSpace(o.PgmID)) != "R3TR" {
+		return false
+	}
+	switch strings.ToUpper(strings.TrimSpace(o.Type)) {
+	case "TABU", "TDAT", "VDAT", "CDAT":
+		return true
+	}
+	return false
 }
 
 // packageObjectOf is the repository object whose package an entry belongs
