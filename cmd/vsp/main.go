@@ -152,7 +152,7 @@ func init() {
 	rootCmd.Flags().Duration("keepalive", 0, "Session keep-alive interval (e.g., 60s, 5m). Prevents session timeout during idle periods. 0 = disabled (default; see #168)")
 
 	// Long calls
-	rootCmd.Flags().Int("call-timeout", 0, "Default budget in seconds of one long MCP call (ExecuteABAP, ABAP Unit, deploy, source write, activation) that names no params.timeout; at most 3600. 0 = none: each request to SAP is limited to 60s. A negative value is a startup error")
+	rootCmd.Flags().Int("call-timeout", 0, "Default budget in seconds of one long MCP call (ExecuteABAP, ABAP Unit including coverage, ATC, deploy, source write, activation) that names no params.timeout; at most 3600. 0 = none: each request to SAP is limited to 60s. A negative value is a startup error")
 
 	// Safety options
 	rootCmd.Flags().BoolVar(&cfg.ReadOnly, "read-only", false, "Block all write operations (create, update, delete, activate)")
