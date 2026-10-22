@@ -57,7 +57,40 @@ func (c *Client) CheckObjectPackageByName(ctx context.Context, objectType, name 
 			return c.checkPackageSafety(r.PackageName)
 		}
 	}
-	return fmt.Errorf("resolving package for %s %s: package metadata not found", objectType, name)
+	// The repository search knows only what ADT models. Smart Forms (SSFO),
+	// SAPscript forms (FORM) and other objects ADT has no editor for are in
+	// TADIR all the same, with their package: read it there.
+	pkg, terr := c.tadirPackage(ctx, objectType, name)
+	if terr != nil {
+		return fmt.Errorf("resolving package for %s %s: package metadata not found (TADIR: %v)", objectType, name, terr)
+	}
+	if pkg == "" {
+		return fmt.Errorf("resolving package for %s %s: package metadata not found", objectType, name)
+	}
+	return c.checkPackageSafety(pkg)
+}
+
+// tadirPackage is the package TADIR records for R3TR objectType name, or ""
+// when TADIR has no entry. It is the package check's own fixed lookup -- one
+// key, nothing from the caller but a quoted name -- so it does not go through
+// the freestyle-SQL gate, any more than the repository search does: refusing
+// it would only turn a verifiable object into an unverifiable one.
+func (c *Client) tadirPackage(ctx context.Context, objectType, name string) (string, error) {
+	for _, r := range objectType {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return "", fmt.Errorf("object type %q", objectType)
+		}
+	}
+	res, err := c.runQueryRaw(ctx, fmt.Sprintf(
+		"SELECT devclass FROM tadir WHERE pgmid = 'R3TR' AND object = '%s' AND obj_name = '%s'",
+		objectType, sqlQuote(name)), 1)
+	if err != nil {
+		return "", err
+	}
+	if res == nil || len(res.Rows) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(cell(res.Rows[0], "DEVCLASS")), nil
 }
 
 // checkTransportableEdit checks if editing objects that require transports is allowed.

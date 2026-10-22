@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -605,6 +606,59 @@ func TestClient_CheckObjectPackageByName(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("got %v, want an error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// Smart Forms and SAPscript forms are not in the repository search; their
+// package comes from TADIR, and the whitelist applies to it as to any other.
+func TestClient_CheckObjectPackageByName_FromTADIRWhenSearchHasNoHit(t *testing.T) {
+	cases := []struct {
+		name, devclass, wantErr string
+	}{
+		{"allowed package", "/PAR/SD", ""},
+		{"forbidden package", "VBRK_STANDARD", "blocked by safety configuration"},
+		{"not in TADIR fails closed", "", "package metadata not found"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sql string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("x-csrf-token", "test-token")
+				if strings.Contains(r.URL.Path, "/repository/informationsystem/search") {
+					w.Header().Set("Content-Type", "application/xml")
+					w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core"/>`))
+					return
+				}
+				if r.Method == http.MethodHead || r.Method == http.MethodGet {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.Header().Set("Content-Type", "application/xml")
+				body, _ := io.ReadAll(r.Body)
+				sql = string(body)
+				if tc.devclass == "" {
+					w.Write([]byte(tableXML()))
+					return
+				}
+				w.Write([]byte(tableXML(col("DEVCLASS", tc.devclass))))
+			}))
+			defer srv.Close()
+			// --block-free-sql does not blind the package check: its TADIR
+			// lookup is the check's own, not the caller's SQL.
+			client := NewClient(srv.URL, "user", "pass", WithAllowedPackages("Z*", "/PAR/*"), WithBlockFreeSQL())
+
+			err := client.CheckObjectPackageByName(context.Background(), "SSFO", "/par/le_shp_delnote")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("unexpected refusal: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("got %v, want an error containing %q", err, tc.wantErr)
+			}
+			if !strings.Contains(sql, "object = 'SSFO'") || !strings.Contains(sql, "obj_name = '/PAR/LE_SHP_DELNOTE'") {
+				t.Errorf("TADIR lookup = %q", sql)
 			}
 		})
 	}
