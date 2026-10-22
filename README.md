@@ -245,7 +245,9 @@ breakpoints do not stop them.
 If you want to debug a dialog in SAP GUI instead: entering
 `/n*SADT_START_TCODE D_AIE_TCODE=<tcode>;D_IDE_USER=<your user>` in the
 command field opens the transaction in a session that ADT breakpoints apply
-to (see #2).
+to (see #2). For a report without a transaction code, use `SA38` as the
+transaction and start the report from there. Only ADT breakpoints are
+loaded this way, a breakpoint set in SE38 is a separate mechanism.
 
 ### Debug from your editor (DAP)
 
