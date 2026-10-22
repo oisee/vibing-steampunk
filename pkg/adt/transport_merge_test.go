@@ -7,9 +7,23 @@ func TestParseTransportObject(t *testing.T) {
 	if err != nil || k.PgmID != "R3TR" || k.Object != "PROG" || k.Name != "ZDEMO" {
 		t.Errorf("two parts: %+v %v", k, err)
 	}
-	k, err = ParseTransportObject("LIMU METH ZCL_DEMO RUN")
-	if err != nil || k.PgmID != "LIMU" || k.Name != "ZCL_DEMO RUN" {
-		t.Errorf("limu: %+v %v", k, err)
+	// A method is the class in 30 columns, then the method, as E071 holds
+	// it -- however many blanks the caller typed between the two.
+	padded := "ZCL_DEMO                      RUN"
+	for _, in := range []string{"LIMU METH ZCL_DEMO RUN", "limu meth zcl_demo   run", "LIMU METH " + padded} {
+		k, err = ParseTransportObject(in)
+		if err != nil || k.PgmID != "LIMU" || k.Object != "METH" || k.Name != padded {
+			t.Errorf("%q: %+v %v", in, k, err)
+		}
+	}
+	// Other names keep their blanks as given.
+	k, err = ParseTransportObject("LIMU CPRI ZCL_DEMO")
+	if err != nil || k.Name != "ZCL_DEMO" {
+		t.Errorf("cpri: %+v %v", k, err)
+	}
+	k, err = ParseTransportObject("R3TR TABU ZTAB  X")
+	if err != nil || k.Name != "ZTAB  X" {
+		t.Errorf("inner blanks: %+v %v", k, err)
 	}
 	if _, err := ParseTransportObject("ZDEMO"); err == nil {
 		t.Error("one part accepted")
