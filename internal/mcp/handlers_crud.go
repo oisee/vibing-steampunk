@@ -784,6 +784,16 @@ func (s *Server) handleMoveObject(ctx context.Context, request mcp.CallToolReque
 		return newToolResultError(err.Error()), nil
 	}
 
+	// A transport names the request the moved object is recorded in. It is
+	// checked before anything moves: a move that cannot be recorded is not
+	// started.
+	transport := strings.ToUpper(transportParam(request.GetArguments()))
+	if transport != "" {
+		if err := s.checkTransportWrite("MoveObject", transport); err != nil {
+			return newToolResultError(err.Error()), nil
+		}
+	}
+
 	// Ensure WebSocket client is connected
 	if err := s.ensureDebugWSClient(ctx); err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to connect to ZADT_VSP WebSocket: %v. Ensure ZADT_VSP is deployed and SAPC/SICF are configured.", err)), nil
@@ -791,15 +801,41 @@ func (s *Server) handleMoveObject(ctx context.Context, request mcp.CallToolReque
 
 	result, err := s.debugWSClient.MoveObject(ctx, objectType, objectName, newPackage)
 	if err != nil {
-		return newToolResultError(fmt.Sprintf("MoveObject failed: %v", err)), nil
+		return newToolResultError(fmt.Sprintf("MoveObject failed: %v%s", err, moveTimeoutHint(err))), nil
+	}
+	if !result.Success {
+		return newToolResultError(fmt.Sprintf("Move failed: %s", result.Message)), nil
 	}
 
-	// Format result
-	if result.Success {
-		return mcp.NewToolResultText(fmt.Sprintf("Object moved successfully.\n\nObject: %s %s\nNew Package: %s\nMessage: %s",
-			result.Object, result.ObjName, result.NewPackage, result.Message)), nil
+	text := fmt.Sprintf("Object moved successfully.\n\nObject: %s %s\nNew Package: %s\nMessage: %s",
+		result.Object, result.ObjName, result.NewPackage, result.Message)
+	switch {
+	case transport != "":
+		entry := adt.TransportEntry{TransportObjectKey: adt.TransportObjectKey{
+			PgmID: "R3TR", Object: strings.ToUpper(objectType), Name: strings.ToUpper(objectName)}}
+		rec, err := s.adtClient.AddTransportObjects(ctx, s.debugWSClient, transport, []adt.TransportEntry{entry})
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("%s\n\nThe object was moved, but recording it in %s failed: %v. "+
+				`Record it with SAP(action="system", params={"type": "add_transport_object", "transport": %q, "objects": [%q]}).`,
+				text, transport, err, transport, entry.String())), nil
+		}
+		text += fmt.Sprintf("\nRecorded in: %s (task %s)", rec.Request, rec.Task)
+	case !strings.HasPrefix(newPackage, "$"):
+		text += fmt.Sprintf("\nNot recorded in a request: %s is transportable; pass \"transport\" to record the object, "+
+			`or add it with SAP(action="system", params={"type": "add_transport_object", ...}).`, newPackage)
 	}
-	return newToolResultError(fmt.Sprintf("Move failed: %s", result.Message)), nil
+	return mcp.NewToolResultText(text), nil
+}
+
+// moveTimeoutHint explains a move that got no answer. The ZADT_VSP session
+// ends without one when the move dumps in the push channel, and the dump has
+// rolled the move back.
+func moveTimeoutHint(err error) string {
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		return ""
+	}
+	return ". No answer usually means the ZADT_VSP session ended with a runtime error, which rolled the move back; " +
+		`see SAP(action="analyze", params={"type": "list_dumps", "since": "<today>"}). The next call opens a new session`
 }
 
 // withName fills params["name"] from the target ("STRUCT ZDEMO") when the call
