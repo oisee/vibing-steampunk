@@ -593,6 +593,7 @@ type routeFunc = func(ctx context.Context, action, objectType, objectName string
 // added there and not here fails the test.
 func routeTable(s *Server) map[string]routeFunc {
 	return map[string]routeFunc{
+		"routeFormAction":           s.routeFormAction,
 		"routeSourceAction":         s.routeSourceAction,
 		"routeReadAction":           s.routeReadAction,
 		"routeSearchAction":         s.routeSearchAction,

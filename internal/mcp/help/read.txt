@@ -1,5 +1,13 @@
 SAP(action="read") - Read source code and metadata
 
+Print forms, through ZADT_VSP's form service (needs ZADT_VSP 2.4.0):
+  SAP(action="read", target="SSFO ZDEMO_SF")                    Smart Form, the SMARTFORMS download XML
+  SAP(action="read", target="FORM ZDEMO_SCRIPT")                SAPscript form, abapGit's FORM structure, every language
+  SAP(action="read", target="SFPF ZDEMO_PDF")                   Adobe form without its original-language layout
+  SAP(action="read", target="SFPF ZDEMO_PDF", params={"language": "ES"})   the XDP layout of one language
+  SAP(action="read", target="SFPI ZDEMO_IF")                    Adobe form interface
+  params: "info": true (package, languages, inactive version), "file_path" (write the document to a file)
+
 IDoc, as WE02 shows it (classic RFC; segment data EDID4-SDATA cannot be queried):
   SAP(action="read", target="IDOC 28757955")
   SAP(action="read", target="IDOC 28757955", params={"segment": "E1EDKA1"})   (prefix; "all_fields": true, "raw": true, "max_segments": 500)

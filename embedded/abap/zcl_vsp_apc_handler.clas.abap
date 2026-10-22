@@ -56,6 +56,7 @@ CLASS zcl_vsp_apc_handler IMPLEMENTATION.
     APPEND NEW zcl_vsp_debug_service( ) TO gt_services.
     APPEND NEW zcl_vsp_amdp_service( ) TO gt_services.
     APPEND NEW zcl_vsp_report_service( ) TO gt_services.
+    APPEND NEW zcl_vsp_form_service( ) TO gt_services.
     " The git and transport services are optional: the git service exists
     " only where abapGit does (vsp install skips it otherwise), and an
     " administrator may deploy ZADT_VSP without the transport service. The
