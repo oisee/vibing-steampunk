@@ -52,6 +52,8 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/oisee/vibing-steampunk/pkg/mcpext"
 )
 
 // --- the fake SAP -----------------------------------------------------------
@@ -624,6 +626,7 @@ func routeTable(s *Server) map[string]routeFunc {
 		"routeServiceBindingAction": s.routeServiceBindingAction,
 		"routeI18nAction":           s.routeI18nAction,
 		"routeRevisionsAction":      s.routeRevisionsAction,
+		"routeExtensionAction":      s.routeExtensionAction,
 	}
 }
 
@@ -929,8 +932,20 @@ func (env *invariantEnv) run(name string, call func(ctx context.Context, s *Serv
 	}
 	o.LateRFCDials = afterLate - during
 	o.Class, o.Known = readOnlyClasses[name]
+	if !o.Known {
+		o.Class, o.Known = invariantExtensionClasses[name]
+	}
 	return o
 }
+
+// invariantExtensions are registered on every server the invariant builds, so
+// that the extensions' actions are walked like the built-in ones -- classified
+// by the class each declares -- and a combination of extensions is checked
+// the same way as one.
+var (
+	invariantExtensions                                = []mcpext.Extension{newFakeExtension()}
+	invariantExtensionCases, invariantExtensionClasses = extensionCases(invariantExtensions)
+)
 
 func readOnlyConfig(base string) *Config {
 	return &Config{
@@ -943,6 +958,7 @@ func readOnlyConfig(base string) *Config {
 		// Transports are enabled so that --read-only, and nothing else, is
 		// what stands between a transport write and SAP.
 		EnableTransports: true,
+		Extensions:       invariantExtensions,
 	}
 }
 
@@ -990,6 +1006,7 @@ func TestReadOnlyInvariant(t *testing.T) {
 	}
 
 	cases := append(actionCases(), expert.tableCases()...)
+	cases = append(cases, invariantExtensionCases...)
 	outcomes := make([]probeOutcome, 0, 2*(len(tools)+len(cases)))
 	for _, world := range []string{"present", "absent"} {
 		env.sap.absent.Store(world == "absent")

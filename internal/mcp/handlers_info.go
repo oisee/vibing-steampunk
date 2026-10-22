@@ -92,6 +92,9 @@ func (s *Server) handleInfo(ctx context.Context) *mcp.CallToolResult {
 	if s.config.ReadOnly {
 		b.WriteString("  mode         read-only — every write is refused before it is sent\n")
 	}
+	if line := s.extensionsInfoLine(); line != "" {
+		b.WriteString(line)
+	}
 
 	// What to do next depends on whether anything works. Handing five object
 	// calls to a caller whose session is dead is five failures and no
