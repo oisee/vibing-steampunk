@@ -311,11 +311,18 @@ func (s *Server) dropSharedRFC(ctx context.Context) {
 // dialRFC resolves the destination for this server's system, honouring per-call
 // overrides and the RFC settings of this server's .vsp.json system.
 func (s *Server) dialRFC(ctx context.Context, params map[string]any) (*openrfc.Client, error) {
+	return s.dialRFCTimeout(ctx, params, 0)
+}
+
+// dialRFCTimeout is dialRFC with the longest time one call may take. Zero
+// keeps the library default, 30 seconds — too short for a call that blocks
+// server-side on purpose, like a debugger listener.
+func (s *Server) dialRFCTimeout(ctx context.Context, params map[string]any, timeout time.Duration) (*openrfc.Client, error) {
 	dest, err := s.rfcDestination(params)
 	if err != nil {
 		return nil, err
 	}
-	c, err := saprfc.Open(ctx, dest)
+	c, err := saprfc.OpenWithTimeout(ctx, dest, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("RFC logon to %s:%d failed: %w", dest.Host, dest.Port, err)
 	}
@@ -343,6 +350,11 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 	if in.User == "" && sameSystem(os.Getenv("SAP_URL"), os.Getenv("SAP_CLIENT"), s.config.BaseURL, s.config.Client) {
 		in.User, in.Password = os.Getenv("SAP_USER"), os.Getenv("SAP_PASSWORD")
 	}
+	// SAP_SAPROUTER belongs to the system SAP_URL names, like SAP_USER: another
+	// server must not dial through this one's router.
+	if sameSystem(os.Getenv("SAP_URL"), os.Getenv("SAP_CLIENT"), s.config.BaseURL, s.config.Client) {
+		in.SAProuterFlag = os.Getenv("SAP_SAPROUTER")
+	}
 	// Per-system RFC settings of this server's own .vsp.json system. Taking the
 	// default system's instead sent every other server to the default system's
 	// gateway, with the default system's RFC credentials.
@@ -352,7 +364,7 @@ func (s *Server) rfcDestination(params map[string]any) (saprfc.Params, error) {
 			return saprfc.Params{}, oerr
 		}
 		if ok {
-			in.RFCHost, in.RFCSysnr, in.RFCPort = sys.RFCHost, sys.RFCSysnr, sys.RFCPort
+			in.RFCHost, in.RFCSysnr, in.RFCPort, in.SAProuter = sys.RFCHost, sys.RFCSysnr, sys.RFCPort, sys.SAProuter
 			// The entry as written, not GetSystem's view of it, which fills an
 			// empty rfc_user/rfc_password from SAP_USER/SAP_PASSWORD.
 			in.RFCUser, in.RFCPassword = sys.RFCUser, sys.RFCPassword

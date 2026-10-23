@@ -51,6 +51,10 @@ type debugSession struct {
 // ADT resources, and a pinned conversation additionally reaches the ZADT_DEBUG
 // facade where it is installed. HTTPS is the fallback and is not a lesser one —
 // the conformance test requires both to answer identically.
+// debugRFCCallTimeout is how long one RFC call of the debug session may take:
+// longer than the longest listen DebuggerListen allows (240 s), with margin.
+const debugRFCCallTimeout = 5 * time.Minute
+
 func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 	s.debugMu.Lock()
 	defer s.debugMu.Unlock()
@@ -59,7 +63,10 @@ func (s *Server) debugger(ctx context.Context) (*debugSession, error) {
 	}
 
 	user := s.config.Username
-	if c, err := s.dialRFC(ctx, nil); err == nil {
+	// The listener holds its RFC call for as long as it waits (DebuggerListen
+	// allows 240 s); with the library's 30 s per-call default the client cut it
+	// off at 30 s and the session died ("i/o timeout", then "rfc: closed").
+	if c, err := s.dialRFCTimeout(ctx, nil, debugRFCCallTimeout); err == nil {
 		dbg, derr := saprfc.NewDebugger(ctx, c, user)
 		if derr == nil {
 			s.debugSess = &debugSession{dbg: dbg, conn: c, route: "rfc", user: user}
