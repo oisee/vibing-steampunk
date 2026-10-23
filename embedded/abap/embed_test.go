@@ -29,3 +29,14 @@ func TestEmbeddedSourcesMatchSrc(t *testing.T) {
 		}
 	}
 }
+
+// TestDescriptionsFitSAP pins every description to the 60 characters SAP
+// allows for an object's short text. One of 61 made SAP refuse to create
+// ZCL_VSP_GIT_SERVICE, and with it ZVSP_GIT_IMPORT, which uses it.
+func TestDescriptionsFitSAP(t *testing.T) {
+	for _, obj := range GetObjects() {
+		if n := len([]rune(obj.Description)); n > 60 {
+			t.Errorf("%s: description is %d characters, SAP allows 60: %q", obj.Name, n, obj.Description)
+		}
+	}
+}
