@@ -81,6 +81,17 @@ func TestEnsurePackage(t *testing.T) {
 	}
 }
 
+func TestEnsurePackage_NoCreateResource(t *testing.T) {
+	fake := &fakeClient{
+		packageProbes: []packageProbe{{}, {}},
+		createErr:     &adt.APIError{StatusCode: 404, Message: "No suitable resource found", Path: "/sap/bc/adt/packages"},
+	}
+	_, err := EnsurePackage(context.Background(), fake, "ZSYNTHETIC", "Synthetic package")
+	if err == nil || !strings.Contains(err.Error(), "SE21") {
+		t.Fatalf("error = %v, want the SE21 route", err)
+	}
+}
+
 func TestDeploySource(t *testing.T) {
 	tests := []struct {
 		name    string
