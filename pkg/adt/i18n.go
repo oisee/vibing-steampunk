@@ -204,25 +204,18 @@ func (c *Client) WriteMessageClassTexts(ctx context.Context, name, lang string, 
 		lockHandle = lock.LockHandle
 	}
 
-	// Build the XML body in the shape ADT actually serves and expects: a
-	// namespaced <mc:messageClass> root whose messages carry mc:msgno/mc:msgtext
-	// as ATTRIBUTES. MessageClass itself is the read model — Go's encoding/xml
-	// cannot express prefixed names for writing and namespace-agnostic matching
-	// for reading in one struct — so the request has its own type.
-	mc := messageClassWrite{
-		XMLNSmc:      "http://www.sap.com/adt/MessageClass",
-		XMLNSadtcore: "http://www.sap.com/adt/core",
-		Name:         name,
-		Language:     lang,
-	}
-	for _, t := range texts {
-		mc.Messages = append(mc.Messages, messageWrite{Number: t.Number, Text: t.Text})
-	}
-	body, err := xml.Marshal(mc)
+	// The PUT reads the language of the texts, the package and the short
+	// text from the body, and rewrites the short text when it differs: the
+	// class is read first, on the session of the caller's lock, and goes
+	// back unchanged around the messages (messageclass.go).
+	cur, err := c.readMessageClass(ctx, name, lang, true)
 	if err != nil {
-		return fmt.Errorf("marshal message class XML: %w", err)
+		return err
 	}
-	body = append([]byte(xml.Header), body...)
+	body, err := messageClassBody(cur, lang, texts)
+	if err != nil {
+		return err
+	}
 
 	path := objectURL
 
@@ -434,22 +427,4 @@ func (c *Client) CompareObjectLanguages(ctx context.Context, objectSourceURL, so
 	}
 
 	return comparison, nil
-}
-
-// messageClassWrite is the request body for updating a message class. ADT serves
-// and accepts <mc:messageClass> with the messages' number and text as attributes;
-// marshalling the read model produced a bare <MessageClass> that the server could
-// not interpret.
-type messageClassWrite struct {
-	XMLName      xml.Name       `xml:"mc:messageClass"`
-	XMLNSmc      string         `xml:"xmlns:mc,attr"`
-	XMLNSadtcore string         `xml:"xmlns:adtcore,attr"`
-	Name         string         `xml:"adtcore:name,attr"`
-	Language     string         `xml:"adtcore:language,attr,omitempty"`
-	Messages     []messageWrite `xml:"mc:messages"`
-}
-
-type messageWrite struct {
-	Number string `xml:"mc:msgno,attr"`
-	Text   string `xml:"mc:msgtext,attr"`
 }

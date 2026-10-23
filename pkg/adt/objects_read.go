@@ -604,13 +604,21 @@ func parseSRVBMetadata(data []byte) (*ServiceBinding, error) {
 type MessageClassMessage struct {
 	Number string `xml:"msgno,attr" json:"number"`
 	Text   string `xml:"msgtext,attr" json:"text"`
+	// SelfExplanatory is "true" when the short text needs no long text.
+	SelfExplanatory string `xml:"selfexplainatory,attr" json:"selfExplanatory,omitempty"`
 }
 
 // MessageClass represents an ABAP message class with all its messages
 type MessageClass struct {
-	Name        string                `xml:"name,attr" json:"name"`
-	Description string                `xml:"description,attr" json:"description"`
-	Messages    []MessageClassMessage `xml:"messages" json:"messages"`
+	Name           string `xml:"name,attr" json:"name"`
+	Description    string `xml:"description,attr" json:"description"`
+	Language       string `xml:"language,attr" json:"language,omitempty"`
+	MasterLanguage string `xml:"masterLanguage,attr" json:"masterLanguage,omitempty"`
+	PackageRef     struct {
+		Name string `xml:"name,attr"`
+	} `xml:"packageRef" json:"-"`
+	Package  string                `xml:"-" json:"package,omitempty"`
+	Messages []MessageClassMessage `xml:"messages" json:"messages"`
 }
 
 // GetMessageClass retrieves all messages from an ABAP message class.
@@ -635,5 +643,6 @@ func (c *Client) GetMessageClass(ctx context.Context, msgClassName string) (*Mes
 	}
 
 	mc.Name = msgClassName
+	mc.Package = mc.PackageRef.Name
 	return &mc, nil
 }

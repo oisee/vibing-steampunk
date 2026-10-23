@@ -257,8 +257,15 @@ func TestDeleteObject_SuppliedHandlePastKeepAliveWindowKeepsLookupStateful(t *te
 func TestWriteMessageClassTexts_SuppliedHandleKeepsLookupStateful(t *testing.T) {
 	const objURL = "/sap/bc/adt/messageclass/zdemo_mc"
 	rec := &adtRecorder{}
-	client := newStubbedClient(t, rec, deleteRoute(objURL, "ZDEMO_MC", "$TMP"),
-		WithAllowedPackages("$TMP"))
+	route := deleteRoute(objURL, "ZDEMO_MC", "$TMP")
+	client := newStubbedClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		// The class is read before the PUT, for its short text and package.
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messageclass/") {
+			_, _ = io.WriteString(w, `<mc:messageClass xmlns:mc="http://www.sap.com/adt/MessageClass" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZDEMO_MC" adtcore:description="demo" adtcore:masterLanguage="DE"><adtcore:packageRef adtcore:name="$TMP"/></mc:messageClass>`)
+			return
+		}
+		route(w, r)
+	}, WithAllowedPackages("$TMP"))
 	ctx := context.Background()
 
 	lock, err := client.LockObject(ctx, objURL, "MODIFY")

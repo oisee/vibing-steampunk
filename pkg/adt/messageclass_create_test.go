@@ -55,6 +55,11 @@ func TestWriteMessageClassTexts_PutBodyCarriesTheLanguage(t *testing.T) {
 			putBody = string(b)
 			mu.Unlock()
 		}
+		// The class is read before the PUT, for its short text and package.
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messageclass/") {
+			_, _ = io.WriteString(w, `<mc:messageClass xmlns:mc="http://www.sap.com/adt/MessageClass" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZDEMO_MC" adtcore:description="demo" adtcore:masterLanguage="DE"><adtcore:packageRef adtcore:name="$TMP"/></mc:messageClass>`)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 	if err := client.WriteMessageClassTexts(context.Background(), "ZDEMO_MC", "de",

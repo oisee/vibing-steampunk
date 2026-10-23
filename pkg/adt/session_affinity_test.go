@@ -309,6 +309,10 @@ func TestWriteMessageClassTexts_PutStaysInTheLockSession(t *testing.T) {
 			_, _ = io.WriteString(w, testLockXML)
 			return
 		}
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messageclass/") {
+			_, _ = io.WriteString(w, `<mc:messageClass xmlns:mc="http://www.sap.com/adt/MessageClass" xmlns:adtcore="http://www.sap.com/adt/core" adtcore:name="ZDEMO_MC" adtcore:description="demo"/>`)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -334,6 +338,10 @@ func TestWriteMessageClassTexts_PutStaysInTheLockSession(t *testing.T) {
 			"the lockHandle in its query came from a stateful LOCK (issue #91)", got)
 		dumpCalls(t, calls)
 	}
+	// The class is read before the PUT, for the short text and package the
+	// PUT would otherwise overwrite; that read sits inside the lock window.
+	lockAt := indexOfCall(calls, isLock)
+	assertWindowStateful(t, calls, lockAt, putAt)
 }
 
 // --- The one hop no config gates: the CSRF refetch mid-write ---
