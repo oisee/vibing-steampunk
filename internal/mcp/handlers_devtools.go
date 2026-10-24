@@ -12,7 +12,7 @@ import (
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
 
-// routeDevToolsAction routes "test" (unit tests), "analyze" (syntax check), "edit" (activate), and "analyze" (execute_abap, check_abap).
+// routeDevToolsAction routes "test" (unit tests), "analyze" (syntax check), "edit" (activate), and "analyze" (execute_abap, run_class, check_abap).
 func (s *Server) routeDevToolsAction(ctx context.Context, action, objectType, objectName string, params map[string]any) (*mcp.CallToolResult, bool, error) {
 	if action == "test" {
 		analysisType := getStringParam(params, "type")
@@ -48,6 +48,8 @@ func (s *Server) routeDevToolsAction(ctx context.Context, action, objectType, ob
 			return s.callHandler(ctx, s.handleSyntaxCheck, params)
 		case "execute_abap":
 			return s.callHandler(ctx, s.handleExecuteABAP, params)
+		case "run_class":
+			return s.callHandler(ctx, s.handleRunClass, params)
 		case "check_abap":
 			return s.callHandler(ctx, s.handleCheckABAP, params)
 		}
@@ -262,4 +264,26 @@ func (s *Server) runUnitTests(ctx context.Context, request mcp.CallToolRequest) 
 	// only_failures, the failed methods alone, in the lean shape.
 	output, _ := adt.IndentJSON(adt.NewUnitTestReport(result, onlyFailures))
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+// handleRunClass runs an IF_OO_ADT_CLASSRUN class and returns its console
+// output.
+func (s *Server) handleRunClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "run_class", s.runClass)
+}
+
+// runClass is handleRunClass without the call budget (see longCall).
+func (s *Server) runClass(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	className, _ := request.GetArguments()["class_name"].(string)
+	if strings.TrimSpace(className) == "" {
+		return newToolResultError("class_name is required"), nil
+	}
+	output, err := s.adtClient.RunClass(ctx, className)
+	if err != nil {
+		return newToolResultError(fmt.Sprintf("RunClass failed: %v", err)), nil
+	}
+	if output == "" {
+		return mcp.NewToolResultText("RunClass: the class ran and wrote no console output."), nil
+	}
+	return mcp.NewToolResultText(output), nil
 }

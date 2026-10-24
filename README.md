@@ -180,6 +180,83 @@ ends with a stack read, every catch was thrown away. It serves the same document
 from the dispatcher instead. The shape is discovered once per session and
 remembered.
 
+#### Debugging a report without SAP GUI
+
+ADT breakpoints do not fire in stand-alone SAP GUI sessions (SAP Help,
+"Breakpoints Characteristics"; see #2). They do fire for ADT requests and for
+RFC sessions. So a report can be debugged without any GUI, and without a
+transaction code, by starting it in an RFC session a few seconds after an
+ADT request:
+
+1. `SetBreakpoint` on the report line.
+2. `RunClass` on a trigger class (below). It starts an asynchronous RFC and
+   returns at once.
+3. `DebuggerListen`. The RFC session runs the report and stops on the line.
+
+The report runs in an RFC session that was started by a request without SAP
+GUI, so it cannot show screens: no selection screen, no dialog box, no ALV
+grid. Dialog interactions over RFC need a caller with a SAP GUI window (ABAP
+Keyword Documentation, "RFC Dialog Interactions"). `SUBMIT ... AND RETURN`
+without `VIA SELECTION-SCREEN` skips the selection screen. When you are done,
+`DebuggerDetach` releases the stopped session.
+
+A remote-enabled function module (set *Remote-Enabled Module* in its
+attributes) that runs the report after a delay:
+
+```abap
+FUNCTION z_debug_submit_report
+  IMPORTING
+    VALUE(iv_report)  TYPE progname
+    VALUE(iv_variant) TYPE raldb_vari
+    VALUE(iv_delay)   TYPE i DEFAULT 8.
+
+  WAIT UP TO iv_delay SECONDS.
+  IF iv_variant IS INITIAL.
+    SUBMIT (iv_report) EXPORTING LIST TO MEMORY AND RETURN.
+  ELSE.
+    SUBMIT (iv_report) USING SELECTION-SET iv_variant
+           EXPORTING LIST TO MEMORY AND RETURN.
+  ENDIF.
+  CALL FUNCTION 'LIST_FREE_MEMORY'.
+ENDFUNCTION.
+```
+
+The trigger class:
+
+```abap
+CLASS zcl_debug_trigger DEFINITION PUBLIC FINAL CREATE PUBLIC.
+  PUBLIC SECTION.
+    INTERFACES if_oo_adt_classrun.
+ENDCLASS.
+
+CLASS zcl_debug_trigger IMPLEMENTATION.
+  METHOD if_oo_adt_classrun~main.
+    CALL FUNCTION 'Z_DEBUG_SUBMIT_REPORT' STARTING NEW TASK 'ZDEBUG'
+      EXPORTING  iv_report = 'ZDEMO_REPORT' iv_variant = 'DEMO' iv_delay = 8
+      EXCEPTIONS communication_failure = 1
+                 system_failure        = 2.
+    out->write( |started ZDEMO_REPORT in an RFC session, sy-subrc = { sy-subrc }| ).
+  ENDMETHOD.
+ENDCLASS.
+```
+
+You do not declare `out`: it comes from the interface,
+`if_oo_adt_classrun_out` on newer releases and `if_oo_adt_intrnl_classrun` on
+older ones.
+
+Keep the delay longer than RunClass takes to return plus the start of
+DebuggerListen, and shorter than the listen timeout. Do not put a breakpoint
+in the trigger class: it would stop the classrun request itself and RunClass
+would wait until its timeout. Background jobs are not a substitute: ADT
+breakpoints do not stop them.
+
+If you want to debug a dialog in SAP GUI instead: entering
+`/n*SADT_START_TCODE D_AIE_TCODE=<tcode>;D_IDE_USER=<your user>` in the
+command field opens the transaction in a session that ADT breakpoints apply
+to (see #2). For a report without a transaction code, use `SA38` as the
+transaction and start the report from there. Only ADT breakpoints are
+loaded this way, a breakpoint set in SE38 is a separate mechanism.
+
 ### Debug from your editor (DAP)
 
 `vsp dap` is a Debug Adapter Protocol server on stdin/stdout. VS Code, nvim-dap,
@@ -1382,7 +1459,7 @@ must rewrite `Host` to reach vsp over HTTP.
 
 ### Hyperfocused Mode — 1 Tool to Rule Them All (Recommended)
 
-**Recommended for most setups.** Single `SAP(action, target, params)` tool covers most of what the 148 individual tools do — gCTS, revision history and i18n still need `--mode expert`. The same tool is now registered in focused and expert too, so an agent in either can reach the `analyze` surface. Minimal token overhead, maximum capability.
+**Recommended for most setups.** Single `SAP(action, target, params)` tool covers most of what the 149 individual tools do — gCTS, revision history and i18n still need `--mode expert`. The same tool is now registered in focused and expert too, so an agent in either can reach the `analyze` surface. Minimal token overhead, maximum capability.
 
 ```
 SAP(action="read",   target="CLAS ZCL_TRAVEL")
@@ -1391,7 +1468,7 @@ SAP(action="create", target="DEVC", params={"name": "$ZOZIK", "description": "Ne
 SAP(action="help",   target="debug")
 ```
 
-| Metric | Focused (98 tools) | Expert (148 tools) | Hyperfocused (1 tool) |
+| Metric | Focused (98 tools) | Expert (149 tools) | Hyperfocused (1 tool) |
 |--------|-------------------:|-------------------:|----------------------:|
 | MCP schema tokens | ~14,000 | ~40,000 | **~200** |
 | Reduction | — | — | **99.5%** |
@@ -1624,7 +1701,7 @@ See **[CLI Guide](docs/cli-guide.md)** for the complete reference with feature r
 | **API Surface** | `vsp api-surface` — Clean Core inventory: which standard APIs does your code use? |
 | **Graph Export** | 7 formats: mermaid, HTML, DOT (Graphviz), PlantUML, GraphML (Gephi), JSON, MD |
 | **Static Analysis** | `vsp analyze` — 13 lint rules in pure Go, no external dependencies |
-| **Hyperfocused Mode** | 1 universal SAP tool, **~200 tokens** vs ~40K for 148 tools |
+| **Hyperfocused Mode** | 1 universal SAP tool, **~200 tokens** vs ~40K for 149 tools |
 | **Context Compression** | Auto-compressed dependency contracts — 7–30x compression, built-in ABAP parser |
 | **Method-Level Surgery** | Read/edit individual methods — 95% token reduction vs full-class round-trips |
 | **ABAP LSP** | Built-in Language Server — real-time diagnostics, go-to-definition, context push |
@@ -2147,7 +2224,7 @@ network as Windows does. In `~/.vsp.json` on the Linux side:
 vsp --url https://host:44300 --user admin --password secret
 vsp --url https://host:44300 --cookie-file cookies.txt
 vsp --url https://host:44300 --sso --sso-system dev   # browser SSO, self-refreshing
-vsp --mode expert          # Enable all 148 tools
+vsp --mode expert          # Enable all 149 tools
 vsp --mode hyperfocused    # Single SAP tool (~200 tokens instead of ~40K)
 ```
 
@@ -2393,7 +2470,7 @@ One axis, three values — `--mode` or `SAP_MODE`:
 
 ```mermaid
 graph LR
-    F["focused<br/>98 tools<br/>~14K tokens"] --> E["expert<br/>148 tools<br/>~40K tokens"]
+    F["focused<br/>98 tools<br/>~14K tokens"] --> E["expert<br/>149 tools<br/>~40K tokens"]
     E --> H["hyperfocused<br/>1 tool<br/>~200 tokens<br/><i>recommended</i>"]
     style H fill:#2d6a4f,color:#fff,stroke:#4ade80,stroke-width:2px
     style F fill:#264653,color:#fff
@@ -2402,7 +2479,7 @@ graph LR
 
 | Aspect | Focused | Expert | Hyperfocused (recommended) |
 |--------|:-:|:-:|:-:|
-| **Tools** | 98 essential | 148 complete | 1 universal `SAP()` |
+| **Tools** | 98 essential | 149 complete | 1 universal `SAP()` |
 | **Schema tokens** | ~14K | ~40K | **~200** |
 | **How AI calls it** | `GetSource(type, name)` | Same, + granular tools | `SAP(action, target, params)` |
 | **Documentation** | In tool schemas | In tool schemas | `SAP(action="help")` |
@@ -2412,7 +2489,7 @@ graph LR
 ```bash
 vsp --mode hyperfocused  # recommended — single SAP(action, target, params) tool
 vsp --mode focused       # 98 curated tools (individual tool names)
-vsp --mode expert        # all 148 tools individually
+vsp --mode expert        # all 149 tools individually
 ```
 
 ## DSL & Automation
@@ -2627,6 +2704,23 @@ prints the same object as the MCP tool.
 
 See [ExecuteABAP Report](reports/2025-12-05-004-execute-abap-implementation.md) for details.
 
+## RunClass
+
+Run the `main` method of a class that implements `IF_OO_ADT_CLASSRUN`, the
+way F9 (Run as ABAP Application) does in Eclipse ADT. The answer is what the
+class wrote to the console.
+
+```
+RunClass:
+  class_name: ZCL_DEBUG_TRIGGER
+```
+
+RunClass executes code. `--read-only` and `--disallowed-ops W` refuse it, and
+with `--allowed-packages` the class has to be in an allowed package. Unlike
+ExecuteABAP it creates no temporary program and does not depend on ABAP Unit
+risk levels. In hyperfocused mode: `SAP(action="analyze", params={"type":
+"run_class", "class_name": "ZCL_DEBUG_TRIGGER"})`.
+
 ## ABAP Unit results
 
 `RunUnitTests` / `SAP(action="test")` answers JSON:
@@ -2743,7 +2837,7 @@ See [README_TOOLS.md](README_TOOLS.md) for complete tool documentation.
 
 **vsp** is a Go rewrite with:
 - Single binary, zero dependencies
-- 148 tools (vs 13 original)
+- 149 tools (vs 13 original)
 - ~50x faster startup
 
 ## Optional: WebSocket Handler (ZADT_VSP)
@@ -2783,7 +2877,7 @@ See [WebSocket Handler Report](reports/2025-12-18-002-websocket-rfc-handler.md) 
 | Document | Description |
 |----------|-------------|
 | [docs/architecture.md](docs/architecture.md) | Architecture diagrams (Mermaid) |
-| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (148 tools) |
+| [README_TOOLS.md](README_TOOLS.md) | Complete tool reference (149 tools) |
 | [MCP_USAGE.md](MCP_USAGE.md) | AI agent usage guide |
 | [docs/DSL.md](docs/DSL.md) | DSL & workflow documentation |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical architecture (detailed) |
@@ -2914,7 +3008,7 @@ vibing-steampunk/
 
 | Metric | Value |
 |--------|-------|
-| **Tools** | 148 expert, 98 focused, 1 universal |
+| **Tools** | 149 expert, 98 focused, 1 universal |
 | **Unit Tests** | 1354 (`go test ./... -list '.*'`; integration tests excluded by build tag) |
 | **Platforms** | 6 (Linux, macOS, Windows × amd64/arm64) |
 

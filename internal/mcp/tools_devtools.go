@@ -174,6 +174,20 @@ func (s *Server) registerDevTools(shouldRegister func(string) bool) {
 			),
 		), s.handleExecuteABAP)
 	}
+
+	// RunClass - run an IF_OO_ADT_CLASSRUN class through the ADT classrun (Expert mode only)
+	if shouldRegister("RunClass") {
+		s.mcpServer.AddTool(mcp.NewTool("RunClass",
+			mcp.WithDescription("Run the main method of a class that implements IF_OO_ADT_CLASSRUN, as F9 (Run as ABAP Application) does in Eclipse ADT, and return what it wrote to the console. It executes code: refused under --read-only, and with --allowed-packages the class must be in an allowed package. The run is an ADT request, so ADT breakpoints apply to it and to RFC sessions it starts; see the README recipe for debugging a report without SAP GUI."),
+			mcp.WithString("class_name",
+				mcp.Required(),
+				mcp.Description("Class to run, e.g. ZCL_DEBUG_TRIGGER"),
+			),
+			mcp.WithNumber("timeout",
+				mcp.Description(callTimeoutDescription),
+			),
+		), s.handleRunClass)
+	}
 }
 
 // registerTestingQualityTools registers testing and code quality tools.
