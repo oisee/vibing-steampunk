@@ -70,6 +70,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		if result.Message != "" {
 			fmt.Fprintf(os.Stderr, "%s\n", result.Message)
 		}
+		if len(result.SyntaxWarnings) > 0 {
+			fmt.Fprintf(os.Stderr, "Syntax warnings:\n")
+			for _, sw := range result.SyntaxWarnings {
+				fmt.Fprintf(os.Stderr, "  %s\n", sw)
+			}
+		}
 	} else {
 		fmt.Fprintf(os.Stderr, "Deploy failed for %s\n", filePath)
 		if result.Message != "" {
@@ -82,6 +88,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Syntax errors:\n")
 			for _, se := range result.SyntaxErrors {
 				fmt.Fprintf(os.Stderr, "  %s\n", se)
+			}
+		}
+		if len(result.SyntaxWarnings) > 0 {
+			fmt.Fprintf(os.Stderr, "Syntax warnings:\n")
+			for _, sw := range result.SyntaxWarnings {
+				fmt.Fprintf(os.Stderr, "  %s\n", sw)
 			}
 		}
 		return fmt.Errorf("deploy failed")

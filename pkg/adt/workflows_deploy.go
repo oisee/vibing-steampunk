@@ -23,11 +23,40 @@ type DeployResult struct {
 	Success            bool     `json:"success"`
 	Created            bool     `json:"created"` // true if created, false if updated
 	SyntaxErrors       []string `json:"syntaxErrors,omitempty"`
+	SyntaxWarnings     []string `json:"syntaxWarnings,omitempty"`
 	Errors             []string `json:"errors,omitempty"`
 	ExpectedSourceHash string   `json:"expectedSourceHash,omitempty"`
 	TargetSourceHash   string   `json:"targetSourceHash,omitempty"`
 	VerifiedSourceHash string   `json:"verifiedSourceHash,omitempty"`
 	Message            string   `json:"message,omitempty"`
+}
+
+// blockingSyntaxErrors returns the check run messages that stop a write:
+// severity E, A or X. Warnings and infos do not, as in WriteSource.
+func blockingSyntaxErrors(results []SyntaxCheckResult) []SyntaxCheckResult {
+	var blocking []SyntaxCheckResult
+	for _, r := range results {
+		if isBlockingSeverity(r.Severity) {
+			blocking = append(blocking, r)
+		}
+	}
+	return blocking
+}
+
+func isBlockingSeverity(severity string) bool {
+	return severity == "E" || severity == "A" || severity == "X"
+}
+
+// syntaxMessageLines formats check run messages as "Line N: text". With
+// blocking set it keeps the messages that stop a write, otherwise the rest.
+func syntaxMessageLines(results []SyntaxCheckResult, blocking bool) []string {
+	var lines []string
+	for _, r := range results {
+		if isBlockingSeverity(r.Severity) == blocking {
+			lines = append(lines, fmt.Sprintf("Line %d: %s", r.Line, r.Text))
+		}
+	}
+	return lines
 }
 
 // DeployFromFileOptions configures an optional optimistic-concurrency guard
@@ -151,20 +180,19 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		}
 	}()
 
-	if len(syntaxErrors) > 0 {
-		// Convert syntax errors to strings
-		errorMsgs := make([]string, len(syntaxErrors))
-		for i, e := range syntaxErrors {
-			errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
-		}
+	// Only errors stop the write; warnings are reported in the result.
+	blocking := blockingSyntaxErrors(syntaxErrors)
+	syntaxWarnings := syntaxMessageLines(syntaxErrors, false)
+	if len(blocking) > 0 {
 		return &DeployResult{
-			FilePath:     filePath,
-			ObjectURL:    objectURL,
-			ObjectName:   info.ObjectName,
-			ObjectType:   string(info.ObjectType),
-			Success:      false,
-			SyntaxErrors: errorMsgs,
-			Message:      fmt.Sprintf("Object created but has %d syntax errors", len(syntaxErrors)),
+			FilePath:       filePath,
+			ObjectURL:      objectURL,
+			ObjectName:     info.ObjectName,
+			ObjectType:     string(info.ObjectType),
+			Success:        false,
+			SyntaxErrors:   syntaxMessageLines(blocking, true),
+			SyntaxWarnings: syntaxWarnings,
+			Message:        fmt.Sprintf("Object created but has %d syntax errors", len(blocking)),
 		}, nil
 	}
 
@@ -243,8 +271,9 @@ func (c *Client) CreateFromFile(ctx context.Context, filePath, packageName, tran
 		ObjectType: string(info.ObjectType),
 		Success:    true,
 		Transport:  transport, TransportNote: trNote,
-		Created: true,
-		Message: fmt.Sprintf("Successfully created and activated %s %s from %s", info.ObjectType, info.ObjectName, filePath),
+		Created:        true,
+		SyntaxWarnings: syntaxWarnings,
+		Message:        fmt.Sprintf("Successfully created and activated %s %s from %s", info.ObjectType, info.ObjectName, filePath),
 	}, nil
 }
 
@@ -315,6 +344,7 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 
 	// 4. Syntax check first — see the note above: a stateless request sent while
 	// the object is locked ends the session the lock belongs to.
+	var syntaxWarnings []string
 	if !isClassInclude {
 		syntaxErrors, err := c.SyntaxCheck(ctx, objectURL, source)
 		if err != nil {
@@ -328,19 +358,19 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 				Message:    fmt.Sprintf("Syntax check failed: %v", err),
 			}, nil
 		}
-		if len(syntaxErrors) > 0 {
-			errorMsgs := make([]string, len(syntaxErrors))
-			for i, e := range syntaxErrors {
-				errorMsgs[i] = fmt.Sprintf("Line %d: %s", e.Line, e.Text)
-			}
+		// Only errors stop the write; warnings are reported in the result.
+		blocking := blockingSyntaxErrors(syntaxErrors)
+		syntaxWarnings = syntaxMessageLines(syntaxErrors, false)
+		if len(blocking) > 0 {
 			return &DeployResult{
-				FilePath:     filePath,
-				ObjectURL:    objectURL,
-				ObjectName:   info.ObjectName,
-				ObjectType:   string(info.ObjectType),
-				Success:      false,
-				SyntaxErrors: errorMsgs,
-				Message:      fmt.Sprintf("Source has %d syntax errors", len(syntaxErrors)),
+				FilePath:       filePath,
+				ObjectURL:      objectURL,
+				ObjectName:     info.ObjectName,
+				ObjectType:     string(info.ObjectType),
+				Success:        false,
+				SyntaxErrors:   syntaxMessageLines(blocking, true),
+				SyntaxWarnings: syntaxWarnings,
+				Message:        fmt.Sprintf("Source has %d syntax errors", len(blocking)),
 			}, nil
 		}
 	}
@@ -495,15 +525,16 @@ func (c *Client) UpdateFromFileWithOptions(ctx context.Context, filePath, transp
 	}
 
 	result = &DeployResult{
-		FilePath:      filePath,
-		ObjectURL:     objectURL,
-		ObjectName:    info.ObjectName,
-		ObjectType:    objTypeStr,
-		Success:       true,
-		Transport:     transport,
-		TransportNote: trNote,
-		Created:       false,
-		Message:       fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
+		FilePath:       filePath,
+		ObjectURL:      objectURL,
+		ObjectName:     info.ObjectName,
+		ObjectType:     objTypeStr,
+		Success:        true,
+		Transport:      transport,
+		TransportNote:  trNote,
+		Created:        false,
+		SyntaxWarnings: syntaxWarnings,
+		Message:        fmt.Sprintf("Successfully updated and activated %s %s from %s", objTypeStr, info.ObjectName, filePath),
 	}
 	if opts == nil || opts.ExpectedSourceHash == "" {
 		return result, nil
