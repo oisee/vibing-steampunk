@@ -13,7 +13,8 @@ type MutationSurface int
 const (
 	// SurfaceADT is the default ADT object surface (classes, programs,
 	// interfaces, data elements, message classes, etc.). Package resolution
-	// for existing objects uses SearchObject.
+	// for existing objects uses SearchObject and, when the search names no
+	// package, the object's metadata document. It fails closed if neither does.
 	SurfaceADT MutationSurface = iota
 
 	// SurfaceUI5 is the UI5/BSP filestore surface. Package resolution for
