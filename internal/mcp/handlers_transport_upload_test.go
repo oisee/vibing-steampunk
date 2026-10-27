@@ -151,7 +151,7 @@ func TestUploadTransportGates(t *testing.T) {
 		"no files":                                   {nil, map[string]any{}, "both files"},
 		"one file":                                   {nil, map[string]any{"cofile_path": co}, "both files"},
 		"unpaired files":                             {nil, map[string]any{"cofile_path": co, "datafile_path": filepath.Join(filepath.Dir(da), "R900002.XYZ")}, "not one request"},
-		"wrong name pattern":                         {nil, map[string]any{"cofile_path": filepath.Join(filepath.Dir(co), "cofile.txt"), "datafile_path": da}, "K<6 digits>"},
+		"wrong name pattern":                         {nil, map[string]any{"cofile_path": filepath.Join(filepath.Dir(co), "cofile.txt"), "datafile_path": da}, "K<6 alphanum>"},
 		"paths and contents both":                    {nil, map[string]any{"cofile_path": co, "datafile_path": da, "cofile_base64": "eA==", "datafile_base64": "eA=="}, "not both"},
 		"cofile that is not one": {nil, map[string]any{"cofile_name": "K900001.XYZ", "cofile_base64": base64.StdEncoding.EncodeToString([]byte("hello")),
 			"datafile_name": "R900001.XYZ", "datafile_base64": "AAE="}, "header"},
