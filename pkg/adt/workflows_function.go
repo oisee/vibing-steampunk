@@ -161,6 +161,14 @@ func (c *Client) writeFunctionModule(ctx context.Context, group, name, processin
 		}
 	}()
 
+	// Reuse SAP's recording request when the caller did not name one, just
+	// like the other source writers. Resolve it after cleanup is registered:
+	// a request rejected by policy must still release the acquired lock.
+	transport, err = c.resolveWriteTransport(transport, lock.CorrNr, "WriteFunctionModule")
+	if err != nil {
+		return err
+	}
+
 	if processingType != "" && !strings.EqualFold(processingType, info.ProcessingType) {
 		params := url.Values{}
 		params.Set("lockHandle", lock.LockHandle)
