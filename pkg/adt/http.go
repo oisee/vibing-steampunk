@@ -368,7 +368,11 @@ func (t *Transport) request(ctx context.Context, path string, opts *RequestOptio
 		// the failed attempt and the retry, and an unmarked probe there retires
 		// the session the lock handle belongs to (issue #91).
 		if err := t.fetchCSRFTokenWithReauth(ctx, !t.config.ReauthReadOnly, opts.Stateful); err != nil {
-			return nil, fmt.Errorf("refreshing CSRF token: %w", err)
+			// The 403 may not have been about the token at all. Keep SAP's own
+			// answer in front, and as an *APIError: callers decide on it, and
+			// a definite refusal must not read as a lost response.
+			refused := &APIError{StatusCode: resp.StatusCode, Message: string(body), Path: path}
+			return nil, fmt.Errorf("%w (refreshing CSRF token: %w)", refused, err)
 		}
 
 		// Retry the request
