@@ -16,6 +16,7 @@ type pinFake struct {
 	*httptest.Server
 	sid, client, user string
 	noSysInfo         bool   // answer 404 for the system information resource
+	noPreview         bool   // answer 404 for the data preview too (low 7.40 SPs)
 	logsys            string // T000-LOGSYS for the fallback
 
 	mu   sync.Mutex
@@ -39,6 +40,10 @@ func newPinFake(t *testing.T, sid, client, user string) *pinFake {
 			w.Header().Set("Content-Type", "application/vnd.sap.adt.core.http.systeminformation.v1+json")
 			fmt.Fprintf(w, `{"systemID":%q,"client":%q,"userName":%q,"userFullName":"Some One","language":"EN"}`, f.sid, f.client, f.user)
 		case "/sap/bc/adt/datapreview/freestyle":
+			if f.noPreview {
+				http.NotFound(w, r)
+				return
+			}
 			_, _ = w.Write([]byte(previewXML([]string{"MANDT", "LOGSYS"}, []string{f.client, f.logsys})))
 		case "/sap/bc/adt/cts/transportrequests":
 			fmt.Fprintf(w, `<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:name=%q/>`, f.user)
@@ -243,5 +248,74 @@ func TestPinFallsBackWhereSystemInformationIsMissing(t *testing.T) {
 	if _, err := c.transport.Request(context.Background(), pinReadPath, nil); !IsIdentityMismatch(err) ||
 		!strings.Contains(err.Error(), "could not confirm the system ID") {
 		t.Fatalf("want an unconfirmed-SID refusal, got %v", err)
+	}
+}
+
+// Where ADT names no SID, the identity fallback does, and the pin is checked
+// against its answer. A SID that T000 names is kept.
+func TestPinAsksTheFallbackWhereADTNamesNoSID(t *testing.T) {
+	calls := 0
+	answer := func(sid string) IdentityFallback {
+		return func(context.Context) (*Identity, error) {
+			calls++
+			return &Identity{SID: sid, Source: "test fallback"}, nil
+		}
+	}
+	pinned := func(f *pinFake, pin string, fb IdentityFallback) error {
+		c := NewClient(f.URL, "TESTUSER", "secret", WithClient("001"), WithExpect(mustPin(t, pin)))
+		if fb != nil {
+			c.SetIdentityFallback(fb)
+		}
+		_, err := c.transport.Request(context.Background(), pinReadPath, nil)
+		return err
+	}
+
+	// Neither the system information resource nor the data preview: T000
+	// cannot be read at all.
+	f := newPinFake(t, "", "001", "TESTUSER")
+	f.noSysInfo, f.noPreview = true, true
+	if err := pinned(f, "A4H.001/TESTUSER", nil); !strings.Contains(fmt.Sprint(err), "reading T000") {
+		t.Fatalf("without a fallback, want the T000 error, got %v", err)
+	}
+	if err := pinned(f, "A4H.001/TESTUSER", answer("a4h")); err != nil {
+		t.Fatalf("matching SID from the fallback: %v", err)
+	}
+	if err := pinned(f, "A4H.001/TESTUSER", answer("B4H")); !IsIdentityMismatch(err) {
+		t.Fatalf("want a refusal for the fallback's other SID, got %v", err)
+	}
+	// A failed fallback is final: it is not asked again on the next request.
+	failed := 0
+	failing := func(context.Context) (*Identity, error) {
+		failed++
+		return nil, fmt.Errorf("gateway closed")
+	}
+	c := NewClient(f.URL, "TESTUSER", "secret", WithClient("001"), WithExpect(mustPin(t, "A4H.001/TESTUSER")))
+	c.SetIdentityFallback(failing)
+	for i := 0; i < 2; i++ {
+		_, err := c.transport.Request(context.Background(), pinReadPath, nil)
+		if !IsIdentityMismatch(err) || !strings.Contains(err.Error(), "gateway closed") {
+			t.Fatalf("request %d: want a final refusal with the fallback's error, got %v", i, err)
+		}
+	}
+	if failed != 1 {
+		t.Errorf("the failed fallback was asked %d times, want 1", failed)
+	}
+
+	// T000 is read, but its logical system name carries no SID.
+	g := newPinFake(t, "", "001", "TESTUSER")
+	g.noSysInfo, g.logsys = true, ""
+	if err := pinned(g, "A4H.001", answer("A4H")); err != nil {
+		t.Fatalf("empty LOGSYS, matching SID from the fallback: %v", err)
+	}
+
+	// T000 names a SID: the fallback is not asked, and a mismatch stands.
+	before := calls
+	h := newPinFake(t, "", "001", "TESTUSER")
+	h.noSysInfo, h.logsys = true, "B4HCLNT001"
+	if err := pinned(h, "A4H.001", answer("A4H")); !IsIdentityMismatch(err) {
+		t.Fatalf("want the T000 mismatch to stand, got %v", err)
+	}
+	if calls != before {
+		t.Errorf("the fallback was asked although T000 named a SID")
 	}
 }
