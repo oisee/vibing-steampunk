@@ -364,8 +364,20 @@ func (d *Debugger) DetachDebuggee(ctx context.Context) error {
 
 // ADTStep executes one step: stepInto, stepOver, stepReturn, stepContinue.
 func (d *Debugger) ADTStep(ctx context.Context, method string) (*ADTResponse, error) {
+	return d.ADTStepTo(ctx, method, "")
+}
+
+// ADTStepTo executes a step that may name a target. stepRunToLine and
+// stepJumpToLine are the two that need one: SAP reads it from the uri
+// parameter as the target line's source URI with a #start= fragment, and
+// without it answers "Parameter uri could not be found". An empty uri sends
+// the step without one, which is what every other step wants.
+func (d *Debugger) ADTStepTo(ctx context.Context, method, uri string) (*ADTResponse, error) {
 	q := url.Values{}
 	q.Set("method", method)
+	if uri != "" {
+		q.Set("uri", uri)
+	}
 
 	res, err := d.ADT(ctx, "POST", "/sap/bc/adt/debugger?"+q.Encode(),
 		[]ADTHeader{{Name: "Accept", Value: acceptAnything}}, nil)
