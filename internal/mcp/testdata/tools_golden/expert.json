@@ -2977,7 +2977,7 @@
         "idempotentHint": false,
         "openWorldHint": true
       },
-      "description": "Retrieve ABAP transaction details",
+      "description": "Retrieve ABAP transaction details: description, package, and what it starts (program, screen, parameter, called transaction, OO class/method)",
       "inputSchema": {
         "properties": {
           "transaction_name": {
