@@ -477,9 +477,18 @@ func (c *Client) probeIdentity(ctx context.Context) (*Identity, error) {
 	pin := c.transport.identity.pin
 	if id == nil {
 		id = &Identity{Source: "T000 and the transport organizer"}
-		// vsp's own fixed statement, not caller SQL: the free-SQL safety
+		// vsp's own fixed statements, not caller SQL: the free-SQL safety
 		// switch is about what an agent may run, so it is not consulted.
-		res, qerr := c.runQueryRaw(ctx, "SELECT MANDT, LOGSYS FROM T000 WHERE MANDT = '"+c.config.Client+"'", 1)
+		// sy-sysid is the running system's SID. The logical system name is
+		// customizing, and a copied system keeps the source's (#382).
+		where := " FROM T000 WHERE MANDT = '" + c.config.Client + "'"
+		res, qerr := c.runQueryRaw(ctx, "SELECT @sy-sysid AS SID, MANDT, LOGSYS"+where, 1)
+		var apiErr *APIError
+		if qerr != nil && !(errors.As(qerr, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)) {
+			// A data preview that takes no host expression: the plain read.
+			// A refused logon is not asked twice.
+			res, qerr = c.runQueryRaw(ctx, "SELECT MANDT, LOGSYS"+where, 1)
+		}
 		if qerr != nil {
 			return nil, fmt.Errorf("reading T000: %w", qerr)
 		}
@@ -488,7 +497,10 @@ func (c *Client) probeIdentity(ctx context.Context) (*Identity, error) {
 			if v, ok := row["MANDT"].(string); ok {
 				id.Client = strings.TrimSpace(v)
 			}
-			if v, ok := row["LOGSYS"].(string); ok {
+			if v, ok := row["SID"].(string); ok && strings.TrimSpace(v) != "" {
+				id.SID = strings.ToUpper(strings.TrimSpace(v))
+				id.Source = "T000 with sy-sysid, and the transport organizer"
+			} else if v, ok := row["LOGSYS"].(string); ok {
 				if m := logsysSIDRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(v))); m != nil {
 					id.SID = m[1]
 				}

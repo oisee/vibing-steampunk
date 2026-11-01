@@ -3,6 +3,7 @@ package adt
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +18,9 @@ type pinFake struct {
 	sid, client, user string
 	noSysInfo         bool   // answer 404 for the system information resource
 	logsys            string // T000-LOGSYS for the fallback
+	// sysid answers SELECT @sy-sysid through the data preview. Empty: the
+	// release takes no host expression there, and the query fails with 400.
+	sysid string
 
 	mu   sync.Mutex
 	seen []string
@@ -39,6 +43,15 @@ func newPinFake(t *testing.T, sid, client, user string) *pinFake {
 			w.Header().Set("Content-Type", "application/vnd.sap.adt.core.http.systeminformation.v1+json")
 			fmt.Fprintf(w, `{"systemID":%q,"client":%q,"userName":%q,"userFullName":"Some One","language":"EN"}`, f.sid, f.client, f.user)
 		case "/sap/bc/adt/datapreview/freestyle":
+			body, _ := io.ReadAll(r.Body)
+			if strings.Contains(strings.ToLower(string(body)), "@sy-sysid") {
+				if f.sysid == "" {
+					http.Error(w, "host expressions are not supported here", http.StatusBadRequest)
+					return
+				}
+				_, _ = w.Write([]byte(previewXML([]string{"SID", "MANDT", "LOGSYS"}, []string{f.sysid, f.client, f.logsys})))
+				return
+			}
 			_, _ = w.Write([]byte(previewXML([]string{"MANDT", "LOGSYS"}, []string{f.client, f.logsys})))
 		case "/sap/bc/adt/cts/transportrequests":
 			fmt.Fprintf(w, `<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" tm:name=%q/>`, f.user)
@@ -243,5 +256,33 @@ func TestPinFallsBackWhereSystemInformationIsMissing(t *testing.T) {
 	if _, err := c.transport.Request(context.Background(), pinReadPath, nil); !IsIdentityMismatch(err) ||
 		!strings.Contains(err.Error(), "could not confirm the system ID") {
 		t.Fatalf("want an unconfirmed-SID refusal, got %v", err)
+	}
+}
+
+// Where the data preview takes SELECT @sy-sysid, the SID is the running
+// system's, not the logical system name's: a copied system keeps the source's
+// LOGSYS (#382).
+func TestPinReadsTheSIDFromSySysid(t *testing.T) {
+	pinned := func(f *pinFake, pin string) error {
+		c := NewClient(f.URL, "TESTUSER", "secret", WithClient("001"), WithExpect(mustPin(t, pin)))
+		_, err := c.transport.Request(context.Background(), pinReadPath, nil)
+		return err
+	}
+
+	// LOGSYS names another system: sy-sysid decides, both ways.
+	f := newPinFake(t, "", "001", "TESTUSER")
+	f.noSysInfo, f.sysid, f.logsys = true, "A4H", "B4HCLNT001"
+	if err := pinned(f, "A4H.001/TESTUSER"); err != nil {
+		t.Fatalf("the running SID matches the pin, LOGSYS names another: %v", err)
+	}
+	if err := pinned(f, "B4H.001/TESTUSER"); !IsIdentityMismatch(err) {
+		t.Fatalf("the pin names LOGSYS's SID, not the running one: want a refusal, got %v", err)
+	}
+
+	// A logical system name that carries no SID does not matter either.
+	g := newPinFake(t, "", "001", "TESTUSER")
+	g.noSysInfo, g.sysid, g.logsys = true, "a4h", "ERPDEV"
+	if err := pinned(g, "A4H.001"); err != nil {
+		t.Fatalf("sy-sysid with a free LOGSYS: %v", err)
 	}
 }
