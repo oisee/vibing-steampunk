@@ -65,7 +65,7 @@ func TestWrapSQL_BreaksAnINListWithoutBlanks(t *testing.T) {
 			t.Errorf("line %d is %d characters", n+1, len(line))
 		}
 	}
-	if strings.ReplaceAll(strings.ReplaceAll(w, "\n", ""), " ", "") != strings.ReplaceAll(q, " ", "") {
+	if strings.NewReplacer("\r", "", "\n", "", " ", "").Replace(w) != strings.ReplaceAll(q, " ", "") {
 		t.Error("wrapping changed more than blanks")
 	}
 }

@@ -14,13 +14,19 @@ func TestWrapSQL(t *testing.T) {
 	}
 	q := "SELECT a, b FROM t WHERE x IN ( " + strings.Join(lits, ", ") + " ) AND y = 'a value with spaces inside' ORDER BY sdldate DESCENDING, sdltime DESCENDING"
 	w := wrapSQL(q)
-	for n, line := range strings.Split(w, "\n") {
+	for n, line := range strings.Split(w, "\r\n") {
 		if len(line) > 200 {
 			t.Errorf("line %d is %d characters", n+1, len(line))
 		}
 	}
-	if strings.ReplaceAll(w, "\n", " ") != q {
+	if strings.Join(strings.Fields(w), " ") != strings.Join(strings.Fields(q), " ") {
 		t.Error("wrapping changed the statement's words")
+	}
+	// The data preview splits the text at CR+LF only (a bare LF is kept
+	// inside the statement and breaks its keyword search), so every break
+	// must be CR+LF.
+	if strings.Count(w, "\n") != strings.Count(w, "\r\n") {
+		t.Error("a line break is not CR+LF")
 	}
 	if !strings.Contains(w, "'a value with spaces inside'") {
 		t.Error("a literal was broken")

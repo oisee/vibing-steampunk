@@ -489,8 +489,13 @@ func wrapSQL(query string) string {
 				return
 			}
 		}
-		if lineLen > 0 && lineLen+1+len(word) > limit {
-			out.WriteByte('\n')
+		if lineLen > 0 && lineLen+2+len(word) > limit {
+			// CR+LF, not a bare LF: the data preview splits the text at
+			// CR+LF and joins the pieces with a blank before it looks for
+			// WHERE and GROUP BY. A bare LF is never split, the keyword
+			// search then fails, and the INTO clause it inserts lands in
+			// the middle of the statement (seen on 7.40).
+			out.WriteString("\r\n")
 			lineLen = 0
 		} else if lineLen > 0 {
 			out.WriteByte(' ')
@@ -510,7 +515,7 @@ func wrapSQL(query string) string {
 			emit(query[start:i])
 			start = i + 1
 			if query[i] == '\n' {
-				out.WriteByte('\n')
+				out.WriteString("\r\n")
 				lineLen = 0
 			}
 		}
