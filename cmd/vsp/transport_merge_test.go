@@ -6,9 +6,40 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/spf13/pflag"
 )
+
+func TestTransportToc_InvalidSelectionStopsBeforeConnecting(t *testing.T) {
+	flags := transportTocCmd.Flags()
+	oldTarget, _ := flags.GetString("target")
+	targetChanged := flags.Lookup("target").Changed
+	objectFlag := flags.Lookup("object")
+	if objectFlag == nil {
+		t.Fatal("object selection flag is missing")
+	}
+	oldObjects, _ := flags.GetStringArray("object")
+	objectsChanged := objectFlag.Changed
+	if err := flags.Set("target", "QAS"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = flags.Set("target", oldTarget)
+		flags.Lookup("target").Changed = targetChanged
+		_ = objectFlag.Value.(pflag.SliceValue).Replace(oldObjects)
+		objectFlag.Changed = objectsChanged
+	})
+	if err := flags.Set("object", "LIMU METH ZCL_TEST RUN"); err != nil {
+		t.Fatal(err)
+	}
+	err := transportTocCmd.RunE(transportTocCmd, []string{"TR-SRC"})
+	if err == nil || !strings.Contains(err.Error(), "R3TR") {
+		t.Fatalf("invalid selection reached connection resolution: %v", err)
+	}
+}
 
 // upgradeAuth is the credential a WebSocket upgrade to ZADT_VSP carried.
 type upgradeAuth struct {

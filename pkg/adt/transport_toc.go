@@ -34,6 +34,9 @@ type TransportOfCopiesOptions struct {
 	CTSProject string
 	// Release releases the transport of copies once it is filled.
 	Release bool
+	// Objects selects exact R3TR repository entries from the source.
+	// Nil copies the entire source; an explicit empty selection is refused.
+	Objects []TransportObjectKey
 }
 
 // TransportOfCopiesResult is what a copy did.
@@ -129,17 +132,41 @@ func (c *Client) copyToTransportOfCopies(ctx context.Context, bridge functionBri
 		return nil, err
 	}
 
-	details, err := c.GetTransport(ctx, source)
+	details, err := c.transportTree(ctx, source)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", source, err)
 	}
 	from, skipped := copySources(details)
+	if !strings.EqualFold(details.Number, source) {
+		found := false
+		from, skipped = nil, nil
+		for _, task := range details.Tasks {
+			if strings.EqualFold(task.Number, source) {
+				found = true
+				if len(task.Objects) > 0 {
+					from = []copySource{{Number: task.Number, Entries: task.Objects}}
+				}
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("task %s is not listed in parent request %s", source, details.Number)
+		}
+	}
 	if len(from) == 0 {
 		if len(skipped) > 0 {
 			return nil, fmt.Errorf("%s holds no objects in its tasks to copy; its request-level entries are not copied: %s",
 				source, describeSkips(skipped))
 		}
 		return nil, fmt.Errorf("%s holds no objects to copy", source)
+	}
+	if opts.Objects != nil {
+		var excluded []TransportOfCopiesSkip
+		from, excluded, err = selectCopyObjects(from, opts.Objects)
+		if err != nil {
+			return nil, err
+		}
+		skipped = append(skipped, excluded...)
 	}
 
 	// Every object the copy would carry must pass the package policy, before
@@ -172,32 +199,39 @@ func (c *Client) copyToTransportOfCopies(ctx context.Context, bridge functionBri
 		ReleaseStatus: "not requested", Skipped: skipped, PackageUnchecked: unchecked}
 	// Every list is tried, so the result says of each whether it was copied;
 	// one that fails does not hide the state of the others.
-	for _, src := range from {
-		out, err := bridge.CallRFC(ctx, "TR_COPY_COMM", map[string]any{
-			"WI_DIALOG":                "", // no dialog; an empty value turns the default 'X' off
-			"WI_TRKORR_FROM":           src.Number,
-			"WI_TRKORR_TO":             number,
-			"WI_WITHOUT_DOCUMENTATION": "X",
-		})
-		if err == nil && out.Subrc != 0 {
-			err = fmt.Errorf("sy-subrc %d%s", out.Subrc, withMessage(out.Message))
+	if opts.Objects != nil {
+		if err := c.fillSelectedCopy(ctx, bridge, res, from); err != nil {
+			res.ReleaseStatus = "not attempted: the selected copy is incomplete"
+			return res, res.incomplete(err.Error())
 		}
-		if err != nil {
-			res.Failed = append(res.Failed, TransportOfCopiesFailure{From: src.Number, Entries: entryNames(src.Entries),
-				Error: fmt.Sprintf("TR_COPY_COMM: %v", err)})
-			continue
+	} else {
+		for _, src := range from {
+			out, err := bridge.CallRFC(ctx, "TR_COPY_COMM", map[string]any{
+				"WI_DIALOG":                "", // no dialog; an empty value turns the default 'X' off
+				"WI_TRKORR_FROM":           src.Number,
+				"WI_TRKORR_TO":             number,
+				"WI_WITHOUT_DOCUMENTATION": "X",
+			})
+			if err == nil && out.Subrc != 0 {
+				err = fmt.Errorf("sy-subrc %d%s", out.Subrc, withMessage(out.Message))
+			}
+			if err != nil {
+				res.Failed = append(res.Failed, TransportOfCopiesFailure{From: src.Number, Entries: entryNames(src.Entries),
+					Error: fmt.Sprintf("TR_COPY_COMM: %v", err)})
+				continue
+			}
+			res.CopiedFrom = append(res.CopiedFrom, src.Number)
+			res.CopiedEntries = append(res.CopiedEntries, entryNames(src.Entries)...)
 		}
-		res.CopiedFrom = append(res.CopiedFrom, src.Number)
-		res.CopiedEntries = append(res.CopiedEntries, entryNames(src.Entries)...)
-	}
-	if d, err := c.GetTransport(ctx, number); err == nil {
-		res.Objects = d.Objects
-	}
-	if len(res.Failed) > 0 {
-		if opts.Release {
-			res.ReleaseStatus = "not attempted: the copy is incomplete"
+		if d, err := c.GetTransport(ctx, number); err == nil {
+			res.Objects = d.Objects
 		}
-		return res, res.incomplete(fmt.Sprintf("%d of %d list(s) failed to copy", len(res.Failed), len(from)))
+		if len(res.Failed) > 0 {
+			if opts.Release {
+				res.ReleaseStatus = "not attempted: the copy is incomplete"
+			}
+			return res, res.incomplete(fmt.Sprintf("%d of %d list(s) failed to copy", len(res.Failed), len(from)))
+		}
 	}
 
 	if opts.Release {
@@ -212,6 +246,126 @@ func (c *Client) copyToTransportOfCopies(ctx context.Context, bridge functionBri
 		res.ReleaseStatus = "released"
 	}
 	return res, nil
+}
+
+func selectCopyObjects(from []copySource, objects []TransportObjectKey) ([]copySource, []TransportOfCopiesSkip, error) {
+	if len(objects) == 0 {
+		return nil, nil, fmt.Errorf("objects selection must not be empty; omit it to copy the entire source")
+	}
+	wanted := map[string]bool{}
+	for _, key := range objects {
+		key = normalizedKey(key)
+		o := TransportObjectV2{PgmID: key.PgmID, Type: key.Object, Name: key.Name}
+		if err := validateCopyObject(key); err != nil {
+			return nil, nil, err
+		}
+		wanted[entryKey(o)] = false
+	}
+	var selected []copySource
+	var skipped []TransportOfCopiesSkip
+	for _, src := range from {
+		chosen := copySource{Number: src.Number}
+		for _, o := range src.Entries {
+			found, ok := wanted[entryKey(o)]
+			if ok {
+				if !found {
+					chosen.Entries = append(chosen.Entries, o)
+					wanted[entryKey(o)] = true
+				}
+			} else {
+				skipped = append(skipped, TransportOfCopiesSkip{Entry: entryName(o), Reason: "not selected"})
+			}
+		}
+		if len(chosen.Entries) > 0 {
+			selected = append(selected, chosen)
+		}
+	}
+	for _, key := range objects {
+		key = normalizedKey(key)
+		if !wanted[entryKey(TransportObjectV2{PgmID: key.PgmID, Type: key.Object, Name: key.Name})] {
+			return nil, nil, fmt.Errorf("selected object %s is not in the source's copyable object lists", key)
+		}
+	}
+	return selected, skipped, nil
+}
+
+// ParseTransportOfCopiesObjects parses an explicit, nonempty selection.
+// Callers leave Objects nil when the selection was omitted.
+func ParseTransportOfCopiesObjects(objects []string) ([]TransportObjectKey, error) {
+	if len(objects) == 0 {
+		return nil, fmt.Errorf("objects selection must not be empty; omit it to copy the entire source")
+	}
+	keys := make([]TransportObjectKey, 0, len(objects))
+	for _, object := range objects {
+		key, err := ParseTransportObject(object)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateCopyObject(key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func validateCopyObject(key TransportObjectKey) error {
+	o := TransportObjectV2{PgmID: key.PgmID, Type: key.Object, Name: key.Name}
+	if key.PgmID != "R3TR" || key.Object == "" || key.Name == "" || isTableContentsEntry(o) {
+		return fmt.Errorf("selection %q: only R3TR repository entries are supported, not LIMU or table contents", key.String())
+	}
+	return nil
+}
+
+func (c *Client) fillSelectedCopy(ctx context.Context, bridge functionBridge, res *TransportOfCopiesResult, from []copySource) error {
+	var entries []TransportEntry
+	expected := map[string]bool{}
+	for _, src := range from {
+		for _, o := range src.Entries {
+			entries = append(entries, TransportEntry{TransportObjectKey: TransportObjectKey{PgmID: o.PgmID, Object: o.Type, Name: o.Name}})
+			expected[entryKey(o)] = true
+		}
+	}
+	rows, _, err := entryRows(entries)
+	if err != nil {
+		return err
+	}
+	out, err := bridge.CallRFC(ctx, "TR_APPEND_TO_COMM_OBJS_KEYS", map[string]any{
+		"WI_TRKORR": res.Transport,
+		"WT_E071":   rows,
+		"IV_DIALOG": "",
+	})
+	if err == nil && out.Subrc != 0 {
+		err = fmt.Errorf("sy-subrc %d%s", out.Subrc, withMessage(out.Message))
+	}
+	if err != nil {
+		return fmt.Errorf("TR_APPEND_TO_COMM_OBJS_KEYS: %w", err)
+	}
+	for _, src := range from {
+		res.CopiedFrom = append(res.CopiedFrom, src.Number)
+		res.CopiedEntries = append(res.CopiedEntries, entryNames(src.Entries)...)
+	}
+	details, err := c.GetTransport(ctx, res.Transport)
+	if err != nil {
+		return fmt.Errorf("verifying the selected copy: %w", err)
+	}
+	if !strings.EqualFold(details.Number, res.Transport) {
+		return fmt.Errorf("verifying the selected copy: requested %s but received %s", res.Transport, details.Number)
+	}
+	res.Objects = details.Objects
+	for _, o := range res.Objects {
+		if !isObjectEntry(o) {
+			continue
+		}
+		if !expected[entryKey(o)] {
+			return fmt.Errorf("verifying the selected copy: unexpected entry %s", entryName(o))
+		}
+		delete(expected, entryKey(o))
+	}
+	if len(expected) != 0 {
+		return fmt.Errorf("verifying the selected copy: %d selected object(s) missing", len(expected))
+	}
+	return nil
 }
 
 // CheckTransportOfCopies runs the policy checks a transport of copies of

@@ -21,6 +21,13 @@ Transports:
   SAP(action="system", params={"type": "merge_transports", "source": ["A4HK900001", "A4HK900003"], "target": "A4HK900005"})
   SAP(action="system", params={"type": "move_transport_object", "object": "PROG ZDEMO", "from": "A4HK900001", "to": "A4HK900005"})
   SAP(action="system", params={"type": "copy_to_toc", "transport": "A4HK900001", "target": "QAS"})  - transport of copies, as SE01 (ZADT_VSP); "release": true releases it
+  SAP(action="system", params={"type": "copy_to_toc", "transport": "A4HK900002", "target": "QAS", "objects": ["R3TR CLAS ZCL_DEMO"], "release": true})
+    - transport may name a request or task; a task copies only its own objects, never its siblings.
+      Omit objects to copy the whole source. A nonempty objects array selects exact R3TR repository entries
+      already present in the source; LIMU and table contents (TABU/TDAT/VDAT/CDAT) are not selectable.
+      Every selected object must pass the same package policy before creation; an unfiltered source
+      containing a forbidden object is still refused. Selected contents are read back and checked exactly
+      before release; an incomplete or unverifiable copy is an error and remains unreleased.
   SAP(action="system", params={"type": "upload_transport", "cofile_path": "/in/K900001.DEV", "datafile_path": "/in/R900001.DEV"})
     - expert mode; writes both files into this system's DIR_TRANS, releases the job that adds the request to its import queue, answers "pending" with the job; never imports (STMS does)
   SAP(action="system", params={"type": "transport_status", "transport": "TR-EXAMPLE", "job": "12345678"})  - the upload's outcome: queued / pending / job_failed / unknown, read-only
