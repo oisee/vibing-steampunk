@@ -71,8 +71,12 @@ modifiable, from the request itself once it is released. The copy is
 TR_COPY_COMM with its dialog off, reached through ZADT_VSP's function bridge;
 the request is created over ADT. ADT takes a target without a client (QAS,
 not QAS.100). Nothing is released unless --release is given.
+Name a task to copy only its list. Repeat --object to select exact R3TR
+repository entries already in that list (not LIMU or table contents).
+Selected entries keep the same package checks and are verified before release.
 
   SAP_ENABLE_TRANSPORTS=true vsp -s devsys transport toc TR-A --target QAS
+  SAP_ENABLE_TRANSPORTS=true vsp -s devsys transport toc TR-TASK --target QAS --object "R3TR CLAS ZCL_DEMO" --release
   SAP_ENABLE_TRANSPORTS=true vsp -s devsys transport toc TR-A --target /GROUP/ --release`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -81,6 +85,16 @@ not QAS.100). Nothing is released unless --release is given.
 		opts.Description, _ = cmd.Flags().GetString("description")
 		opts.CTSProject, _ = cmd.Flags().GetString("cts-project")
 		opts.Release, _ = cmd.Flags().GetBool("release")
+		if cmd.Flags().Changed("object") {
+			names, err := cmd.Flags().GetStringArray("object")
+			if err != nil {
+				return err
+			}
+			opts.Objects, err = adt.ParseTransportOfCopiesObjects(names)
+			if err != nil {
+				return err
+			}
+		}
 		if opts.Target == "" {
 			return fmt.Errorf("--target <SYSTEM|/GROUP/> is required")
 		}
@@ -103,6 +117,9 @@ not QAS.100). Nothing is released unless --release is given.
 			fmt.Fprintln(os.Stderr)
 			for _, sk := range res.Skipped {
 				fmt.Fprintf(os.Stderr, "  skipped %s: %s\n", sk.Entry, sk.Reason)
+			}
+			for _, e := range res.PackageUnchecked {
+				fmt.Fprintf(os.Stderr, "  copied without a package check (table contents): %s\n", e)
 			}
 		}
 		return terr
@@ -262,6 +279,7 @@ func init() {
 	transportTocCmd.Flags().String("description", "", "Description; defaults to \"ToC \" and the original's")
 	transportTocCmd.Flags().String("cts-project", "", "CTS project; defaults to the system's cts_project")
 	transportTocCmd.Flags().Bool("release", false, "Release the transport of copies once it is filled")
+	transportTocCmd.Flags().StringArray("object", nil, "Select an exact R3TR repository entry from the source (repeatable)")
 	transportTocCmd.Flags().Bool("json", false, "Emit JSON")
 	transportAddCmd.Flags().StringArray("key", nil, "Table key of a TABU entry (repeatable)")
 	transportAddCmd.Flags().Bool("json", false, "Emit JSON")
