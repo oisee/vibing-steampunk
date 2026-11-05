@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/oisee/vibing-steampunk/pkg/cache"
@@ -44,6 +45,7 @@ type systemParams struct {
 	Insecure     bool
 	CookieFile   string
 	CookieString string
+	ClientCert   *tls.Certificate // mTLS client cert (macOS keychain), no password
 
 	// TransportCmd is the argv of a helper that carries every ADT request
 	// over its stdin/stdout and authenticates on its own.
@@ -188,14 +190,37 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// mTLS: SAP_CLIENT_CERT_CN (by CN) or SAP_CLIENT_CERT_ISSUER (freshest valid
+	// cert from that CA) loads a macOS keychain identity — no password.
+	var clientCert *tls.Certificate
+	certCN, certIss := os.Getenv("SAP_CLIENT_CERT_CN"), os.Getenv("SAP_CLIENT_CERT_ISSUER")
 	if len(transportCmd) > 0 {
 		// The helper authenticates; credentials of ours are refused, not
 		// silently dropped.
 		if user != "" || password != "" {
 			return nil, fmt.Errorf("%w (found: SAP_USER/SAP_PASSWORD)", adt.ErrTransportCmdAuth)
 		}
+		if certCN != "" || certIss != "" {
+			return nil, fmt.Errorf("%w (found: SAP_CLIENT_CERT_CN/SAP_CLIENT_CERT_ISSUER)", adt.ErrTransportCmdAuth)
+		}
+	} else if certCN != "" {
+		c, err := adt.LoadKeychainClientCert(certCN)
+		if err != nil {
+			return nil, fmt.Errorf("client cert (CN=%s): %w", certCN, err)
+		}
+		clientCert = c
+	} else if certIss != "" {
+		c, err := adt.LoadKeychainClientCertByIssuers(splitTrimCLI(certIss))
+		if err != nil {
+			return nil, fmt.Errorf("client cert (issuer=%s): %w", certIss, err)
+		}
+		clientCert = c
 	} else if user == "" || password == "" {
-		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_TRANSPORT_CMD)")
+		return nil, fmt.Errorf("SAP_USER and SAP_PASSWORD required (or SAP_TRANSPORT_CMD, or SAP_CLIENT_CERT_CN / SAP_CLIENT_CERT_ISSUER for mTLS)")
+	}
+	if clientCert != nil && user == "" && clientCert.Leaf != nil {
+		user = clientCert.Leaf.Subject.CommonName // effective SAP user = cert CN
 	}
 
 	cacheEnabled := strings.EqualFold(os.Getenv("VSP_CACHE"), "true")
@@ -215,6 +240,7 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		User:               user,
 		Password:           password,
 		TransportCmd:       transportCmd,
+		ClientCert:         clientCert,
 		Client:             getEnvOrDefault("SAP_CLIENT", "001"),
 		Language:           getEnvOrDefault("SAP_LANGUAGE", "EN"),
 		Insecure:           os.Getenv("SAP_INSECURE") == "true",
@@ -434,6 +460,10 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 		client := adt.NewClient(params.URL, "", "", opts...)
 		trackTransportCmd(client.CloseTransport)
 		return client, nil
+	}
+
+	if params.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(params.ClientCert))
 	}
 
 	// Browser single sign-on: cookies are fetched on demand and refreshed
@@ -871,4 +901,15 @@ var systemsInitCmd = &cobra.Command{
 		fmt.Println("Set passwords via environment variables: VSP_<SYSTEM>_PASSWORD")
 		return nil
 	},
+}
+
+// splitTrimCLI splits a comma-separated issuer list (see SAP_CLIENT_CERT_ISSUER).
+func splitTrimCLI(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
