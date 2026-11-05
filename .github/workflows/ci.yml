@@ -54,12 +54,14 @@ jobs:
       # Cross-compilation only guards main; a release already builds its six
       # targets, and PRs do not need to pay for it. linux/386, linux/arm and
       # windows/386 are not released since v2.60.0, but `vsp update` tells users
-      # there to `go install`, so they must keep compiling.
+      # there to `go install`, so they must keep compiling. darwin/arm64 is in
+      # the list because it is the one target where a cgo dependency slips past
+      # a Linux build and only fails at release time.
       - name: Cross-compile check
         if: github.event_name == 'push'
         run: |
-          for target in linux/amd64 linux/386 linux/arm windows/amd64 windows/386; do
-            GOOS=${target%/*} GOARCH=${target#*/} go build ./... || exit 1
+          for target in linux/amd64 linux/386 linux/arm windows/amd64 windows/386 darwin/arm64; do
+            CGO_ENABLED=0 GOOS=${target%/*} GOARCH=${target#*/} go build ./... || exit 1
           done
 
   vet:
