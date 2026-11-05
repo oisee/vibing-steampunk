@@ -72,21 +72,35 @@ func isNotFound(err error) bool {
 // It returns a map of include names to source code.
 // Supports namespaced classes like /UI5/CL_REPOSITORY_LOAD.
 func (c *Client) GetClass(ctx context.Context, className string) (map[string]string, error) {
+	source, err := c.classMainSource(ctx, className, "")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"main": source}, nil
+}
+
+// versionQuery names the version a read asks for; "" leaves the choice to SAP.
+func versionQuery(version string) url.Values {
+	if version == "" {
+		return nil
+	}
+	return url.Values{"version": {version}}
+}
+
+// classMainSource reads source/main, in the version named ("" = SAP's choice).
+func (c *Client) classMainSource(ctx context.Context, className, version string) (string, error) {
 	className = strings.ToUpper(className)
 
 	// Go directly to source/main endpoint (URL encode for namespaced objects)
 	sourcePath := fmt.Sprintf("/sap/bc/adt/oo/classes/%s/source/main", url.PathEscape(className))
 	resp, err := c.transport.Request(ctx, sourcePath, &RequestOptions{
 		Method: http.MethodGet,
+		Query:  versionQuery(version),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("getting class source: %w", err)
+		return "", fmt.Errorf("getting class source: %w", err)
 	}
-
-	sources := make(map[string]string)
-	sources["main"] = string(resp.Body)
-
-	return sources, nil
+	return string(resp.Body), nil
 }
 
 // GetClassSource retrieves just the main source code of an ABAP class.
@@ -101,6 +115,12 @@ func (c *Client) GetClassSource(ctx context.Context, className string) (string, 
 // GetClassMethods retrieves the list of methods in a class with their source line boundaries.
 // This is useful for method-level source operations (GetSource with method, EditSource with method).
 func (c *Client) GetClassMethods(ctx context.Context, className string) ([]MethodInfo, error) {
+	return c.classMethods(ctx, className, "")
+}
+
+// classMethods reads the method line ranges, in the version named ("" = SAP's
+// choice, which for objectstructure is always the inactive version).
+func (c *Client) classMethods(ctx context.Context, className, version string) ([]MethodInfo, error) {
 	// The name may arrive already escaped from a URL; normalize to the raw
 	// name so it is escaped exactly once below.
 	className = strings.ToUpper(unescapeObjectName(className))
@@ -110,6 +130,7 @@ func (c *Client) GetClassMethods(ctx context.Context, className string) ([]Metho
 	resp, err := c.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodGet,
 		Accept: "application/vnd.sap.adt.objectstructure.v2+xml",
+		Query:  versionQuery(version),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("getting class object structure: %w", err)
@@ -147,8 +168,30 @@ func (c *Client) GetClassMethodSource(ctx context.Context, className, methodName
 	className = strings.ToUpper(className)
 	methodName = strings.ToUpper(methodName)
 
+	// The source as a whole-class read gets it: SAP gives the reader their own
+	// unactivated edits, and everyone else the active version.
+	fullSource, err := c.classMainSource(ctx, className, "")
+	if err != nil {
+		return "", fmt.Errorf("getting class source: %w", err)
+	}
+
+	// The line ranges must come from that same version. Unversioned, the
+	// structure is always read inactive: that cut the active source at another
+	// user's inactive line numbers, and rewrote a stale inactive ==CS cache under
+	// the reader (seen on a 7.50 system, 2026-11-02).
+	version := "inactive"
+	active, err := c.classMainSource(ctx, className, "active")
+	switch {
+	case err == nil && active == fullSource:
+		version = "active"
+	case err != nil && !isNotFound(err):
+		// A never-activated class is assumed to answer not found (not seen on a
+		// system yet); if SAP answers otherwise, this error is what the reader gets.
+		return "", fmt.Errorf("getting active class source: %w", err)
+	}
+
 	// Get method boundaries
-	methods, err := c.GetClassMethods(ctx, className)
+	methods, err := c.classMethods(ctx, className, version)
 	if err != nil {
 		return "", fmt.Errorf("getting class methods: %w", err)
 	}
@@ -167,12 +210,6 @@ func (c *Client) GetClassMethodSource(ctx context.Context, className, methodName
 
 	if method.ImplementationStart == 0 || method.ImplementationEnd == 0 {
 		return "", fmt.Errorf("method %s has no implementation", methodName)
-	}
-
-	// Get full class source
-	fullSource, err := c.GetClassSource(ctx, className)
-	if err != nil {
-		return "", fmt.Errorf("getting class source: %w", err)
 	}
 
 	// Extract method lines
