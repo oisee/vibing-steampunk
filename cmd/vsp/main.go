@@ -301,19 +301,22 @@ func runServer(cmd *cobra.Command, args []string) error {
 	// stays up, every tool call returns the real error, and an SLC (re)login
 	// mid-session heals the next handshake without a restart.
 	var certLoader func() (*tls.Certificate, error)
+	var certCurrent func() ([]byte, error)
 	var certDesc string
 	if clientCertCN != "" {
 		cn := clientCertCN
 		certDesc = "CN=" + cn
 		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCert(cn) }
+		certCurrent = func() ([]byte, error) { return adt.CurrentKeychainClientCert(cn) }
 	} else if clientCertIssuer != "" {
 		// comma-separated issuer CNs: fleets often have more than one SLS/CA
 		issuers := splitTrim(clientCertIssuer)
 		certDesc = "issuer=" + strings.Join(issuers, " | ")
 		certLoader = func() (*tls.Certificate, error) { return adt.LoadKeychainClientCertByIssuers(issuers) }
+		certCurrent = func() ([]byte, error) { return adt.CurrentKeychainClientCertByIssuers(issuers) }
 	}
 	if certLoader != nil {
-		provider := adt.NewCachingCertProvider(certLoader)
+		provider := adt.NewCachingCertProvider(certLoader, certCurrent)
 		cfg.ClientCertProvider = provider
 		// Eager best-effort resolve: derives the effective username (cert CN)
 		// and gives immediate feedback — but failure is a warning, not an exit.

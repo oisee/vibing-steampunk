@@ -23,3 +23,13 @@ func LoadKeychainClientCertByIssuer(issuerCN string) (*tls.Certificate, error) {
 func LoadKeychainClientCertByIssuers(issuerCNs []string) (*tls.Certificate, error) {
 	return nil, errors.New(errKeychainUnsupported)
 }
+
+// CurrentKeychainClientCert is only implemented on macOS.
+func CurrentKeychainClientCert(cn string) ([]byte, error) {
+	return nil, errors.New(errKeychainUnsupported)
+}
+
+// CurrentKeychainClientCertByIssuers is only implemented on macOS.
+func CurrentKeychainClientCertByIssuers(issuerCNs []string) ([]byte, error) {
+	return nil, errors.New(errKeychainUnsupported)
+}

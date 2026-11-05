@@ -65,3 +65,31 @@ func TestLoadKeychainClientCertByIssuer_Live(t *testing.T) {
 		t.Errorf("chain ends in the self-signed root %q; roots are not sent", last.Subject.CommonName)
 	}
 }
+
+// TestCurrentKeychainClientCertByIssuers_Live runs only against a real keychain:
+//
+//	VSP_TEST_KEYCHAIN_ISSUER="SAP PKI Certificate Service Client CA" go test ./pkg/adt -run Live -v
+//
+// The probe must name the same leaf the loader picks, and must not use the
+// private key: run from an unsigned test binary, any key use would raise a
+// keychain dialog.
+func TestCurrentKeychainClientCertByIssuers_Live(t *testing.T) {
+	issuer := os.Getenv("VSP_TEST_KEYCHAIN_ISSUER")
+	if issuer == "" {
+		t.Skip("set VSP_TEST_KEYCHAIN_ISSUER to run against the login keychain")
+	}
+
+	raw, err := CurrentKeychainClientCertByIssuers([]string{issuer})
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	cert, err := LoadKeychainClientCertByIssuers([]string{issuer})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !bytes.Equal(raw, cert.Leaf.Raw) {
+		t.Fatalf("probe leaf differs from loaded leaf (CN=%q)", cert.Leaf.Subject.CommonName)
+	}
+	t.Logf("leaf CN=%q NotBefore=%s NotAfter=%s", cert.Leaf.Subject.CommonName,
+		cert.Leaf.NotBefore.Local().Format("15:04:05"), cert.Leaf.NotAfter.Local().Format("Jan 2 15:04:05"))
+}

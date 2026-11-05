@@ -2,6 +2,7 @@
 package adt
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -153,7 +154,15 @@ func (c *Config) HasClientCert() bool {
 // cert is reused until shortly before its NotAfter, then re-resolved. Failed
 // loads are retried on every call (so an SLC login mid-session heals the next
 // handshake without a restart).
-func NewCachingCertProvider(load func() (*tls.Certificate, error)) func() (*tls.Certificate, error) {
+//
+// current, when non-nil, reports the DER leaf the loader would pick right now,
+// without touching the private key. The cache is only reused while that leaf
+// is the cached one. Expiry alone is not enough: Secure Login Client mints a new
+// keypair at every enrolment (machine start, re-login) and deletes the old one
+// hours before the old certificate expires. A certificate cached across that
+// roll signs with a key that no longer exists: macOS shows a dialog no password
+// can satisfy, and the handshake fails with CFError -128 until a restart.
+func NewCachingCertProvider(load func() (*tls.Certificate, error), current func() ([]byte, error)) func() (*tls.Certificate, error) {
 	var mu sync.Mutex
 	var cached *tls.Certificate
 	return func() (*tls.Certificate, error) {
@@ -161,7 +170,14 @@ func NewCachingCertProvider(load func() (*tls.Certificate, error)) func() (*tls.
 		defer mu.Unlock()
 		if cached != nil && cached.Leaf != nil &&
 			time.Now().Add(5*time.Minute).Before(cached.Leaf.NotAfter) {
-			return cached, nil
+			if current == nil {
+				return cached, nil
+			}
+			if raw, err := current(); err == nil && bytes.Equal(raw, cached.Leaf.Raw) {
+				return cached, nil
+			}
+			// The keychain moved on, or cannot say: never fall back to a key that may be gone.
+			cached = nil
 		}
 		cert, err := load()
 		if err != nil {
