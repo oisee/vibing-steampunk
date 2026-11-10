@@ -51,3 +51,46 @@ func TestLikeAny(t *testing.T) {
 		t.Errorf("got %s %v", where, args)
 	}
 }
+
+func TestUniquePathKeepsBothSources(t *testing.T) {
+	used := map[string]bool{}
+	a := uniquePath(used, "src/"+FileName("Z/A"), ".abap", "Z/A", "A")
+	b := uniquePath(used, "src/"+FileName("Z#A"), ".abap", "Z#A", "A")
+	if a == b {
+		t.Fatalf("Z/A and Z#A share %s", a)
+	}
+	if a != "src/Z#A.abap" || !strings.HasPrefix(b, "src/Z#A.") || !strings.HasSuffix(b, ".abap") {
+		t.Errorf("got %s and %s", a, b)
+	}
+}
+
+func TestPrepareOutFollowsSymlinks(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, ".git"), []byte("gitdir: elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(filepath.Join(repo, "sub"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareOut(filepath.Join(link, "dump"), false); err == nil || !strings.Contains(err.Error(), "git working tree") {
+		t.Fatalf("a symlink into a repo was not refused: %v", err)
+	}
+}
+
+func TestPrepareOutIsPrivate(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "dump")
+	if err := prepareOut(out, false); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm()&0o077 != 0 {
+		t.Errorf("dump directory is %v, readable by others", st.Mode().Perm())
+	}
+}

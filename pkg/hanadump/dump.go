@@ -15,6 +15,13 @@ import (
 	"time"
 )
 
+// Dumps are private: directories and files are readable by their owner only,
+// whatever the umask.
+const (
+	dirMode  = 0o700
+	fileMode = 0o600
+)
+
 // Table is one repository table dumped beside the sources: its rows whose
 // Column matches the name patterns.
 type Table struct {
@@ -91,6 +98,10 @@ type Manifest struct {
 	Catalog    bool           `json:"catalog"`
 	Tables     []Table        `json:"tables"`
 	Counts     map[string]int `json:"counts"`
+	// MissingTables are tables the database refused to select from — not in
+	// this release, or not readable by the user. A table that failed part way
+	// through is not here: that fails the dump, and no manifest is written.
+	MissingTables []string `json:"missing_tables,omitempty"`
 }
 
 // SourceRecord is one line of reposrc.jsonl.
@@ -103,7 +114,10 @@ type SourceRecord struct {
 	Lines     int    `json:"lines"`
 	SHA256    string `json:"sha256,omitempty"`
 	File      string `json:"file,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// Empty marks a row whose DATA is NULL or empty: no file is written,
+	// because a file would show a line the database does not hold.
+	Empty bool   `json:"empty,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // Run writes the dump: src/*.abap, reposrc.jsonl, tables/<NAME>.jsonl and
@@ -141,13 +155,18 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 	for _, t := range opts.Tables {
-		n, err := dumpTable(ctx, db, opts, t)
-		if err != nil {
+		n, missing, err := dumpTable(ctx, db, opts, t)
+		if missing {
 			// A table the release does not have is a fact about the system,
 			// not a reason to lose the sources already written.
-			logf("table %s: %v", t.Name, err)
-			m.Counts["table_errors"]++
+			logf("table %s: not selectable: %v", t.Name, err)
+			m.MissingTables = append(m.MissingTables, t.Name)
 			continue
+		}
+		if err != nil {
+			// Part way through: the file is incomplete. Fail, and leave no
+			// manifest, so the dump cannot be mistaken for a finished one.
+			return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 		}
 		m.Counts["rows_"+t.Name] = n
 		logf("table %s: %d rows", t.Name, n)
@@ -161,7 +180,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 
 	m.Finished = time.Now().UTC()
 	b, _ := json.MarshalIndent(m, "", "  ")
-	return m, os.WriteFile(filepath.Join(opts.Out, "manifest.json"), append(b, '\n'), 0o644)
+	return m, os.WriteFile(filepath.Join(opts.Out, "manifest.json"), append(b, '\n'), fileMode)
 }
 
 func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, logf func(string, ...any)) error {
@@ -177,7 +196,7 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 	}
 	defer rows.Close()
 
-	if err := os.MkdirAll(filepath.Join(opts.Out, "src"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(opts.Out, "src"), dirMode); err != nil {
 		return err
 	}
 	f, err := os.Create(filepath.Join(opts.Out, "reposrc.jsonl"))
@@ -187,6 +206,7 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 	defer f.Close()
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
+	used := map[string]bool{}
 
 	for rows.Next() {
 		var (
@@ -203,16 +223,24 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 			return fmt.Errorf("hanadump: REPOSRC row: %w", err)
 		}
 		r.ChangedBy, r.ChangedOn, r.MaxLine = by.String, on.String, int(maxLine.Int64)
+		if len(data) == 0 {
+			r.Empty = true
+			m.Counts["sources_empty"]++
+			if err := enc.Encode(r); err != nil {
+				return err
+			}
+			continue
+		}
 		lines, derr := DecodeSource(data)
 		if derr != nil {
 			// Lossless even when undecodable: keep the column as stored, so
 			// a better decoder can be run later without the database.
 			r.Error = derr.Error()
-			r.File = "undecoded/" + FileName(r.Program) + "." + strings.ToLower(r.State) + ".bin"
-			if err := os.MkdirAll(filepath.Join(opts.Out, "undecoded"), 0o755); err != nil {
+			r.File = uniquePath(used, "undecoded/"+FileName(r.Program)+"."+strings.ToLower(r.State), ".bin", r.Program, r.State)
+			if err := os.MkdirAll(filepath.Join(opts.Out, "undecoded"), dirMode); err != nil {
 				return err
 			}
-			if err := os.WriteFile(filepath.Join(opts.Out, r.File), data, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(opts.Out, r.File), data, fileMode); err != nil {
 				return err
 			}
 			m.Counts["source_errors"]++
@@ -220,12 +248,12 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 			text := strings.Join(lines, "\n") + "\n"
 			sum := sha256.Sum256([]byte(text))
 			r.Lines, r.SHA256 = len(lines), hex.EncodeToString(sum[:])
-			r.File = "src/" + FileName(r.Program)
+			base := "src/" + FileName(r.Program)
 			if r.State != "A" {
-				r.File += "." + strings.ToLower(r.State)
+				base += "." + strings.ToLower(r.State)
 			}
-			r.File += ".abap"
-			if err := os.WriteFile(filepath.Join(opts.Out, r.File), []byte(text), 0o644); err != nil {
+			r.File = uniquePath(used, base, ".abap", r.Program, r.State)
+			if err := os.WriteFile(filepath.Join(opts.Out, r.File), []byte(text), fileMode); err != nil {
 				return err
 			}
 			m.Counts["sources"]++
@@ -246,20 +274,20 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 
 // dumpTable writes every column of the matching rows as JSON objects. Binary
 // values become "0x" followed by hex, so a row survives the round trip.
-func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, error) {
+func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (n int, missing bool, err error) {
 	where, args := likeAny(t.Column, opts.Names)
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, t.Name, where), args...)
 	if err != nil {
-		return 0, err
+		return 0, true, err
 	}
 	defer rows.Close()
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	types, err := rows.ColumnTypes()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	// Character columns may arrive as bytes (go-hdb hands VARCHAR over that
 	// way); they are text and are written as text. Only binary types stay hex.
@@ -270,12 +298,12 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, err
 			text[i] = true
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(opts.Out, "tables"), 0o755); err != nil {
-		return 0, err
+	if err := os.MkdirAll(filepath.Join(opts.Out, "tables"), dirMode); err != nil {
+		return 0, false, err
 	}
 	f, err := os.Create(filepath.Join(opts.Out, "tables", t.Name+".jsonl"))
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer f.Close()
 	w := bufio.NewWriter(f)
@@ -286,10 +314,9 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, err
 	for i := range vals {
 		ptrs[i] = &vals[i]
 	}
-	n := 0
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
-			return n, err
+			return n, false, err
 		}
 		row := make(map[string]any, len(cols))
 		for i, c := range cols {
@@ -300,14 +327,14 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, err
 			row[c] = jsonValue(vals[i])
 		}
 		if err := enc.Encode(row); err != nil {
-			return n, err
+			return n, false, err
 		}
 		n++
 	}
 	if err := rows.Err(); err != nil {
-		return n, err
+		return n, false, err
 	}
-	return n, w.Flush()
+	return n, false, w.Flush()
 }
 
 func jsonValue(v any) any {
@@ -345,12 +372,47 @@ func isIdent(s string) bool {
 	return true
 }
 
+// uniquePath returns base+ext, or — when another row already took that path,
+// as `Z/A` and `Z#A` would — base, a dot, eight hex digits of the program
+// name's hash, and ext. No source overwrites another.
+func uniquePath(used map[string]bool, base, ext, program, state string) string {
+	p := base + ext
+	if used[p] {
+		sum := sha256.Sum256([]byte(program + "\x00" + state))
+		p = base + "." + hex.EncodeToString(sum[:4]) + ext
+	}
+	used[p] = true
+	return p
+}
+
+// resolved follows symlinks on the part of path that exists, so the git
+// check below looks at where the dump will really land.
+func resolved(path string) (string, error) {
+	rest := ""
+	for d := path; ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil {
+			real, err := filepath.EvalSymlinks(d)
+			if err != nil {
+				return "", err
+			}
+			return filepath.Join(real, rest), nil
+		}
+		if filepath.Dir(d) == d {
+			return path, nil
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+	}
+}
+
 // prepareOut makes the output directory and refuses two mistakes: writing
 // over an earlier dump, and writing into a git working tree, from which a
 // dump of someone's repository is one `git add .` away from being published.
 func prepareOut(out string, allowInRepo bool) error {
 	abs, err := filepath.Abs(out)
 	if err != nil {
+		return err
+	}
+	if abs, err = resolved(abs); err != nil {
 		return err
 	}
 	if !allowInRepo {
@@ -366,7 +428,7 @@ func prepareOut(out string, allowInRepo bool) error {
 	entries, err := os.ReadDir(abs)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return os.MkdirAll(abs, 0o755)
+		return os.MkdirAll(abs, dirMode)
 	case err != nil:
 		return err
 	case len(entries) > 0:

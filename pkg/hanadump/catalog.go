@@ -48,7 +48,7 @@ type catalogObject struct{ schema, name, typ string }
 func dumpCatalog(ctx context.Context, db *sql.DB, opts Options, m *Manifest, logf func(string, ...any)) error {
 	dir := filepath.Join(opts.Out, "catalog")
 	for _, d := range []string{"procedures", "functions", "views", "tables"} {
-		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(dir, d), dirMode); err != nil {
 			return err
 		}
 	}
@@ -108,7 +108,7 @@ func dumpCatalog(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 			rec.File = "catalog/" + strings.ToLower(o.typ) + "s/" + FileName(o.schema+"."+o.name) + ".sql"
 			sum := sha256.Sum256([]byte(text))
 			rec.SHA256 = hex.EncodeToString(sum[:])
-			if err := os.WriteFile(filepath.Join(opts.Out, rec.File), []byte(text), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(opts.Out, rec.File), []byte(text), fileMode); err != nil {
 				return err
 			}
 			m.Counts["catalog_"+strings.ToLower(o.typ)+"s"]++
