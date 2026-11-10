@@ -5,6 +5,7 @@ go 1.26.0
 toolchain go1.26.8
 
 require (
+	github.com/SAP/go-hdb v1.21.0
 	github.com/chromedp/cdproto v0.0.0-20260912003405-686a5c723acc
 	github.com/chromedp/chromedp v0.16.0
 	github.com/gorilla/websocket v1.5.3
@@ -16,7 +17,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/yuin/gopher-lua v1.1.2
 	golang.org/x/net v0.59.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
@@ -46,7 +47,7 @@ require (
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	modernc.org/libc v1.75.7 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
