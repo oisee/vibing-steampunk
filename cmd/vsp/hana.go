@@ -57,6 +57,7 @@ func init() {
 	f.String("schema", "", "ABAP schema, e.g. SAPA4H or SAPABAP1")
 	f.StringArray("name", nil, "LIKE pattern for program and object names (repeatable)")
 	f.Bool("inactive", false, "also dump inactive versions")
+	f.Bool("catalog", false, "also dump definitions of matching database procedures/functions (AMDP) and the views and tables they read")
 	f.String("provenance", "", "where this content comes from and under what rights; written to the manifest")
 	f.String("out", "", "output directory (new or empty, outside git)")
 	f.Bool("allow-in-repo", false, "permit an output directory inside a git working tree")
@@ -77,6 +78,7 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 	schema, _ := f.GetString("schema")
 	names, _ := f.GetStringArray("name")
 	inactive, _ := f.GetBool("inactive")
+	catalog, _ := f.GetBool("catalog")
 	provenance, _ := f.GetString("provenance")
 	out, _ := f.GetString("out")
 	allowInRepo, _ := f.GetBool("allow-in-repo")
@@ -104,11 +106,12 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 	}
 
 	m, err := hanadump.Run(ctx, db, hanadump.Options{
-		Schema: schema, Names: names, Inactive: inactive, Out: out,
+		Schema: schema, Names: names, Inactive: inactive, Catalog: catalog, Out: out,
 		Provenance:  provenance,
 		Connection:  hanadump.Connection{Host: host, Port: port, User: user, Database: database},
 		AllowInRepo: allowInRepo,
 		BlobInto:    func(dst *[]byte) any { return (*hdbBlob)(dst) },
+		TextInto:    func(dst *string) any { return (*hdbText)(dst) },
 		Log: func(format string, args ...any) {
 			fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...)
 		},
@@ -131,4 +134,15 @@ func (b *hdbBlob) Scan(src any) error {
 		return nil
 	}
 	return hdb.ScanLobBytes(src, (*[]byte)(b))
+}
+
+// hdbText receives a character LOB from go-hdb.
+type hdbText string
+
+func (t *hdbText) Scan(src any) error {
+	if src == nil {
+		*t = ""
+		return nil
+	}
+	return hdb.ScanLobString(src, (*string)(t))
 }

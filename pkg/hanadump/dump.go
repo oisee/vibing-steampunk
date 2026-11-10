@@ -63,7 +63,13 @@ type Options struct {
 	// bytes land in *dst. Drivers that hand out LOB locators (go-hdb does)
 	// need their own scanner; nil means scanning into *dst directly.
 	BlobInto func(dst *[]byte) any
-	Log      func(format string, args ...any)
+	// TextInto is BlobInto for character LOBs (NCLOB definitions).
+	TextInto func(dst *string) any
+	// Catalog also dumps the definitions of database procedures and
+	// functions matching Names (AMDP methods are "<CLASS>=><METHOD>") and,
+	// transitively, the views and tables they read — under catalog/.
+	Catalog bool
+	Log     func(format string, args ...any)
 }
 
 // Manifest is written last, as manifest.json, and says what the dump holds.
@@ -76,6 +82,7 @@ type Manifest struct {
 	Schema     string         `json:"schema"`
 	Names      []string       `json:"names"`
 	Inactive   bool           `json:"inactive"`
+	Catalog    bool           `json:"catalog"`
 	Tables     []Table        `json:"tables"`
 	Counts     map[string]int `json:"counts"`
 }
@@ -121,7 +128,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	m := &Manifest{
 		Tool: "vsp hana dump", Started: time.Now().UTC(), Provenance: opts.Provenance,
 		Connection: opts.Connection, Schema: opts.Schema, Names: opts.Names,
-		Inactive: opts.Inactive, Tables: opts.Tables, Counts: map[string]int{},
+		Inactive: opts.Inactive, Catalog: opts.Catalog, Tables: opts.Tables, Counts: map[string]int{},
 	}
 
 	if err := dumpSources(ctx, db, opts, m, logf); err != nil {
@@ -138,6 +145,12 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		}
 		m.Counts["rows_"+t.Name] = n
 		logf("table %s: %d rows", t.Name, n)
+	}
+
+	if opts.Catalog {
+		if err := dumpCatalog(ctx, db, opts, m, logf); err != nil {
+			return nil, err
+		}
 	}
 
 	m.Finished = time.Now().UTC()
