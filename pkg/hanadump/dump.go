@@ -23,8 +23,9 @@ type Table struct {
 }
 
 // DefaultTables are the tables a converter needs to put sources back into
-// objects: the object directory, program attributes, class method includes,
-// function modules, classes and function groups.
+// objects — the object directory, program attributes, class method includes,
+// function modules, classes and function groups — and to order them by what
+// refers to what.
 var DefaultTables = []Table{
 	{"TADIR", "OBJ_NAME"},
 	{"TRDIR", "NAME"},
@@ -32,6 +33,11 @@ var DefaultTables = []Table{
 	{"TFDIR", "FUNCNAME"},
 	{"SEOCLASS", "CLSNAME"},
 	{"TLIBG", "AREA"},
+	// SAP's own where-used index, by the including program: what each
+	// source refers to. Dependencies come from here rather than a parser.
+	{"WBCROSSGT", "INCLUDE"},
+	{"WBCROSSI", "INCLUDE"},
+	{"CROSS", "INCLUDE"},
 }
 
 // Connection describes where the dump was read from, for the manifest. It
