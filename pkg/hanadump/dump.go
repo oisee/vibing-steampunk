@@ -257,6 +257,19 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, err
 	if err != nil {
 		return 0, err
 	}
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return 0, err
+	}
+	// Character columns may arrive as bytes (go-hdb hands VARCHAR over that
+	// way); they are text and are written as text. Only binary types stay hex.
+	text := make([]bool, len(cols))
+	for i, t := range types {
+		switch t.DatabaseTypeName() {
+		case "VARCHAR", "NVARCHAR", "CHAR", "NCHAR", "ALPHANUM", "SHORTTEXT", "CLOB", "NCLOB", "STRING", "NSTRING":
+			text[i] = true
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(opts.Out, "tables"), 0o755); err != nil {
 		return 0, err
 	}
@@ -280,6 +293,10 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (int, err
 		}
 		row := make(map[string]any, len(cols))
 		for i, c := range cols {
+			if b, ok := vals[i].([]byte); ok && text[i] {
+				row[c] = string(b)
+				continue
+			}
 			row[c] = jsonValue(vals[i])
 		}
 		if err := enc.Encode(row); err != nil {
