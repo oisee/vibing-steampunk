@@ -60,6 +60,7 @@ func init() {
 	f.StringArray("package", nil, "LIKE pattern for packages (TADIR DEVCLASS, repeatable): their objects are dumped as if named")
 	f.Bool("ddic", false, "also dump the dictionary rows (DD02L/DD03L/DD04L/DD01L/DD07L/DD40L, texts) and CDS sources (DDDDLSRC) of the selected names")
 	f.StringArray("table", nil, "raw table, repeatable: NAME or NAME:COLUMN=PATTERN[,PATTERN]; NAME may be a LIKE pattern (/IWBEP/I_SBD_%)")
+	f.Bool("skip-test-includes", false, "leave out classes' test includes (CCAU) and their where-used rows")
 	f.String("ddic-closure", "", "closure-request.json (schema 1): its CLAS/INTF/FUGR/PROG are selected as if named, its TABL/DTEL/DOMA/TTYP/SHLP closed over transitively and their DDIC rows dumped")
 	f.Bool("catalog", false, "also dump definitions of matching database procedures/functions (AMDP) and the views and tables they read")
 	f.String("provenance", "", "where this content comes from and under what rights; written to the manifest")
@@ -89,6 +90,7 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 	packages, _ := f.GetStringArray("package")
 	ddic, _ := f.GetBool("ddic")
 	tableSpecs, _ := f.GetStringArray("table")
+	skipTests, _ := f.GetBool("skip-test-includes")
 	closurePath, _ := f.GetString("ddic-closure")
 	var closure *hanadump.ClosureRequest
 	if closurePath != "" {
@@ -134,7 +136,7 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 
 	m, err := hanadump.Run(ctx, db, hanadump.Options{
 		Schema: schema, Names: names, Inactive: inactive, Catalog: catalog, Out: out,
-		Packages: packages, DDIC: ddic, RawTables: rawTables, Closure: closure,
+		Packages: packages, DDIC: ddic, RawTables: rawTables, Closure: closure, SkipTestIncludes: skipTests,
 		Provenance:  provenance,
 		Connection:  hanadump.Connection{Host: host, Port: port, User: user, Database: database},
 		AllowInRepo: allowInRepo,

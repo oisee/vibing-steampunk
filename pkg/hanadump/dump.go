@@ -93,6 +93,9 @@ type Options struct {
 	Packages []string
 	// DDIC also dumps DDICTables for the selected names.
 	DDIC bool
+	// SkipTestIncludes leaves out a class's test include (CCAU): its source
+	// and its where-used rows, so tests pull nothing into a closure.
+	SkipTestIncludes bool
 	// RawTables are dumped as asked, whatever the names select.
 	RawTables []RawTable
 	// Closure is a dependency-closure request: its source kinds are selected
@@ -232,6 +235,9 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	closureTadir := false
 	for _, t := range tables {
 		where, args := likeAny(t.Column, opts.Names)
+		if opts.SkipTestIncludes && (t.Name == "WBCROSSGT" || t.Name == "WBCROSSI" || t.Name == "CROSS") {
+			where += " AND NOT " + testInclude(t.Column)
+		}
 		if t.Name == "TFDIR" && len(opts.Names) > 0 {
 			// a function module by its own name, or by its group's main
 			// program (a group named, or a package's group)
@@ -386,6 +392,9 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 		return f.Close()
 	}
 	where, args := likeAny("PROGNAME", opts.Names)
+	if opts.SkipTestIncludes {
+		where += " AND NOT " + testInclude("PROGNAME")
+	}
 	if !opts.Inactive {
 		where += " AND R3STATE = 'A'"
 	}
@@ -485,6 +494,12 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where strin
 func tableAbsent(err error) bool {
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "invalid table name") || strings.Contains(m, "insufficient privilege")
+}
+
+// testInclude matches a class pool's test include: the class name padded
+// to 30 characters, then CCAU.
+func testInclude(col string) string {
+	return fmt.Sprintf(`(LENGTH(%q) = 34 AND SUBSTRING(%q, 31, 4) = 'CCAU')`, col, col)
 }
 
 // allClosureNames is every dictionary name a closure resolved, once.

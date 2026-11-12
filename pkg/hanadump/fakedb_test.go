@@ -277,3 +277,29 @@ func TestClosureNamesGetTheirTadirRows(t *testing.T) {
 		t.Errorf("rows_TADIR = %d", m.Counts["rows_TADIR"])
 	}
 }
+
+// --skip-test-includes: no CCAU source and no where-used row of one.
+func TestSkipTestIncludes(t *testing.T) {
+	db, f := openFake(t,
+		&fakeRule{contains: `.REPOSRC`, cols: []string{"PROGNAME", "R3STATE", "UNAM", "UDAT", "MAXLINELN", "DATA"}},
+		&fakeRule{contains: `FROM "S".`, cols: []string{"X"}},
+	)
+	opts := fakeOpts(t)
+	opts.Names, opts.SkipTestIncludes = []string{"Z%"}, true
+	if _, err := Run(context.Background(), db, opts); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"REPOSRC": false, `"WBCROSSGT"`: false, `"CROSS"`: false}
+	for _, q := range f.seen {
+		for k := range want {
+			if strings.Contains(q, k) && strings.Contains(q, `SUBSTRING(`) && strings.Contains(q, `'CCAU'`) {
+				want[k] = true
+			}
+		}
+	}
+	for k, ok := range want {
+		if !ok {
+			t.Errorf("%s is not filtered for test includes", k)
+		}
+	}
+}
