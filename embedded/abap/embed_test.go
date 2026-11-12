@@ -29,3 +29,13 @@ func TestEmbeddedSourcesMatchSrc(t *testing.T) {
 		}
 	}
 }
+
+// SAP refuses a class or program whose short text is longer than 60
+// characters; an install then fails half way through.
+func TestEmbeddedDescriptionsFitSAP(t *testing.T) {
+	for _, o := range GetObjects() {
+		if n := len([]rune(o.Description)); n > 60 {
+			t.Errorf("%s %s: description is %d characters, SAP takes 60", o.Type, o.Name, n)
+		}
+	}
+}

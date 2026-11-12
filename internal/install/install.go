@@ -22,7 +22,22 @@ type Client interface {
 // after a definite missing result. A create error is tolerated only if a fresh
 // probe proves that the package now exists, as can happen with a concurrent
 // create.
+// MaxDescription is the longest short text SAP accepts for a package or a
+// class (60 characters); a longer one is refused with "too long".
+const MaxDescription = 60
+
+// FitDescription cuts a description to MaxDescription characters, ending a
+// cut one with "...".
+func FitDescription(s string) string {
+	r := []rune(s)
+	if len(r) <= MaxDescription {
+		return s
+	}
+	return string(r[:MaxDescription-3]) + "..."
+}
+
 func EnsurePackage(ctx context.Context, client Client, name, description string) (created bool, err error) {
+	description = FitDescription(description)
 	exists, err := client.PackageExists(ctx, name)
 	if err != nil {
 		return false, fmt.Errorf("package existence check was inconclusive: %w", err)

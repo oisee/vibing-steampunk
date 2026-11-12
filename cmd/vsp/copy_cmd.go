@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/oisee/vibing-steampunk/embedded/deps"
@@ -105,7 +106,8 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to read ZIP file: %w", err)
 		}
-		sourceName = sourceFile
+		// the file's name, not its path: it becomes the package's description
+		sourceName = filepath.Base(sourceFile)
 	}
 
 	fmt.Printf("Source: %s (%d bytes)\n", sourceName, len(zipData))

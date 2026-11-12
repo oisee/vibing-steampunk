@@ -14,6 +14,7 @@ type fakeClient struct {
 	probeIndex    int
 	createErr     error
 	createCalls   int
+	createOpts    adt.CreateObjectOptions
 	writeResult   *adt.WriteSourceResult
 	writeErr      error
 	writeOpts     *adt.WriteSourceOptions
@@ -35,8 +36,9 @@ func (f *fakeClient) PackageExists(context.Context, string) (bool, error) {
 	return probe.exists, probe.err
 }
 
-func (f *fakeClient) CreateObject(context.Context, adt.CreateObjectOptions) error {
+func (f *fakeClient) CreateObject(_ context.Context, opts adt.CreateObjectOptions) error {
 	f.createCalls++
+	f.createOpts = opts
 	return f.createErr
 }
 
@@ -133,5 +135,21 @@ func TestDeploySourceNamesTheActivationMessages(t *testing.T) {
 	want := `[E] Program ZABAPGIT_STANDALONE, line 4711: The type "SXCO_AO_COMPONENT" is unknown.`
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("the install error must name SAP's message %q; got %q", want, err.Error())
+	}
+}
+
+// A description longer than SAP's 60 characters is cut, not sent as it is:
+// "vsp copy" named the package after the whole zip path and SAP refused it.
+func TestEnsurePackageFitsTheDescription(t *testing.T) {
+	fake := &fakeClient{packageProbes: []packageProbe{{}, {exists: true}}}
+	long := "Deployed from /a/very/long/path/to/some/export/directory/package-export.zip"
+	if _, err := EnsurePackage(context.Background(), fake, "$SYNTHETIC", long); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.createOpts.Description; len([]rune(got)) > MaxDescription || got[:20] != long[:20] {
+		t.Fatalf("description %q (%d chars)", got, len([]rune(got)))
+	}
+	if got := FitDescription("short"); got != "short" {
+		t.Fatalf("a short description changed: %q", got)
 	}
 }
