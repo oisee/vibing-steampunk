@@ -25,7 +25,9 @@ var DDICTables = []Table{
 	{"DD04L", "ROLLNAME"}, {"DD04T", "ROLLNAME"},
 	{"DD01L", "DOMNAME"}, {"DD01T", "DOMNAME"},
 	{"DD07L", "DOMNAME"}, {"DD07T", "DOMNAME"},
-	{"DD40L", "TYPENAME"},
+	{"DD40L", "TYPENAME"}, {"DD40T", "TYPENAME"},
+	// technical settings: a transparent table does not activate without them
+	{"DD09L", "TABNAME"},
 	{"DDDDLSRC", "DDLNAME"},
 	{"DDLXSRC_SRC", "DDLXNAME"},
 	{"SRVDSRC_SRC", "SRVDNAME"},
