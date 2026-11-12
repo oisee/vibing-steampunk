@@ -30,6 +30,8 @@ var DDICTables = []Table{
 	{"DDLXSRC_SRC", "DDLXNAME"},
 	{"SRVDSRC_SRC", "SRVDNAME"},
 	{"ACMDCLSRC", "DCLNAME"},
+	// search helps: header, texts, parameters, and the included ones
+	{"DD30L", "SHLPNAME"}, {"DD30T", "SHLPNAME"}, {"DD31S", "SHLPNAME"}, {"DD32S", "SHLPNAME"},
 }
 
 // RawTable is a table dumped as the caller asked: Pattern is a LIKE pattern

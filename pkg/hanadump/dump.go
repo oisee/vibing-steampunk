@@ -90,7 +90,11 @@ type Options struct {
 	DDIC bool
 	// RawTables are dumped as asked, whatever the names select.
 	RawTables []RawTable
-	Log       func(format string, args ...any)
+	// Closure is a dependency-closure request: its source kinds are selected
+	// as if named, its dictionary kinds are closed over on the server and
+	// their DDIC rows dumped (DDIC is implied).
+	Closure *ClosureRequest
+	Log     func(format string, args ...any)
 }
 
 // Manifest is written last, as manifest.json, and says what the dump holds.
@@ -110,6 +114,7 @@ type Manifest struct {
 	PackageNames []string       `json:"package_names,omitempty"`
 	DDIC         bool           `json:"ddic,omitempty"`
 	RawTables    []RawTable     `json:"raw_tables,omitempty"`
+	Closure      *ClosureResult `json:"closure,omitempty"`
 	Counts       map[string]int `json:"counts"`
 	// MissingTables are tables the database refused to select from — not in
 	// this release, or not readable by the user. A table that failed part way
@@ -136,8 +141,11 @@ type SourceRecord struct {
 // Run writes the dump: src/*.abap, reposrc.jsonl, tables/<NAME>.jsonl and
 // manifest.json under opts.Out, which must not exist or be empty.
 func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
-	if opts.Schema == "" || len(opts.Names)+len(opts.Packages) == 0 || opts.Out == "" {
-		return nil, errors.New("hanadump: schema, at least one name or package pattern and an output directory are required")
+	if opts.Schema == "" || len(opts.Names)+len(opts.Packages) == 0 && opts.Closure == nil || opts.Out == "" {
+		return nil, errors.New("hanadump: schema, a name or package pattern or a closure request, and an output directory are required")
+	}
+	if opts.Closure != nil {
+		opts.DDIC = true
 	}
 	if !isIdent(opts.Schema) {
 		return nil, fmt.Errorf("hanadump: %q is not a plain schema name", opts.Schema)
@@ -172,6 +180,24 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		Inactive: opts.Inactive, Catalog: opts.Catalog, Tables: opts.Tables, Counts: map[string]int{},
 		Packages: opts.Packages, DDIC: opts.DDIC, RawTables: opts.RawTables,
 	}
+	// the dictionary names a closure request reaches, by DDIC table column
+	closureNames := map[string][]string{}
+	if opts.Closure != nil {
+		res, err := closeDictionary(ctx, db, opts.Schema, opts.Closure)
+		if err != nil {
+			return nil, err
+		}
+		m.Closure = res
+		for kind, names := range res.Resolved {
+			m.Counts["closure_"+kind] = len(names)
+		}
+		logf("closure: %d rounds, %v resolved, %d kinds with missing names", res.Rounds, m.Counts, len(res.Missing))
+		byColumn := map[string]string{"TABL": "TABNAME", "DTEL": "ROLLNAME", "DOMA": "DOMNAME", "TTYP": "TYPENAME", "SHLP": "SHLPNAME"}
+		for kind, names := range res.Resolved {
+			closureNames[byColumn[kind]] = append(closureNames[byColumn[kind]], names...)
+		}
+		opts.Names = append(append([]string{}, opts.Names...), opts.Closure.SourcePatternsOf()...)
+	}
 	if len(opts.Packages) > 0 {
 		objects, patterns, err := resolvePackages(ctx, db, opts.Schema, opts.Packages)
 		if err != nil {
@@ -198,6 +224,12 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	for _, t := range tables {
 		dumped[t.Name] = true
 		where, args := likeAny(t.Column, opts.Names)
+		if t.Name == "TFDIR" && len(opts.Names) > 0 {
+			// a function module by its own name, or by its group's main
+			// program (a group named, or a package's group)
+			pw, pa := likeAny("PNAME", opts.Names)
+			where, args = "("+where+" OR "+pw+")", append(append([]any{}, args...), pa...)
+		}
 		if len(opts.Packages) > 0 {
 			switch t.Name {
 			case "TADIR", "TDEVC":
@@ -207,13 +239,30 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 				if t.Name == "TADIR" {
 					where = `"PGMID" = 'R3TR' AND ` + where
 				}
-			case "TFDIR":
-				// a function module's name is not in TADIR; its group's
-				// main program is
-				where, args = likeAny("PNAME", opts.Names)
 			}
 		}
-		n, missing, err := dumpTable(ctx, db, opts, t.Name, where, args)
+		var n int
+		var missing bool
+		var err error
+		if len(opts.Names) > 0 {
+			n, missing, err = dumpTable(ctx, db, opts, t.Name, where, args)
+		}
+		// closure names, by IN list, leaving out the rows the patterns took
+		if extra := closureNames[t.Column]; !missing && err == nil && len(extra) > 0 && isDDIC(t.Name) {
+			appended := n > 0 || len(opts.Names) > 0
+			err = inChunks(extra, func(ph string, inArgs []any) error {
+				w, a := fmt.Sprintf(`%q IN (%s)`, t.Column, ph), inArgs
+				if len(opts.Names) > 0 {
+					w, a = w+" AND NOT "+where, append(append([]any{}, inArgs...), args...)
+				}
+				k, miss, e := dumpTableTo(ctx, db, opts, t.Name, w, a, appended)
+				appended, n = true, n+k
+				if miss {
+					missing = true
+				}
+				return e
+			})
+		}
 		if missing {
 			// A table the release does not have is a fact about the system,
 			// not a reason to lose the sources already written.
@@ -228,6 +277,25 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		}
 		m.Counts["rows_"+t.Name] = n
 		logf("table %s: %d rows", t.Name, n)
+	}
+	// function module signatures and short texts, by the modules TFDIR gave
+	if funcs, err := columnValues(opts.Out, "TFDIR", "FUNCNAME"); err != nil {
+		return nil, err
+	} else if len(funcs) > 0 {
+		for _, t := range []Table{{"FUPARAREF", "FUNCNAME"}, {"TFTIT", "FUNCNAME"}} {
+			dumped[t.Name] = true
+			n, missing, err := dumpByValues(ctx, db, opts, t.Name, t.Column, funcs)
+			if missing {
+				logf("table %s: not selectable: %v", t.Name, err)
+				m.MissingTables = append(m.MissingTables, t.Name)
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
+			}
+			m.Counts["rows_"+t.Name] = n
+			logf("table %s: %d rows for %d function modules", t.Name, n, len(funcs))
+		}
 	}
 	for _, r := range opts.RawTables {
 		names, err := expandRawTable(ctx, db, opts.Schema, r)
@@ -275,6 +343,11 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 }
 
 func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, logf func(string, ...any)) error {
+	if len(opts.Names) == 0 {
+		// a dictionary-only closure: no program is asked for, and the
+		// converter still finds the (empty) source list
+		return os.WriteFile(filepath.Join(opts.Out, "reposrc.jsonl"), nil, fileMode)
+	}
 	where, args := likeAny("PROGNAME", opts.Names)
 	if !opts.Inactive {
 		where += " AND R3STATE = 'A'"
@@ -366,6 +439,22 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 // dumpTable writes every column of the matching rows as JSON objects. Binary
 // values become "0x" followed by hex, so a row survives the round trip.
 func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any) (n int, missing bool, err error) {
+	return dumpTableTo(ctx, db, opts, table, where, args, false)
+}
+
+// isDDIC says whether a table is one of DDICTables.
+func isDDIC(name string) bool {
+	for _, t := range DDICTables {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// dumpTableTo is dumpTable; with appendTo it adds to the table's file rather
+// than creating it.
+func dumpTableTo(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any, appendTo bool) (n int, missing bool, err error) {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, table, where), args...)
 	if err != nil {
 		return 0, true, err
@@ -400,7 +489,11 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where strin
 	if err := os.MkdirAll(filepath.Join(opts.Out, "tables"), dirMode); err != nil {
 		return 0, false, err
 	}
-	f, err := os.OpenFile(filepath.Join(opts.Out, "tables", FileName(table)+".jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if appendTo {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+	}
+	f, err := os.OpenFile(filepath.Join(opts.Out, "tables", FileName(table)+".jsonl"), flags, fileMode)
 	if err != nil {
 		return 0, false, err
 	}
