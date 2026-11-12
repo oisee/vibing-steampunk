@@ -293,7 +293,6 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		return nil, err
 	} else if len(funcs) > 0 {
 		for _, t := range []Table{{"FUPARAREF", "FUNCNAME"}, {"TFTIT", "FUNCNAME"}} {
-			dumped[t.Name] = true
 			n, missing, err := dumpByValues(ctx, db, opts, t.Name, t.Column, funcs)
 			if missing {
 				logf("table %s: not selectable: %v", t.Name, err)
@@ -303,6 +302,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			if err != nil {
 				return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 			}
+			dumped[t.Name] = true
 			m.Counts["rows_"+t.Name] = n
 			m.Tables = append(m.Tables, t)
 			logf("table %s: %d rows for %d function modules", t.Name, n, len(funcs))
@@ -355,7 +355,11 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 	if len(opts.Names) == 0 {
 		// a dictionary-only closure: no program is asked for, and the
 		// converter still finds the (empty) source list
-		return os.WriteFile(filepath.Join(opts.Out, "reposrc.jsonl"), nil, fileMode)
+		f, err := os.OpenFile(filepath.Join(opts.Out, "reposrc.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
+		if err != nil {
+			return err
+		}
+		return f.Close()
 	}
 	where, args := likeAny("PROGNAME", opts.Names)
 	if !opts.Inactive {
@@ -456,8 +460,7 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where strin
 // privilege" (258) -- rather than for any other reason.
 func tableAbsent(err error) bool {
 	m := strings.ToLower(err.Error())
-	return strings.Contains(m, "invalid table name") || strings.Contains(m, "insufficient privilege") ||
-		strings.Contains(m, "no such table") // the test driver's spelling
+	return strings.Contains(m, "invalid table name") || strings.Contains(m, "insufficient privilege")
 }
 
 // isDDIC says whether a table is one of DDICTables.

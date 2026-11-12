@@ -82,7 +82,8 @@ func (s *fakeStmt) Query(args []driver.Value) (driver.Rows, error) {
 		}
 		return &fakeRows{cols: r.cols, rows: r.rows}, nil
 	}
-	return nil, fmt.Errorf("no such table: %s", s.q)
+	// an unmatched statement reads a table this database does not have
+	return nil, fmt.Errorf("259: invalid table name: %s", s.q)
 }
 
 type fakeRows struct {
@@ -202,7 +203,7 @@ func TestCloseDictionary(t *testing.T) {
 // and no manifest is written.
 func TestRawTableFailureFailsTheRun(t *testing.T) {
 	db, _ := openFake(t,
-		&fakeRule{contains: `"REPOSRC"`, cols: []string{"PROGNAME", "R3STATE", "UNAM", "UDAT", "MAXLINELN", "DATA"}},
+		&fakeRule{contains: `.REPOSRC`, cols: []string{"PROGNAME", "R3STATE", "UNAM", "UDAT", "MAXLINELN", "DATA"}},
 		&fakeRule{contains: `SYS.TABLES`, cols: []string{"TABLE_NAME"}, rows: [][]driver.Value{{"ZRAW"}}},
 		&fakeRule{contains: `"ZRAW"`, err: errors.New("invalid column name: OBJNAME")},
 		&fakeRule{contains: `FROM "S".`, cols: []string{"X"}},
@@ -215,5 +216,38 @@ func TestRawTableFailureFailsTheRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(opts.Out, "manifest.json")); !os.IsNotExist(err) {
 		t.Errorf("a failed run wrote a manifest: %v", err)
+	}
+}
+
+// S3/S8 (claude-z round 1): with --name and --package, TADIR takes both the
+// packages' rows and the named objects'; the manifest lists TDEVC.
+func TestPackagesAndNamesTogether(t *testing.T) {
+	db, f := openFake(t,
+		&fakeRule{contains: `SELECT OBJECT, OBJ_NAME, DEVCLASS FROM "S"."TADIR"`, cols: []string{"OBJECT", "OBJ_NAME", "DEVCLASS"},
+			rows: [][]driver.Value{{"PROG", "ZPKG_PROG", "ZPKG"}}},
+		&fakeRule{contains: `.REPOSRC`, cols: []string{"PROGNAME", "R3STATE", "UNAM", "UDAT", "MAXLINELN", "DATA"}},
+		&fakeRule{contains: `FROM "S".`, cols: []string{"X"}},
+	)
+	opts := fakeOpts(t)
+	opts.Names, opts.Packages = []string{"ZOTHER"}, []string{"ZPKG"}
+	m, err := Run(context.Background(), db, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tadir string
+	for _, q := range f.seen {
+		if strings.HasPrefix(q, `SELECT * FROM "S"."TADIR"`) {
+			tadir = q
+		}
+	}
+	if !strings.Contains(tadir, `"PGMID" = 'R3TR' AND (("DEVCLASS" LIKE ?`) || !strings.Contains(tadir, `OR ("OBJ_NAME" LIKE ?`) {
+		t.Errorf("TADIR is not packages OR names: %s", tadir)
+	}
+	names := []string{}
+	for _, tb := range m.Tables {
+		names = append(names, tb.Name)
+	}
+	if !strings.Contains(strings.Join(names, ","), "TDEVC") {
+		t.Errorf("manifest.tables %v lacks TDEVC", names)
 	}
 }
