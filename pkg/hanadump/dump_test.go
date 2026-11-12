@@ -47,7 +47,7 @@ func TestIsIdent(t *testing.T) {
 
 func TestLikeAny(t *testing.T) {
 	where, args := likeAny("PROGNAME", []string{"Z%", "LZ%"})
-	if where != `("PROGNAME" LIKE ? OR "PROGNAME" LIKE ?)` || len(args) != 2 {
+	if where != `("PROGNAME" LIKE ? ESCAPE '\' OR "PROGNAME" LIKE ? ESCAPE '\')` || len(args) != 2 {
 		t.Errorf("got %s %v", where, args)
 	}
 }

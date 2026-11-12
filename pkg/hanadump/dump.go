@@ -82,22 +82,35 @@ type Options struct {
 	// functions matching Names (AMDP methods are "<CLASS>=><METHOD>") and,
 	// transitively, the views and tables they read — under catalog/.
 	Catalog bool
-	Log     func(format string, args ...any)
+	// Packages are LIKE patterns on TADIR's DEVCLASS: their objects' sources
+	// and rows are dumped as if their names had been given (with LIKE's
+	// wildcards escaped), and TADIR and TDEVC rows are taken by package.
+	Packages []string
+	// DDIC also dumps DDICTables for the selected names.
+	DDIC bool
+	// RawTables are dumped as asked, whatever the names select.
+	RawTables []RawTable
+	Log       func(format string, args ...any)
 }
 
 // Manifest is written last, as manifest.json, and says what the dump holds.
 type Manifest struct {
-	Tool       string         `json:"tool"`
-	Started    time.Time      `json:"started"`
-	Finished   time.Time      `json:"finished"`
-	Provenance string         `json:"provenance"`
-	Connection Connection     `json:"connection"`
-	Schema     string         `json:"schema"`
-	Names      []string       `json:"names"`
-	Inactive   bool           `json:"inactive"`
-	Catalog    bool           `json:"catalog"`
-	Tables     []Table        `json:"tables"`
-	Counts     map[string]int `json:"counts"`
+	Tool       string     `json:"tool"`
+	Started    time.Time  `json:"started"`
+	Finished   time.Time  `json:"finished"`
+	Provenance string     `json:"provenance"`
+	Connection Connection `json:"connection"`
+	Schema     string     `json:"schema"`
+	Names      []string   `json:"names"`
+	Inactive   bool       `json:"inactive"`
+	Catalog    bool       `json:"catalog"`
+	Tables     []Table    `json:"tables"`
+	Packages   []string   `json:"packages,omitempty"`
+	// PackageNames are the name patterns the packages resolved to.
+	PackageNames []string       `json:"package_names,omitempty"`
+	DDIC         bool           `json:"ddic,omitempty"`
+	RawTables    []RawTable     `json:"raw_tables,omitempty"`
+	Counts       map[string]int `json:"counts"`
 	// MissingTables are tables the database refused to select from — not in
 	// this release, or not readable by the user. A table that failed part way
 	// through is not here: that fails the dump, and no manifest is written.
@@ -123,14 +136,22 @@ type SourceRecord struct {
 // Run writes the dump: src/*.abap, reposrc.jsonl, tables/<NAME>.jsonl and
 // manifest.json under opts.Out, which must not exist or be empty.
 func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
-	if opts.Schema == "" || len(opts.Names) == 0 || opts.Out == "" {
-		return nil, errors.New("hanadump: schema, at least one name pattern and an output directory are required")
+	if opts.Schema == "" || len(opts.Names)+len(opts.Packages) == 0 || opts.Out == "" {
+		return nil, errors.New("hanadump: schema, at least one name or package pattern and an output directory are required")
 	}
 	if !isIdent(opts.Schema) {
 		return nil, fmt.Errorf("hanadump: %q is not a plain schema name", opts.Schema)
 	}
 	if opts.Tables == nil {
-		opts.Tables = DefaultTables
+		opts.Tables = append([]Table{}, DefaultTables...)
+		if opts.DDIC {
+			opts.Tables = append(opts.Tables, DDICTables...)
+		}
+	}
+	for _, r := range opts.RawTables {
+		if !isPattern(r.Pattern) || r.Column != "" && (!isIdent(r.Column) || len(r.Values) == 0) {
+			return nil, fmt.Errorf("hanadump: raw table %+v: not a table pattern with an optional COLUMN=PATTERN filter", r)
+		}
 	}
 	for _, t := range opts.Tables {
 		if !isIdent(t.Name) || !isIdent(t.Column) {
@@ -149,13 +170,50 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		Tool: "vsp hana dump", Started: time.Now().UTC(), Provenance: opts.Provenance,
 		Connection: opts.Connection, Schema: opts.Schema, Names: opts.Names,
 		Inactive: opts.Inactive, Catalog: opts.Catalog, Tables: opts.Tables, Counts: map[string]int{},
+		Packages: opts.Packages, DDIC: opts.DDIC, RawTables: opts.RawTables,
+	}
+	if len(opts.Packages) > 0 {
+		objects, patterns, err := resolvePackages(ctx, db, opts.Schema, opts.Packages)
+		if err != nil {
+			return nil, err
+		}
+		if len(objects) == 0 && len(opts.Names) == 0 {
+			return nil, fmt.Errorf("hanadump: no TADIR objects in packages %v", opts.Packages)
+		}
+		m.PackageNames, m.Counts["package_objects"] = patterns, len(objects)
+		logf("packages %v: %d objects, %d name patterns", opts.Packages, len(objects), len(patterns))
+		opts.Names = append(append([]string{}, opts.Names...), patterns...)
 	}
 
 	if err := dumpSources(ctx, db, opts, m, logf); err != nil {
 		return nil, err
 	}
-	for _, t := range opts.Tables {
-		n, missing, err := dumpTable(ctx, db, opts, t)
+	tables := opts.Tables
+	if len(opts.Packages) > 0 {
+		tables = append(append([]Table{}, tables...), Table{"TDEVC", "DEVCLASS"})
+	}
+	// a table is dumped once: two raw patterns may name it, or name one of
+	// the tables above
+	dumped := map[string]bool{}
+	for _, t := range tables {
+		dumped[t.Name] = true
+		where, args := likeAny(t.Column, opts.Names)
+		if len(opts.Packages) > 0 {
+			switch t.Name {
+			case "TADIR", "TDEVC":
+				// by package, not by name: a padded class name's pattern
+				// also matches objects of other packages
+				where, args = likeAny("DEVCLASS", opts.Packages)
+				if t.Name == "TADIR" {
+					where = `"PGMID" = 'R3TR' AND ` + where
+				}
+			case "TFDIR":
+				// a function module's name is not in TADIR; its group's
+				// main program is
+				where, args = likeAny("PNAME", opts.Names)
+			}
+		}
+		n, missing, err := dumpTable(ctx, db, opts, t.Name, where, args)
 		if missing {
 			// A table the release does not have is a fact about the system,
 			// not a reason to lose the sources already written.
@@ -170,6 +228,39 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		}
 		m.Counts["rows_"+t.Name] = n
 		logf("table %s: %d rows", t.Name, n)
+	}
+	for _, r := range opts.RawTables {
+		names, err := expandRawTable(ctx, db, opts.Schema, r)
+		if err != nil {
+			return nil, fmt.Errorf("hanadump: raw table %s: %w", r.Pattern, err)
+		}
+		if len(names) == 0 {
+			logf("raw table %s: no such table", r.Pattern)
+			m.MissingTables = append(m.MissingTables, r.Pattern)
+			continue
+		}
+		where, args := "1 = 1", []any(nil)
+		if r.Column != "" {
+			where, args = likeAny(r.Column, r.Values)
+		}
+		for _, name := range names {
+			if dumped[name] {
+				logf("raw table %s: already dumped, skipped", name)
+				continue
+			}
+			dumped[name] = true
+			n, missing, err := dumpTable(ctx, db, opts, name, where, args)
+			if missing {
+				logf("raw table %s: not selectable: %v", name, err)
+				m.MissingTables = append(m.MissingTables, name)
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("hanadump: table %s: %w", name, err)
+			}
+			m.Counts["rows_"+name] = n
+			logf("raw table %s: %d rows", name, n)
+		}
 	}
 
 	if opts.Catalog {
@@ -274,9 +365,8 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 
 // dumpTable writes every column of the matching rows as JSON objects. Binary
 // values become "0x" followed by hex, so a row survives the round trip.
-func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (n int, missing bool, err error) {
-	where, args := likeAny(t.Column, opts.Names)
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, t.Name, where), args...)
+func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any) (n int, missing bool, err error) {
+	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, table, where), args...)
 	if err != nil {
 		return 0, true, err
 	}
@@ -292,16 +382,25 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (n int, m
 	// Character columns may arrive as bytes (go-hdb hands VARCHAR over that
 	// way); they are text and are written as text. Only binary types stay hex.
 	text := make([]bool, len(cols))
+	// LOB columns arrive as locators only the driver can read (go-hdb):
+	// they are scanned through opts.TextInto / opts.BlobInto.
+	textLob, blobLob := make([]string, len(cols)), make([][]byte, len(cols))
+	isText, isBlob := make([]bool, len(cols)), make([]bool, len(cols))
 	for i, t := range types {
 		switch t.DatabaseTypeName() {
-		case "VARCHAR", "NVARCHAR", "CHAR", "NCHAR", "ALPHANUM", "SHORTTEXT", "CLOB", "NCLOB", "STRING", "NSTRING":
+		case "VARCHAR", "NVARCHAR", "CHAR", "NCHAR", "ALPHANUM", "SHORTTEXT", "STRING", "NSTRING":
 			text[i] = true
+		case "CLOB", "NCLOB", "TEXT", "BINTEXT":
+			isText[i] = opts.TextInto != nil
+			text[i] = true
+		case "BLOB":
+			isBlob[i] = opts.BlobInto != nil
 		}
 	}
 	if err := os.MkdirAll(filepath.Join(opts.Out, "tables"), dirMode); err != nil {
 		return 0, false, err
 	}
-	f, err := os.Create(filepath.Join(opts.Out, "tables", t.Name+".jsonl"))
+	f, err := os.OpenFile(filepath.Join(opts.Out, "tables", FileName(table)+".jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 	if err != nil {
 		return 0, false, err
 	}
@@ -312,11 +411,28 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, t Table) (n int, m
 	vals := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
 	for i := range vals {
-		ptrs[i] = &vals[i]
+		switch {
+		case isText[i]:
+			ptrs[i] = opts.TextInto(&textLob[i])
+		case isBlob[i]:
+			ptrs[i] = opts.BlobInto(&blobLob[i])
+		default:
+			ptrs[i] = &vals[i]
+		}
 	}
 	for rows.Next() {
 		if err := rows.Scan(ptrs...); err != nil {
 			return n, false, err
+		}
+		for i := range cols {
+			if isText[i] {
+				vals[i] = textLob[i]
+			} else if isBlob[i] {
+				vals[i] = nil // SQL NULL
+				if blobLob[i] != nil {
+					vals[i] = append([]byte{}, blobLob[i]...)
+				}
+			}
 		}
 		row := make(map[string]any, len(cols))
 		for i, c := range cols {
@@ -352,7 +468,7 @@ func likeAny(col string, patterns []string) (string, []any) {
 	parts := make([]string, len(patterns))
 	args := make([]any, len(patterns))
 	for i, p := range patterns {
-		parts[i] = fmt.Sprintf("%q LIKE ?", col)
+		parts[i] = fmt.Sprintf(`%q LIKE ? ESCAPE '\'`, col)
 		args[i] = p
 	}
 	return "(" + strings.Join(parts, " OR ") + ")", args

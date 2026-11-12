@@ -57,11 +57,14 @@ func init() {
 	f.String("schema", "", "ABAP schema, e.g. SAPA4H or SAPABAP1")
 	f.StringArray("name", nil, "LIKE pattern for program and object names (repeatable)")
 	f.Bool("inactive", false, "also dump inactive versions")
+	f.StringArray("package", nil, "LIKE pattern for packages (TADIR DEVCLASS, repeatable): their objects are dumped as if named")
+	f.Bool("ddic", false, "also dump the dictionary rows (DD02L/DD03L/DD04L/DD01L/DD07L/DD40L, texts) and CDS sources (DDDDLSRC) of the selected names")
+	f.StringArray("table", nil, "raw table, repeatable: NAME or NAME:COLUMN=PATTERN[,PATTERN]; NAME may be a LIKE pattern (/IWBEP/I_SBD_%)")
 	f.Bool("catalog", false, "also dump definitions of matching database procedures/functions (AMDP) and the views and tables they read")
 	f.String("provenance", "", "where this content comes from and under what rights; written to the manifest")
 	f.String("out", "", "output directory (new or empty, outside git)")
 	f.Bool("allow-in-repo", false, "permit an output directory inside a git working tree")
-	for _, n := range []string{"host", "user", "schema", "name", "provenance", "out"} {
+	for _, n := range []string{"host", "user", "schema", "provenance", "out"} {
 		_ = hanaDumpCmd.MarkFlagRequired(n)
 	}
 	hanaCmd.AddCommand(hanaDumpCmd)
@@ -82,6 +85,20 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 	provenance, _ := f.GetString("provenance")
 	out, _ := f.GetString("out")
 	allowInRepo, _ := f.GetBool("allow-in-repo")
+	packages, _ := f.GetStringArray("package")
+	ddic, _ := f.GetBool("ddic")
+	tableSpecs, _ := f.GetStringArray("table")
+	if len(names)+len(packages) == 0 {
+		return errors.New("give at least one --name or --package")
+	}
+	var rawTables []hanadump.RawTable
+	for _, spec := range tableSpecs {
+		t, err := hanadump.ParseRawTable(spec)
+		if err != nil {
+			return err
+		}
+		rawTables = append(rawTables, t)
+	}
 
 	if password == "" {
 		password = os.Getenv("VSP_HANA_PASSWORD")
@@ -107,6 +124,7 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 
 	m, err := hanadump.Run(ctx, db, hanadump.Options{
 		Schema: schema, Names: names, Inactive: inactive, Catalog: catalog, Out: out,
+		Packages: packages, DDIC: ddic, RawTables: rawTables,
 		Provenance:  provenance,
 		Connection:  hanadump.Connection{Host: host, Port: port, User: user, Database: database},
 		AllowInRepo: allowInRepo,
