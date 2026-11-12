@@ -251,3 +251,29 @@ func TestPackagesAndNamesTogether(t *testing.T) {
 		t.Errorf("manifest.tables %v lacks TDEVC", names)
 	}
 }
+
+// A closure's dictionary objects get their TADIR rows, so a converter places
+// them in their packages (dell, bed run 10: closure DDIC had no TADIR rows).
+func TestClosureNamesGetTheirTadirRows(t *testing.T) {
+	db, _ := openFake(t,
+		&fakeRule{contains: `SELECT DISTINCT "TABNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZTAB"}}},
+		&fakeRule{contains: `SELECT DISTINCT`, cols: []string{"N"}},
+		&fakeRule{contains: `FROM "S"."DD03L" WHERE "AS4LOCAL"`, cols: []string{"FIELDNAME", "ROLLNAME", "COMPTYPE", "PRECFIELD", "DOMNAME"}},
+		&fakeRule{contains: `"S"."TADIR" WHERE "PGMID" = 'R3TR' AND "OBJECT" IN`, cols: []string{"PGMID", "OBJECT", "OBJ_NAME", "DEVCLASS"},
+			rows: [][]driver.Value{{"R3TR", "TABL", "ZTAB", "ZSTD"}}},
+		&fakeRule{contains: `FROM "S".`, cols: []string{"X"}},
+	)
+	opts := fakeOpts(t)
+	opts.Closure = &ClosureRequest{Schema: 1, Requested: map[string][]string{"TABL": {"ZTAB"}}}
+	m, err := Run(context.Background(), db, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(opts.Out, "tables", "TADIR.jsonl"))
+	if err != nil || !strings.Contains(string(b), `"DEVCLASS":"ZSTD"`) {
+		t.Fatalf("TADIR rows of the closure: %q %v", b, err)
+	}
+	if m.Counts["rows_TADIR"] != 1 {
+		t.Errorf("rows_TADIR = %d", m.Counts["rows_TADIR"])
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -228,6 +229,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	// a table is dumped once: two raw patterns may name it, or name one of
 	// the tables above
 	dumped := map[string]bool{}
+	closureTadir := false
 	for _, t := range tables {
 		where, args := likeAny(t.Column, opts.Names)
 		if t.Name == "TFDIR" && len(opts.Names) > 0 {
@@ -274,6 +276,24 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 				return e
 			})
 		}
+		// the dictionary objects a closure reached are placed in their packages
+		// by TADIR, as every other object is: their rows join the file
+		if all := allClosureNames(closureNames); !missing && err == nil && t.Name == "TADIR" && len(all) > 0 {
+			appended := n > 0 || len(opts.Names) > 0
+			err = inChunks(all, func(ph string, inArgs []any) error {
+				w := fmt.Sprintf(`"PGMID" = 'R3TR' AND "OBJECT" IN ('TABL', 'DTEL', 'DOMA', 'TTYP', 'SHLP') AND "OBJ_NAME" IN (%s)`, ph)
+				a := inArgs
+				if len(opts.Names) > 0 {
+					w, a = w+" AND NOT ("+where+")", append(append([]any{}, inArgs...), args...)
+				}
+				k, _, e := dumpTableTo(ctx, db, opts, t.Name, w, a, appended)
+				appended, n = true, n+k
+				return e
+			})
+			if err == nil {
+				closureTadir = true
+			}
+		}
 		if missing {
 			// A table the release does not have is a fact about the system,
 			// not a reason to lose the sources already written.
@@ -286,7 +306,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			// manifest, so the dump cannot be mistaken for a finished one.
 			return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 		}
-		if len(opts.Names) > 0 || len(closureNames[t.Column]) > 0 && isDDIC(t.Name) {
+		if len(opts.Names) > 0 || len(closureNames[t.Column]) > 0 && isDDIC(t.Name) || t.Name == "TADIR" && closureTadir {
 			dumped[t.Name] = true // a file was written
 		}
 		m.Counts["rows_"+t.Name] = n
@@ -465,6 +485,22 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where strin
 func tableAbsent(err error) bool {
 	m := strings.ToLower(err.Error())
 	return strings.Contains(m, "invalid table name") || strings.Contains(m, "insufficient privilege")
+}
+
+// allClosureNames is every dictionary name a closure resolved, once.
+func allClosureNames(byColumn map[string][]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, names := range byColumn {
+		for _, n := range names {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // isDDIC says whether a table is one of DDICTables.
