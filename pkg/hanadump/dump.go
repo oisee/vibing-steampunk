@@ -180,6 +180,8 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		Inactive: opts.Inactive, Catalog: opts.Catalog, Tables: opts.Tables, Counts: map[string]int{},
 		Packages: opts.Packages, DDIC: opts.DDIC, RawTables: opts.RawTables,
 	}
+	// the names the caller gave, before packages and a closure add theirs
+	userNames := append([]string{}, opts.Names...)
 	// the dictionary names a closure request reaches, by DDIC table column
 	closureNames := map[string][]string{}
 	if opts.Closure != nil {
@@ -217,12 +219,12 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	tables := opts.Tables
 	if len(opts.Packages) > 0 {
 		tables = append(append([]Table{}, tables...), Table{"TDEVC", "DEVCLASS"})
+		m.Tables = tables
 	}
 	// a table is dumped once: two raw patterns may name it, or name one of
 	// the tables above
 	dumped := map[string]bool{}
 	for _, t := range tables {
-		dumped[t.Name] = true
 		where, args := likeAny(t.Column, opts.Names)
 		if t.Name == "TFDIR" && len(opts.Names) > 0 {
 			// a function module by its own name, or by its group's main
@@ -237,6 +239,11 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 				// also matches objects of other packages
 				where, args = likeAny("DEVCLASS", opts.Packages)
 				if t.Name == "TADIR" {
+					// and the objects named beside the packages
+					if len(userNames) > 0 {
+						nw, na := likeAny("OBJ_NAME", userNames)
+						where, args = "("+where+" OR "+nw+")", append(append([]any{}, args...), na...)
+					}
 					where = `"PGMID" = 'R3TR' AND ` + where
 				}
 			}
@@ -275,6 +282,9 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			// manifest, so the dump cannot be mistaken for a finished one.
 			return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 		}
+		if len(opts.Names) > 0 || len(closureNames[t.Column]) > 0 && isDDIC(t.Name) {
+			dumped[t.Name] = true // a file was written
+		}
 		m.Counts["rows_"+t.Name] = n
 		logf("table %s: %d rows", t.Name, n)
 	}
@@ -294,6 +304,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 				return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 			}
 			m.Counts["rows_"+t.Name] = n
+			m.Tables = append(m.Tables, t)
 			logf("table %s: %d rows for %d function modules", t.Name, n, len(funcs))
 		}
 	}
@@ -317,12 +328,8 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 				continue
 			}
 			dumped[name] = true
-			n, missing, err := dumpTable(ctx, db, opts, name, where, args)
-			if missing {
-				logf("raw table %s: not selectable: %v", name, err)
-				m.MissingTables = append(m.MissingTables, name)
-				continue
-			}
+			n, _, err := dumpTable(ctx, db, opts, name, where, args)
+			// SYS.TABLES listed it: a failure here is never absence
 			if err != nil {
 				return nil, fmt.Errorf("hanadump: table %s: %w", name, err)
 			}
@@ -331,7 +338,9 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		}
 	}
 
-	if opts.Catalog {
+	if opts.Catalog && len(opts.Names) == 0 {
+		logf("catalog: no names selected, nothing to dump")
+	} else if opts.Catalog {
 		if err := dumpCatalog(ctx, db, opts, m, logf); err != nil {
 			return nil, err
 		}
@@ -363,7 +372,7 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 	if err := os.MkdirAll(filepath.Join(opts.Out, "src"), dirMode); err != nil {
 		return err
 	}
-	f, err := os.Create(filepath.Join(opts.Out, "reposrc.jsonl"))
+	f, err := os.OpenFile(filepath.Join(opts.Out, "reposrc.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileMode)
 	if err != nil {
 		return err
 	}
@@ -442,6 +451,15 @@ func dumpTable(ctx context.Context, db *sql.DB, opts Options, table, where strin
 	return dumpTableTo(ctx, db, opts, table, where, args, false)
 }
 
+// tableAbsent says whether a query failed because the table is not there or
+// not readable -- HANA's "invalid table name" (259) and "insufficient
+// privilege" (258) -- rather than for any other reason.
+func tableAbsent(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "invalid table name") || strings.Contains(m, "insufficient privilege") ||
+		strings.Contains(m, "no such table") // the test driver's spelling
+}
+
 // isDDIC says whether a table is one of DDICTables.
 func isDDIC(name string) bool {
 	for _, t := range DDICTables {
@@ -457,7 +475,10 @@ func isDDIC(name string) bool {
 func dumpTableTo(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any, appendTo bool) (n int, missing bool, err error) {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, table, where), args...)
 	if err != nil {
-		return 0, true, err
+		// absent only when the database says so, and only on a table's first
+		// query: a later chunk's failure, or a dropped connection, is a
+		// partial dump, which fails the run
+		return 0, !appendTo && tableAbsent(err), err
 	}
 	defer rows.Close()
 	cols, err := rows.Columns()

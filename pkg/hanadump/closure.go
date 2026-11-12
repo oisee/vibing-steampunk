@@ -28,7 +28,11 @@ type ClosureRequest struct {
 type ClosureResult struct {
 	Rounds   int                 `json:"rounds"`
 	Resolved map[string][]string `json:"resolved"`
-	Missing  map[string][]string `json:"missing,omitempty"`
+	// Missing: names the dictionary has no active version of
+	Missing map[string][]string `json:"missing,omitempty"`
+	// Unhandled: request kinds this dumper does not close over, with their
+	// names, so the asker knows its request was only partly served
+	Unhandled map[string][]string `json:"unhandled,omitempty"`
 }
 
 // ReadClosureRequest reads a request file.
@@ -131,8 +135,22 @@ func closeDictionary(ctx context.Context, db *sql.DB, schema string, req *Closur
 			add("TTYP", name)
 		}
 	}
-	res := &ClosureResult{Resolved: map[string][]string{}, Missing: map[string][]string{}}
-	for len(todo["TABL"])+len(todo["DTEL"])+len(todo["TTYP"]) > 0 {
+	res := &ClosureResult{Resolved: map[string][]string{}, Missing: map[string][]string{}, Unhandled: map[string][]string{}}
+	handled := map[string]bool{}
+	for _, k := range append(append([]string{}, SourceKinds...), dictKinds...) {
+		handled[k] = true
+	}
+	for kind := range req.Requested {
+		if !handled[kind] {
+			if names := req.newNames(kind); len(names) > 0 {
+				res.Unhandled[kind] = names
+			}
+		}
+	}
+	if len(res.Unhandled) == 0 {
+		res.Unhandled = nil
+	}
+	for len(todo["TABL"])+len(todo["DTEL"])+len(todo["TTYP"])+len(todo["SHLP"]) > 0 {
 		res.Rounds++
 		if res.Rounds > 50 {
 			return nil, fmt.Errorf("hanadump: dictionary closure did not settle after 50 rounds")
@@ -201,6 +219,34 @@ func closeDictionary(ctx context.Context, db *sql.DB, schema string, req *Closur
 		if err != nil {
 			return nil, fmt.Errorf("hanadump: closure DD40L: %w", err)
 		}
+		// a collective search help's included helps (DD31S), and the data
+		// elements of every help's parameters (DD32S)
+		err = inChunks(round["SHLP"], func(ph string, args []any) error {
+			for _, q := range []string{
+				fmt.Sprintf(`SELECT 'SHLP', "SUBSHLP" FROM %q."DD31S" WHERE "AS4LOCAL" = 'A' AND "SHLPNAME" IN (%s)`, schema, ph),
+				fmt.Sprintf(`SELECT 'DTEL', "ROLLNAME" FROM %q."DD32S" WHERE "AS4LOCAL" = 'A' AND "SHLPNAME" IN (%s)`, schema, ph),
+			} {
+				rows, err := db.QueryContext(ctx, q, args...)
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var kind, name sql.NullString
+					if err := rows.Scan(&kind, &name); err != nil {
+						rows.Close()
+						return err
+					}
+					add(kind.String, name.String)
+				}
+				if err := rows.Close(); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hanadump: closure search helps: %w", err)
+		}
 	}
 	// what the dictionary has, kind by kind: the rest is reported missing
 	exists := map[string][2]string{"TABL": {"DD02L", "TABNAME"}, "DTEL": {"DD04L", "ROLLNAME"}, "DOMA": {"DD01L", "DOMNAME"}, "TTYP": {"DD40L", "TYPENAME"}, "SHLP": {"DD30L", "SHLPNAME"}}
@@ -267,6 +313,7 @@ func dumpByValues(ctx context.Context, db *sql.DB, opts Options, table, column s
 		return err
 	})
 	if m, ok := err.(errMissing); ok {
+		// only a first query can find the table absent (dumpTableTo)
 		return total, true, m.err
 	}
 	return total, false, err

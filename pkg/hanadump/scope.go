@@ -24,7 +24,7 @@ var DDICTables = []Table{
 	{"DD03L", "TABNAME"},
 	{"DD04L", "ROLLNAME"}, {"DD04T", "ROLLNAME"},
 	{"DD01L", "DOMNAME"}, {"DD01T", "DOMNAME"},
-	{"DD07L", "DOMNAME"},
+	{"DD07L", "DOMNAME"}, {"DD07T", "DOMNAME"},
 	{"DD40L", "TYPENAME"},
 	{"DDDDLSRC", "DDLNAME"},
 	{"DDLXSRC_SRC", "DDLXNAME"},
