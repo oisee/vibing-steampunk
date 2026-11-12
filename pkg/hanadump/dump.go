@@ -39,6 +39,10 @@ var DefaultTables = []Table{
 	{"TMDIR", "CLASSNAME"},
 	{"TFDIR", "FUNCNAME"},
 	{"SEOCLASS", "CLSNAME"},
+	// a class's attributes (category: exception, ...; unit tests; message
+	// class) and its description, which abapGit's .clas.xml carries
+	{"SEOCLASSDF", "CLSNAME"},
+	{"SEOCLASSTX", "CLSNAME"},
 	{"TLIBG", "AREA"},
 	// SAP's own where-used index, by the including program: what each
 	// source refers to. Dependencies come from here rather than a parser.
