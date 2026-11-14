@@ -55,8 +55,9 @@ func ReadClosureRequest(path string) (*ClosureRequest, error) {
 var SourceKinds = []string{"CLAS", "INTF", "FUGR", "PROG"}
 
 // dictKinds are closed over: tables and structures, data elements, domains,
-// table types, search helps.
-var dictKinds = []string{"TABL", "DTEL", "DOMA", "TTYP", "SHLP"}
+// table types, search helps, and views -- the help views and database views
+// a search help selects from or reads its texts from.
+var dictKinds = []string{"TABL", "DTEL", "DOMA", "TTYP", "SHLP", "VIEW"}
 
 // newNames returns the request's names of a kind that were not already seen.
 func (r *ClosureRequest) newNames(kind string) []string {
@@ -150,7 +151,7 @@ func closeDictionary(ctx context.Context, db *sql.DB, schema string, req *Closur
 	if len(res.Unhandled) == 0 {
 		res.Unhandled = nil
 	}
-	for len(todo["TABL"])+len(todo["DTEL"])+len(todo["TTYP"])+len(todo["SHLP"]) > 0 {
+	for len(todo["TABL"])+len(todo["DTEL"])+len(todo["TTYP"])+len(todo["SHLP"])+len(todo["VIEW"]) > 0 {
 		res.Rounds++
 		if res.Rounds > 50 {
 			return nil, fmt.Errorf("hanadump: dictionary closure did not settle after 50 rounds")
@@ -219,12 +220,15 @@ func closeDictionary(ctx context.Context, db *sql.DB, schema string, req *Closur
 		if err != nil {
 			return nil, fmt.Errorf("hanadump: closure DD40L: %w", err)
 		}
-		// a collective search help's included helps (DD31S), and the data
-		// elements of every help's parameters (DD32S)
+		// a collective search help's included helps (DD31S), the data
+		// elements of every help's parameters (DD32S), and what a help
+		// selects from and takes its texts from (DD30L SELMETHOD, TEXTTAB):
+		// a view (DD02L says VIEW) or a table
 		err = inChunks(round["SHLP"], func(ph string, args []any) error {
 			for _, q := range []string{
 				fmt.Sprintf(`SELECT 'SHLP', "SUBSHLP" FROM %q."DD31S" WHERE "AS4LOCAL" = 'A' AND "SHLPNAME" IN (%s)`, schema, ph),
 				fmt.Sprintf(`SELECT 'DTEL', "ROLLNAME" FROM %q."DD32S" WHERE "AS4LOCAL" = 'A' AND "SHLPNAME" IN (%s)`, schema, ph),
+				fmt.Sprintf(`SELECT CASE WHEN D."TABCLASS" = 'VIEW' THEN 'VIEW' ELSE 'TABL' END, D."TABNAME" FROM %q."DD30L" H JOIN %q."DD02L" D ON D."AS4LOCAL" = 'A' AND D."TABNAME" IN (H."SELMETHOD", H."TEXTTAB") WHERE H."AS4LOCAL" = 'A' AND H."SHLPNAME" IN (%s)`, schema, schema, ph),
 			} {
 				rows, err := db.QueryContext(ctx, q, args...)
 				if err != nil {
@@ -247,9 +251,36 @@ func closeDictionary(ctx context.Context, db *sql.DB, schema string, req *Closur
 		if err != nil {
 			return nil, fmt.Errorf("hanadump: closure search helps: %w", err)
 		}
+		// a view's base tables (DD26S) and its fields' data elements (DD27S)
+		err = inChunks(round["VIEW"], func(ph string, args []any) error {
+			for _, q := range []string{
+				fmt.Sprintf(`SELECT 'TABL', "TABNAME" FROM %q."DD26S" WHERE "AS4LOCAL" = 'A' AND "VIEWNAME" IN (%s)`, schema, ph),
+				fmt.Sprintf(`SELECT 'DTEL', "ROLLNAME" FROM %q."DD27S" WHERE "AS4LOCAL" = 'A' AND "VIEWNAME" IN (%s)`, schema, ph),
+			} {
+				rows, err := db.QueryContext(ctx, q, args...)
+				if err != nil {
+					return err
+				}
+				for rows.Next() {
+					var kind, name sql.NullString
+					if err := rows.Scan(&kind, &name); err != nil {
+						rows.Close()
+						return err
+					}
+					add(kind.String, name.String)
+				}
+				if err := rows.Close(); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hanadump: closure views: %w", err)
+		}
 	}
 	// what the dictionary has, kind by kind: the rest is reported missing
-	exists := map[string][2]string{"TABL": {"DD02L", "TABNAME"}, "DTEL": {"DD04L", "ROLLNAME"}, "DOMA": {"DD01L", "DOMNAME"}, "TTYP": {"DD40L", "TYPENAME"}, "SHLP": {"DD30L", "SHLPNAME"}}
+	exists := map[string][2]string{"TABL": {"DD02L", "TABNAME"}, "DTEL": {"DD04L", "ROLLNAME"}, "DOMA": {"DD01L", "DOMNAME"}, "TTYP": {"DD40L", "TYPENAME"}, "SHLP": {"DD30L", "SHLPNAME"}, "VIEW": {"DD25L", "VIEWNAME"}}
 	for _, k := range dictKinds {
 		names := keys(sets[k])
 		found := map[string]bool{}

@@ -159,10 +159,11 @@ func TestCloseDictionary(t *testing.T) {
 	db, _ := openFake(t,
 		// existence: everything is there except ZSTRU_NEST
 		&fakeRule{contains: `SELECT DISTINCT "TABNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZTAB"}, {"ZSTRU_INC"}}},
-		&fakeRule{contains: `SELECT DISTINCT "ROLLNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZDTEL1"}, {"ZDTEL_ROW"}, {"ZDTEL_SH"}}},
+		&fakeRule{contains: `SELECT DISTINCT "ROLLNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZDTEL1"}, {"ZDTEL_ROW"}, {"ZDTEL_SH"}, {"ZDTEL_V"}}},
 		&fakeRule{contains: `SELECT DISTINCT "DOMNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZDOMA1"}, {"ZDOMA_RAW"}}},
 		&fakeRule{contains: `SELECT DISTINCT "TYPENAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZTTYP"}}},
 		&fakeRule{contains: `SELECT DISTINCT "SHLPNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZSH_COLL"}, {"ZSH_ELEM"}}},
+		&fakeRule{contains: `SELECT DISTINCT "VIEWNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZHVIEW"}}},
 		&fakeRule{contains: `FROM "S"."DD03L"`, cols: []string{"FIELDNAME", "ROLLNAME", "COMPTYPE", "PRECFIELD", "DOMNAME"}, rows: [][]driver.Value{
 			{"FIELD1", "ZDTEL1", "E", "", ""},
 			{".INCLUDE", "", "", "ZSTRU_INC", ""},
@@ -175,8 +176,13 @@ func TestCloseDictionary(t *testing.T) {
 		&fakeRule{contains: `FROM "S"."DD40L" WHERE "AS4LOCAL" = 'A' AND "TYPENAME"`, cols: []string{"ROWTYPE", "ROWKIND"}, rows: [][]driver.Value{{"ZDTEL_ROW", "E"}}},
 		&fakeRule{contains: `"DD31S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"SHLP", "ZSH_ELEM"}}},
 		&fakeRule{contains: `"DD32S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"DTEL", "ZDTEL_SH"}}},
+		// the help selects from a help view; the view reads ZTAB and has a field of ZDTEL_V
+		&fakeRule{contains: `"DD30L" H JOIN`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"VIEW", "ZHVIEW"}}, times: 1},
+		&fakeRule{contains: `"DD30L" H JOIN`, cols: []string{"K", "N"}},
+		&fakeRule{contains: `"DD26S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"TABL", "ZTAB"}}},
+		&fakeRule{contains: `"DD27S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"DTEL", "ZDTEL_V"}}},
 	)
-	req := &ClosureRequest{Schema: 1, Requested: map[string][]string{"TABL": {"ZTAB"}, "SHLP": {"ZSH_COLL"}, "VIEW": {"ZVIEW"}}}
+	req := &ClosureRequest{Schema: 1, Requested: map[string][]string{"TABL": {"ZTAB"}, "SHLP": {"ZSH_COLL"}, "ENHO": {"ZENH"}}}
 	res, err := closeDictionary(context.Background(), db, "S", req)
 	if err != nil {
 		t.Fatal(err)
@@ -185,8 +191,8 @@ func TestCloseDictionary(t *testing.T) {
 		sort.Strings(res.Resolved[k])
 	}
 	want := map[string][]string{
-		"TABL": {"ZSTRU_INC", "ZTAB"}, "DTEL": {"ZDTEL1", "ZDTEL_ROW", "ZDTEL_SH"}, "DOMA": {"ZDOMA1", "ZDOMA_RAW"},
-		"TTYP": {"ZTTYP"}, "SHLP": {"ZSH_COLL", "ZSH_ELEM"},
+		"TABL": {"ZSTRU_INC", "ZTAB"}, "DTEL": {"ZDTEL1", "ZDTEL_ROW", "ZDTEL_SH", "ZDTEL_V"}, "DOMA": {"ZDOMA1", "ZDOMA_RAW"},
+		"TTYP": {"ZTTYP"}, "SHLP": {"ZSH_COLL", "ZSH_ELEM"}, "VIEW": {"ZHVIEW"},
 	}
 	if !reflect.DeepEqual(res.Resolved, want) {
 		t.Errorf("resolved %v, want %v", res.Resolved, want)
@@ -194,7 +200,7 @@ func TestCloseDictionary(t *testing.T) {
 	if !reflect.DeepEqual(res.Missing, map[string][]string{"TABL": {"ZSTRU_NEST"}}) {
 		t.Errorf("missing %v", res.Missing)
 	}
-	if !reflect.DeepEqual(res.Unhandled, map[string][]string{"VIEW": {"ZVIEW"}}) {
+	if !reflect.DeepEqual(res.Unhandled, map[string][]string{"ENHO": {"ZENH"}}) {
 		t.Errorf("unhandled %v", res.Unhandled)
 	}
 }

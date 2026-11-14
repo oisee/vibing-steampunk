@@ -44,6 +44,9 @@ var DefaultTables = []Table{
 	// class) and its description, which abapGit's .clas.xml carries
 	{"SEOCLASSDF", "CLSNAME"},
 	{"SEOCLASSTX", "CLSNAME"},
+	// text pools (text symbols, selection texts, the program title) by
+	// program: a class pool's "<name>====...CP", a group's SAPL<name>
+	{"REPOTEXT", "PROGNAME"},
 	{"TLIBG", "AREA"},
 	// SAP's own where-used index, by the including program: what each
 	// source refers to. Dependencies come from here rather than a parser.
@@ -202,7 +205,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			m.Counts["closure_"+kind] = len(names)
 		}
 		logf("closure: %d rounds, %v resolved, %d kinds with missing names", res.Rounds, m.Counts, len(res.Missing))
-		byColumn := map[string]string{"TABL": "TABNAME", "DTEL": "ROLLNAME", "DOMA": "DOMNAME", "TTYP": "TYPENAME", "SHLP": "SHLPNAME"}
+		byColumn := map[string]string{"TABL": "TABNAME", "DTEL": "ROLLNAME", "DOMA": "DOMNAME", "TTYP": "TYPENAME", "SHLP": "SHLPNAME", "VIEW": "VIEWNAME"}
 		for kind, names := range res.Resolved {
 			closureNames[byColumn[kind]] = append(closureNames[byColumn[kind]], names...)
 		}
@@ -287,7 +290,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		if all := allClosureNames(closureNames); !missing && err == nil && t.Name == "TADIR" && len(all) > 0 {
 			appended := n > 0 || len(opts.Names) > 0
 			err = inChunks(all, func(ph string, inArgs []any) error {
-				w := fmt.Sprintf(`"PGMID" = 'R3TR' AND "OBJECT" IN ('TABL', 'DTEL', 'DOMA', 'TTYP', 'SHLP') AND "OBJ_NAME" IN (%s)`, ph)
+				w := fmt.Sprintf(`"PGMID" = 'R3TR' AND "OBJECT" IN ('TABL', 'DTEL', 'DOMA', 'TTYP', 'SHLP', 'VIEW') AND "OBJ_NAME" IN (%s)`, ph)
 				a := inArgs
 				if len(opts.Names) > 0 {
 					w, a = w+" AND NOT ("+where+")", append(append([]any{}, inArgs...), args...)

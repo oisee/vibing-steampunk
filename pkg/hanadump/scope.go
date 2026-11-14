@@ -34,6 +34,10 @@ var DDICTables = []Table{
 	{"ACMDCLSRC", "DCLNAME"},
 	// search helps: header, texts, parameters, and the included ones
 	{"DD30L", "SHLPNAME"}, {"DD30T", "SHLPNAME"}, {"DD31S", "SHLPNAME"}, {"DD32S", "SHLPNAME"},
+	// a collective help's parameter assignments to its included helps
+	{"DD33S", "SHLPNAME"},
+	// views: header, texts, base tables, fields, selection conditions
+	{"DD25L", "VIEWNAME"}, {"DD25T", "VIEWNAME"}, {"DD26S", "VIEWNAME"}, {"DD27S", "VIEWNAME"}, {"DD28S", "VIEWNAME"},
 }
 
 // RawTable is a table dumped as the caller asked: Pattern is a LIKE pattern
