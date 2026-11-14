@@ -321,7 +321,7 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			// manifest, so the dump cannot be mistaken for a finished one.
 			return nil, fmt.Errorf("hanadump: table %s: %w", t.Name, err)
 		}
-		if len(opts.Names) > 0 || len(closureNames[t.Column]) > 0 && isDDIC(t.Name) || t.Name == "TADIR" && closureTadir {
+		if len(opts.Names) > 0 || len(closureNames[col]) > 0 && isDDIC(t.Name) || t.Name == "TADIR" && closureTadir {
 			dumped[t.Name] = true // a file was written
 		}
 		m.Counts["rows_"+t.Name] = n

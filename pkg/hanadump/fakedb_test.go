@@ -309,3 +309,52 @@ func TestSkipTestIncludes(t *testing.T) {
 		}
 	}
 }
+
+// A view reached last (a help selects from it; nothing else is pending) is
+// still closed over, its DD28S rows are read by CONDNAME, and it gets its
+// TADIR row.
+func TestClosureViewReachedLast(t *testing.T) {
+	db, f := openFake(t,
+		&fakeRule{contains: `SELECT DISTINCT "SHLPNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZSH"}}},
+		&fakeRule{contains: `SELECT DISTINCT "VIEWNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZV"}}},
+		&fakeRule{contains: `SELECT DISTINCT "ROLLNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZD"}}},
+		&fakeRule{contains: `SELECT DISTINCT "TABNAME"`, cols: []string{"N"}, rows: [][]driver.Value{{"ZT"}}},
+		&fakeRule{contains: `SELECT DISTINCT`, cols: []string{"N"}},
+		&fakeRule{contains: `"DD30L" H JOIN`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"VIEW", "ZV"}}},
+		&fakeRule{contains: `SELECT 'TABL', "TABNAME" FROM "S"."DD26S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"TABL", "ZT"}}},
+		&fakeRule{contains: `SELECT 'DTEL', "ROLLNAME" FROM "S"."DD27S"`, cols: []string{"K", "N"}, rows: [][]driver.Value{{"DTEL", "ZD"}}},
+		&fakeRule{contains: `SELECT 'SHLP'`, cols: []string{"K", "N"}},
+		&fakeRule{contains: `SELECT 'DTEL', "ROLLNAME" FROM "S"."DD32S"`, cols: []string{"K", "N"}},
+		&fakeRule{contains: `FROM "S"."DD03L" WHERE "AS4LOCAL"`, cols: []string{"FIELDNAME", "ROLLNAME", "COMPTYPE", "PRECFIELD", "DOMNAME"}},
+		&fakeRule{contains: `"DOMNAME" FROM "S"."DD04L"`, cols: []string{"DOMNAME"}},
+		&fakeRule{contains: `"S"."TADIR" WHERE "PGMID" = 'R3TR' AND "OBJECT" IN`, cols: []string{"PGMID", "OBJECT", "OBJ_NAME", "DEVCLASS"},
+			rows: [][]driver.Value{{"R3TR", "VIEW", "ZV", "ZSTD"}}},
+		&fakeRule{contains: `FROM "S".`, cols: []string{"X"}},
+	)
+	opts := fakeOpts(t)
+	opts.Closure = &ClosureRequest{Schema: 1, Requested: map[string][]string{"SHLP": {"ZSH"}}}
+	m, err := Run(context.Background(), db, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string][]string{"SHLP": {"ZSH"}, "VIEW": {"ZV"}, "TABL": {"ZT"}, "DTEL": {"ZD"}}
+	if !reflect.DeepEqual(m.Closure.Resolved, want) {
+		t.Errorf("resolved %v, want %v", m.Closure.Resolved, want)
+	}
+	cond, tadir := false, false
+	for _, q := range f.seen {
+		if strings.Contains(q, `"DD28S" WHERE "CONDNAME" IN (`) {
+			cond = true
+		}
+		if strings.Contains(q, `"OBJECT" IN (`) && strings.Contains(q, `'VIEW'`) {
+			tadir = true
+		}
+	}
+	if !cond || !tadir {
+		t.Errorf("DD28S read by CONDNAME: %v; TADIR asked for VIEW rows: %v", cond, tadir)
+	}
+	b, _ := os.ReadFile(filepath.Join(opts.Out, "tables", "TADIR.jsonl"))
+	if !strings.Contains(string(b), `"OBJECT":"VIEW"`) {
+		t.Errorf("TADIR: %q", b)
+	}
+}
