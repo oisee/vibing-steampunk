@@ -61,7 +61,7 @@ func init() {
 	f.Bool("ddic", false, "also dump the dictionary rows (DD02L/DD03L/DD04L/DD01L/DD07L/DD40L, texts) and CDS sources (DDDDLSRC) of the selected names")
 	f.StringArray("table", nil, "raw table, repeatable: NAME or NAME:COLUMN=PATTERN[,PATTERN]; NAME may be a LIKE pattern (/IWBEP/I_SBD_%)")
 	f.Bool("skip-test-includes", false, "leave out classes' test includes (CCAU) and their where-used rows")
-	f.String("ddic-closure", "", "closure-request.json (schema 1): its CLAS/INTF/FUGR/PROG are selected as if named, its TABL/DTEL/DOMA/TTYP/SHLP closed over transitively and their DDIC rows dumped")
+	f.String("ddic-closure", "", "closure-request.json (schema 1): its CLAS/INTF/FUGR/PROG are selected as if named, its TABL/DTEL/DOMA/TTYP/SHLP/VIEW closed over transitively (a search help to the view or table it reads) and their DDIC rows dumped")
 	f.Bool("catalog", false, "also dump definitions of matching database procedures/functions (AMDP) and the views and tables they read")
 	f.String("provenance", "", "where this content comes from and under what rights; written to the manifest")
 	f.String("out", "", "output directory (new or empty, outside git)")

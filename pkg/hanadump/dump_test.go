@@ -94,3 +94,34 @@ func TestPrepareOutIsPrivate(t *testing.T) {
 		t.Errorf("dump directory is %v, readable by others", st.Mode().Perm())
 	}
 }
+
+type fakeDecimal struct {
+	form byte
+	neg  bool
+	coef []byte
+	exp  int32
+}
+
+func (d fakeDecimal) Decompose([]byte) (byte, bool, []byte, int32) {
+	return d.form, d.neg, d.coef, d.exp
+}
+
+// A DECIMAL from go-hdb is written as its exact digits, not as {}.
+func TestDecimalIsWrittenAsDigits(t *testing.T) {
+	for _, c := range []struct {
+		d    fakeDecimal
+		want string
+	}{
+		{fakeDecimal{0, false, nil, -1}, "0.0"},
+		{fakeDecimal{0, false, []byte{0x04, 0xe2}, -2}, "12.50"},
+		{fakeDecimal{0, true, []byte{3}, 0}, "-3"},
+		{fakeDecimal{0, false, []byte{12}, 2}, "1200"},
+		{fakeDecimal{0, false, []byte{5}, -3}, "0.005"},
+		{fakeDecimal{0, true, nil, -2}, "0.00"},
+		{fakeDecimal{2, false, nil, 0}, "NaN"},
+	} {
+		if got := jsonValue(c.d); got != c.want {
+			t.Errorf("%+v: got %v, want %s", c.d, got, c.want)
+		}
+	}
+}

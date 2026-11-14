@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -270,7 +271,12 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 			n, missing, err = dumpTable(ctx, db, opts, t.Name, where, args)
 		}
 		// closure names, by IN list, leaving out the rows the patterns took
-		if extra := closureNames[t.Column]; !missing && err == nil && len(extra) > 0 && isDDIC(t.Name) {
+		col := t.Column
+		if col == "CONDNAME" {
+			// a view's selection conditions are keyed by the view's name
+			col = "VIEWNAME"
+		}
+		if extra := closureNames[col]; !missing && err == nil && len(extra) > 0 && isDDIC(t.Name) {
 			appended := n > 0 || len(opts.Names) > 0
 			err = inChunks(extra, func(ph string, inArgs []any) error {
 				w, a := fmt.Sprintf(`%q IN (%s)`, t.Column, ph), inArgs
@@ -634,9 +640,48 @@ func jsonValue(v any) any {
 		return "0x" + hex.EncodeToString(x)
 	case time.Time:
 		return x.UTC().Format(time.RFC3339Nano)
+	case decimalDecomposer:
+		// go-hdb hands DECIMAL over as a value with unexported fields, which
+		// encoding/json would write as {}: write its exact digits instead
+		return decimalString(x)
 	default:
 		return x
 	}
+}
+
+// decimalDecomposer is database/sql's decimal interface, as go-hdb's
+// Decimal implements it.
+type decimalDecomposer interface {
+	Decompose(buf []byte) (form byte, negative bool, coefficient []byte, exponent int32)
+}
+
+// decimalString writes a decimal exactly, with as many fraction digits as
+// its exponent says ("0.0", "12.50", "-3", "1200"); infinities and NaN by name.
+func decimalString(d decimalDecomposer) string {
+	form, neg, coef, exp := d.Decompose(nil)
+	switch form {
+	case 1:
+		if neg {
+			return "-Infinity"
+		}
+		return "Infinity"
+	case 2:
+		return "NaN"
+	}
+	digits := new(big.Int).SetBytes(coef).String()
+	if exp >= 0 {
+		digits += strings.Repeat("0", int(exp))
+	} else {
+		frac := int(-exp)
+		if len(digits) <= frac {
+			digits = strings.Repeat("0", frac-len(digits)+1) + digits
+		}
+		digits = digits[:len(digits)-frac] + "." + digits[len(digits)-frac:]
+	}
+	if neg && strings.Trim(digits, "0.") != "" {
+		digits = "-" + digits
+	}
+	return digits
 }
 
 func likeAny(col string, patterns []string) (string, []any) {
