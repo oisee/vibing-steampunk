@@ -185,7 +185,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install qemu (to run the arm64 binary)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+        # Newer Ubuntu images have no qemu-user-static, only qemu-user, whose
+        # qemu-aarch64 is static already; the run spec names the -static path.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static || sudo apt-get install -y -qq qemu-user
+          if ! command -v qemu-aarch64-static >/dev/null; then
+            sudo ln -s "$(command -v qemu-aarch64)" /usr/local/bin/qemu-aarch64-static
+          fi
+          qemu-aarch64-static --version | head -1
       - name: Build
         run: ./.github/ci/release.sh build "$TAG" dist
       - name: Verify (names, headers, build info, checksums)
