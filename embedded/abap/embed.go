@@ -128,7 +128,7 @@ func GetObjects() []ObjectInfo {
 			Type:        "CLAS",
 			Name:        "ZCL_VSP_GIT_SERVICE",
 			Source:      ZclVspGitService,
-			Description: "Git domain - abapGit export and zip import (requires abapGit)",
+			Description: "Git domain - abapGit export and zip import",
 			Optional:    true, // Requires abapGit on SAP system
 			// The APC handler creates it dynamically, so ZADT_VSP runs without it.
 			RequiresAbapGit: true,
