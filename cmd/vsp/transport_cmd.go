@@ -106,6 +106,9 @@ func transportCmdConflicts(cmd *cobra.Command) error {
 	if flagOrEnv("cookie-file", "COOKIE_FILE") {
 		found = append(found, "cookie-file")
 	}
+	if flagOrEnv("client-cert-cn", "CLIENT_CERT_CN") || flagOrEnv("client-cert-issuer", "CLIENT_CERT_ISSUER") {
+		found = append(found, "client-cert")
+	}
 	if flagOrEnv("cookie-string", "COOKIE_STRING") {
 		found = append(found, "cookie-string")
 	}

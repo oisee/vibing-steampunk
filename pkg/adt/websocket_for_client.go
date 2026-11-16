@@ -34,6 +34,7 @@ func (c *Client) NewDebugWebSocketClient() *DebugWebSocketClient {
 	user, password, cookies := c.wsCredentials()
 	ws := NewDebugWebSocketClient(c.config.BaseURL, c.config.Client, user, password, c.config.InsecureSkipVerify)
 	ws.transportCmd = TransportCmdName(c.config.TransportCmd)
+	c.config.applyClientCert(ws.BaseWebSocketClient)
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
@@ -49,6 +50,7 @@ func (c *Client) NewAMDPWebSocketClient() *AMDPWebSocketClient {
 	user, password, cookies := c.wsCredentials()
 	ws := NewAMDPWebSocketClient(c.config.BaseURL, c.config.Client, user, password, c.config.InsecureSkipVerify)
 	ws.transportCmd = TransportCmdName(c.config.TransportCmd)
+	c.config.applyClientCert(ws.BaseWebSocketClient)
 	if len(cookies) > 0 {
 		ws.SetCookies(cookies)
 	}
@@ -56,4 +58,16 @@ func (c *Client) NewAMDPWebSocketClient() *AMDPWebSocketClient {
 		ws.credentials = c.verifiedCredentials
 	}
 	return ws
+}
+
+// applyClientCert hands c's client certificate (mTLS) to a WebSocket, so the
+// upgrade authenticates the way c's HTTP calls do; without it the dial falls
+// back to basic auth with an empty password and the bridge answers 401.
+func (cfg *Config) applyClientCert(ws *BaseWebSocketClient) {
+	switch {
+	case cfg.ClientCertProvider != nil:
+		ws.SetClientCertProvider(cfg.ClientCertProvider)
+	case cfg.ClientCert != nil:
+		ws.SetClientCert(cfg.ClientCert)
+	}
 }

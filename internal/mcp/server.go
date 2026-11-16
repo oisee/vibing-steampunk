@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/oisee/vibing-steampunk/pkg/cache"
@@ -75,6 +76,14 @@ type Config struct {
 	Client             string
 	Language           string
 	InsecureSkipVerify bool
+
+	// ClientCert, when set, is presented for TLS mutual auth (mTLS) instead of
+	// a password. On macOS it is loaded from the keychain in main.go.
+	ClientCert *tls.Certificate
+
+	// ClientCertProvider resolves the cert lazily per TLS handshake (wins over
+	// ClientCert): the server stays up without a cert and heals after SLC login.
+	ClientCertProvider func() (*tls.Certificate, error)
 
 	// Cookie authentication (alternative to basic auth)
 	Cookies map[string]string
@@ -200,6 +209,11 @@ func NewServer(cfg *Config) *Server {
 	}
 	if cfg.InsecureSkipVerify {
 		opts = append(opts, adt.WithInsecureSkipVerify())
+	}
+	if cfg.ClientCertProvider != nil {
+		opts = append(opts, adt.WithClientCertProvider(cfg.ClientCertProvider))
+	} else if cfg.ClientCert != nil {
+		opts = append(opts, adt.WithClientCert(cfg.ClientCert))
 	}
 	if len(cfg.Cookies) > 0 {
 		opts = append(opts, adt.WithCookies(cfg.Cookies))
