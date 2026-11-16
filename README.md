@@ -1130,6 +1130,7 @@ Read an ABAP system's code out of its HANA database when the ABAP server is gone
 - `probe` says what a login may do, without naming any object.
 - `list` gives the objects in scope and their size before anything is read, split into customer and SAP.
 - `dump` writes `objects.jsonl`: every object in scope is reported as written or as row data, or skipped with a reason.
+- `--catalog` (AMDP sources) needs the read-only `CATALOG READ` privilege, or schema ownership: HANA hides definitions from a plain SELECT reader. A hidden definition is reported as an error, never written as an empty file.
 
 **Read-only by construction**, in both commands. Each session is switched to `SET TRANSACTION READ ONLY`, so HANA itself refuses any write. On top of that, only a single `SELECT` or `WITH ... SELECT` reaches the driver: prepared statements cannot execute, and only read-only transactions can begin.
 
