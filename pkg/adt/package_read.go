@@ -17,6 +17,10 @@ import (
 // any other outcome (5xx, network, auth) is returned as an error so the
 // caller does not silently classify a transient failure as "missing".
 //
+// 7.40 and 7.50 have no such resource: the router answers 404 for every
+// name, $TMP included. That 404 carries no ADT exception document, and then
+// TDEVC, read through data preview, gives the answer instead.
+//
 // Unlike GetPackage, which reads the nodestructure API and cannot distinguish
 // "package does not exist" from "package exists but has no children" (both
 // return an empty tree), this is a definitive existence check.
@@ -31,6 +35,14 @@ func (c *Client) PackageExists(ctx context.Context, packageName string) (bool, e
 	})
 	if err == nil {
 		return true, nil
+	}
+	if IsRouterNotFound(err) {
+		res, qerr := c.GetTableContents(ctx, "TDEVC", 1,
+			"SELECT DEVCLASS FROM TDEVC WHERE DEVCLASS = '"+strings.ReplaceAll(strings.ToUpper(packageName), "'", "''")+"'")
+		if qerr != nil {
+			return false, fmt.Errorf("no packages resource on this release, and TDEVC: %w", qerr)
+		}
+		return len(res.Rows) > 0, nil
 	}
 	var apiErr *APIError
 	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {

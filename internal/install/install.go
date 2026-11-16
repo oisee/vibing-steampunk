@@ -44,6 +44,10 @@ func EnsurePackage(ctx context.Context, client Client, name, description string)
 		return false, fmt.Errorf("package creation could not be verified: %w", verifyErr)
 	}
 	if !exists {
+		if adt.IsRouterNotFound(createErr) {
+			return false, fmt.Errorf("package %s does not exist, and this release has no ADT resource to create it: "+
+				"create it in SE21 (%v)", name, createErr)
+		}
 		if createErr != nil {
 			return false, fmt.Errorf("package create failed and package is still absent: %w", createErr)
 		}

@@ -1011,6 +1011,17 @@ func IsNotFoundError(err error) bool {
 	return false
 }
 
+// IsRouterNotFound tells a 404 of the ADT router — no application for the
+// path, or no resource in the application — from a resource's own 404 for
+// an object that does not exist, which comes as an ADT exception document.
+func IsRouterNotFound(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return false
+	}
+	return !strings.Contains(apiErr.Message, "<exc:exception") && !strings.Contains(apiErr.Message, ":exception ")
+}
+
 // IsSessionExpiredError checks if an error indicates SAP session timeout.
 func IsSessionExpiredError(err error) bool {
 	if err == nil {
