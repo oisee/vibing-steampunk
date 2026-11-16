@@ -33,6 +33,12 @@ set -euo pipefail
 PLATFORMS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 # shellcheck disable=SC2086 # split on purpose: one platform per word
 NPLATFORMS=$(set -- $PLATFORMS; echo $#)
+# The HANA dumper sidecar (cmd/osd-hana-dump) ships beside vsp for the OSD
+# extension, which pins a version and these sums. Its names are an interface too.
+SIDECAR_PLATFORMS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+# shellcheck disable=SC2086 # split on purpose: one platform per word
+NSIDECAR=$(set -- $SIDECAR_PLATFORMS; echo $#)
+SIDECAR_SUMS=osd-hana-dump-checksums.txt
 EXTRA_FILES="LICENSE NOTICE" # Apache-2.0 s.4 (open-rfc-go is embedded); the binaries are bare
 TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 
@@ -46,6 +52,13 @@ asset_of() { # os/arch -> asset file name, as cmd/vsp/update.go assetName
 	local os=${1%/*} arch=${1#*/}
 	if [ "$os" = windows ]; then echo "vsp-$os-$arch.exe"; else echo "vsp-$os-$arch"; fi
 }
+
+sidecar_of() { # os/arch -> sidecar asset file name
+	local os=${1%/*} arch=${1#*/}
+	if [ "$os" = windows ]; then echo "osd-hana-dump-$os-$arch.exe"; else echo "osd-hana-dump-$os-$arch"; fi
+}
+
+sidecar_assets() { local p; for p in $SIDECAR_PLATFORMS; do sidecar_of "$p"; done; }
 
 sha256_of() {
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
@@ -139,6 +152,16 @@ cmd_build() {
 			go build -ldflags "$ldflags" -o "$out" ./cmd/vsp
 	done
 	(cd "$dist" && for p in $PLATFORMS; do a=$(asset_of "$p"); echo "$(sha256_of "$a")  $a"; done) > "$dist/checksums.txt"
+	# The sidecar: its own version variables, its own checksums file (vsp
+	# update reads checksums.txt, whose lines are vsp's alone).
+	for p in $SIDECAR_PLATFORMS; do
+		os=${p%/*}; arch=${p#*/}
+		out="$dist/$(sidecar_of "$p")"
+		echo "build $out"
+		CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+			go build -ldflags "-s -w -X main.version=$tag -X main.commit=$sha" -o "$out" ./cmd/osd-hana-dump
+	done
+	(cd "$dist" && for p in $SIDECAR_PLATFORMS; do a=$(sidecar_of "$p"); echo "$(sha256_of "$a")  $a"; done) > "$dist/$SIDECAR_SUMS"
 	local f
 	for f in $EXTRA_FILES; do cp "$f" "$dist/$f"; done
 	echo "built $tag ($sha) into $dist/"
@@ -196,10 +219,10 @@ cmd_verify() {
 
 	# 1. Exactly the expected files: nothing missing, nothing stale left over.
 	local want got
-	want=$(for p in $PLATFORMS; do asset_of "$p"; done; echo checksums.txt; for f in $EXTRA_FILES; do echo "$f"; done)
+	want=$(for p in $PLATFORMS; do asset_of "$p"; done; echo checksums.txt; sidecar_assets; echo "$SIDECAR_SUMS"; for f in $EXTRA_FILES; do echo "$f"; done)
 	want=$(echo "$want" | LC_ALL=C sort)
 	got=$(cd "$dist" && ls -1A | LC_ALL=C sort)
-	if [ "$want" = "$got" ]; then ok "file set: $NPLATFORMS binaries, checksums.txt, $EXTRA_FILES"
+	if [ "$want" = "$got" ]; then ok "file set: $NPLATFORMS binaries, checksums.txt, $NSIDECAR sidecar binaries, $SIDECAR_SUMS, $EXTRA_FILES"
 	else bad "file set differs from the expected one:"; diff <(echo "$want") <(echo "$got") >&2 || true; fi
 
 	# 2. Per binary: the header is the platform the name claims, and Go's own
@@ -244,6 +267,43 @@ cmd_verify() {
 		bad "checksums.txt missing"
 	fi
 
+	# 4. The sidecar, by the same rules: header, build info, its own sums.
+	for p in $SIDECAR_PLATFORMS; do
+		os=${p%/*}; arch=${p#*/}; a=$(sidecar_of "$p"); f="$dist/$a"
+		[ -f "$f" ] || { bad "$a missing"; continue; }
+		if why=$(expect_header "$f" "$os" "$arch"); then ok "$a header is $os/$arch"; else bad "$a header: $why"; fi
+		[ "$(buildinfo "$f" GOOS)" = "$os" ] || bad "$a build info GOOS=$(buildinfo "$f" GOOS)"
+		[ "$(buildinfo "$f" GOARCH)" = "$arch" ] || bad "$a build info GOARCH=$(buildinfo "$f" GOARCH)"
+		[ "$(buildinfo "$f" CGO_ENABLED)" = 0 ] || bad "$a CGO_ENABLED=$(buildinfo "$f" CGO_ENABLED)"
+		[ "$(buildinfo "$f" path)" = github.com/oisee/vibing-steampunk/cmd/osd-hana-dump ] || bad "$a is not cmd/osd-hana-dump: $(buildinfo "$f" path)"
+		v=$(buildinfo "$f" vcs.revision)
+		[ "$v" = "$sha" ] || bad "$a was built from ${v:-an unknown revision}, not $tag ($sha)"
+		v=$(buildinfo "$f" vcs.modified)
+		[ "$v" = false ] || bad "$a was built from a modified tree (vcs.modified=${v:-unknown})"
+		v=$(buildinfo "$f" -ldflags)
+		case " $v " in *" -X main.version=$tag "*) ;; *) bad "$a ldflags do not set main.version=$tag: $v" ;; esac
+		case " $v " in *" -X main.commit=$sha "*) ;; *) bad "$a ldflags do not set main.commit=$sha" ;; esac
+	done
+	sums="$dist/$SIDECAR_SUMS"
+	if [ -f "$sums" ]; then
+		n=$(grep -c . "$sums" || true)
+		[ "$n" = "$NSIDECAR" ] || bad "$SIDECAR_SUMS has $n lines, want $NSIDECAR"
+		for p in $SIDECAR_PLATFORMS; do
+			a=$(sidecar_of "$p")
+			line=$(grep -E "^[0-9a-f]{64}  \*?$a\$" "$sums" || true)
+			[ -n "$line" ] || { bad "$SIDECAR_SUMS has no line for $a"; continue; }
+			[ "${line%% *}" = "$(sha256_of "$dist/$a")" ] || bad "$SIDECAR_SUMS: $a does not match"
+		done
+		while IFS= read -r line; do
+			name=${line##* }; name=${name#\*}
+			case " $(sidecar_assets | tr '\n' ' ') " in
+			*" $name "*) ;; *) bad "$SIDECAR_SUMS names an unexpected file: $name" ;; esac
+		done < "$sums"
+	else
+		bad "$SIDECAR_SUMS missing"
+	fi
+	[ "$fail" = 0 ] && ok "sidecar: $NSIDECAR binaries of $tag, $sha, unmodified; $SIDECAR_SUMS matches"
+
 	for f in $EXTRA_FILES; do
 		cmp -s "$f" "$dist/$f" || bad "$dist/$f is not the repository's $f"
 	done
@@ -277,9 +337,18 @@ cmd_run() {
 		fi
 		[ "$status" = 0 ] || { bad "$a --version exited $status: $first"; continue; }
 		# vsp prints: vsp version <Version> (commit: <Commit>, built: <BuildDate>)
-		case $first in
-		"vsp version $tag (commit: $sha, built: "*) ok "$a${launcher:+ via $launcher}: $first" ;;
-		*) bad "$a --version printed '$first', want 'vsp version $tag (commit: $sha, ...'" ;;
+		# the sidecar: osd-hana-dump <version> <commit> <go> <os/arch> (read-only)
+		case $a in
+		osd-hana-dump-*)
+			case $first in
+			"osd-hana-dump $tag $sha "*) ok "$a${launcher:+ via $launcher}: $first" ;;
+			*) bad "$a --version printed '$first', want 'osd-hana-dump $tag $sha ...'" ;;
+			esac ;;
+		*)
+			case $first in
+			"vsp version $tag (commit: $sha, built: "*) ok "$a${launcher:+ via $launcher}: $first" ;;
+			*) bad "$a --version printed '$first', want 'vsp version $tag (commit: $sha, ...'" ;;
+			esac ;;
 		esac
 	done
 	[ "$fail" = 0 ] || die "run $tag: FAILED"
@@ -341,6 +410,8 @@ cmd_notes() {
 		echo
 		echo "Checksums: \`checksums.txt\`. Or run \`vsp update\` from an older version on one of these platforms; elsewhere: \`go install github.com/oisee/vibing-steampunk/cmd/vsp@latest\`."
 		echo "\`LICENSE\` and \`NOTICE\` travel with the binaries (Apache-2.0 components are embedded)."
+		echo
+		echo "**osd-hana-dump** (read-only HANA dumper sidecar, \`cmd/osd-hana-dump/README.md\`): \`osd-hana-dump-<os>-<arch>\` for linux/darwin amd64 and arm64 and windows amd64; checksums: \`$SIDECAR_SUMS\`."
 		echo
 		echo "**Changelog:** https://github.com/$repo/blob/$tag/CHANGELOG.md"
 	} > "$out"
