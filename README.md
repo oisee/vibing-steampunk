@@ -1112,7 +1112,28 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.61.0 — snc and traces](https://github.com/oisee/vibing-steampunk/releases/tag/v2.61.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.62.0 — straight from HANA](https://github.com/oisee/vibing-steampunk/releases/tag/v2.62.0)**.
+
+### v2.62.0 — new since v2.61.0
+
+Read an ABAP system's code out of its HANA database when the ABAP server is gone, and never write a byte to it.
+
+**New:** `vsp hana dump` reads ABAP sources and repository rows straight from the HANA database behind an AS ABAP, over its SQL port, with no logon to ABAP. It is for a system that will not start any more (an expired trial, a restored backup) and for migration tooling that needs the sources and the dictionary offline. What to dump is yours to say: `--name` and `--package` take SQL LIKE patterns.
+- Sources: REPOSRC decoded to `src/*.abap`, listed with SHA-256 in `reposrc.jsonl`. A row that cannot be decoded is kept raw under `undecoded/`.
+- Repository rows as JSONL: TADIR, TRDIR, TMDIR, TFDIR, SEOCLASS, TLIBG, text pools, and the where-used index.
+- `--ddic` adds dictionary rows (tables, data elements, domains, table types, search helps, views) and the sources kept outside REPOSRC (CDS, metadata extensions, service definitions, access controls).
+- `--ddic-closure request.json` closes a dependency request over the dictionary on the server.
+- `--catalog` adds AMDP procedures and what they read.
+- The output directory must be new or empty and outside any git working tree. Files are private (0600).
+
+**New:** `osd-hana-dump`, the same dumper as a separate binary for the OSD extension (`cmd/osd-hana-dump/README.md`). It takes a JSON request and prints one JSON line, with exit codes 0-5. The release ships it for Linux and macOS (amd64, arm64) and Windows (amd64), with its own `osd-hana-dump-checksums.txt`.
+- `probe` says what a login may do, without naming any object.
+- `list` gives the objects in scope and their size before anything is read, split into customer and SAP.
+- `dump` writes `objects.jsonl`: every object in scope is reported as written or as row data, or skipped with a reason.
+
+**Read-only by construction**, in both commands. Each session is switched to `SET TRANSACTION READ ONLY`, so HANA itself refuses any write. On top of that, only a single `SELECT` or `WITH ... SELECT` reaches the driver: prepared statements cannot execute, and only read-only transactions can begin.
+
+**Behaviour change:** `vsp hana dump` takes its password from `VSP_HANA_PASSWORD` or `--password-stdin`, never from the command line.
 
 ### v2.61.0 — new since v2.60.0
 

@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.62.0] - 2026-11-16
+### Bug Fixes
+
+- **hana:** Write character columns as text, not 0x-hex ([`749e990`](https://github.com/oisee/vibing-steampunk/commit/749e990ed45726ade19b5753917fad96ef611cd4))
+- **hana:** Critic round 1 — no overwrites, no false success, private files ([`23507d1`](https://github.com/oisee/vibing-steampunk/commit/23507d15570be666bd288e3779deb87f3e14643f))
+- **hana:** Claude-z review of the scope slice -- M1 and SHOULDs ([`b20f5f5`](https://github.com/oisee/vibing-steampunk/commit/b20f5f5b027be726d74fdd1fc2de468370d5a9ad))
+- **hana:** Claude-k round 2 (MERGE) -- SHOULDs and NICEs ([`86ff6ae`](https://github.com/oisee/vibing-steampunk/commit/86ff6ae4f1e97dd5ada64096d562e9fea15583c9))
+
+
+### Features
+
+- **hana:** Dump ABAP sources and repository rows straight from HANA ([`736603d`](https://github.com/oisee/vibing-steampunk/commit/736603d48fd456655bb030c1bae3db4d1230d44f))
+- **hana:** --catalog dumps AMDP procedures and what they read ([`5029326`](https://github.com/oisee/vibing-steampunk/commit/5029326a2d0ea0278835cebada104fb5f5396485))
+- **hana:** Dump SAP's where-used index (WBCROSSGT, WBCROSSI, CROSS) by including program ([`0c26aec`](https://github.com/oisee/vibing-steampunk/commit/0c26aec6815ca4debdf412d3877ddc5a7419dfad))
+- **hana:** --package, --ddic and --table for vsp hana dump ([`77ed431`](https://github.com/oisee/vibing-steampunk/commit/77ed431079b74e6db56474d0adaeccf0b886516e))
+- **hana:** --ddic-closure, function module signatures, search-help tables ([`50234cc`](https://github.com/oisee/vibing-steampunk/commit/50234cc87f1e3574005d95528c81a588c72da580))
+- **hana:** --ddic also dumps DD09L (technical settings) and DD40T (table type texts) ([`6d7b2be`](https://github.com/oisee/vibing-steampunk/commit/6d7b2be75464b3e3b62fc1f0d55fe226f3d17b41))
+- **hana:** Dump SEOCLASSDF and SEOCLASSTX with the repository rows ([`d07b6cb`](https://github.com/oisee/vibing-steampunk/commit/d07b6cbdf3093ba053c04ac1132d05f49026bb25))
+- **hana:** A closure's dictionary objects get their TADIR rows ([`aaa63dc`](https://github.com/oisee/vibing-steampunk/commit/aaa63dcf4884618543e79a3401b911107ad8a46e))
+- **hana:** --skip-test-includes leaves out classes' test includes ([`bf6f591`](https://github.com/oisee/vibing-steampunk/commit/bf6f591ec171350f46cca6784ce45359c06d14af))
+- **hana dump:** Text pools, collective-help assignments, and the views search helps read ([`e055ead`](https://github.com/oisee/vibing-steampunk/commit/e055ead1c3996ce9ed3ce9ca898d58ed95f0e033))
+- **hana dump:** DECIMAL as exact digits; DD28S by CONDNAME ([`b36e115`](https://github.com/oisee/vibing-steampunk/commit/b36e11556483ae70e1d6a5fce87c27fe04d3d884))
+- **hana dump:** Pin a view reached last, DD28S by CONDNAME and VIEW TADIR rows ([`97f9ad7`](https://github.com/oisee/vibing-steampunk/commit/97f9ad7c7df3036cef5934b51d380466181a18c5))
+- **osd-hana-dump:** Read-only HANA dumper sidecar (probe, list, dump) ([`0d5767b`](https://github.com/oisee/vibing-steampunk/commit/0d5767b7922ba0763f0e23555be2e2cb577ecd28))
+- **osd-hana-dump smoke:** Current macOS runner labels ([`9e21c7a`](https://github.com/oisee/vibing-steampunk/commit/9e21c7a22a09f599213b9af493394c2232ff503d))
+- **release:** Ship the osd-hana-dump sidecar beside vsp ([`4a0a2ed`](https://github.com/oisee/vibing-steampunk/commit/4a0a2edad57a5cdcc58131f68510501a4483e9b7))
+- **release:** Read the sidecar's main package path from its path line ([`748ba65`](https://github.com/oisee/vibing-steampunk/commit/748ba6542a90f33eaf47bbb55c96b046ef7eb488))
+
+
 ## [2.61.0] - 2026-10-09
 ### Bug Fixes
 
