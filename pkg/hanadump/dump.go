@@ -107,6 +107,8 @@ type Options struct {
 	// their DDIC rows dumped (DDIC is implied).
 	Closure *ClosureRequest
 	Log     func(format string, args ...any)
+	// Tool names the program in the manifest; "vsp hana dump" when empty.
+	Tool string
 }
 
 // Manifest is written last, as manifest.json, and says what the dump holds.
@@ -186,8 +188,12 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 		return nil, err
 	}
 
+	tool := opts.Tool
+	if tool == "" {
+		tool = "vsp hana dump"
+	}
 	m := &Manifest{
-		Tool: "vsp hana dump", Started: time.Now().UTC(), Provenance: opts.Provenance,
+		Tool: tool, Started: time.Now().UTC(), Provenance: opts.Provenance,
 		Connection: opts.Connection, Schema: opts.Schema, Names: opts.Names,
 		Inactive: opts.Inactive, Catalog: opts.Catalog, Tables: opts.Tables, Counts: map[string]int{},
 		Packages: opts.Packages, DDIC: opts.DDIC, RawTables: opts.RawTables,
@@ -772,3 +778,8 @@ func prepareOut(out string, allowInRepo bool) error {
 	}
 	return nil
 }
+
+// PrepareOut checks an output directory the way Run does (outside any git
+// working tree unless allowed; new or empty) and creates it, so a caller can
+// tell a refused directory apart from a failed dump.
+func PrepareOut(out string, allowInRepo bool) error { return prepareOut(out, allowInRepo) }

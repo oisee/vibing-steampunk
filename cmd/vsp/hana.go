@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	hdb "github.com/SAP/go-hdb/driver"
 	"github.com/spf13/cobra"
@@ -26,7 +28,8 @@ var hanaDumpCmd = &cobra.Command{
 	SilenceUsage: true,
 	Short:        "Dump ABAP sources and repository rows from HANA to a flat directory",
 	Long: `Read REPOSRC and a few repository tables straight from the HANA database of
-an AS ABAP, over SQL — no logon to ABAP, so it works on a system whose ABAP
+an AS ABAP, over SQL and read-only (the session is set READ ONLY and nothing
+but SELECT leaves) — no logon to ABAP, so it works on a system whose ABAP
 side will not start, or on a backup restored into any HANA.
 
 Each selected source is decompressed and written as plain text under src/,
@@ -52,7 +55,7 @@ func init() {
 	f.String("host", "", "HANA host")
 	f.Int("port", 30015, "SQL port of the database to read (the tenant's own port, or SYSTEMDB's with --database)")
 	f.String("user", "", "database user; the schema owner reads the repository tables")
-	f.String("password", "", "password (default: $VSP_HANA_PASSWORD)")
+	f.Bool("password-stdin", false, "read the password from the first line of stdin (default: $VSP_HANA_PASSWORD)")
 	f.String("database", "", "tenant name, when connecting through the SYSTEMDB port")
 	f.String("schema", "", "ABAP schema, e.g. SAPA4H or SAPABAP1")
 	f.StringArray("name", nil, "LIKE pattern for program and object names (repeatable)")
@@ -78,7 +81,7 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 	host, _ := f.GetString("host")
 	port, _ := f.GetInt("port")
 	user, _ := f.GetString("user")
-	password, _ := f.GetString("password")
+	pwStdin, _ := f.GetBool("password-stdin")
 	database, _ := f.GetString("database")
 	schema, _ := f.GetString("schema")
 	names, _ := f.GetStringArray("name")
@@ -112,21 +115,29 @@ func runHanaDump(cmd *cobra.Command, _ []string) error {
 		rawTables = append(rawTables, t)
 	}
 
-	if password == "" {
-		password = os.Getenv("VSP_HANA_PASSWORD")
+	// Never from the command line: argv is visible to every user of the host.
+	password := os.Getenv("VSP_HANA_PASSWORD")
+	if pwStdin {
+		line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+		if err != nil && line == "" {
+			return errors.New("--password-stdin: no password on stdin")
+		}
+		password = strings.TrimRight(line, "\r\n")
 	}
 	if password == "" {
-		return errors.New("no password: pass --password or set VSP_HANA_PASSWORD")
+		return errors.New("no password: set VSP_HANA_PASSWORD or pass --password-stdin")
 	}
 
 	dsn := url.URL{Scheme: "hdb", User: url.UserPassword(user, password), Host: net.JoinHostPort(host, strconv.Itoa(port))}
 	if database != "" {
 		dsn.RawQuery = url.Values{"databaseName": {database}}.Encode()
 	}
-	db, err := sql.Open("hdb", dsn.String())
+	connector, err := hdb.NewDSNConnector(dsn.String())
 	if err != nil {
-		return err
+		return errors.New("connection settings are not valid") // the DSN holds the password
 	}
+	// read-only: the session is set READ ONLY and only SELECTs leave
+	db := sql.OpenDB(hanadump.ReadOnlyConnector(connector))
 	defer db.Close()
 
 	ctx := context.Background()

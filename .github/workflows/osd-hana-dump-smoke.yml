@@ -1,0 +1,90 @@
+name: osd-hana-dump smoke
+
+# Builds the HANA dumper sidecar for its five targets once, then starts each
+# binary on a runner of its own platform from a fresh temporary folder, with
+# `--version` only: does an unsigned binary start, and how big is it. On macOS
+# and Windows it is started a second time marked as downloaded (quarantine
+# attribute / Mark of the Web), the way a browser would leave it; that run is
+# recorded, not required. No database is touched.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "cmd/osd-hana-dump/**"
+      - "pkg/hanadump/readonly*.go"
+      - ".github/workflows/osd-hana-dump-smoke.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./cmd/osd-hana-dump/ ./pkg/hanadump/
+      - run: make osd-hana-dump VERSION=smoke-${GITHUB_SHA::7}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osd-hana-dump
+          path: dist/osd-hana-dump/
+
+  start:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: linux-amd64, exe: osd-hana-dump }
+          - { runner: ubuntu-24.04-arm, target: linux-arm64, exe: osd-hana-dump }
+          - { runner: macos-13, target: darwin-amd64, exe: osd-hana-dump }
+          - { runner: macos-14, target: darwin-arm64, exe: osd-hana-dump }
+          - { runner: windows-latest, target: windows-amd64, exe: osd-hana-dump.exe }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: osd-hana-dump
+          path: artifact
+      - name: start from a fresh folder
+        run: |
+          d=$(mktemp -d)
+          cp "artifact/${{ matrix.target }}/${{ matrix.exe }}" "$d/"
+          cd "$d"
+          chmod +x "${{ matrix.exe }}"
+          size=$(wc -c < "${{ matrix.exe }}" | tr -d ' ')
+          ./"${{ matrix.exe }}" --version
+          ./"${{ matrix.exe }}" --version --json | tee version.json
+          grep -q '"read_only":true' version.json
+          echo "| ${{ matrix.target }} | ${{ matrix.runner }} | $size bytes | starts |" >> "$GITHUB_STEP_SUMMARY"
+      - name: start marked as downloaded (macOS quarantine)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          d=$(mktemp -d)
+          cp "artifact/${{ matrix.target }}/${{ matrix.exe }}" "$d/"
+          chmod +x "$d/${{ matrix.exe }}"
+          xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;" "$d/${{ matrix.exe }}"
+          codesign -dv "$d/${{ matrix.exe }}" 2>&1 | head -3 || true
+          spctl --assess --type execute -vv "$d/${{ matrix.exe }}" 2>&1 || true
+          if "$d/${{ matrix.exe }}" --version; then r=starts; else r="refused ($?)"; fi
+          echo "| ${{ matrix.target }} quarantined | ${{ matrix.runner }} | | $r |" >> "$GITHUB_STEP_SUMMARY"
+      - name: start marked as downloaded (Windows Mark of the Web)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $d = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP ([guid]::NewGuid()))
+          Copy-Item "artifact/${{ matrix.target }}/${{ matrix.exe }}" $d
+          $exe = Join-Path $d "${{ matrix.exe }}"
+          Set-Content -Path $exe -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+          & $exe --version
+          $r = if ($LASTEXITCODE -eq 0) { "starts" } else { "refused ($LASTEXITCODE)" }
+          "| ${{ matrix.target }} MOTW | ${{ matrix.runner }} | | $r |" | Out-File -Append -FilePath $env:GITHUB_STEP_SUMMARY
