@@ -1112,7 +1112,17 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.62.0 — straight from HANA](https://github.com/oisee/vibing-steampunk/releases/tag/v2.62.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.62.1 — straight from HANA, exactly](https://github.com/oisee/vibing-steampunk/releases/tag/v2.62.1)**.
+
+### v2.62.1 — new since v2.62.0
+
+`osd-hana-dump` takes exactly the objects it is asked for, over TLS if you want, and holds up on a whole system's customer code.
+
+- **Exact objects:** `requested: {"TYPE": ["NAME", ...]}` selects those (type, name) pairs and nothing else: the sidecar expands each into its sources (class and interface pools, a function group's main program and its own includes), and only the dictionary closure adds rows, listed in the manifest's `closure.resolved`. A function group no longer takes the includes of groups whose names start with its own.
+- **Large requests:** no statement carries more than 500 parameters. Tens of thousands of objects work: the whole customer code of one system (11 820 objects, 204 400 programs) dumps in about 90 seconds.
+- **TLS:** `--encrypt`, `--trust-server-certificate`, `--ca-file`.
+- **More row kinds:** message classes (T100A/T100T/T100) and function-group texts (TLIBT); CDS metadata extensions, service definitions and access controls are reported as rows.
+- **Honest report:** `rows` only when the object's rows are in the dump.
 
 ### v2.62.0 — new since v2.61.0
 

@@ -124,8 +124,14 @@ view's definition only to its owner or to a login with the `CATALOG READ`
 system privilege (read-only). Without it the definition comes back empty; that
 is reported as an error (exit 3), never written as an empty file.
 `local` takes `all` or `authors` (TADIR AUTHOR). `requested`/`iteration`/`seen`
-are an iterator's dependency-closure request: source kinds are selected as if
-named, dictionary kinds are closed over transitively, and `ddic` is implied.
+are an exact object list, as (type, name) pairs, and an iterator's
+dependency-closure request: source kinds bring their own sources (a function
+group its main program and its `L<group>` + three-character includes), message
+classes and CDS kinds their rows, dictionary kinds are closed over transitively
+(the names reached are listed in `manifest.json` `closure.resolved`), and
+`ddic` is implied. Nothing outside the list and its closure is selected. No
+statement carries more than 500 parameters, so the list may be tens of
+thousands of names long.
 `languages` and `tables` are reserved and refused until implemented. Any other
 field is an error naming it.
 
