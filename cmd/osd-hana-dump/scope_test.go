@@ -14,6 +14,8 @@ import (
 // parameters, standing in for HANA's own limit (SQL error 589).
 type paramDriver struct{ maxSeen *int }
 
+var lastTADIR string
+
 func (d paramDriver) Open(string) (driver.Conn, error) { return paramConn(d), nil }
 
 type paramConn paramDriver
@@ -30,6 +32,7 @@ func (c paramConn) QueryContext(_ context.Context, q string, args []driver.Named
 	}
 	r := &paramRows{}
 	if strings.Contains(q, `"TADIR"`) {
+		lastTADIR = q
 		for _, a := range args {
 			if s, ok := a.Value.(string); ok {
 				r.names = append(r.names, s)
@@ -95,5 +98,25 @@ func itoa(i int) string {
 		if i /= 10; i == 0 {
 			return s
 		}
+	}
+}
+
+// A requested FUGR does not bring the same-named objects of other types.
+func TestScopeRequestedIsTypeAndName(t *testing.T) {
+	var maxSeen int
+	sql.Register("osd-param-typed", paramDriver{&maxSeen})
+	db, err := sql.Open("osd-param-typed", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// the fake answers each parameter as a PROG: only a PROG request may
+	// put its statement's type into the condition the fake sees
+	objs, err := scope(context.Background(), db, "S", &Request{Schema: 1, Requested: map[string][]string{"FUGR": {"ZG"}, "x'; --": {"ZX"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 1 || lastTADIR == "" || !strings.Contains(lastTADIR, `"OBJECT" = 'FUGR' AND "OBJ_NAME" IN (?)`) {
+		t.Errorf("objects %v, statement %q", objs, lastTADIR)
 	}
 }

@@ -240,14 +240,17 @@ func TestPackagesAndNamesTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var tadir string
+	// packages and names select TADIR rows in statements of their own, each
+	// of R3TR objects only
+	var byPkg, byName bool
 	for _, q := range f.seen {
-		if strings.HasPrefix(q, `SELECT * FROM "S"."TADIR"`) {
-			tadir = q
+		if strings.HasPrefix(q, `SELECT * FROM "S"."TADIR" WHERE "PGMID" = 'R3TR' AND (`) {
+			byPkg = byPkg || strings.Contains(q, `("DEVCLASS" IN (?))`)
+			byName = byName || strings.Contains(q, `("OBJ_NAME" IN (?))`)
 		}
 	}
-	if !strings.Contains(tadir, `"PGMID" = 'R3TR' AND (("DEVCLASS" LIKE ?`) || !strings.Contains(tadir, `OR ("OBJ_NAME" LIKE ?`) {
-		t.Errorf("TADIR is not packages OR names: %s", tadir)
+	if !byPkg || !byName {
+		t.Errorf("TADIR is not packages OR names: by package %v, by name %v in %q", byPkg, byName, f.seen)
 	}
 	names := []string{}
 	for _, tb := range m.Tables {

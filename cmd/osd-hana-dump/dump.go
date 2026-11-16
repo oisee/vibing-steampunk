@@ -38,6 +38,14 @@ var (
 	// rowTypes: content wholly in the default tables, always dumped
 	rowTypes  = map[string]bool{"MSAG": true}
 	ddicTypes = map[string]bool{"TABL": true, "DTEL": true, "DOMA": true, "TTYP": true, "SHLP": true, "VIEW": true, "DDLS": true, "DDLX": true, "SRVD": true, "DCLS": true}
+	// rowKeys: the table and column holding a row kind's definition. An
+	// object reported as rows has at least one row there.
+	rowKeys = map[string][2]string{
+		"MSAG": {"T100A", "ARBGB"}, "TABL": {"DD02L", "TABNAME"}, "VIEW": {"DD25L", "VIEWNAME"},
+		"DTEL": {"DD04L", "ROLLNAME"}, "DOMA": {"DD01L", "DOMNAME"}, "TTYP": {"DD40L", "TYPENAME"},
+		"SHLP": {"DD30L", "SHLPNAME"}, "DDLS": {"DDDDLSRC", "DDLNAME"}, "DDLX": {"DDLXSRC_SRC", "DDLXNAME"},
+		"SRVD": {"SRVDSRC_SRC", "SRVDNAME"}, "DCLS": {"ACMDCLSRC", "DCLNAME"},
+	}
 )
 
 type File struct {
@@ -143,7 +151,7 @@ func runDump(ctx context.Context, db *sql.DB, c Connection, schema string, req *
 	if err != nil {
 		return err
 	}
-	report, errs := buildReport(objs, recs, req, m)
+	report, errs := buildReport(objs, recs, req, m, rowsPresent(out))
 	for i := range report {
 		for j := range report[i].Files {
 			if st, err := os.Stat(filepath.Join(out, report[i].Files[j].Path)); err == nil {
@@ -220,6 +228,15 @@ func selectionNames(req *Request, objs []Object) []string {
 			addPat(p)
 		}
 	}
+	// requested kinds whose content is rows the dictionary closure does not
+	// reach: selected by their exact names
+	for kind, ns := range req.Requested {
+		if rowTypes[kind] || kind == "DDLS" || kind == "DDLX" || kind == "SRVD" || kind == "DCLS" {
+			for _, n := range ns {
+				addPat(hanadump.EscapeLike(n))
+			}
+		}
+	}
 	if req.Catalog {
 		for _, o := range objs {
 			if o.Type == "CLAS" {
@@ -254,7 +271,9 @@ func readSources(path string) ([]hanadump.SourceRecord, error) {
 
 // buildReport gives every object in scope, and every closure name the
 // repository does not have, exactly one status.
-func buildReport(objs []Object, recs []hanadump.SourceRecord, req *Request, m *hanadump.Manifest) ([]ReportEntry, []string) {
+// buildReport gives every object one status. present says whether a row
+// kind's object has its definition rows in the dump; nil takes them as there.
+func buildReport(objs []Object, recs []hanadump.SourceRecord, req *Request, m *hanadump.Manifest, present func(kind, name string) bool) ([]ReportEntry, []string) {
 	progs := &progIndex{}
 	for i, r := range recs {
 		progs.names = append(progs.names, r.Program)
@@ -298,6 +317,8 @@ func buildReport(objs []Object, recs []hanadump.SourceRecord, req *Request, m *h
 				}
 			}
 			e.State = joinStates(states)
+		case (rowTypes[o.Type] || ddicTypes[o.Type] && ddic) && present != nil && !present(o.Type, o.Name):
+			e.Status, e.Reason = statusSkipped, reasonNoSource
 		case rowTypes[o.Type]:
 			e.Status = statusRows
 		case ddicTypes[o.Type] && ddic:
@@ -381,16 +402,12 @@ func (p *progIndex) match(patterns []string) []int {
 	var out []int
 	seen := map[int]bool{}
 	for _, pat := range patterns {
-		lit, prefix := unlike(pat)
-		for i := sort.SearchStrings(p.names, lit); i < len(p.names); i++ {
-			if prefix && !strings.HasPrefix(p.names[i], lit) || !prefix && p.names[i] != lit {
-				break
-			}
+		matchSorted(p.names, pat, func(i int) {
 			if !seen[p.idx[i]] {
 				seen[p.idx[i]] = true
 				out = append(out, p.idx[i])
 			}
-		}
+		})
 	}
 	sort.Ints(out)
 	return out
@@ -499,4 +516,34 @@ func (t *hdbText) Scan(src any) error {
 		return nil
 	}
 	return hdb.ScanLobString(src, (*string)(t))
+}
+
+// rowsPresent reads, once per table, the names a dump's tables hold.
+func rowsPresent(out string) func(kind, name string) bool {
+	cache := map[string]map[string]bool{}
+	return func(kind, name string) bool {
+		k, ok := rowKeys[kind]
+		if !ok {
+			return true
+		}
+		set, done := cache[k[0]]
+		if !done {
+			set = map[string]bool{}
+			if f, err := os.Open(filepath.Join(out, "tables", hanadump.FileName(k[0])+".jsonl")); err == nil {
+				sc := bufio.NewScanner(f)
+				sc.Buffer(make([]byte, 1<<20), 1<<26)
+				for sc.Scan() {
+					var row map[string]any
+					if json.Unmarshal(sc.Bytes(), &row) == nil {
+						if v, ok := row[k[1]].(string); ok {
+							set[strings.TrimSpace(v)] = true
+						}
+					}
+				}
+				f.Close()
+			}
+			cache[k[0]] = set
+		}
+		return set[name]
+	}
 }

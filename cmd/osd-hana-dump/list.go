@@ -62,7 +62,7 @@ func scope(ctx context.Context, db *sql.DB, schema string, req *Request) ([]Obje
 	}
 	in := func(prefix string) func(int) string {
 		return func(n int) string {
-			return prefix + `"OBJ_NAME" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + ")"
+			return "(" + prefix + `"OBJ_NAME" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + "))"
 		}
 	}
 	chunks(req.Names, like("OBJ_NAME"))
@@ -77,11 +77,18 @@ func scope(ctx context.Context, db *sql.DB, schema string, req *Request) ([]Obje
 			groups = append(groups, group{c, nil})
 		}
 	}
-	var reqNames []string
-	for _, names := range req.Requested {
-		reqNames = append(reqNames, names...)
+	// requested names are exact (type, name) pairs
+	kinds := make([]string, 0, len(req.Requested))
+	for kind := range req.Requested {
+		kinds = append(kinds, kind)
 	}
-	chunks(reqNames, in(""))
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		if !isKind(kind) {
+			continue // not a TADIR object type: reported as not found
+		}
+		chunks(req.Requested[kind], in(`"OBJECT" = '`+kind+`' AND `))
+	}
 	if len(groups) == 0 {
 		groups = []group{{"", nil}} // empty request: the whole repository
 	}
@@ -278,37 +285,46 @@ func sourceSizes(ctx context.Context, db *sql.DB, schema string, patterns []stri
 func (p *progSizes) of(patterns []string) (n int, bytes int64) {
 	seen := map[int]bool{}
 	for _, pat := range patterns {
-		lit, prefix := unlike(pat)
-		i := sort.SearchStrings(p.names, lit)
-		for ; i < len(p.names); i++ {
-			if prefix && !strings.HasPrefix(p.names[i], lit) || !prefix && p.names[i] != lit {
-				break
-			}
+		matchSorted(p.names, pat, func(i int) {
 			if !seen[i] {
 				seen[i] = true
 				n++
 				bytes += p.size[i]
 			}
-		}
+		})
 	}
 	return n, bytes
 }
 
-// unlike undoes hanadump.EscapeLike and reports a trailing unescaped '%'.
-func unlike(pat string) (lit string, prefix bool) {
+// likePrefix is the literal start of a LIKE pattern, up to its first
+// unescaped wildcard; exact when it has none.
+func likePrefix(pat string) (prefix string, exact bool) {
 	var b strings.Builder
 	for i := 0; i < len(pat); i++ {
 		switch {
 		case pat[i] == '\\' && i+1 < len(pat):
 			i++
 			b.WriteByte(pat[i])
-		case pat[i] == '%' && i == len(pat)-1:
-			prefix = true
+		case pat[i] == '%' || pat[i] == '_':
+			return b.String(), false
 		default:
 			b.WriteByte(pat[i])
 		}
 	}
-	return b.String(), prefix
+	return b.String(), true
+}
+
+// matchSorted calls fn for each index of sorted names pat matches.
+func matchSorted(names []string, pat string, fn func(i int)) {
+	prefix, exact := likePrefix(pat)
+	for i := sort.SearchStrings(names, prefix); i < len(names) && strings.HasPrefix(names[i], prefix); i++ {
+		if exact && names[i] != prefix {
+			break
+		}
+		if exact || likeMatch(pat, names[i]) {
+			fn(i)
+		}
+	}
 }
 
 type group struct {
@@ -401,4 +417,18 @@ func writeJSONL[T any](path string, items []T) error {
 		return err
 	}
 	return f.Close()
+}
+
+// isKind admits a TADIR object type (four characters, A-Z and 0-9), so a
+// requested kind can be written into a statement.
+func isKind(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }

@@ -74,25 +74,22 @@ func dumpCatalog(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 		{"PROCEDURES", "PROCEDURE_NAME", "PROCEDURE"},
 		{"FUNCTIONS", "FUNCTION_NAME", "FUNCTION"},
 	} {
-		where, args := likeAny(kind.col, opts.Names)
-		q := fmt.Sprintf(`SELECT %s FROM SYS.%s WHERE SCHEMA_NAME = ? AND %s ORDER BY 1`, kind.col, kind.view, where)
-		rows, err := db.QueryContext(ctx, q, append([]any{opts.Schema}, args...)...)
-		if err != nil {
-			return fmt.Errorf("hanadump: catalog %s: %w", kind.view, err)
-		}
-		for rows.Next() {
-			var n string
-			if err := rows.Scan(&n); err != nil {
-				rows.Close()
-				return err
+		var selected []string
+		for _, c := range nameConds(kind.col, opts.Names) {
+			names, err := strings1Query(ctx, db, fmt.Sprintf(`SELECT %s FROM SYS.%s WHERE SCHEMA_NAME = ? AND %s`, kind.col, kind.view, c.where), append([]any{opts.Schema}, c.args...)...)
+			if err != nil {
+				return fmt.Errorf("hanadump: catalog %s: %w", kind.view, err)
 			}
+			selected = append(selected, names...)
+		}
+		sort.Strings(selected)
+		for _, n := range selected {
 			o := catalogObject{opts.Schema, n, kind.typ}
+			if seen[o] {
+				continue
+			}
 			seen[o], reason[o] = true, "selected"
 			queue = append(queue, o)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
 		}
 	}
 
