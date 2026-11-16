@@ -35,7 +35,9 @@ const (
 
 var (
 	sourceTypes = map[string]bool{"CLAS": true, "INTF": true, "PROG": true, "FUGR": true, "BDEF": true}
-	ddicTypes   = map[string]bool{"TABL": true, "DTEL": true, "DOMA": true, "TTYP": true, "SHLP": true, "VIEW": true, "DDLS": true}
+	// rowTypes: content wholly in the default tables, always dumped
+	rowTypes  = map[string]bool{"MSAG": true}
+	ddicTypes = map[string]bool{"TABL": true, "DTEL": true, "DOMA": true, "TTYP": true, "SHLP": true, "VIEW": true, "DDLS": true, "DDLX": true, "SRVD": true, "DCLS": true}
 )
 
 type File struct {
@@ -296,6 +298,8 @@ func buildReport(objs []Object, recs []hanadump.SourceRecord, req *Request, m *h
 				}
 			}
 			e.State = joinStates(states)
+		case rowTypes[o.Type]:
+			e.Status = statusRows
 		case ddicTypes[o.Type] && ddic:
 			e.Status = statusRows
 		case ddicTypes[o.Type]:

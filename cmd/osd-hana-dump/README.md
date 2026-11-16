@@ -26,8 +26,16 @@ osd-hana-dump dump  [connection flags] --request f.json|- --out dir [--allow-in-
 
 Connection flags: `--host`, `--port` (the tenant's SQL port, or SYSTEMDB's with
 `--database <tenant>`), `--user` (default `$OSD_HANA_USER`), `--abap-schema`
-(default: the one schema holding `REPOSRC`). The same fields can come from the
+(default: the one schema holding `REPOSRC`), and the TLS flags below. The same fields can come from the
 request's `connection` object; flags win.
+
+**TLS**: `--encrypt` verifies the server certificate against the system's roots
+or `--ca-file`, for `--tls-server-name` (default: `--host`; a certificate without
+the host as a SAN fails, as it should). `--trust-server-certificate` encrypts
+without verifying, for self-signed test systems only. The request's `connection`
+takes `encrypt`, `trust_server_certificate`, `ca_file`, `tls_server_name`.
+Without TLS the password and the data travel in clear; stderr says so, and
+`probe` reports `tls`: `verified`, `unverified` or `off`.
 
 **Password**: `$OSD_HANA_PASSWORD`, or `--password-stdin` (first line of
 standard input). There is no password flag: argv is visible to every user of
@@ -79,7 +87,7 @@ line:
 |---|---|
 | `type`, `name`, `package`, `author`, `class` | from TADIR |
 | `state` | `A`, `I` or `A+I`: the versions written |
-| `status` | `written` (sources under `src/`), `rows` (content in `tables/`), `skipped` |
+| `status` | `written` (sources under `src/`), `rows` (content in `tables/`: MSAG always; TABL, DTEL, DOMA, TTYP, SHLP, VIEW, DDLS, DDLX, SRVD, DCLS with `ddic`), `skipped` |
 | `reason` | for `skipped`: `not-found`, `no-source`, `encoding`, `excluded` (needs `ddic`), `unsupported`, `too-large` (reserved) |
 | `files` | `path`, `state`, `sha256` of the bytes as written (UTF-8, LF), `bytes`, `error` |
 

@@ -134,6 +134,7 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 		{Type: "PROG", Name: "ZNOSRC", Package: "$P"},
 		{Type: "TABL", Name: "ZT", Package: "$P"},
 		{Type: "MSAG", Name: "ZM", Package: "$P"},
+		{Type: "SICF", Name: "ZS", Package: "$P"},
 		{Type: "FUGR", Name: "ZG", Package: "$P"},
 	}
 	recs := []hanadump.SourceRecord{
@@ -172,14 +173,15 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 	check("PROG ZBROKEN", statusSkipped, reasonEncoding, 1)
 	check("PROG ZNOSRC", statusSkipped, reasonNoSource, 0)
 	check("TABL ZT", statusRows, "", 0)
-	check("MSAG ZM", statusSkipped, reasonUnsupported, 0)
+	check("MSAG ZM", statusRows, "", 0)
+	check("SICF ZS", statusSkipped, reasonUnsupported, 0)
 	check("FUGR ZG", statusWritten, "", 1)
 	check("TABL ZGONE", statusSkipped, reasonNotFound, 0)
 	check("ENHO ZE", statusSkipped, reasonUnsupported, 0)
 	if got["CLAS ZCL_A"].State != "A+I" {
 		t.Errorf("state %q", got["CLAS ZCL_A"].State)
 	}
-	if len(report) != 8 {
+	if len(report) != 9 {
 		t.Errorf("%d entries", len(report))
 	}
 	// errors: the undecodable program and the missing table; not the
@@ -234,5 +236,43 @@ func TestSelectionNamesBringIncludesAndAMDP(t *testing.T) {
 	req.Catalog = false
 	if strings.Contains(strings.Join(selectionNames(req, objs), " "), "=>") {
 		t.Errorf("AMDP patterns without catalog")
+	}
+}
+
+// The sources --ddic dumps outside REPOSRC (CDS, metadata extensions, service
+// definitions, access controls) are rows, not unsupported.
+func TestCDSKindsAreRows(t *testing.T) {
+	var objs []Object
+	for _, k := range []string{"DDLS", "DDLX", "SRVD", "DCLS"} {
+		objs = append(objs, Object{Type: k, Name: "Z" + k})
+	}
+	report, _ := buildReport(objs, nil, &Request{Schema: 1, DDIC: true}, &hanadump.Manifest{})
+	for _, e := range report {
+		if e.Status != statusRows {
+			t.Errorf("%s: %s/%s", e.Type, e.Status, e.Reason)
+		}
+	}
+}
+
+func TestTLSMode(t *testing.T) {
+	for _, c := range []struct {
+		c    Connection
+		want string
+	}{
+		{Connection{}, "off"},
+		{Connection{Encrypt: true}, "verified"},
+		{Connection{CAFile: "ca.pem"}, "verified"},
+		{Connection{TLSServerName: "h"}, "verified"},
+		{Connection{TrustServerCertificate: true}, "unverified"},
+		{Connection{Encrypt: true, TrustServerCertificate: true}, "unverified"},
+	} {
+		if got := c.c.tlsMode(); got != c.want {
+			t.Errorf("%+v: %s, want %s", c.c, got, c.want)
+		}
+	}
+	t.Setenv("OSD_HANA_PASSWORD", "x")
+	code, out, _ := runArgs(t, "", "probe", "--host", "h", "--port", "1", "--user", "u", "--trust-server-certificate", "--ca-file", "ca.pem")
+	if code != exitUsage || !strings.Contains(out, "contradict") {
+		t.Errorf("exit %d: %s", code, out)
 	}
 }

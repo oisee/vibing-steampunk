@@ -49,6 +49,12 @@ var DefaultTables = []Table{
 	// program: a class pool's "<name>====...CP", a group's SAPL<name>
 	{"REPOTEXT", "PROGNAME"},
 	{"TLIBG", "AREA"},
+	// a function group's short text, every language (abapGit's AREAT)
+	{"TLIBT", "AREA"},
+	// message classes: header, short text, and the messages, every language
+	{"T100A", "ARBGB"},
+	{"T100T", "ARBGB"},
+	{"T100", "ARBGB"},
 	// SAP's own where-used index, by the including program: what each
 	// source refers to. Dependencies come from here rather than a parser.
 	{"WBCROSSGT", "INCLUDE"},
