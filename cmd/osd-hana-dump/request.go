@@ -47,6 +47,24 @@ type Connection struct {
 	Database   string `json:"database,omitempty"`
 	User       string `json:"user,omitempty"`
 	ABAPSchema string `json:"abap_schema,omitempty"`
+	// TLS: Encrypt verifies the server against the system's roots (or
+	// CAFile) under TLSServerName (default: Host); TrustServerCertificate
+	// encrypts without verifying (a self-signed bed, never production).
+	Encrypt                bool   `json:"encrypt,omitempty"`
+	TrustServerCertificate bool   `json:"trust_server_certificate,omitempty"`
+	CAFile                 string `json:"ca_file,omitempty"`
+	TLSServerName          string `json:"tls_server_name,omitempty"`
+}
+
+// tlsMode: "verified", "unverified" (encrypted, certificate not checked), or "off".
+func (c Connection) tlsMode() string {
+	switch {
+	case c.TrustServerCertificate:
+		return "unverified"
+	case c.Encrypt || c.CAFile != "" || c.TLSServerName != "":
+		return "verified"
+	}
+	return "off"
 }
 
 type Local struct {

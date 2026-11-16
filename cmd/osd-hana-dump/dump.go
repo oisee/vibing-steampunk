@@ -35,7 +35,7 @@ const (
 
 var (
 	sourceTypes = map[string]bool{"CLAS": true, "INTF": true, "PROG": true, "FUGR": true, "BDEF": true}
-	ddicTypes   = map[string]bool{"TABL": true, "DTEL": true, "DOMA": true, "TTYP": true, "SHLP": true, "VIEW": true, "DDLS": true}
+	ddicTypes   = map[string]bool{"TABL": true, "DTEL": true, "DOMA": true, "TTYP": true, "SHLP": true, "VIEW": true, "DDLS": true, "DDLX": true, "SRVD": true, "DCLS": true}
 )
 
 type File struct {

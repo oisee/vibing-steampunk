@@ -17,7 +17,9 @@ type Probe struct {
 	ABAPSchemas []SchemaProbe `json:"abap_schemas"`
 	// LoginClass: schema_owner (owns an ABAP schema), admin (DATABASE, USER
 	// or ROLE ADMIN), or other.
-	LoginClass string   `json:"login_class"`
+	LoginClass string `json:"login_class"`
+	// TLS: "verified", "unverified" or "off", as connected.
+	TLS        string   `json:"tls"`
 	AdminPrivs []string `json:"admin_privileges,omitempty"`
 	Notes      []string `json:"notes,omitempty"`
 }
@@ -42,7 +44,7 @@ type SchemaProbe struct {
 }
 
 func runProbe(ctx context.Context, db *sql.DB, c Connection, w io.Writer) error {
-	p := Probe{DB: "tenant", LoginClass: "other"}
+	p := Probe{DB: "tenant", LoginClass: "other", TLS: c.tlsMode()}
 	var dbName string
 	if err := db.QueryRowContext(ctx, `SELECT DATABASE_NAME FROM SYS.M_DATABASE`).Scan(&dbName); err != nil {
 		return fail(exitUnsupported, "M_DATABASE: %v", err)

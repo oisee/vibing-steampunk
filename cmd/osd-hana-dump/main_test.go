@@ -236,3 +236,41 @@ func TestSelectionNamesBringIncludesAndAMDP(t *testing.T) {
 		t.Errorf("AMDP patterns without catalog")
 	}
 }
+
+// The sources --ddic dumps outside REPOSRC (CDS, metadata extensions, service
+// definitions, access controls) are rows, not unsupported.
+func TestCDSKindsAreRows(t *testing.T) {
+	var objs []Object
+	for _, k := range []string{"DDLS", "DDLX", "SRVD", "DCLS"} {
+		objs = append(objs, Object{Type: k, Name: "Z" + k})
+	}
+	report, _ := buildReport(objs, nil, &Request{Schema: 1, DDIC: true}, &hanadump.Manifest{})
+	for _, e := range report {
+		if e.Status != statusRows {
+			t.Errorf("%s: %s/%s", e.Type, e.Status, e.Reason)
+		}
+	}
+}
+
+func TestTLSMode(t *testing.T) {
+	for _, c := range []struct {
+		c    Connection
+		want string
+	}{
+		{Connection{}, "off"},
+		{Connection{Encrypt: true}, "verified"},
+		{Connection{CAFile: "ca.pem"}, "verified"},
+		{Connection{TLSServerName: "h"}, "verified"},
+		{Connection{TrustServerCertificate: true}, "unverified"},
+		{Connection{Encrypt: true, TrustServerCertificate: true}, "unverified"},
+	} {
+		if got := c.c.tlsMode(); got != c.want {
+			t.Errorf("%+v: %s, want %s", c.c, got, c.want)
+		}
+	}
+	t.Setenv("OSD_HANA_PASSWORD", "x")
+	code, out, _ := runArgs(t, "", "probe", "--host", "h", "--port", "1", "--user", "u", "--trust-server-certificate", "--ca-file", "ca.pem")
+	if code != exitUsage || !strings.Contains(out, "contradict") {
+		t.Errorf("exit %d: %s", code, out)
+	}
+}

@@ -103,6 +103,7 @@ func usage(w io.Writer) {
   osd-hana-dump dump  [connection flags] --request f.json|- --out dir [--allow-in-repo]
 
 connection flags: --host --port --database --user --abap-schema --password-stdin
+                  --encrypt --trust-server-certificate --ca-file --tls-server-name
 password: $OSD_HANA_PASSWORD, or --password-stdin (first line of stdin)
 read-only by construction: only SELECT statements leave this program.
 `)
@@ -139,6 +140,10 @@ func dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	user := fs.String("user", "", "database user (default $OSD_HANA_USER)")
 	abapSchema := fs.String("abap-schema", "", "ABAP schema (default: the one schema holding REPOSRC)")
 	pwStdin := fs.Bool("password-stdin", false, "read the password from the first line of stdin")
+	encrypt := fs.Bool("encrypt", false, "TLS, verifying the server certificate (system roots, or --ca-file)")
+	trustCert := fs.Bool("trust-server-certificate", false, "TLS without verifying the certificate (self-signed test systems only)")
+	caFile := fs.String("ca-file", "", "PEM file with the root certificate(s) to verify the server against (implies --encrypt)")
+	tlsName := fs.String("tls-server-name", "", "host name to verify the certificate for (default: --host; implies --encrypt)")
 	reqPath := fs.String("request", "", "request JSON file, or - for stdin")
 	out := fs.String("out", "", "output directory")
 	allowInRepo := fs.Bool("allow-in-repo", false, "permit an output directory inside a git working tree")
@@ -207,6 +212,17 @@ func dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if *abapSchema != "" {
 		c.ABAPSchema = *abapSchema
 	}
+	c.Encrypt = c.Encrypt || *encrypt
+	c.TrustServerCertificate = c.TrustServerCertificate || *trustCert
+	if *caFile != "" {
+		c.CAFile = *caFile
+	}
+	if *tlsName != "" {
+		c.TLSServerName = *tlsName
+	}
+	if c.TrustServerCertificate && c.CAFile != "" {
+		return fail(exitUsage, "--trust-server-certificate and --ca-file contradict each other")
+	}
 	if c.Host == "" || c.Port == 0 || c.User == "" {
 		return fail(exitUsage, "connection: host, port and user are required (flags, request.connection, or $OSD_HANA_USER)")
 	}
@@ -246,15 +262,33 @@ func dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 // statement passes hanadump.CheckReadOnly before it reaches the driver.
 func open(ctx context.Context, c Connection, password string) (*sql.DB, error) {
 	dsn := url.URL{Scheme: "hdb", User: url.UserPassword(c.User, password), Host: net.JoinHostPort(c.Host, strconv.Itoa(c.Port))}
+	q := url.Values{}
 	if c.Database != "" {
-		dsn.RawQuery = url.Values{"databaseName": {c.Database}}.Encode()
+		q.Set("databaseName", c.Database)
 	}
+	switch c.tlsMode() {
+	case "unverified":
+		q.Set(hdb.DSNTLSInsecureSkipVerify, "true")
+	case "verified":
+		name := c.TLSServerName
+		if name == "" {
+			name = c.Host
+		}
+		q.Set(hdb.DSNTLSServerName, name)
+		if c.CAFile != "" {
+			q.Set(hdb.DSNTLSRootCAFile, c.CAFile)
+		}
+	}
+	dsn.RawQuery = q.Encode()
 	base, err := hdb.NewDSNConnector(dsn.String())
 	if err != nil {
 		// the DSN carries the password: never echo it
 		return nil, fail(exitUsage, "connection settings are not valid")
 	}
 	db := sql.OpenDB(hanadump.ReadOnlyConnector(base))
+	if c.tlsMode() == "off" {
+		fmt.Fprintln(os.Stderr, "osd-hana-dump: warning: unencrypted connection, the password and the data travel in clear (--encrypt)")
+	}
 	if err := db.PingContext(ctx); err != nil {
 		db.Close()
 		return nil, fail(exitConnect, "connect %s:%d as %s: %v", c.Host, c.Port, c.User, scrub(err, password))
