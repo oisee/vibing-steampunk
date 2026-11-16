@@ -221,6 +221,18 @@ release-dist: ## Build + verify the 6 release assets for TAG into dist/ (what CI
 # expanded to nothing and this target installed to /bin.
 GOPATH_BIN=$(shell go env GOPATH)/bin
 
+OSD_HANA_TARGETS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
+osd-hana-dump: ## Build the HANA dumper sidecar for its five targets into dist/osd-hana-dump/<os>-<arch>/, with SHA256SUMS
+	@rm -rf dist/osd-hana-dump && mkdir -p dist/osd-hana-dump
+	@for t in $(OSD_HANA_TARGETS); do \
+		os=$${t%/*}; arch=$${t#*/}; ext=; [ $$os = windows ] && ext=.exe; \
+		d=dist/osd-hana-dump/$$os-$$arch; mkdir -p $$d; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath \
+			-ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$$(git rev-parse HEAD)" \
+			-o $$d/osd-hana-dump$$ext ./cmd/osd-hana-dump || exit 1; \
+	done
+	@cd dist/osd-hana-dump && find . -type f -name 'osd-hana-dump*' | sort | xargs sha256sum > SHA256SUMS && cat SHA256SUMS
+
 install: ## Install the binary to GOPATH/bin
 	@mkdir -p $(GOPATH_BIN)
 	$(GOBUILD) $(LDFLAGS) -o $(GOPATH_BIN)/$(BINARY_NAME) $(CMD_DIR)
