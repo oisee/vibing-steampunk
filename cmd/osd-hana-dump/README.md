@@ -87,7 +87,7 @@ line:
 |---|---|
 | `type`, `name`, `package`, `author`, `class` | from TADIR |
 | `state` | `A`, `I` or `A+I`: the versions written |
-| `status` | `written` (sources under `src/`), `rows` (content in `tables/`), `skipped` |
+| `status` | `written` (sources under `src/`), `rows` (content in `tables/`: MSAG always; TABL, DTEL, DOMA, TTYP, SHLP, VIEW, DDLS, DDLX, SRVD, DCLS with `ddic`), `skipped` |
 | `reason` | for `skipped`: `not-found`, `no-source`, `encoding`, `excluded` (needs `ddic`), `unsupported`, `too-large` (reserved) |
 | `files` | `path`, `state`, `sha256` of the bytes as written (UTF-8, LF), `bytes`, `error` |
 

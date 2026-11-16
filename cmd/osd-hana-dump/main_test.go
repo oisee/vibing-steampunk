@@ -134,6 +134,7 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 		{Type: "PROG", Name: "ZNOSRC", Package: "$P"},
 		{Type: "TABL", Name: "ZT", Package: "$P"},
 		{Type: "MSAG", Name: "ZM", Package: "$P"},
+		{Type: "SICF", Name: "ZS", Package: "$P"},
 		{Type: "FUGR", Name: "ZG", Package: "$P"},
 	}
 	recs := []hanadump.SourceRecord{
@@ -172,14 +173,15 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 	check("PROG ZBROKEN", statusSkipped, reasonEncoding, 1)
 	check("PROG ZNOSRC", statusSkipped, reasonNoSource, 0)
 	check("TABL ZT", statusRows, "", 0)
-	check("MSAG ZM", statusSkipped, reasonUnsupported, 0)
+	check("MSAG ZM", statusRows, "", 0)
+	check("SICF ZS", statusSkipped, reasonUnsupported, 0)
 	check("FUGR ZG", statusWritten, "", 1)
 	check("TABL ZGONE", statusSkipped, reasonNotFound, 0)
 	check("ENHO ZE", statusSkipped, reasonUnsupported, 0)
 	if got["CLAS ZCL_A"].State != "A+I" {
 		t.Errorf("state %q", got["CLAS ZCL_A"].State)
 	}
-	if len(report) != 8 {
+	if len(report) != 9 {
 		t.Errorf("%d entries", len(report))
 	}
 	// errors: the undecodable program and the missing table; not the

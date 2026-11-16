@@ -364,7 +364,7 @@ func buildCommit() string {
 
 // capabilities are what a request may ask of this binary; OSG refuses an
 // old pinned binary by checking them.
-var capabilities = []string{"probe", "list", "dump", "names", "packages", "local", "closure", "inactive", "catalog", "ddic", "skip_test_includes", "object_report"}
+var capabilities = []string{"probe", "list", "dump", "names", "packages", "local", "closure", "inactive", "catalog", "ddic", "skip_test_includes", "object_report", "tls", "msag"}
 
 func printVersion(w io.Writer, asJSON bool) error {
 	if !asJSON {
