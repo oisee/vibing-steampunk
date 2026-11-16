@@ -275,7 +275,8 @@ cmd_verify() {
 		[ "$(buildinfo "$f" GOOS)" = "$os" ] || bad "$a build info GOOS=$(buildinfo "$f" GOOS)"
 		[ "$(buildinfo "$f" GOARCH)" = "$arch" ] || bad "$a build info GOARCH=$(buildinfo "$f" GOARCH)"
 		[ "$(buildinfo "$f" CGO_ENABLED)" = 0 ] || bad "$a CGO_ENABLED=$(buildinfo "$f" CGO_ENABLED)"
-		[ "$(buildinfo "$f" path)" = github.com/oisee/vibing-steampunk/cmd/osd-hana-dump ] || bad "$a is not cmd/osd-hana-dump: $(buildinfo "$f" path)"
+		v=$(go version -m "$f" | awk -F '\t' '$2 == "path" { print $3; exit }')
+		[ "$v" = github.com/oisee/vibing-steampunk/cmd/osd-hana-dump ] || bad "$a is not cmd/osd-hana-dump: ${v:-no main package path}"
 		v=$(buildinfo "$f" vcs.revision)
 		[ "$v" = "$sha" ] || bad "$a was built from ${v:-an unknown revision}, not $tag ($sha)"
 		v=$(buildinfo "$f" vcs.modified)
