@@ -2,11 +2,11 @@ package adt
 
 import "testing"
 
-// The suffix is hexadecimal, and that is not a guess: one class read live had
-// CM001, CM003, CM009 and CM00A, decoding to methods 1, 3, 9 and 10. Decimal
-// has no A in it.
-func TestMethodIndexIsHexadecimal(t *testing.T) {
-	cases := map[string]int{"CM001": 1, "CM003": 3, "CM009": 9, "CM00A": 10, "CM010": 16, "CM0FF": 255}
+// The suffix is base 36: CL_DEP_TREE has CM00A to CM00Z, and TMDIR gives
+// CM00Z's method index as 35, on 7.40 and 7.50. Hexadecimal would stop at
+// CM00F and read CM010 as 16.
+func TestMethodIndexIsBase36(t *testing.T) {
+	cases := map[string]int{"CM001": 1, "CM009": 9, "CM00A": 10, "CM00G": 16, "CM00Z": 35, "CM010": 36, "CM0ZZ": 1295}
 	for section, want := range cases {
 		got, ok := methodIndexFromSection(section)
 		if !ok {
