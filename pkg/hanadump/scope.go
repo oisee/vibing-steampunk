@@ -113,7 +113,10 @@ func SourcePatterns(o PackageObject) []string {
 				ns, group = o.Name[:i+2], o.Name[i+2:]
 			}
 		}
-		return []string{name, EscapeLike(ns + "SAPL" + group), EscapeLike(ns+"L"+group) + "%"}
+		// a group's includes are L<group> and three characters (TOP, UXX,
+		// U01, F01, $01, ...): a "%" would also take the includes of every
+		// group whose name starts with this one's
+		return []string{name, EscapeLike(ns + "SAPL" + group), EscapeLike(ns+"L"+group) + "___"}
 	default:
 		return []string{name}
 	}

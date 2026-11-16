@@ -21,9 +21,9 @@ func TestSourcePatterns(t *testing.T) {
 		{PackageObject{Type: "INTF", Name: "/NS/IF_Y"}, []string{`/NS/IF\_Y`, `/NS/IF\_Y======================%`}},
 		// a behaviour definition's source is "<name>====...BD" (and BDI)
 		{PackageObject{Type: "BDEF", Name: "/NS/R_T"}, []string{`/NS/R\_T`, `/NS/R\_T=======================%`}},
-		{PackageObject{Type: "FUGR", Name: "ZFG"}, []string{"ZFG", "SAPLZFG", "LZFG%"}},
+		{PackageObject{Type: "FUGR", Name: "ZFG"}, []string{"ZFG", "SAPLZFG", "LZFG___"}},
 		// a namespace keeps its slashes in front of SAPL and L
-		{PackageObject{Type: "FUGR", Name: "/NS/F_G"}, []string{`/NS/F\_G`, `/NS/SAPLF\_G`, `/NS/LF\_G%`}},
+		{PackageObject{Type: "FUGR", Name: "/NS/F_G"}, []string{`/NS/F\_G`, `/NS/SAPLF\_G`, `/NS/LF\_G___`}},
 		{PackageObject{Type: "PROG", Name: "Z_REPORT"}, []string{`Z\_REPORT`}},
 		{PackageObject{Type: "TABL", Name: "ZTAB"}, []string{"ZTAB"}},
 	}

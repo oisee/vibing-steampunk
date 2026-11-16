@@ -22,7 +22,7 @@ func TestClosureRequestSkipsSeenAndSelectsSources(t *testing.T) {
 	if got := r.newNames("DTEL"); len(got) != 0 {
 		t.Errorf("empty names dropped: %q", got)
 	}
-	want := []string{`ZCL\_A`, `ZCL\_A=========================%`, `/NS/FG`, `/NS/SAPLFG`, `/NS/LFG%`}
+	want := []string{`ZCL\_A`, `ZCL\_A=========================%`, `/NS/FG`, `/NS/SAPLFG`, `/NS/LFG___`}
 	if got := r.SourcePatternsOf(); !reflect.DeepEqual(got, want) {
 		t.Errorf("source kinds as names: got %q, want %q", got, want)
 	}

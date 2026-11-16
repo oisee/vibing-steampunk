@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -116,14 +118,33 @@ func TestLikeMatchAndUnlike(t *testing.T) {
 	}
 	for _, o := range []hanadump.PackageObject{{Type: "CLAS", Name: "ZCL_A_B"}, {Type: "FUGR", Name: "/NS/G_1"}, {Type: "PROG", Name: "Z%X"}} {
 		for _, p := range hanadump.SourcePatterns(o) {
-			lit, prefix := unlike(p)
-			if strings.HasSuffix(p, "%") && !strings.HasSuffix(p, `\%`) != prefix {
-				t.Errorf("unlike(%q) prefix %v", p, prefix)
+			prefix, exact := likePrefix(p)
+			if exact && !likeMatch(p, prefix) {
+				t.Errorf("exact pattern %q does not match its own literal %q", p, prefix)
 			}
-			if !likeMatch(p, lit) {
-				t.Errorf("pattern %q does not match its own literal %q", p, lit)
+			if !exact && len(prefix) >= len(strings.ReplaceAll(p, `\`, "")) {
+				t.Errorf("likePrefix(%q) = %q, not a prefix before the wildcard", p, prefix)
 			}
 		}
+	}
+	for _, c := range []struct {
+		pat, prefix string
+		exact       bool
+	}{{`ZCL\_A`, "ZCL_A", true}, {`LZG___`, "LZG", false}, {`ZCL\_A====%`, "ZCL_A====", false}, {`100\%`, "100%", true}} {
+		if p, e := likePrefix(c.pat); p != c.prefix || e != c.exact {
+			t.Errorf("likePrefix(%q) = %q %v", c.pat, p, e)
+		}
+	}
+}
+
+// A group's include pattern does not take another group's includes.
+func TestGroupIncludesExact(t *testing.T) {
+	p := &progSizes{names: []string{"LZIRCF01", "LZIRCTOP", "LZIRC_GRANTTOP", "LZIRC_GRANTV02", "SAPLZIRC", "SAPLZIRC_GRANT"}, size: []int64{1, 2, 4, 8, 16, 32}}
+	if n, b := p.of(hanadump.SourcePatterns(hanadump.PackageObject{Type: "FUGR", Name: "ZIRC"})); n != 3 || b != 19 {
+		t.Errorf("ZIRC: %d programs, %d bytes; want 3, 19", n, b)
+	}
+	if n, b := p.of(hanadump.SourcePatterns(hanadump.PackageObject{Type: "FUGR", Name: "ZIRC_GRANT"})); n != 3 || b != 44 {
+		t.Errorf("ZIRC_GRANT: %d programs, %d bytes; want 3, 44", n, b)
 	}
 }
 
@@ -147,7 +168,7 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 	}
 	req := &Request{Schema: 1, Requested: map[string][]string{"TABL": {"ZT", "ZGONE"}}}
 	m := &hanadump.Manifest{Closure: &hanadump.ClosureResult{Missing: map[string][]string{"TABL": {"ZGONE"}}, Unhandled: map[string][]string{"ENHO": {"ZE"}}}}
-	report, errs := buildReport(objs, recs, req, m)
+	report, errs := buildReport(objs, recs, req, m, nil)
 	got := map[string]ReportEntry{}
 	for _, e := range report {
 		if _, dup := got[e.Type+" "+e.Name]; dup {
@@ -192,7 +213,7 @@ func TestBuildReportEveryObjectOneStatus(t *testing.T) {
 }
 
 func TestBuildReportDDICOff(t *testing.T) {
-	report, _ := buildReport([]Object{{Type: "DTEL", Name: "ZD"}}, nil, &Request{Schema: 1}, &hanadump.Manifest{})
+	report, _ := buildReport([]Object{{Type: "DTEL", Name: "ZD"}}, nil, &Request{Schema: 1}, &hanadump.Manifest{}, nil)
 	if report[0].Status != statusSkipped || report[0].Reason != reasonExcluded {
 		t.Errorf("%+v", report[0])
 	}
@@ -225,7 +246,7 @@ func TestSelectionNamesBringIncludesAndAMDP(t *testing.T) {
 	objs := []Object{{Type: "CLAS", Name: "ZCL_A"}, {Type: "FUGR", Name: "ZG"}, {Type: "CLAS", Name: "ZCL_PKG_ONLY"}}
 	req := &Request{Schema: 1, Names: []string{"ZCL\\_A", "ZG"}, Catalog: true}
 	got := strings.Join(selectionNames(req, objs), " ")
-	for _, want := range []string{`ZCL\_A=========================%`, "SAPLZG", "LZG%", `ZCL\_A=>%`, `ZCL\_PKG\_ONLY=>%`} {
+	for _, want := range []string{`ZCL\_A=========================%`, "SAPLZG", "LZG___", `ZCL\_A=>%`, `ZCL\_PKG\_ONLY=>%`} {
 		if !strings.Contains(" "+got+" ", " "+want+" ") {
 			t.Errorf("missing %q in %s", want, got)
 		}
@@ -246,7 +267,7 @@ func TestCDSKindsAreRows(t *testing.T) {
 	for _, k := range []string{"DDLS", "DDLX", "SRVD", "DCLS"} {
 		objs = append(objs, Object{Type: k, Name: "Z" + k})
 	}
-	report, _ := buildReport(objs, nil, &Request{Schema: 1, DDIC: true}, &hanadump.Manifest{})
+	report, _ := buildReport(objs, nil, &Request{Schema: 1, DDIC: true}, &hanadump.Manifest{}, nil)
 	for _, e := range report {
 		if e.Status != statusRows {
 			t.Errorf("%s: %s/%s", e.Type, e.Status, e.Reason)
@@ -274,5 +295,37 @@ func TestTLSMode(t *testing.T) {
 	code, out, _ := runArgs(t, "", "probe", "--host", "h", "--port", "1", "--user", "u", "--trust-server-certificate", "--ca-file", "ca.pem")
 	if code != exitUsage || !strings.Contains(out, "contradict") {
 		t.Errorf("exit %d: %s", code, out)
+	}
+}
+
+// A row kind is rows only when its definition rows are in the dump.
+func TestReportRowsOnlyWhenPresent(t *testing.T) {
+	out := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(out, "tables"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "tables", "T100A.jsonl"), []byte(`{"ARBGB":"ZM","MASTERLANG":"E"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	objs := []Object{{Type: "MSAG", Name: "ZM"}, {Type: "MSAG", Name: "ZGONE"}, {Type: "DDLS", Name: "ZI_X"}}
+	report, _ := buildReport(objs, nil, &Request{Schema: 1, DDIC: true}, &hanadump.Manifest{}, rowsPresent(out))
+	want := map[string]string{"ZM": statusRows, "ZGONE": statusSkipped, "ZI_X": statusSkipped}
+	for _, e := range report {
+		if e.Status != want[e.Name] || e.Status == statusSkipped && e.Reason != reasonNoSource {
+			t.Errorf("%s %s: %s/%s", e.Type, e.Name, e.Status, e.Reason)
+		}
+	}
+}
+
+func TestSelectionNamesTakeRequestedRowKinds(t *testing.T) {
+	req := &Request{Schema: 1, Requested: map[string][]string{"MSAG": {"Z_M"}, "DDLS": {"ZI_X"}, "TABL": {"ZT"}}}
+	got := " " + strings.Join(selectionNames(req, nil), " ") + " "
+	for _, want := range []string{` Z\_M `, ` ZI\_X `} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in%s", want, got)
+		}
+	}
+	if strings.Contains(got, " ZT ") {
+		t.Errorf("a table goes through the closure, not by name:%s", got)
 	}
 }

@@ -250,77 +250,74 @@ func Run(ctx context.Context, db *sql.DB, opts Options) (*Manifest, error) {
 	dumped := map[string]bool{}
 	closureTadir := false
 	for _, t := range tables {
-		where, args := likeAny(t.Column, opts.Names)
+		conds := nameConds(t.Column, opts.Names)
+		extra := ""
 		if opts.SkipTestIncludes && (t.Name == "WBCROSSGT" || t.Name == "WBCROSSI" || t.Name == "CROSS") {
-			where += " AND NOT " + testInclude(t.Column)
+			extra = "NOT " + testInclude(t.Column)
 		}
 		if t.Name == "TFDIR" && len(opts.Names) > 0 {
 			// a function module by its own name, or by its group's main
 			// program (a group named, or a package's group)
-			pw, pa := likeAny("PNAME", opts.Names)
-			where, args = "("+where+" OR "+pw+")", append(append([]any{}, args...), pa...)
+			conds = append(conds, nameConds("PNAME", opts.Names)...)
 		}
 		if len(opts.Packages) > 0 {
 			switch t.Name {
 			case "TADIR", "TDEVC":
 				// by package, not by name: a padded class name's pattern
 				// also matches objects of other packages
-				where, args = likeAny("DEVCLASS", opts.Packages)
+				conds = nameConds("DEVCLASS", opts.Packages)
 				if t.Name == "TADIR" {
 					// and the objects named beside the packages
-					if len(userNames) > 0 {
-						nw, na := likeAny("OBJ_NAME", userNames)
-						where, args = "("+where+" OR "+nw+")", append(append([]any{}, args...), na...)
-					}
-					where = `"PGMID" = 'R3TR' AND ` + where
+					conds = append(conds, nameConds("OBJ_NAME", userNames)...)
+					extra = `"PGMID" = 'R3TR'`
 				}
 			}
 		}
-		var n int
-		var missing bool
-		var err error
-		if len(opts.Names) > 0 {
-			n, missing, err = dumpTable(ctx, db, opts, t.Name, where, args)
-		}
-		// closure names, by IN list, leaving out the rows the patterns took
+		// closure names, by IN list
 		col := t.Column
 		if col == "CONDNAME" {
 			// a view's selection conditions are keyed by the view's name
 			col = "VIEWNAME"
 		}
-		if extra := closureNames[col]; !missing && err == nil && len(extra) > 0 && isDDIC(t.Name) {
-			appended := n > 0 || len(opts.Names) > 0
-			err = inChunks(extra, func(ph string, inArgs []any) error {
-				w, a := fmt.Sprintf(`%q IN (%s)`, t.Column, ph), inArgs
-				if len(opts.Names) > 0 {
-					w, a = w+" AND NOT "+where, append(append([]any{}, inArgs...), args...)
-				}
-				k, miss, e := dumpTableTo(ctx, db, opts, t.Name, w, a, appended)
-				appended, n = true, n+k
-				if miss {
-					missing = true
-				}
-				return e
-			})
+		var closureConds []cond
+		if extraNames := closureNames[col]; len(extraNames) > 0 && isDDIC(t.Name) {
+			closureConds = nameConds(t.Column, escapeAll(extraNames))
 		}
 		// the dictionary objects a closure reached are placed in their packages
 		// by TADIR, as every other object is: their rows join the file
-		if all := allClosureNames(closureNames); !missing && err == nil && t.Name == "TADIR" && len(all) > 0 {
-			appended := n > 0 || len(opts.Names) > 0
-			err = inChunks(all, func(ph string, inArgs []any) error {
-				w := fmt.Sprintf(`"PGMID" = 'R3TR' AND "OBJECT" IN ('TABL', 'DTEL', 'DOMA', 'TTYP', 'SHLP', 'VIEW') AND "OBJ_NAME" IN (%s)`, ph)
-				a := inArgs
-				if len(opts.Names) > 0 {
-					w, a = w+" AND NOT ("+where+")", append(append([]any{}, inArgs...), args...)
+		var tadirConds []cond
+		if all := allClosureNames(closureNames); t.Name == "TADIR" && len(all) > 0 {
+			tadirConds = nameConds("OBJ_NAME", escapeAll(all))
+		}
+		tw := &tableWriter{ctx: ctx, db: db, opts: opts, table: t.Name}
+		if !(len(opts.Names) > 0 && len(conds) == 1 && len(closureConds)+len(tadirConds) == 0) {
+			tw.seen = rowSet{}
+		}
+		var missing bool
+		var err error
+		if len(opts.Names) > 0 {
+			for _, c := range conds {
+				if missing, err = tw.dump(c, extra); missing || err != nil {
+					break
 				}
-				k, _, e := dumpTableTo(ctx, db, opts, t.Name, w, a, appended)
-				appended, n = true, n+k
-				return e
-			})
+			}
+		}
+		for _, c := range closureConds {
+			if missing || err != nil {
+				break
+			}
+			missing, err = tw.dump(c, "")
+		}
+		for _, c := range tadirConds {
+			if missing || err != nil {
+				break
+			}
+			_, err = tw.dump(c, `"PGMID" = 'R3TR' AND "OBJECT" IN ('TABL', 'DTEL', 'DOMA', 'TTYP', 'SHLP', 'VIEW')`)
 			if err == nil {
 				closureTadir = true
 			}
 		}
+		n := tw.n
 		if missing {
 			// A table the release does not have is a fact about the system,
 			// not a reason to lose the sources already written.
@@ -412,20 +409,42 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 		}
 		return f.Close()
 	}
-	where, args := likeAny("PROGNAME", opts.Names)
+	var filter []string
 	if opts.SkipTestIncludes {
-		where += " AND NOT " + testInclude("PROGNAME")
+		filter = append(filter, "NOT "+testInclude("PROGNAME"))
 	}
 	if !opts.Inactive {
-		where += " AND R3STATE = 'A'"
+		filter = append(filter, "R3STATE = 'A'")
 	}
-	q := fmt.Sprintf(`SELECT PROGNAME, R3STATE, UNAM, UDAT, MAXLINELN, DATA FROM %q.REPOSRC WHERE %s ORDER BY PROGNAME, R3STATE`,
-		opts.Schema, where)
-	rows, err := db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return fmt.Errorf("hanadump: REPOSRC: %w", err)
+	extra := strings.Join(filter, " AND ")
+	and := func(w string) string {
+		if extra == "" {
+			return w
+		}
+		return "(" + w + ") AND " + extra
 	}
-	defer rows.Close()
+	conds := nameConds("PROGNAME", opts.Names)
+	if len(conds) > 1 {
+		// Several statements: find the programs first, so each source is
+		// read once and the file stays in program order.
+		progs := map[string]bool{}
+		for _, c := range conds {
+			names, err := strings1Query(ctx, db, fmt.Sprintf(`SELECT DISTINCT PROGNAME FROM %q.REPOSRC WHERE %s`, opts.Schema, and(c.where)), c.args...)
+			if err != nil {
+				return fmt.Errorf("hanadump: REPOSRC: %w", err)
+			}
+			for _, n := range names {
+				progs[n] = true
+			}
+		}
+		sorted := make([]string, 0, len(progs))
+		for n := range progs {
+			sorted = append(sorted, n)
+		}
+		sort.Strings(sorted)
+		conds = nameConds("PROGNAME", escapeAll(sorted))
+		logf("sources: %d programs in %d statements", len(sorted), len(conds))
+	}
 
 	if err := os.MkdirAll(filepath.Join(opts.Out, "src"), dirMode); err != nil {
 		return err
@@ -438,66 +457,79 @@ func dumpSources(ctx context.Context, db *sql.DB, opts Options, m *Manifest, log
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	used := map[string]bool{}
-
-	for rows.Next() {
-		var (
-			r       SourceRecord
-			by, on  sql.NullString
-			maxLine sql.NullInt64
-			data    []byte
-		)
-		var blob any = &data
-		if opts.BlobInto != nil {
-			blob = opts.BlobInto(&data)
+	one := func(c cond) error {
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT PROGNAME, R3STATE, UNAM, UDAT, MAXLINELN, DATA FROM %q.REPOSRC WHERE %s ORDER BY PROGNAME, R3STATE`,
+			opts.Schema, and(c.where)), c.args...)
+		if err != nil {
+			return fmt.Errorf("hanadump: REPOSRC: %w", err)
 		}
-		if err := rows.Scan(&r.Program, &r.State, &by, &on, &maxLine, blob); err != nil {
-			return fmt.Errorf("hanadump: REPOSRC row: %w", err)
-		}
-		r.ChangedBy, r.ChangedOn, r.MaxLine = by.String, on.String, int(maxLine.Int64)
-		if len(data) == 0 {
-			r.Empty = true
-			m.Counts["sources_empty"]++
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				r       SourceRecord
+				by, on  sql.NullString
+				maxLine sql.NullInt64
+				data    []byte
+			)
+			var blob any = &data
+			if opts.BlobInto != nil {
+				blob = opts.BlobInto(&data)
+			}
+			if err := rows.Scan(&r.Program, &r.State, &by, &on, &maxLine, blob); err != nil {
+				return fmt.Errorf("hanadump: REPOSRC row: %w", err)
+			}
+			r.ChangedBy, r.ChangedOn, r.MaxLine = by.String, on.String, int(maxLine.Int64)
+			if len(data) == 0 {
+				r.Empty = true
+				m.Counts["sources_empty"]++
+				if err := enc.Encode(r); err != nil {
+					return err
+				}
+				continue
+			}
+			lines, derr := DecodeSource(data)
+			if derr != nil {
+				// Lossless even when undecodable: keep the column as stored, so
+				// a better decoder can be run later without the database.
+				r.Error = derr.Error()
+				r.File = uniquePath(used, "undecoded/"+FileName(r.Program)+"."+strings.ToLower(r.State), ".bin", r.Program, r.State)
+				if err := os.MkdirAll(filepath.Join(opts.Out, "undecoded"), dirMode); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(opts.Out, r.File), data, fileMode); err != nil {
+					return err
+				}
+				m.Counts["source_errors"]++
+			} else {
+				text := strings.Join(lines, "\n") + "\n"
+				sum := sha256.Sum256([]byte(text))
+				r.Lines, r.SHA256 = len(lines), hex.EncodeToString(sum[:])
+				base := "src/" + FileName(r.Program)
+				if r.State != "A" {
+					base += "." + strings.ToLower(r.State)
+				}
+				r.File = uniquePath(used, base, ".abap", r.Program, r.State)
+				if err := os.WriteFile(filepath.Join(opts.Out, r.File), []byte(text), fileMode); err != nil {
+					return err
+				}
+				m.Counts["sources"]++
+				if m.Counts["sources"]%1000 == 0 {
+					logf("sources: %d", m.Counts["sources"])
+				}
+			}
 			if err := enc.Encode(r); err != nil {
 				return err
 			}
-			continue
 		}
-		lines, derr := DecodeSource(data)
-		if derr != nil {
-			// Lossless even when undecodable: keep the column as stored, so
-			// a better decoder can be run later without the database.
-			r.Error = derr.Error()
-			r.File = uniquePath(used, "undecoded/"+FileName(r.Program)+"."+strings.ToLower(r.State), ".bin", r.Program, r.State)
-			if err := os.MkdirAll(filepath.Join(opts.Out, "undecoded"), dirMode); err != nil {
-				return err
-			}
-			if err := os.WriteFile(filepath.Join(opts.Out, r.File), data, fileMode); err != nil {
-				return err
-			}
-			m.Counts["source_errors"]++
-		} else {
-			text := strings.Join(lines, "\n") + "\n"
-			sum := sha256.Sum256([]byte(text))
-			r.Lines, r.SHA256 = len(lines), hex.EncodeToString(sum[:])
-			base := "src/" + FileName(r.Program)
-			if r.State != "A" {
-				base += "." + strings.ToLower(r.State)
-			}
-			r.File = uniquePath(used, base, ".abap", r.Program, r.State)
-			if err := os.WriteFile(filepath.Join(opts.Out, r.File), []byte(text), fileMode); err != nil {
-				return err
-			}
-			m.Counts["sources"]++
-			if m.Counts["sources"]%1000 == 0 {
-				logf("sources: %d", m.Counts["sources"])
-			}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("hanadump: REPOSRC: %w", err)
 		}
-		if err := enc.Encode(r); err != nil {
+		return nil
+	}
+	for _, c := range conds {
+		if err := one(c); err != nil {
 			return err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("hanadump: REPOSRC: %w", err)
 	}
 	logf("sources: %d written, %d failed to decode", m.Counts["sources"], m.Counts["source_errors"])
 	return w.Flush()
@@ -552,6 +584,12 @@ func isDDIC(name string) bool {
 // dumpTableTo is dumpTable; with appendTo it adds to the table's file rather
 // than creating it.
 func dumpTableTo(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any, appendTo bool) (n int, missing bool, err error) {
+	return dumpRows(ctx, db, opts, table, where, args, appendTo, nil)
+}
+
+// dumpRows is dumpTableTo; a row already in seen is not written again, and a
+// row written is added to it.
+func dumpRows(ctx context.Context, db *sql.DB, opts Options, table, where string, args []any, appendTo bool, seen rowSet) (n int, missing bool, err error) {
 	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %q.%q WHERE %s`, opts.Schema, table, where), args...)
 	if err != nil {
 		// absent only when the database says so, and only on a table's first
@@ -599,7 +637,6 @@ func dumpTableTo(ctx context.Context, db *sql.DB, opts Options, table, where str
 	}
 	defer f.Close()
 	w := bufio.NewWriter(f)
-	enc := json.NewEncoder(w)
 
 	vals := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
@@ -635,7 +672,18 @@ func dumpTableTo(ctx context.Context, db *sql.DB, opts Options, table, where str
 			}
 			row[c] = jsonValue(vals[i])
 		}
-		if err := enc.Encode(row); err != nil {
+		line, err := json.Marshal(row)
+		if err != nil {
+			return n, false, err
+		}
+		if seen != nil {
+			k := rowKey(line)
+			if _, dup := seen[k]; dup {
+				continue
+			}
+			seen[k] = struct{}{}
+		}
+		if _, err := w.Write(append(line, '\n')); err != nil {
 			return n, false, err
 		}
 		n++

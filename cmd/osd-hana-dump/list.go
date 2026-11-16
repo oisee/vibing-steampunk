@@ -31,71 +31,109 @@ type Object struct {
 	Programs    int   `json:"programs"`
 }
 
+// maxParams bounds the parameters of one statement.
+const maxParams = 500
+
 // scope reads the TADIR objects a request selects (everything, for an empty
 // request) and classifies them.
 func scope(ctx context.Context, db *sql.DB, schema string, req *Request) ([]Object, error) {
-	var conds []string
-	var args []any
-	like := func(col string, pats []string) {
-		parts := make([]string, len(pats))
-		for i, p := range pats {
-			parts[i] = fmt.Sprintf(`%q LIKE ? ESCAPE '\'`, col)
-			args = append(args, p)
+	// Each condition group runs as its own TADIR query with at most
+	// maxParams parameters (HANA refuses a statement with too many: SQL
+	// error 589), and the results are merged.
+	type group struct {
+		cond string
+		args []any
+	}
+	var groups []group
+	chunks := func(vals []string, cond func(n int) string) {
+		for at := 0; at < len(vals); at += maxParams {
+			part := vals[at:min(at+maxParams, len(vals))]
+			args := make([]any, len(part))
+			for i, v := range part {
+				args[i] = v
+			}
+			groups = append(groups, group{cond(len(part)), args})
 		}
-		conds = append(conds, "("+strings.Join(parts, " OR ")+")")
 	}
-	if len(req.Names) > 0 {
-		like("OBJ_NAME", req.Names)
+	like := func(col string) func(int) string {
+		return func(n int) string {
+			return "(" + strings.TrimSuffix(strings.Repeat(fmt.Sprintf(`%q LIKE ? ESCAPE '\' OR `, col), n), " OR ") + ")"
+		}
 	}
-	if len(req.Packages) > 0 {
-		like("DEVCLASS", req.Packages)
+	in := func(prefix string) func(int) string {
+		return func(n int) string {
+			return "(" + prefix + `"OBJ_NAME" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + "))"
+		}
 	}
+	chunks(req.Names, like("OBJ_NAME"))
+	chunks(req.Packages, like("DEVCLASS"))
 	if req.Local != nil && (req.Local.All || len(req.Local.Authors) > 0) {
 		c := fmt.Sprintf(`("DEVCLASS" LIKE '$%%' OR "DEVCLASS" IN (SELECT "DEVCLASS" FROM %q."TDEVC" WHERE "DLVUNIT" = 'LOCAL'))`, schema)
 		if len(req.Local.Authors) > 0 {
-			c = "(" + c + ` AND "AUTHOR" IN (` + strings.TrimSuffix(strings.Repeat("?,", len(req.Local.Authors)), ",") + "))"
-			for _, a := range req.Local.Authors {
-				args = append(args, a)
+			chunks(req.Local.Authors, func(n int) string {
+				return "(" + c + ` AND "AUTHOR" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + "))"
+			})
+		} else {
+			groups = append(groups, group{c, nil})
+		}
+	}
+	// requested names are exact (type, name) pairs
+	kinds := make([]string, 0, len(req.Requested))
+	for kind := range req.Requested {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		if !isKind(kind) {
+			continue // not a TADIR object type: reported as not found
+		}
+		chunks(req.Requested[kind], in(`"OBJECT" = '`+kind+`' AND `))
+	}
+	if len(groups) == 0 {
+		groups = []group{{"", nil}} // empty request: the whole repository
+	}
+
+	type row struct {
+		Object
+		src string
+	}
+	byKey := map[string]row{}
+	for _, g := range groups {
+		where := `"PGMID" = 'R3TR'`
+		if g.cond != "" {
+			where += " AND " + g.cond
+		}
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT "OBJECT", "OBJ_NAME", "DEVCLASS", "AUTHOR", "SRCSYSTEM", "GENFLAG" FROM %q."TADIR" WHERE %s`, schema, where), g.args...)
+		if err != nil {
+			return nil, fail(exitUnsupported, "TADIR: %v", err)
+		}
+		for rows.Next() {
+			var o Object
+			var src, gen, author sql.NullString
+			if err := rows.Scan(&o.Type, &o.Name, &o.Package, &author, &src, &gen); err != nil {
+				rows.Close()
+				return nil, err
 			}
+			o.Type, o.Name, o.Package = strings.TrimSpace(o.Type), strings.TrimSpace(o.Name), strings.TrimSpace(o.Package)
+			o.Author = strings.TrimSpace(author.String)
+			o.Generated = strings.TrimSpace(gen.String) != ""
+			byKey[o.Type+"\x00"+o.Name] = row{o, strings.TrimSpace(src.String)}
 		}
-		conds = append(conds, c)
-	}
-	var reqNames []string
-	for _, names := range req.Requested {
-		reqNames = append(reqNames, names...)
-	}
-	if len(reqNames) > 0 {
-		conds = append(conds, `"OBJ_NAME" IN (`+strings.TrimSuffix(strings.Repeat("?,", len(reqNames)), ",")+")")
-		for _, n := range reqNames {
-			args = append(args, n)
-		}
-	}
-	where := `"PGMID" = 'R3TR'`
-	if len(conds) > 0 {
-		where += " AND (" + strings.Join(conds, " OR ") + ")"
-	}
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT "OBJECT", "OBJ_NAME", "DEVCLASS", "AUTHOR", "SRCSYSTEM", "GENFLAG" FROM %q."TADIR" WHERE %s ORDER BY "OBJECT", "OBJ_NAME"`, schema, where), args...)
-	if err != nil {
-		return nil, fail(exitUnsupported, "TADIR: %v", err)
-	}
-	defer rows.Close()
-	var objs []Object
-	var srcsys = map[int]string{}
-	for rows.Next() {
-		var o Object
-		var src, gen sql.NullString
-		var author sql.NullString
-		if err := rows.Scan(&o.Type, &o.Name, &o.Package, &author, &src, &gen); err != nil {
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return nil, err
 		}
-		o.Type, o.Name, o.Package = strings.TrimSpace(o.Type), strings.TrimSpace(o.Name), strings.TrimSpace(o.Package)
-		o.Author = strings.TrimSpace(author.String)
-		o.Generated = strings.TrimSpace(gen.String) != ""
-		srcsys[len(objs)] = strings.TrimSpace(src.String)
-		objs = append(objs, o)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // type, then name: the order one ORDER BY gave
+	objs := make([]Object, len(keys))
+	srcsys := make([]string, len(keys))
+	for i, k := range keys {
+		objs[i], srcsys[i] = byKey[k].Object, byKey[k].src
 	}
 
 	ns, err := namespaces(ctx, db, schema)
@@ -247,37 +285,46 @@ func sourceSizes(ctx context.Context, db *sql.DB, schema string, patterns []stri
 func (p *progSizes) of(patterns []string) (n int, bytes int64) {
 	seen := map[int]bool{}
 	for _, pat := range patterns {
-		lit, prefix := unlike(pat)
-		i := sort.SearchStrings(p.names, lit)
-		for ; i < len(p.names); i++ {
-			if prefix && !strings.HasPrefix(p.names[i], lit) || !prefix && p.names[i] != lit {
-				break
-			}
+		matchSorted(p.names, pat, func(i int) {
 			if !seen[i] {
 				seen[i] = true
 				n++
 				bytes += p.size[i]
 			}
-		}
+		})
 	}
 	return n, bytes
 }
 
-// unlike undoes hanadump.EscapeLike and reports a trailing unescaped '%'.
-func unlike(pat string) (lit string, prefix bool) {
+// likePrefix is the literal start of a LIKE pattern, up to its first
+// unescaped wildcard; exact when it has none.
+func likePrefix(pat string) (prefix string, exact bool) {
 	var b strings.Builder
 	for i := 0; i < len(pat); i++ {
 		switch {
 		case pat[i] == '\\' && i+1 < len(pat):
 			i++
 			b.WriteByte(pat[i])
-		case pat[i] == '%' && i == len(pat)-1:
-			prefix = true
+		case pat[i] == '%' || pat[i] == '_':
+			return b.String(), false
 		default:
 			b.WriteByte(pat[i])
 		}
 	}
-	return b.String(), prefix
+	return b.String(), true
+}
+
+// matchSorted calls fn for each index of sorted names pat matches.
+func matchSorted(names []string, pat string, fn func(i int)) {
+	prefix, exact := likePrefix(pat)
+	for i := sort.SearchStrings(names, prefix); i < len(names) && strings.HasPrefix(names[i], prefix); i++ {
+		if exact && names[i] != prefix {
+			break
+		}
+		if exact || likeMatch(pat, names[i]) {
+			fn(i)
+		}
+	}
 }
 
 type group struct {
@@ -370,4 +417,18 @@ func writeJSONL[T any](path string, items []T) error {
 		return err
 	}
 	return f.Close()
+}
+
+// isKind admits a TADIR object type (four characters, A-Z and 0-9), so a
+// requested kind can be written into a statement.
+func isKind(s string) bool {
+	if len(s) != 4 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
