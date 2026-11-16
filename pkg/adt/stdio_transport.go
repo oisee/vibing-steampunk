@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -270,6 +271,14 @@ func (t *StdioTransport) ensureStarted() error {
 		t.broken = errors.New("transport command is empty")
 		return t.broken
 	}
+	// The working directory may be a project nobody vetted. A program that
+	// is not an absolute path would be looked up from it (directly, or via a
+	// PATH entry or GODEBUG its .env set), so it is refused, wherever the
+	// command came from.
+	if !filepath.IsAbs(t.argv[0]) {
+		t.broken = fmt.Errorf("transport command %s: the program must be an absolute path", t.name)
+		return t.broken
+	}
 
 	inR, inW, err := os.Pipe()
 	if err != nil {
@@ -288,7 +297,11 @@ func (t *StdioTransport) ensureStarted() error {
 	cmd.Stdin = inR
 	cmd.Stdout = outW
 	cmd.Stderr = io.MultiWriter(stdioStderr, tail)
-	cmd.Env = helperEnv(os.Environ())
+	cmd.Env = helperEnv(helperEnviron())
+	// Run in the program's own directory, not the caller's: a relative
+	// argument ("helper.py") must not name a file of the project vsp was
+	// started in.
+	cmd.Dir = filepath.Dir(t.argv[0])
 	// A grandchild that keeps stderr open must not keep Wait from returning.
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
@@ -374,6 +387,17 @@ func (t *StdioTransport) fail(cause error, kill bool) error {
 	t.releaseLocked()
 	return t.broken
 }
+
+// helperEnviron is the environment a transport command starts from. A
+// program that loads a project's .env should set it, with SetHelperEnviron,
+// to the environment it had before: a project must not reach the helper with
+// LD_PRELOAD, PATH or the like.
+var helperEnviron = os.Environ
+
+// SetHelperEnviron sets where a transport command's environment comes from,
+// before any is started. vsp passes its environment as it was at start-up,
+// before ./.env was loaded.
+func SetHelperEnviron(environ func() []string) { helperEnviron = environ }
 
 // helperSecretName matches environment variable names that hold a secret.
 var helperSecretName = regexp.MustCompile(`(?i)(PASSWORD|PASSWD|SECRET|TOKEN|COOKIE)`)

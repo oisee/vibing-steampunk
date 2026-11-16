@@ -271,3 +271,20 @@ func TestCLI_TransportCmdHelpersAreClosed(t *testing.T) {
 		t.Errorf("debug transport after closeTransportCmds: want closed, got %v", err)
 	}
 }
+
+// vsp hands a transport command its environment from before ./.env was
+// loaded: startupEnviron is taken when the package's variables are set, before
+// any init runs.
+func TestStartupEnvironTakenBeforeDotEnv(t *testing.T) {
+	for _, kv := range startupEnviron {
+		if strings.HasPrefix(kv, "VSP_TEST_LATE_VAR=") {
+			t.Fatal("startupEnviron saw a variable set after start-up")
+		}
+	}
+	t.Setenv("VSP_TEST_LATE_VAR", "x")
+	for _, kv := range startupEnviron {
+		if strings.HasPrefix(kv, "VSP_TEST_LATE_VAR=") {
+			t.Fatal("startupEnviron follows the live environment")
+		}
+	}
+}

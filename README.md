@@ -1,8 +1,18 @@
 # Vibing Steampunk (vsp)
 
+<p align="center">
+  <img src="media/vibing-steampunk.png" alt="Vibing ABAP Developer: a developer in a steampunk airship cabin, code drifting over the clouds" width="100%">
+</p>
+
 **AI-Agentic Development Unlocked for ABAP** — any system with ADT enabled, 7.50 upwards.
 The available surface varies by release, and `vsp compat` reports it per system: RAP needs
 S/4, AMDP needs HANA, and some ADT resources present on S/4 are absent on ERP.
+
+Part of the steampunk family:
+[open-steamgate](https://github.com/oisee/open-steamgate) (an ABAP application server you can clone),
+[abapiti](https://github.com/oisee/abapiti) (TypeScript and WASM to ABAP),
+[open-rfc-go](https://github.com/oisee/open-rfc-go) (RFC) and
+[open-diag-go](https://github.com/oisee/open-diag-go) (SAP GUI DIAG).
 
 > **ADT ↔ MCP Bridge**: Gives Claude (and other AI assistants) full access to SAP ADT APIs.
 > Read code, write code, debug, deploy, run tests — all through natural language (or DSL for automation).
@@ -46,8 +56,6 @@ S/4, AMDP needs HANA, and some ADT resources present on S/4 are absent on ERP.
 > See also: [OData ↔ MCP Bridge](https://github.com/oisee/odata_mcp_go) for SAP data access.
 >
 > **Want to review or test?** Start here: **[Reviewer Guide](docs/reviewer-guide.md)** — 11 hands-on tasks, 6 of them fully offline.
-
-![Vibing ABAP Developer](./media/vibing-steampunk.png)
 
 ## Hot Right Now
 
@@ -1104,7 +1112,34 @@ Earlier: **[Still Only 5%](articles/2026-08-25-still-five-percent.md)** · **[VS
 
 ## What's New
 
-The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.60.0 — debug, pin, summarise](https://github.com/oisee/vibing-steampunk/releases/tag/v2.60.0)**.
+The headline changes are in the **"New in the last three releases"** callout at the top of this README; the full version history is in [CHANGELOG.md](CHANGELOG.md). Latest release: **[v2.61.0 — snc and traces](https://github.com/oisee/vibing-steampunk/releases/tag/v2.61.0)**.
+
+### v2.61.0 — new since v2.60.0
+
+Reach SNC-only systems from one `vsp.exe`, and read ABAP traces as they really are.
+
+**New:** SNC single sign-on through SAP's `sapnwrfc.dll` (Windows). A system with an `snc` block in `~/.vsp.json` logs on with Kerberos through the SAP NW RFC SDK and carries ADT over RFC, with no password and no browser. The block names the SAP Logon entry, system, client, user and `production`. `vsp.exe` runs itself as the helper (`vsp snc-serve`) and loads the SDK only in a guarded worker:
+- tracing is off and the worker's directory refuses files;
+- DLLs are searched only beside the SDK and in System32;
+- the logon is never retried;
+- the system, client and user are checked after logon.
+
+The channel is read-only. On `"production": true` it forwards GETs only; elsewhere it forwards bounded data preview SELECTs too. In `.mcp.json` it is just `["-s", "dev"]`. From WSL, a Linux vsp uses the Windows `vsp.exe` as its `transport_cmd`. The SDK itself is SAP's: download it from the SAP Software Center. See [SNC single sign-on through sapnwrfc.dll](#snc-single-sign-on-through-sapnwrfcdll-windows).
+
+**New:** transport command. `transport_cmd` in `~/.vsp.json` (or `--transport-cmd`, `SAP_TRANSPORT_CMD`) carries every ADT request over a helper process's stdin/stdout, and the helper does its own sign-on (#373). `-s NAME` gives the MCP server its logon from such a system. See [Transport command](#transport-command-adt-through-a-helper-process).
+
+**Fixed:**
+
+- **ABAP traces read as they are** (#376).
+  - `get_trace` returned empty hit-list entries on 7.58. It now parses the real format: event, program, line, calls, own and total time.
+  - It sorts by own time and returns the top 50 (`top`, `sort_by`). It also reads `dbAccesses` and the call tree, and returns `raw` XML on request.
+  - `list_traces` shows state, aggregation, size and runtime, newest first.
+  - A trace cut off at its size limit now says so instead of returning a bare 416.
+
+**Behaviour changes:**
+
+- **A `transport_cmd` program must be an absolute path.** The helper runs in its own directory and starts from vsp's environment as it was before `./.env` was loaded, so a project's files and `.env` cannot reach it.
+- **The `snc` block requires `"production"`.**
 
 ### v2.60.0 — new since v2.59.1
 
@@ -1985,6 +2020,124 @@ If the helper exits, writes a malformed or oversized frame, or a request is
 abandoned half-way (timeout, cancel), vsp kills the helper and reports the
 transport as broken. It does not restart it, because a new helper would mean a
 new session and the old session's locks would be lost. Restart vsp instead.
+
+### SNC single sign-on through sapnwrfc.dll (Windows)
+
+On Windows, vsp.exe can reach a system the way SAP GUI does: over RFC with SNC
+and Kerberos, using SAP's own NetWeaver RFC library. No password, cookie or
+browser is involved, and no extra program: vsp runs itself as its own transport
+command (`vsp snc-serve`) and carries ADT over RFC (`SADT_REST_RFC_ENDPOINT`).
+The library is loaded from pure Go, so the build stays `CGO_ENABLED=0`.
+
+What you need:
+
+- **sapnwrfc.dll**, from the SAP NW RFC SDK 7.50 for Windows x64. Download it
+  from the SAP Software Center (an S-user with download rights is needed; search
+  for "SAP NW RFC SDK"). vsp never ships the DLL. Keep the SDK's `lib` folder
+  together: its other DLLs are loaded from beside `sapnwrfc.dll` (and from
+  System32), never from the working directory or `PATH`.
+- **The SNC library** SAP GUI uses, usually `gx64krb5.dll` (Kerberos).
+- **A SAP Logon entry** for the system with SNC switched on. vsp reads it from
+  SAPUILandscape.xml, including its `<Include>`s, and takes only the exact entry
+  you name.
+
+```json
+{
+  "systems": {
+    "dev": {
+      "snc": {
+        "dll": "C:\\SAP\\nwrfcsdk\\lib\\sapnwrfc.dll",
+        "snc_lib": "C:\\Program Files\\SAP\\FrontEnd\\SecureLogin\\lib\\gx64krb5.dll",
+        "connection": "DEV - Development",
+        "system": "DEV",
+        "client": "100",
+        "user": "TESTUSER",
+        "production": false
+      }
+    }
+  }
+}
+```
+
+```bash
+vsp -s dev search "ZCL_*"
+```
+
+`dll` and `snc_lib` may be left out: `dll` then means `sapnwrfc.dll` beside
+`vsp.exe`, and `snc_lib` the `SNC_LIB_64` variable that SAP GUI sets, read
+from the user's environment in the registry, then the machine's. It is not
+read from vsp's own process environment, which a project's `.env` feeds, and a
+`%VAR%` value is not expanded: name `snc_lib` then. `SNC_LIB` is not read; it
+names the 32-bit library, which a 64-bit `vsp.exe` cannot load.
+
+Optional keys: `landscape` (an absolute path to SAPUILandscape.xml; default: SAP
+GUI's own, via `SAPLOGON_LSXML_FILE` or `%APPDATA%\SAP\Common`),
+`logon_timeout` (default `45s`), `request_timeout` (default `60s`),
+`production` (required, see below), `allow_data_preview` (forward data preview SELECTs on
+a production system too) and `verbose` (one stderr line per request).
+
+- **Home directory only.** The `snc` block names a DLL that vsp loads, so it is
+  honoured only in `~/.vsp.json` or `~/.vsp/systems.json`, by the same rule as
+  `transport_cmd`. In a `.vsp.json` in the working directory it is refused.
+- **Windows only.** Elsewhere vsp refuses the block. On Linux or macOS, use
+  `transport_cmd` with an external helper instead.
+- **Exclusive.** It cannot be combined with `transport_cmd`, user/password,
+  cookies or `auth: sso`. vsp fills in the rest: `url` defaults to
+  `https://snc.invalid` (nothing connects to it), `client` comes from the block,
+  `expect` defaults to `SYSTEM.CLIENT/USER`, and the system is read-only.
+- **The identity is checked twice.** The logon is refused unless the
+  authenticated system, client and user match the block. vsp's own `expect`
+  check runs again on the first request. On a release without ADT's system
+  information resource, snc-serve answers it from the RFC logon's identity,
+  marked `X-Vsp-Snc-Identity: rfc-logon`, because the T000 fallback cannot
+  always tell the system ID.
+- **Read-only, stricter on production.** GET on an allowlist of ADT read
+  paths goes to SAP: discovery, repository, sources, DDIC, packages, transports
+  and dumps. `production` must be given, so a forgotten flag cannot open a
+  production system. With `"production": false`, a row-capped data
+  preview SELECT is also forwarded, but never one that names a credential
+  table. On a production system it is forwarded only with `allow_data_preview`.
+  vsp's own identity check (one row of T000, for releases without the system
+  information resource) is always forwarded. Everything else, including every
+  write, is answered 403 locally and never reaches SAP: the channel has no
+  stateful session and no locks. Cookies, credentials and session headers are
+  not forwarded.
+- **No retries.** A failed logon or RFC call stops the channel. Nothing is retried,
+  because a retried Kerberos or SNC failure gains nothing. Restart vsp.
+- **No logs on disk, no secrets in errors.** The SDK runs in a separate worker
+  process (vsp.exe again) whose working directory holds only a `sapnwrfc.ini`
+  that turns tracing off and is locked against file creation. Its stderr is
+  discarded. Errors carry RFC return codes and fixed stage names, never SAP's
+  message text, hosts or partner names.
+
+For the MCP server, name the system; it takes the logon, client, identity pin
+and read-only from the snc block, with the same checks as the CLI:
+
+```json
+{
+  "command": "C:\\tools\\vsp.exe",
+  "args": ["-s", "dev"]
+}
+```
+
+A URL, user, password or transport command given as well (flags or `SAP_*`)
+is refused rather than mixed in.
+
+From WSL, a Linux vsp can use the Windows build as its helper: the Windows
+process holds the Kerberos ticket of your Windows logon and reaches the
+network as Windows does. In `~/.vsp.json` on the Linux side:
+
+```json
+"dev": {
+  "url": "https://snc.invalid", "client": "100", "read_only": true,
+  "expect": "DEV.100/TESTUSER",
+  "transport_cmd": ["/mnt/c/tools/vsp.exe", "snc-serve",
+    "-system", "DEV", "-client", "100", "-user", "TESTUSER",
+    "-connection", "DEV - Development",
+    "-dll", "C:\\tools\\sapnwrfc.dll",
+    "-snc-lib", "C:\\Program Files\\SAP\\FrontEnd\\SecureLogin\\lib\\gx64krb5.dll"]
+}
+```
 
 <details>
 <summary><strong>MCP Server Configuration</strong></summary>

@@ -61,18 +61,42 @@ func (s *Server) handleListTraces(ctx context.Context, request mcp.CallToolReque
 	return mcp.NewToolResultText(string(result)), nil
 }
 
+// defaultTraceTop keeps a hit list readable: a long run has tens of
+// thousands of positions, and the few that cost the time sort to the top.
+const defaultTraceTop = 50
+
+// rawTraceLimit caps raw=true output; a hit list can be 20 MB of XML.
+const rawTraceLimit = 256 * 1024
+
 func (s *Server) handleGetTrace(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	traceID, ok := request.GetArguments()["trace_id"].(string)
-	if !ok || traceID == "" {
+	args := request.GetArguments()
+	traceID := getStringParam(args, "trace_id")
+	if traceID == "" {
 		return newToolResultError("trace_id is required"), nil
 	}
+	toolType := getStringParam(args, "tool_type")
 
-	toolType := "hitlist"
-	if tt, ok := request.GetArguments()["tool_type"].(string); ok && tt != "" {
-		toolType = tt
+	if raw, _ := getBoolParam(args, "raw"); raw {
+		body, err := s.adtClient.GetTraceRaw(ctx, traceID, toolType)
+		if err != nil {
+			return newToolResultError(fmt.Sprintf("Failed to get trace: %v", err)), nil
+		}
+		if len(body) > rawTraceLimit {
+			return mcp.NewToolResultText(fmt.Sprintf("%s\n... [truncated: showing %d of %d bytes]", body[:rawTraceLimit], rawTraceLimit, len(body))), nil
+		}
+		return mcp.NewToolResultText(string(body)), nil
 	}
 
-	analysis, err := s.adtClient.GetTrace(ctx, traceID, toolType)
+	opts := adt.TraceGetOptions{
+		ToolType: toolType,
+		SortBy:   getStringParam(args, "sort_by"),
+		Top:      defaultTraceTop,
+	}
+	if top, ok := getFloatParam(args, "top"); ok {
+		opts.Top = int(top) // 0 returns every entry
+	}
+
+	analysis, err := s.adtClient.GetTraceAnalysis(ctx, traceID, opts)
 	if err != nil {
 		return newToolResultError(fmt.Sprintf("Failed to get trace: %v", err)), nil
 	}

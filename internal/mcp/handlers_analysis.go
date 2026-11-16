@@ -520,7 +520,14 @@ func (s *Server) handleTraceExecution(ctx context.Context, request mcp.CallToolR
 			"total_time":  result.Trace.TotalTime,
 			"total_calls": result.Trace.TotalCalls,
 			"entries":     len(result.Trace.Entries),
+			"note":        result.Trace.Note,
 		}
+	}
+
+	// What did not run, and why: without it a failed trace read looks like
+	// code that made no calls.
+	if len(result.Unsearched) > 0 {
+		output["unsearched"] = result.Unsearched
 	}
 
 	if len(result.ActualEdges) > 0 {

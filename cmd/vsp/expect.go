@@ -62,6 +62,8 @@ func resolveServerExpect(systemName string, systemsCfg *config.SystemsConfig) pi
 		}
 		if sys, ok := systemsCfg.Systems[name]; ok && strings.TrimSpace(sys.Expect) != "" {
 			return pinSpec{strings.TrimSpace(sys.Expect), fmt.Sprintf(".vsp.json system %q", name)}
+		} else if ok && sys.SNC != nil {
+			return pinSpec{sys.SNC.DefaultExpect(), fmt.Sprintf(".vsp.json system %q (snc)", name)}
 		}
 	}
 	return pinSpec{}

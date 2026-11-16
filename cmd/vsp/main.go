@@ -105,8 +105,12 @@ Ready-to-use configs for 8 AI agents: docs/cli-agents/`,
 }
 
 func init() {
-	// Load .env file if it exists
-	godotenv.Load()
+	// Load .env file if it exists. Not for the hidden SNC commands: vsp starts
+	// them itself, and their environment is the one it handed over.
+	if !sncServeInvocation(os.Args) {
+		_ = godotenv.Load()
+	}
+	adt.SetHelperEnviron(func() []string { return append([]string(nil), startupEnviron...) })
 
 	// Service URL
 	rootCmd.Flags().StringVar(&cfg.BaseURL, "url", "", "SAP system URL (e.g., https://host:44300)")
@@ -248,6 +252,13 @@ func init() {
 func runServer(cmd *cobra.Command, args []string) error {
 	// Resolve configuration with priority: flags > env vars > defaults
 	resolveConfig(cmd)
+
+	// -s NAME naming a home-config system with an snc block or a
+	// transport_cmd supplies the logon itself.
+	if err := applyNamedTransportSystem(cmd, cfg); err != nil {
+		cmd.SilenceUsage = true
+		return err
+	}
 
 	// A transport command is exclusive with every logon flow of vsp's own,
 	// and those below contact the URL: refuse the mix before any of them runs.
@@ -1035,6 +1046,9 @@ func splitCommaSeparated(s string) []string {
 }
 
 func main() {
+	if sncServeInvocation(os.Args) {
+		os.Exit(runSNCServe(os.Args, os.Stdin, os.Stdout, os.Stderr))
+	}
 	err := rootCmd.Execute()
 	// The CLI's transport-command helpers, on success and on error alike.
 	closeTransportCmds()

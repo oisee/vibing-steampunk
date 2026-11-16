@@ -62,6 +62,11 @@ type SystemConfig struct {
 	// a project file must not be able to make vsp run a program.
 	TransportCmd []string `json:"transport_cmd,omitempty"`
 
+	// SNC reaches the system over SNC through SAP's sapnwrfc.dll (Windows
+	// only); GetSystem turns it into a transport command that runs this vsp
+	// as snc-serve. Honoured only from the home directory, like transport_cmd.
+	SNC *SNCSettings `json:"snc,omitempty"`
+
 	// Optional safety settings per system
 	ReadOnly        bool     `json:"read_only,omitempty"`
 	AllowedPackages []string `json:"allowed_packages,omitempty"`
@@ -165,6 +170,13 @@ func (c *SystemsConfig) checkTransportCmd(name string, sys *SystemConfig) error 
 			return fmt.Errorf("system '%s': transport_cmd must be a list of non-empty strings", name)
 		}
 	}
+	// The file is trusted, but the working directory is not, and a program
+	// that is not an absolute path is looked up there: "./helper" directly, a
+	// bare name through a relative PATH entry or GODEBUG=execerrdot=0 from a
+	// project .env. Only an absolute path names one program.
+	if prog := sys.TransportCmd[0]; !filepath.IsAbs(prog) {
+		return fmt.Errorf("system '%s': transport_cmd must start with the absolute path of the program, not %q, which would be looked up from the working directory or PATH", name, prog)
+	}
 	if sys.User != "" || sys.Password != "" || sys.CookieFile != "" || sys.CookieString != "" || sys.UsesSSO() {
 		return fmt.Errorf("system '%s': transport_cmd carries its own authentication; remove user/password/cookies", name)
 	}
@@ -237,6 +249,13 @@ func (c *SystemsConfig) GetSystem(name string) (*SystemConfig, error) {
 	}
 	if err := c.checkTransportCmd(name, &sys); err != nil {
 		return nil, err
+	}
+	if sys.SNC != nil {
+		snc := *sys.SNC
+		sys.SNC = &snc // GetSystem's result must not alias the loaded config
+		if err := c.applySNC(name, &sys); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve password from environment variable if not set. A system behind

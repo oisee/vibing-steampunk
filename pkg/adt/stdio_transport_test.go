@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -23,8 +24,14 @@ import (
 
 const stdioHelperMarker = "vsp-stdio-helper"
 
+// The program is named by its absolute path, as a transport command must be:
+// os.Args[0] is relative when the test binary is started as ./x.test.
 func stdioHelperArgv() []string {
-	return []string{os.Args[0], "-test.run=^TestStdioHelperProcess$", "--", stdioHelperMarker}
+	exe, err := os.Executable()
+	if err != nil {
+		exe = os.Args[0]
+	}
+	return []string{exe, "-test.run=^TestStdioHelperProcess$", "--", stdioHelperMarker}
 }
 
 func TestStdioHelperProcess(t *testing.T) {
@@ -134,6 +141,9 @@ func runStdioHelper(in io.Reader, out io.Writer, errOut io.Writer) int {
 			return 4
 		case req.URL.Path == "/env":
 			reply(200, nil, []byte(strings.Join(os.Environ(), "\n")))
+		case req.URL.Path == "/cwd":
+			wd, _ := os.Getwd()
+			reply(200, nil, []byte(wd))
 		case req.URL.Path == "/cookie/set":
 			reply(200, map[string]string{"Set-Cookie": "c1=v1; Path=/"}, nil)
 		case req.URL.Path == "/cookie/echo":
@@ -391,12 +401,13 @@ func TestStdioTransport_RefusesCredentials(t *testing.T) {
 }
 
 func TestStdioTransport_StartFailureNamesBasenameOnly(t *testing.T) {
-	st := NewStdioTransport([]string{"/nonexistent/dir/adt-helper", "--x"})
+	dir := filepath.Join(t.TempDir(), "nonexistent")
+	st := NewStdioTransport([]string{filepath.Join(dir, "adt-helper"), "--x"})
 	_, err := stdioGet(t, st, context.Background(), "/big")
 	if err == nil || !strings.Contains(err.Error(), "adt-helper") || !strings.Contains(err.Error(), "broken") {
 		t.Fatalf("want a broken start error naming adt-helper, got %v", err)
 	}
-	if strings.Contains(err.Error(), "/nonexistent/dir") {
+	if strings.Contains(err.Error(), dir) {
 		t.Errorf("error carries the command's path: %v", err)
 	}
 }
@@ -434,8 +445,11 @@ func TestStdioTransport_HelperEnvironmentFiltered(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	got := map[string]bool{}
 	for _, kv := range strings.Split(string(body), "\n") {
-		name, _, _ := strings.Cut(kv, "=")
+		name, _, _ := strings.Cut(strings.TrimSpace(kv), "=")
 		got[name] = true
+		if strings.EqualFold(name, "PATH") { // Windows spells it Path
+			got["PATH"] = true
+		}
 	}
 	for _, gone := range []string{"SAP_USER", "SAP_PASSWORD", "VSP_DEV_PASSWORD", "SAP_RFC_HOST", "MY_API_TOKEN", "SOME_SECRET", "SAP_COOKIE_STRING", "sap_passwd"} {
 		if got[gone] {
@@ -538,4 +552,58 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.b.String()
+}
+
+// A helper starts from the environment SetHelperEnviron names, not from the
+// process's current one: what a project's .env added later (LD_PRELOAD, say)
+// does not reach it.
+func TestStdioTransport_HelperStartsFromTheGivenEnviron(t *testing.T) {
+	base := append([]string(nil), os.Environ()...)  // as at start-up
+	t.Setenv("LD_PRELOAD_FROM_DOTENV", "./evil.so") // added afterwards
+	prev := helperEnviron
+	SetHelperEnviron(func() []string { return base })
+	t.Cleanup(func() { SetHelperEnviron(prev) })
+
+	st := newTestStdioTransport(t)
+	resp, err := stdioGet(t, st, context.Background(), "/env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "LD_PRELOAD_FROM_DOTENV") {
+		t.Error("a variable added after start-up reached the helper")
+	}
+	if !strings.Contains(string(body), "PATH=") {
+		t.Error("the helper lost PATH")
+	}
+}
+
+// The helper runs in its program's directory, not in the caller's working
+// directory, which may be an unvetted project.
+func TestStdioTransport_HelperRunsInItsOwnDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	st := newTestStdioTransport(t)
+	resp, err := stdioGet(t, st, context.Background(), "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	exe, _ := os.Executable()
+	want, _ := filepath.EvalSymlinks(filepath.Dir(exe))
+	got, _ := filepath.EvalSymlinks(string(body))
+	if got != want {
+		t.Errorf("helper ran in %q, want its own directory %q", body, want)
+	}
+}
+
+// A program that is not an absolute path is refused before anything starts.
+func TestStdioTransport_RelativeProgramRefused(t *testing.T) {
+	for _, prog := range []string{"helper", "./helper", "bin/helper"} {
+		st := NewStdioTransport([]string{prog})
+		hc := &http.Client{Transport: st}
+		_, err := hc.Get("https://sidecar.invalid/x")
+		if err == nil || !strings.Contains(err.Error(), "absolute path") {
+			t.Errorf("%q: err = %v", prog, err)
+		}
+	}
 }
