@@ -190,7 +190,7 @@ var stableTables = map[string]bool{
 	"CROSS": true, "WBCROSSGT": true, "WBCROSSGTX": true, "WBCROSSI": true,
 	"TFDIR": true, "TFTIT": true, "ENLFDIR": true, "SEOCLASS": true, "SEOCLASSDF": true, "SEOCLASSTX": true, "SEOMETAREL": true, "SEOCOMPO": true, "SEOCOMPODF": true,
 	"T100": true, "T100T": true, "DOKIL": true, "DOKTL": true, "DOKHL": true,
-	"TSTC": true, "TSTCT": true, "CUS_IMGACH": true, "CUS_IMGACT": true, "TNODEIMG": true, "TNODEIMGR": true, "TNODEIMGT": true,
+	"TSTC": true, "TSTCT": true, "TSTCP": true, "CUS_IMGACH": true, "CUS_IMGACT": true, "TNODEIMG": true, "TNODEIMGR": true, "TNODEIMGT": true,
 	"E070": true, "E071": true, "E07T": true,
 }
 

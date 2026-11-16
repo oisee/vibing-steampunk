@@ -8,46 +8,6 @@ import (
 	"strings"
 )
 
-// --- Transaction Operations ---
-
-// Transaction represents an SAP transaction.
-type Transaction struct {
-	Name        string
-	Description string
-	Program     string
-}
-
-// GetTransaction retrieves information about a transaction.
-func (c *Client) GetTransaction(ctx context.Context, tcode string) (*Transaction, error) {
-	tcode = strings.ToUpper(tcode)
-
-	resp, err := c.transport.Request(ctx, fmt.Sprintf("/sap/bc/adt/vit/wb/object_type/TRAN/object_name/%s", tcode), &RequestOptions{
-		Method: http.MethodGet,
-		Accept: "application/xml",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("getting transaction: %w", err)
-	}
-
-	// Parse transaction info
-	type tranInfo struct {
-		Name        string `xml:"name,attr"`
-		Description string `xml:"description,attr"`
-		Program     string `xml:"program,attr"`
-	}
-
-	var ti tranInfo
-	if err := xml.Unmarshal(resp.Body, &ti); err != nil {
-		return nil, fmt.Errorf("parsing transaction: %w", err)
-	}
-
-	return &Transaction{
-		Name:        ti.Name,
-		Description: ti.Description,
-		Program:     ti.Program,
-	}, nil
-}
-
 // --- Type Info Operations ---
 
 // TypeInfo describes a DDIC data element.
