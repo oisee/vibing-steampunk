@@ -31,71 +31,102 @@ type Object struct {
 	Programs    int   `json:"programs"`
 }
 
+// maxParams bounds the parameters of one statement.
+const maxParams = 500
+
 // scope reads the TADIR objects a request selects (everything, for an empty
 // request) and classifies them.
 func scope(ctx context.Context, db *sql.DB, schema string, req *Request) ([]Object, error) {
-	var conds []string
-	var args []any
-	like := func(col string, pats []string) {
-		parts := make([]string, len(pats))
-		for i, p := range pats {
-			parts[i] = fmt.Sprintf(`%q LIKE ? ESCAPE '\'`, col)
-			args = append(args, p)
+	// Each condition group runs as its own TADIR query with at most
+	// maxParams parameters (HANA refuses a statement with too many: SQL
+	// error 589), and the results are merged.
+	type group struct {
+		cond string
+		args []any
+	}
+	var groups []group
+	chunks := func(vals []string, cond func(n int) string) {
+		for at := 0; at < len(vals); at += maxParams {
+			part := vals[at:min(at+maxParams, len(vals))]
+			args := make([]any, len(part))
+			for i, v := range part {
+				args[i] = v
+			}
+			groups = append(groups, group{cond(len(part)), args})
 		}
-		conds = append(conds, "("+strings.Join(parts, " OR ")+")")
 	}
-	if len(req.Names) > 0 {
-		like("OBJ_NAME", req.Names)
+	like := func(col string) func(int) string {
+		return func(n int) string {
+			return "(" + strings.TrimSuffix(strings.Repeat(fmt.Sprintf(`%q LIKE ? ESCAPE '\' OR `, col), n), " OR ") + ")"
+		}
 	}
-	if len(req.Packages) > 0 {
-		like("DEVCLASS", req.Packages)
+	in := func(prefix string) func(int) string {
+		return func(n int) string {
+			return prefix + `"OBJ_NAME" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + ")"
+		}
 	}
+	chunks(req.Names, like("OBJ_NAME"))
+	chunks(req.Packages, like("DEVCLASS"))
 	if req.Local != nil && (req.Local.All || len(req.Local.Authors) > 0) {
 		c := fmt.Sprintf(`("DEVCLASS" LIKE '$%%' OR "DEVCLASS" IN (SELECT "DEVCLASS" FROM %q."TDEVC" WHERE "DLVUNIT" = 'LOCAL'))`, schema)
 		if len(req.Local.Authors) > 0 {
-			c = "(" + c + ` AND "AUTHOR" IN (` + strings.TrimSuffix(strings.Repeat("?,", len(req.Local.Authors)), ",") + "))"
-			for _, a := range req.Local.Authors {
-				args = append(args, a)
-			}
+			chunks(req.Local.Authors, func(n int) string {
+				return "(" + c + ` AND "AUTHOR" IN (` + strings.TrimSuffix(strings.Repeat("?,", n), ",") + "))"
+			})
+		} else {
+			groups = append(groups, group{c, nil})
 		}
-		conds = append(conds, c)
 	}
 	var reqNames []string
 	for _, names := range req.Requested {
 		reqNames = append(reqNames, names...)
 	}
-	if len(reqNames) > 0 {
-		conds = append(conds, `"OBJ_NAME" IN (`+strings.TrimSuffix(strings.Repeat("?,", len(reqNames)), ",")+")")
-		for _, n := range reqNames {
-			args = append(args, n)
+	chunks(reqNames, in(""))
+	if len(groups) == 0 {
+		groups = []group{{"", nil}} // empty request: the whole repository
+	}
+
+	type row struct {
+		Object
+		src string
+	}
+	byKey := map[string]row{}
+	for _, g := range groups {
+		where := `"PGMID" = 'R3TR'`
+		if g.cond != "" {
+			where += " AND " + g.cond
 		}
-	}
-	where := `"PGMID" = 'R3TR'`
-	if len(conds) > 0 {
-		where += " AND (" + strings.Join(conds, " OR ") + ")"
-	}
-	rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT "OBJECT", "OBJ_NAME", "DEVCLASS", "AUTHOR", "SRCSYSTEM", "GENFLAG" FROM %q."TADIR" WHERE %s ORDER BY "OBJECT", "OBJ_NAME"`, schema, where), args...)
-	if err != nil {
-		return nil, fail(exitUnsupported, "TADIR: %v", err)
-	}
-	defer rows.Close()
-	var objs []Object
-	var srcsys = map[int]string{}
-	for rows.Next() {
-		var o Object
-		var src, gen sql.NullString
-		var author sql.NullString
-		if err := rows.Scan(&o.Type, &o.Name, &o.Package, &author, &src, &gen); err != nil {
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT "OBJECT", "OBJ_NAME", "DEVCLASS", "AUTHOR", "SRCSYSTEM", "GENFLAG" FROM %q."TADIR" WHERE %s`, schema, where), g.args...)
+		if err != nil {
+			return nil, fail(exitUnsupported, "TADIR: %v", err)
+		}
+		for rows.Next() {
+			var o Object
+			var src, gen, author sql.NullString
+			if err := rows.Scan(&o.Type, &o.Name, &o.Package, &author, &src, &gen); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			o.Type, o.Name, o.Package = strings.TrimSpace(o.Type), strings.TrimSpace(o.Name), strings.TrimSpace(o.Package)
+			o.Author = strings.TrimSpace(author.String)
+			o.Generated = strings.TrimSpace(gen.String) != ""
+			byKey[o.Type+"\x00"+o.Name] = row{o, strings.TrimSpace(src.String)}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return nil, err
 		}
-		o.Type, o.Name, o.Package = strings.TrimSpace(o.Type), strings.TrimSpace(o.Name), strings.TrimSpace(o.Package)
-		o.Author = strings.TrimSpace(author.String)
-		o.Generated = strings.TrimSpace(gen.String) != ""
-		srcsys[len(objs)] = strings.TrimSpace(src.String)
-		objs = append(objs, o)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // type, then name: the order one ORDER BY gave
+	objs := make([]Object, len(keys))
+	srcsys := make([]string, len(keys))
+	for i, k := range keys {
+		objs[i], srcsys[i] = byKey[k].Object, byKey[k].src
 	}
 
 	ns, err := namespaces(ctx, db, schema)
