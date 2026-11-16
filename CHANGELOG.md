@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.62.1] - 2026-11-16
+### Bug Fixes
+
+- **osd-hana-dump:** Bounded statements: name patterns go in IN lists of 500 and LIKE chains of 100, never one statement, fixing SQL error 589 (more than 32 767 parameters) and SQL error 4 (out of memory compiling the statement) on large requests; a table read in several statements writes each row once ([`e3646c9`](https://github.com/oisee/vibing-steampunk/commit/e3646c9))
+- **osd-hana-dump:** `requested` is exact (type, name): a requested function group takes only its own includes (`L<group>___`, no longer `L<group>%`, which also took the includes of every group whose name starts with it), and same-named objects of other types are not selected ([`e3646c9`](https://github.com/oisee/vibing-steampunk/commit/e3646c9))
+- **osd-hana-dump:** Requested MSAG/DDLS/DDLX/SRVD/DCLS are selected by name, and an object is reported as `rows` only when its rows are in the dump, otherwise `skipped: no-source` ([`e3646c9`](https://github.com/oisee/vibing-steampunk/commit/e3646c9))
+
+
+### Features
+
+- **osd-hana-dump:** TLS to HANA (`--encrypt`, `--trust-server-certificate`, `--ca-file`; capability `tls`), message classes (T100A/T100T/T100) and function-group texts (TLIBT), DDLX/SRVD/DCLS reported as rows ([`0ea0db4`](https://github.com/oisee/vibing-steampunk/commit/0ea0db4))
+
 ## [2.62.0] - 2026-11-16
 ### Bug Fixes
 
