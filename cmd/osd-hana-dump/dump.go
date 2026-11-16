@@ -101,7 +101,7 @@ func runDump(ctx context.Context, db *sql.DB, c Connection, schema string, req *
 	if len(objs) == 0 && len(req.Requested) == 0 {
 		return fail(exitUsage, "the request selects no objects (unmatched: %s)", strings.Join(unmatchedPatterns(req, objs), "; "))
 	}
-	names := append([]string{}, req.Names...)
+	names := selectionNames(req, objs)
 	if req.Local != nil && (req.Local.All || len(req.Local.Authors) > 0) {
 		localOnly := &Request{Schema: 1, Local: req.Local}
 		locals, err := scope(ctx, db, schema, localOnly)
@@ -149,6 +149,9 @@ func runDump(ctx context.Context, db *sql.DB, c Connection, schema string, req *
 			}
 		}
 	}
+	if n := m.Counts["catalog_errors"]; n > 0 {
+		errs = append(errs, fmt.Sprintf("catalog: %d definitions not readable, see catalog/objects.jsonl", n))
+	}
 	for _, t := range m.MissingTables {
 		errs = append(errs, "table not readable: "+t)
 	}
@@ -189,6 +192,40 @@ func runDump(ctx context.Context, db *sql.DB, c Connection, schema string, req *
 		return failPrinted(exitPartial, "%d errors, see %s", len(errs), s.Manifest)
 	}
 	return nil
+}
+
+// selectionNames: the request's name patterns, and for every object they
+// match its includes (a class's padded names, a function group's SAPL/L
+// programs); with catalog, each class's AMDP methods, which HANA names
+// "<CLASS>=><METHOD>".
+func selectionNames(req *Request, objs []Object) []string {
+	names := append([]string{}, req.Names...)
+	seenPat := map[string]bool{}
+	for _, n := range names {
+		seenPat[n] = true
+	}
+	addPat := func(p string) {
+		if !seenPat[p] {
+			seenPat[p] = true
+			names = append(names, p)
+		}
+	}
+	for _, o := range objs {
+		if !anyPatternMatches(req.Names, o.Name) {
+			continue
+		}
+		for _, p := range hanadump.SourcePatterns(hanadump.PackageObject{Type: o.Type, Name: o.Name, Package: o.Package}) {
+			addPat(p)
+		}
+	}
+	if req.Catalog {
+		for _, o := range objs {
+			if o.Type == "CLAS" {
+				addPat(hanadump.EscapeLike(o.Name) + "=>%")
+			}
+		}
+	}
+	return names
 }
 
 func readSources(path string) ([]hanadump.SourceRecord, error) {
@@ -369,6 +406,15 @@ func unmatchedPatterns(req *Request, objs []Object) []string {
 		}
 	}
 	return out
+}
+
+func anyPatternMatches(pats []string, s string) bool {
+	for _, p := range pats {
+		if likeMatch(p, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func anyLike(pat string, objs []Object, field func(Object) string) bool {

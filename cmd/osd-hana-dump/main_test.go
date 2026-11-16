@@ -218,3 +218,21 @@ func TestScrub(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+func TestSelectionNamesBringIncludesAndAMDP(t *testing.T) {
+	objs := []Object{{Type: "CLAS", Name: "ZCL_A"}, {Type: "FUGR", Name: "ZG"}, {Type: "CLAS", Name: "ZCL_PKG_ONLY"}}
+	req := &Request{Schema: 1, Names: []string{"ZCL\\_A", "ZG"}, Catalog: true}
+	got := strings.Join(selectionNames(req, objs), " ")
+	for _, want := range []string{`ZCL\_A=========================%`, "SAPLZG", "LZG%", `ZCL\_A=>%`, `ZCL\_PKG\_ONLY=>%`} {
+		if !strings.Contains(" "+got+" ", " "+want+" ") {
+			t.Errorf("missing %q in %s", want, got)
+		}
+	}
+	if strings.Contains(got, `ZCL\_PKG\_ONLY====`) {
+		t.Errorf("an object no name matched got its includes: %s", got)
+	}
+	req.Catalog = false
+	if strings.Contains(strings.Join(selectionNames(req, objs), " "), "=>") {
+		t.Errorf("AMDP patterns without catalog")
+	}
+}

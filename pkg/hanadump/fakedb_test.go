@@ -358,3 +358,17 @@ func TestClosureViewReachedLast(t *testing.T) {
 		t.Errorf("TADIR: %q", b)
 	}
 }
+
+// A login that may list a procedure but not read it gets an empty
+// DEFINITION from HANA: that is an error on the record, never an empty file.
+func TestHiddenDefinitionIsAnError(t *testing.T) {
+	db, _ := openFake(t,
+		&fakeRule{contains: "SYS.PROCEDURES WHERE SCHEMA_NAME = ? AND PROCEDURE_NAME = ?", cols: []string{"DEFINITION"}, rows: [][]driver.Value{{"   "}}},
+		&fakeRule{contains: "FROM SYS.PROCEDURES", cols: []string{"PROCEDURE_NAME"}, rows: [][]driver.Value{{"ZCL_A=>M"}}},
+		&fakeRule{contains: "", cols: []string{"X"}},
+	)
+	o := catalogObject{"S", "ZCL_A=>M", "PROCEDURE"}
+	if _, err := definition(context.Background(), db, fakeOpts(t), o); !errors.Is(err, ErrDefinitionHidden) {
+		t.Fatalf("got %v, want ErrDefinitionHidden", err)
+	}
+}

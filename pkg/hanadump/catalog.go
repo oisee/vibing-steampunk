@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -174,6 +175,11 @@ func dependencies(ctx context.Context, db *sql.DB, o catalogObject) ([]Dependenc
 // definition returns an object's DDL as the catalog holds it; for a table,
 // which the catalog keeps no text for, a CREATE statement assembled from its
 // columns and primary key.
+// ErrDefinitionHidden: the catalog lists the object, but its definition is
+// empty for this login (a SELECT-only reader needs the CATALOG READ system
+// privilege, or ownership, to see procedure and view sources).
+var ErrDefinitionHidden = errors.New("definition not visible to this login (needs CATALOG READ or ownership)")
+
 func definition(ctx context.Context, db *sql.DB, opts Options, o catalogObject) (string, error) {
 	var view, col string
 	switch o.typ {
@@ -197,6 +203,11 @@ func definition(ctx context.Context, db *sql.DB, opts Options, o catalogObject) 
 		o.schema, o.name).Scan(dst)
 	if err != nil {
 		return "", err
+	}
+	// HANA answers a login that may see an object but not its source with an
+	// empty DEFINITION, not an error: a file from that would be a silent loss.
+	if strings.TrimSpace(text) == "" {
+		return "", ErrDefinitionHidden
 	}
 	if o.typ == "VIEW" {
 		// SYS.VIEWS keeps the query only.

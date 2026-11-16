@@ -107,7 +107,14 @@ received, counts by status and reason, `errors`, and `unmatched_patterns`
 }
 ```
 
-`names` and `packages` are SQL LIKE patterns (`%`, `_`, `\` escapes).
+`names` and `packages` are SQL LIKE patterns (`%`, `_`, `\` escapes). A name
+pattern selects objects: an object it matches brings its includes, and with
+`catalog` a class brings its AMDP methods (HANA names them `<CLASS>=><METHOD>`).
+
+`catalog` needs more than SELECT on the ABAP schema: HANA shows a procedure's or
+view's definition only to its owner or to a login with the `CATALOG READ`
+system privilege (read-only). Without it the definition comes back empty; that
+is reported as an error (exit 3), never written as an empty file.
 `local` takes `all` or `authors` (TADIR AUTHOR). `requested`/`iteration`/`seen`
 are an iterator's dependency-closure request: source kinds are selected as if
 named, dictionary kinds are closed over transitively, and `ddic` is implied.
