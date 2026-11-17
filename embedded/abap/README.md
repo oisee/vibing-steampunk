@@ -36,7 +36,7 @@ The WebSocket handler enables **stateful operations** not available through stan
 | Timeout issues with blocking ops | Native long-polling |
 | No TPDAPI access | Full debugger integration |
 
-### Objects (9 total - self-contained package)
+### Objects (12 total - self-contained package)
 
 | File | Object | Description |
 |------|--------|-------------|
@@ -47,6 +47,9 @@ The WebSocket handler enables **stateful operations** not available through stan
 | `zcl_vsp_amdp_service.clas.abap` | Class | AMDP domain - HANA/SQLScript debugging |
 | `zcl_vsp_git_service.clas.abap` | Class | Git domain - abapGit integration (158 object types) |
 | `zcl_vsp_report_service.clas.abap` | Class | Report domain - runs a report synchronously (SUBMIT ... AND RETURN), optionally capturing its ALV output |
+| `zcl_vsp_form_service.clas.abap` | Class | Form domain - reads and writes SAPscript forms, Smart Forms and Adobe forms |
+| `zcl_vsp_ssf_silent.clas.abap` | Class | Form domain - the Smart Form API without its transport-request dialogs |
+| `zcx_vsp_form.clas.abap` | Class | Form domain - error with a code for the client |
 | `zcl_vsp_utils.clas.abap` | Class | Shared JSON and parameter helpers |
 | `zcl_vsp_tadir_move.clas.abap` | Class | TADIR package reassignment helper |
 
@@ -425,6 +428,56 @@ Export and deploy ABAP objects using abapGit-compatible format (158 object types
 
 CLAS, INTF, PROG, FUGR, FUNC, TABL, TTYP, DTEL, DOMA, SHLP, VIEW, DDLS, DCLS, DDLX,
 BDEF, SRVD, SRVB, SMBC, STYL, TRAN, MSAG, ENQU, AUTH, SUSO, SUSC, and 130+ more.
+
+---
+
+## Form Domain (`domain: "form"`) - Print Forms
+
+Reads and writes print forms as documents. Content travels base64-encoded in
+`contentBase64`; languages are ISO codes (`DE`, `EN`).
+
+| Type | Document |
+|------|----------|
+| `SSFO` | Smart Form, the XML of the SMARTFORMS download |
+| `FORM` | SAPscript form, abapGit's FORM structure, every language, the text lines inline |
+| `SFPF` | Adobe form without the layout of its original language (as abapGit); with `language`, the XDP layout of that language |
+| `SFPI` | Adobe form interface (as abapGit) |
+
+### Actions
+
+| Action | Params | Result |
+|--------|--------|--------|
+| `info` | `type`, `name` | `exists`, `package`, `masterLanguage`, `languages`, `inactive` |
+| `read` | `type`, `name`, `language`? | `contentBase64`, `mimeType`, `masterLanguage` |
+| `write` | `type`, `name`, `contentBase64`, `language`?, `transport`?, `package`? (create), `testRun`? (`X`) | `saved`, `created`, `activationRequired`, `backupBase64`? |
+
+Only customer objects (Z*, Y*, namespaces) are written. A transportable package
+needs `transport`; the object is recorded in it before anything is saved, so a
+refused request leaves the object as it was. Smart Forms and SAPscript forms can
+be created (with `package`); Adobe forms and interfaces are changed, not created.
+
+Nothing is activated in the service: the workbench activation waits for
+asynchronous tasks, which an APC session does not allow. When the answer says
+`activationRequired`, the client activates the Adobe object over ADT
+(`/sap/bc/adt/vit/wb/object_type/sfpf5f/object_name/<name>`, `sfpi5i` for an
+interface). An Adobe form is replaced by DELETE and CREATE, so until then it has
+no active version; `backupBase64` holds the form as it was, to write back when
+the activation fails.
+
+```json
+{
+  "id": "1",
+  "domain": "form",
+  "action": "write",
+  "params": {
+    "type": "SFPF",
+    "name": "ZDEMO_FORM",
+    "language": "ES",
+    "transport": "A4HK900001",
+    "contentBase64": "PD94bWwg..."
+  }
+}
+```
 
 ---
 

@@ -1,5 +1,11 @@
 SAP(action="edit") - Edit source code
 
+Print forms (SSFO, FORM, SFPF, SFPI): the document as SAP(action="read") returns it, changed:
+  SAP(action="edit", target="SFPF ZDEMO_PDF", params={"language": "ES", "file_path": "zdemo_es.xdp", "transport": "A4HK900001"})
+  SAP(action="edit", target="SFPI ZDEMO_IF", params={"content": "<?xml ...", "test_run": true})
+  Adobe forms and interfaces are activated afterwards; a replaced Adobe form that does not activate is put back.
+  SAP(action="create", target="FORM ZDEMO_SCRIPT", params={"file_path": "zdemo.xml", "package": "$TMP"})   also SSFO
+
 High-level edit (recommended - auto lock/unlock/activate):
   SAP(action="edit", target="CLAS ZCL_TEST", params={"source": "CLASS zcl_test..."})
   SAP(action="edit", target="PROG ZREPORT", params={"source": "REPORT zreport..."})

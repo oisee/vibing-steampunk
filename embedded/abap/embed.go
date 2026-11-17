@@ -43,6 +43,15 @@ var ZclVspGitService string
 //go:embed zcl_vsp_report_service.clas.abap
 var ZclVspReportService string
 
+//go:embed zcx_vsp_form.clas.abap
+var ZcxVspForm string
+
+//go:embed zcl_vsp_ssf_silent.clas.abap
+var ZclVspSsfSilent string
+
+//go:embed zcl_vsp_form_service.clas.abap
+var ZclVspFormService string
+
 //go:embed zcl_vsp_transport_service.clas.abap
 var ZclVspTransportService string
 
@@ -142,6 +151,27 @@ func GetObjects() []ObjectInfo {
 		},
 		{
 			Type:        "CLAS",
+			Name:        "ZCX_VSP_FORM",
+			Source:      ZcxVspForm,
+			Description: "Form domain - error with a code for the client",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
+			Name:        "ZCL_VSP_SSF_SILENT",
+			Source:      ZclVspSsfSilent,
+			Description: "Form domain - Smart Form API without dialogs",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
+			Name:        "ZCL_VSP_FORM_SERVICE",
+			Source:      ZclVspFormService,
+			Description: "Form domain - SAPscript, Smart Forms and Adobe forms",
+			Optional:    false,
+		},
+		{
+			Type:        "CLAS",
 			Name:        "ZCL_VSP_TRANSPORT_SERVICE",
 			Source:      ZclVspTransportService,
 			Description: "Transport domain - upload K/R files, add to import buffer",
@@ -207,8 +237,8 @@ func PostDeploymentInstructions() string {
          -H "Authorization: Basic $(echo -n USER:PASS | base64)"
 
    Expected response:
-   {"id":"welcome","success":true,"data":{"session":"...","version":"2.2.0",
-    "domains":["rfc","debug","amdp","git"]}}
+   {"id":"welcome","success":true,"data":{"session":"...","version":"2.4.0",
+    "domains":["rfc","debug","amdp","git","report","form"]}}
 
 4. VERIFY IN VSP
    ──────────────
