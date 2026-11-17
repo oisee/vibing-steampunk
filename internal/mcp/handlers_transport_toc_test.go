@@ -1,13 +1,31 @@
 package mcp
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
 )
+
+func TestCopyToTransportOfCopies_InvalidSelectionStopsBeforeConnecting(t *testing.T) {
+	for _, value := range []any{nil, "", []any{}, []any{42}, []any{"LIMU METH ZCL_TEST RUN"}, []any{"R3TR TABU T000"}} {
+		t.Run(fmt.Sprint(value), func(t *testing.T) {
+			server := &Server{}
+			res, err := server.handleCopyToTransportOfCopies(context.Background(), mcp.CallToolRequest{
+				Params: mcp.CallToolParams{Arguments: map[string]any{
+					"transport": "TR-SRC", "target": "QAS", "objects": value,
+				}},
+			})
+			if err != nil || res == nil || !res.IsError {
+				t.Fatalf("invalid objects did not fail before connecting: %+v, %v", res, err)
+			}
+		})
+	}
+}
 
 // A transport of copies that exists but is incomplete is reported with what
 // was done, and marked as an error: an agent must not read it as success.

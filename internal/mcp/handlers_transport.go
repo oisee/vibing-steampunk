@@ -463,6 +463,28 @@ func (s *Server) handleCopyToTransportOfCopies(ctx context.Context, request mcp.
 		CTSProject:  getStringParam(args, "cts_project"),
 	}
 	opts.Release, _ = getBoolParam(args, "release")
+	if raw, present := args["objects"]; present {
+		var names []string
+		switch objects := raw.(type) {
+		case []string:
+			names = objects
+		case []any:
+			for _, object := range objects {
+				name, ok := object.(string)
+				if !ok {
+					return newToolResultError("objects must be an array of object strings"), nil
+				}
+				names = append(names, name)
+			}
+		default:
+			return newToolResultError("objects must be an array of object strings"), nil
+		}
+		var err error
+		opts.Objects, err = adt.ParseTransportOfCopiesObjects(names)
+		if err != nil {
+			return newToolResultError(err.Error()), nil
+		}
+	}
 	if source == "" || opts.Target == "" {
 		return newToolResultError("transport (the request to copy) and target (system or /GROUP/) are required"), nil
 	}

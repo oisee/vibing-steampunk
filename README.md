@@ -515,10 +515,21 @@ Nothing is released unless asked:
 ```bash
 SAP_ENABLE_TRANSPORTS=true vsp -s a4h transport toc TR-A --target QAS
 SAP_ENABLE_TRANSPORTS=true vsp -s a4h transport toc TR-A --target /GROUP/ --release
+SAP_ENABLE_TRANSPORTS=true vsp -s a4h transport toc TR-TASK --target QAS --object "R3TR CLAS ZCL_DEMO" --release
 ```
 
 MCP: `system` with `copy_to_toc` (`transport`, `target`, optional
-`description`, `cts_project`, `release`).
+`description`, `cts_project`, `release`, `objects`).
+
+A task number resolves to that task's object list only, not the whole parent
+request. To select a subset, repeat `--object "R3TR TYPE NAME"` in the CLI or
+pass `"objects": ["R3TR CLAS ZCL_DEMO"]` in MCP. Each entry must already be in
+the source's copyable lists and pass the same package policy. An empty
+selection, LIMU parts, and table contents (TABU/TDAT/VDAT/CDAT) are refused
+when explicitly selected; omit the selection to retain whole-list copying.
+Selected entries are appended through `TR_APPEND_TO_COMM_OBJS_KEYS`; the
+source is not modified. The new list is read back and must contain exactly
+the selected objects before release is attempted.
 
 Under `--allowed-packages`, every object the copy would carry is checked
 first (a LIMU entry by its class, interface or program; one whose object

@@ -60,8 +60,10 @@ type tocServer struct {
 	released    []string // released numbers
 	failRelease bool     // answer a release with a 500
 	// objects answers the repository search: name -> {ADT type, package}.
-	objects  map[string][2]string
-	searches []string // names searched for
+	objects    map[string][2]string
+	searches   []string // names searched for
+	responses  map[string]string
+	tocObjects string
 }
 
 func newTocClient(t *testing.T, source string, opts ...Option) (*Client, *tocServer) {
@@ -106,9 +108,21 @@ func newTocClient(t *testing.T, source string, opts ...Option) (*Client, *tocSer
 			_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?><adtcore:objectReferences xmlns:adtcore="http://www.sap.com/adt/core">`+
 				refs+`</adtcore:objectReferences>`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/transportrequests/TR-TOC"):
-			_, _ = io.WriteString(w, transportXML("TR-TOC", "ToC", "D", nil))
+			ts.mu.Lock()
+			body := ts.tocObjects
+			ts.mu.Unlock()
+			if body == "" {
+				body = transportXML("TR-TOC", "ToC", "D", nil)
+			}
+			_, _ = io.WriteString(w, body)
 		case r.Method == http.MethodGet && strings.Contains(path, "/transportrequests/"):
-			_, _ = io.WriteString(w, source)
+			ts.mu.Lock()
+			body, ok := ts.responses[strings.TrimPrefix(path, "/sap/bc/adt/cts/transportrequests/")]
+			ts.mu.Unlock()
+			if !ok {
+				body = source
+			}
+			_, _ = io.WriteString(w, body)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -117,6 +131,33 @@ func newTocClient(t *testing.T, source string, opts ...Option) (*Client, *tocSer
 	opts = append([]Option{WithEnableTransports()}, opts...)
 	cfg := NewConfig(srv.URL, "TESTUSER", "secret", opts...)
 	return NewClientWithTransport(cfg, NewTransport(cfg)), ts
+}
+
+func TestCopyToTransportOfCopies_ResolvesOnlyTheNamedTask(t *testing.T) {
+	for _, status := range []string{"D", "R"} {
+		t.Run(status, func(t *testing.T) {
+			header := transportXML("TR-SRC", "demo", "D", nil)
+			tree := transportXML("TR-SRC", "demo", "D", map[string][]string{
+				"TR-TASK1": {"ZDEMO_A"},
+				"TR-TASK2": {"FOREIGN"},
+			})
+			tree = strings.ReplaceAll(tree, `tm:status="D"`, `tm:status="`+status+`"`)
+			client, ts := newTocClient(t, header, WithAllowedPackages("Z*"))
+			ts.responses = map[string]string{"TR-SRC": tree}
+			ts.objects = map[string][2]string{"ZDEMO_A": {"PROG/P", "ZDEMO"}}
+			bridge := &fakeBridge{}
+			res, err := client.copyToTransportOfCopies(context.Background(), bridge, "TR-TASK1", TransportOfCopiesOptions{Target: "QAS"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := copiedFrom(bridge); len(got) != 1 || got[0] != "TR-TASK1" {
+				t.Fatalf("copied %v, want only TR-TASK1", got)
+			}
+			if res.Source != "TR-TASK1" || len(res.CopiedEntries) != 1 || res.CopiedEntries[0] != "R3TR PROG ZDEMO_A" {
+				t.Fatalf("wrong task contents: %+v", res)
+			}
+		})
+	}
 }
 
 func copiedFrom(b *fakeBridge) []string {
@@ -485,6 +526,40 @@ func TestCopyToTransportOfCopies_AllowedPackagesPass(t *testing.T) {
 	// The class is looked up once for its two LIMU entries.
 	if len(ts.searches) != 2 {
 		t.Errorf("searched %v, want ZDEMO_OK and ZCL_DEMO once each", ts.searches)
+	}
+}
+
+// Table contents have no package: the rows of an SAP table that SE19 records
+// for a PPF BAdI filter must not refuse the copy. They are copied without a
+// lookup and named in the result; the repository objects beside them are
+// still checked.
+func TestCopyToTransportOfCopies_TableContentsAreNotPackageChecked(t *testing.T) {
+	src := entriesXML("R3TR CLAS ZCL_DEMO", "R3TR TABU PPFTFLTCO1", "R3TR TDAT ZDEMO_V_CUST")
+	client, ts := newTocClient(t, src, WithAllowedPackages("ZDEMO*"))
+	ts.objects = map[string][2]string{"ZCL_DEMO": {"CLAS/OC", "ZDEMO_PKG"}}
+	res, err := client.copyToTransportOfCopies(context.Background(), &fakeBridge{}, "TR-SRC", TransportOfCopiesOptions{Target: "QAS"})
+	if err != nil {
+		t.Fatalf("refused a copy holding table contents: %v", err)
+	}
+	if len(ts.searches) != 1 {
+		t.Errorf("searched %v, want ZCL_DEMO only", ts.searches)
+	}
+	if got := strings.Join(res.PackageUnchecked, ", "); got != "R3TR TABU PPFTFLTCO1, R3TR TDAT ZDEMO_V_CUST" {
+		t.Errorf("packageUnchecked = %q", got)
+	}
+}
+
+// A repository object beside table contents is refused as before.
+func TestCopyToTransportOfCopies_TableContentsDoNotHideAForeignObject(t *testing.T) {
+	src := entriesXML("R3TR TABU PPFTFLTCO1", "R3TR PROG ZSAP_OTHER")
+	client, ts := newTocClient(t, src, WithAllowedPackages("ZDEMO*"))
+	ts.objects = map[string][2]string{"ZSAP_OTHER": {"PROG/P", "ZOTHER_PKG"}}
+	_, err := client.copyToTransportOfCopies(context.Background(), &fakeBridge{}, "TR-SRC", TransportOfCopiesOptions{Target: "QAS"})
+	if err == nil || !strings.Contains(err.Error(), "ZSAP_OTHER") || strings.Contains(err.Error(), "PPFTFLTCO1") {
+		t.Errorf("err = %v, want a refusal naming ZSAP_OTHER only", err)
+	}
+	if len(ts.created) != 0 {
+		t.Error("created the transport of copies before refusing")
 	}
 }
 
