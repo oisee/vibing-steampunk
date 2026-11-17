@@ -116,7 +116,7 @@ func TestNormalizeFormType(t *testing.T) {
 }
 
 func TestFormObjectURL(t *testing.T) {
-	if got := FormObjectURL(FormTypeAdobeForm, "/par/load_instr"); got != "/sap/bc/adt/vit/wb/object_type/sfpf5f/object_name/%2FPAR%2FLOAD_INSTR" {
+	if got := FormObjectURL(FormTypeAdobeForm, "/xyz/load_instr"); got != "/sap/bc/adt/vit/wb/object_type/sfpf5f/object_name/%2FXYZ%2FLOAD_INSTR" {
 		t.Errorf("form URL %s", got)
 	}
 	if got := FormObjectURL(FormTypeAdobeIntf, "ZDEMO_IF"); got != "/sap/bc/adt/vit/wb/object_type/sfpi5i/object_name/ZDEMO_IF" {
@@ -159,8 +159,8 @@ func TestWriteFormRefusesBeforeSending(t *testing.T) {
 		opts FormWriteOptions
 		want string
 	}{
-		"package outside the list": {formInfoJSON(true, "/PAR/GENERAL", false),
-			FormWriteOptions{Type: "SFPF", Name: "ZDEMO", Content: "<x/>"}, "/PAR/GENERAL"},
+		"package outside the list": {formInfoJSON(true, "/XYZ/GENERAL", false),
+			FormWriteOptions{Type: "SFPF", Name: "ZDEMO", Content: "<x/>"}, "/XYZ/GENERAL"},
 		"request outside the list": {formInfoJSON(true, "ZDEMO", false),
 			FormWriteOptions{Type: "SFPF", Name: "ZDEMO", Content: "<x/>", Transport: "B4HK900001"}, "B4HK900001"},
 		"create without package": {formInfoJSON(false, "", false),
