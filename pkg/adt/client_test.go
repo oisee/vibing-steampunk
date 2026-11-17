@@ -617,7 +617,7 @@ func TestClient_CheckObjectPackageByName_FromTADIRWhenSearchHasNoHit(t *testing.
 	cases := []struct {
 		name, devclass, wantErr string
 	}{
-		{"allowed package", "/PAR/SD", ""},
+		{"allowed package", "/XYZ/SD", ""},
 		{"forbidden package", "VBRK_STANDARD", "blocked by safety configuration"},
 		{"not in TADIR fails closed", "", "package metadata not found"},
 	}
@@ -647,9 +647,9 @@ func TestClient_CheckObjectPackageByName_FromTADIRWhenSearchHasNoHit(t *testing.
 			defer srv.Close()
 			// --block-free-sql does not blind the package check: its TADIR
 			// lookup is the check's own, not the caller's SQL.
-			client := NewClient(srv.URL, "user", "pass", WithAllowedPackages("Z*", "/PAR/*"), WithBlockFreeSQL())
+			client := NewClient(srv.URL, "user", "pass", WithAllowedPackages("Z*", "/XYZ/*"), WithBlockFreeSQL())
 
-			err := client.CheckObjectPackageByName(context.Background(), "SSFO", "/par/le_shp_delnote")
+			err := client.CheckObjectPackageByName(context.Background(), "SSFO", "/xyz/le_shp_delnote")
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("unexpected refusal: %v", err)
@@ -657,7 +657,7 @@ func TestClient_CheckObjectPackageByName_FromTADIRWhenSearchHasNoHit(t *testing.
 			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("got %v, want an error containing %q", err, tc.wantErr)
 			}
-			if !strings.Contains(sql, "object = 'SSFO'") || !strings.Contains(sql, "obj_name = '/PAR/LE_SHP_DELNOTE'") {
+			if !strings.Contains(sql, "object = 'SSFO'") || !strings.Contains(sql, "obj_name = '/XYZ/LE_SHP_DELNOTE'") {
 				t.Errorf("TADIR lookup = %q", sql)
 			}
 		})
