@@ -98,11 +98,13 @@ PR #293 restores the ZADT_VSP side with ALV capture.
 
 ## Free SQL line breaks (`pkg/adt/query_sql.go`)
 
-On SAP_BASIS 7.40 (ECC 6.0 EHP7), v2.61.0 failed every freestyle statement over
-200 characters, and SAP's message named a token the caller never wrote:
-`"ROWS" may not be converted into a number`, `Field "@DATA(LT_RESULT)" is
-unknown`, `After "'...'", there must be a space or equivalent character`.
-Statements up to 200 characters worked. The cause comes from SAP's own source
+On SAP_BASIS 7.40 (ECC 6.0 EHP7), v2.61.0 failed every freestyle statement that
+went out with an LF in it. That meant every statement `wrapSQL` had to break (a
+line past 200 characters) and every one the caller wrote on several lines.
+SAP's message named a token the caller never wrote: `"ROWS" may not be
+converted into a number`, `Field "@DATA(LT_RESULT)" is unknown`, `After
+"'...'", there must be a space or equivalent character`. Single-line statements
+up to 200 characters worked. The cause comes from SAP's own source
 (`CL_ADT_DP_FREESTYLE_RES`, `CL_ADT_DP_OPEN_SQL_HANDLER`), read on a 7.40 system
 and on an S/4HANA system:
 

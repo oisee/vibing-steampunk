@@ -474,15 +474,17 @@ func (c *Client) runQueryRaw(ctx context.Context, sqlQuery string, maxRows int) 
 // bare LF survives the join and ends up inside that generated source, and SAP
 // answers with a message about whatever token sits next to it ("ROWS" may not
 // be converted into a number, Field "@DATA(LT_RESULT)" is unknown, After
-// "'...'", there must be a space). So on 7.40 every statement wrapSQL broke,
-// i.e. anything over 200 characters, failed, and a shorter one worked. Later
-// releases read the body as plain text, where CR LF and LF are the same line
-// break.
+// "'...'", there must be a space). So on 7.40 every statement that went out
+// with an LF failed: each one wrapSQL had to break (a line past 200
+// characters), and each one the caller wrote on several lines. Later releases
+// read the body as plain text, where CR LF and LF are the same line break.
 //
-// An LF inside a literal becomes CR LF as well. Neither release can carry a
-// line break inside an ABAP SQL literal, so nothing is lost.
+// A line break inside a literal goes out as one CR LF too, never CR CR LF, so
+// SAP splits there the way it splits any CR LF. Neither release can carry a
+// line break inside an ABAP SQL literal.
 func freestyleBody(query string) string {
-	return strings.ReplaceAll(wrapSQL(query), "\n", "\r\n")
+	body := strings.ReplaceAll(wrapSQL(query), "\r\n", "\n")
+	return strings.ReplaceAll(body, "\n", "\r\n")
 }
 
 // wrapSQL keeps every line of a statement under the data preview's limit.

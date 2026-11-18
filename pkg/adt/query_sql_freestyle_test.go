@@ -199,6 +199,20 @@ func TestRunQuery_CallersLineBreaksGoOutAsCRLF(t *testing.T) {
 	}
 }
 
+// A line break inside a literal, LF or CR LF, goes out as one CR LF: SAP splits
+// there as it always did, and no stray CR is left in the literal.
+func TestFreestyleBody_LineBreakInsideALiteralIsOneCRLF(t *testing.T) {
+	const want = "SELECT mtext FROM t000 WHERE mtext = 'A\r\nB'"
+	for _, in := range []string{
+		"SELECT mtext FROM t000 WHERE mtext = 'A\nB'",
+		"SELECT mtext FROM t000 WHERE mtext = 'A\r\nB'",
+	} {
+		if got := freestyleBody(in); got != want {
+			t.Errorf("%q: body %q, want %q", in, got, want)
+		}
+	}
+}
+
 // A wrapped line that starts with '*' is a comment line to the data preview,
 // which would drop the rest of COUNT( * ). wrapSQL puts a blank in front.
 func TestRunQuery_AWrappedLineNeverStartsWithAnAsterisk(t *testing.T) {
