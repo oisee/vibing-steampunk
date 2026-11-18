@@ -96,6 +96,33 @@ spool implementation in `src/zcl_vsp_report_service.clas.abap` with a bare
 #261 added running a report as a background job from the SAP tool. Contributor
 PR #293 restores the ZADT_VSP side with ALV capture.
 
+## Free SQL line breaks (`pkg/adt/query_sql.go`)
+
+On SAP_BASIS 7.40 (ECC 6.0 EHP7), v2.61.0 failed every freestyle statement over
+200 characters, and SAP's message named a token the caller never wrote:
+`"ROWS" may not be converted into a number`, `Field "@DATA(LT_RESULT)" is
+unknown`, `After "'...'", there must be a space or equivalent character`.
+Statements up to 200 characters worked. The cause comes from SAP's own source
+(`CL_ADT_DP_FREESTYLE_RES`, `CL_ADT_DP_OPEN_SQL_HANDLER`), read on a 7.40 system
+and on an S/4HANA system:
+
+- **7.40** takes the body as one string and splits it at CR LF only.
+  `GET_INSTANCE` joins the pieces with a blank and appends `INTO TABLE
+  @DATA(LT_RESULT) UP TO n ROWS`. Past 255 characters, `SPLIT_QUERY_STRING`
+  cuts the statement into source lines at the token offsets `SCAN ABAP-SOURCE`
+  reports. `wrapSQL` broke lines with a bare LF, which survives the join and
+  ends up inside the generated ABAP, so the refused token was whatever sat
+  beside it.
+- **Later releases** read the body through the ADT plain-text handler, where
+  CR LF and LF are the same line break. They refuse a line over 255 characters
+  before parsing, which is what `wrapSQL` exists for.
+- **Both** drop a line that starts with `*` and cut a line at the first `"`,
+  even inside a literal. ABAP comments are the reason.
+
+So the body goes out with CR LF between lines (`freestyleBody`), and a line
+that `wrapSQL` starts never begins with `*`. A literal that contains `"` is
+still cut by SAP on every release. No length gate per release is needed.
+
 ## SNC over sapnwrfc.dll (`pkg/sncrfc`)
 
 This was ported from a standalone sidecar that reached SNC-only systems from Windows.

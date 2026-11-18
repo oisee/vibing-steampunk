@@ -453,7 +453,7 @@ func (c *Client) runQueryRaw(ctx context.Context, sqlQuery string, maxRows int) 
 		Method:      http.MethodPost,
 		Query:       params,
 		Accept:      "application/*",
-		Body:        []byte(wrapSQL(sqlQuery)),
+		Body:        []byte(freestyleBody(sqlQuery)),
 		ContentType: "text/plain",
 	})
 	if err != nil {
@@ -463,11 +463,38 @@ func (c *Client) runQueryRaw(ctx context.Context, sqlQuery string, maxRows int) 
 	return parseTableContents(resp.Body)
 }
 
+// freestyleBody is the statement as the data preview must receive it: wrapped
+// by wrapSQL, with CR LF between the lines.
+//
+// The line break has to be CR LF for SAP_BASIS 7.40. There the service
+// (CL_ADT_DP_OPEN_SQL_HANDLER=>GET_INSTANCE) splits the body at CR LF only and
+// joins the pieces with a blank. It then appends its own INTO TABLE
+// @DATA(LT_RESULT) UP TO n ROWS and, past 255 characters, cuts the statement
+// into source lines itself, at the token offsets SCAN ABAP-SOURCE reports. A
+// bare LF survives the join and ends up inside that generated source, and SAP
+// answers with a message about whatever token sits next to it ("ROWS" may not
+// be converted into a number, Field "@DATA(LT_RESULT)" is unknown, After
+// "'...'", there must be a space). So on 7.40 every statement wrapSQL broke,
+// i.e. anything over 200 characters, failed, and a shorter one worked. Later
+// releases read the body as plain text, where CR LF and LF are the same line
+// break.
+//
+// An LF inside a literal becomes CR LF as well. Neither release can carry a
+// line break inside an ABAP SQL literal, so nothing is lost.
+func freestyleBody(query string) string {
+	return strings.ReplaceAll(wrapSQL(query), "\n", "\r\n")
+}
+
 // wrapSQL keeps every line of a statement under the data preview's limit.
-// The service puts the text into ABAP source lines of 255 characters, and a
-// token cut by that wrap — a literal, a column name — is a syntax error that
-// names half a word. Lines are broken at blanks outside quotes only, so the
-// statement means the same thing.
+// The service puts the text into ABAP source lines of 255 characters, and
+// later releases refuse a body line that is longer; a token cut at that limit
+// is a syntax error that names half a word. Lines are broken at blanks outside
+// quotes only, so the statement means the same thing. The caller's own line
+// breaks are kept; a CR is read as a blank.
+//
+// The data preview drops a line that starts with '*' as a comment (on 7.40
+// and later alike), so a line wrapSQL starts is never one: a word beginning
+// with '*' gets a blank in front of it there.
 func wrapSQL(query string) string {
 	const limit = 200
 	var out strings.Builder
@@ -492,6 +519,10 @@ func wrapSQL(query string) string {
 		if lineLen > 0 && lineLen+1+len(word) > limit {
 			out.WriteByte('\n')
 			lineLen = 0
+			if word[0] == '*' {
+				out.WriteByte(' ')
+				lineLen++
+			}
 		} else if lineLen > 0 {
 			out.WriteByte(' ')
 			lineLen++
@@ -503,7 +534,7 @@ func wrapSQL(query string) string {
 		switch query[i] {
 		case '\'':
 			inQuote = !inQuote
-		case ' ', '\n':
+		case ' ', '\r', '\n':
 			if inQuote {
 				continue
 			}
