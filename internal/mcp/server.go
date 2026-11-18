@@ -22,6 +22,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	openrfc "github.com/oisee/open-rfc-go/rfc"
 	"github.com/oisee/vibing-steampunk/pkg/adt"
+	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
 
 // AsyncTask represents a background task status.
@@ -48,6 +49,11 @@ type Server struct {
 	config        *Config            // Server configuration for session manager creation
 	featureProber *adt.FeatureProber // Feature detection system (safety network)
 	featureConfig adt.FeatureConfig  // Feature configuration
+
+	// The status and job-log readers used by op "job" are replaceable per server,
+	// allowing tests to run without an SAP gateway.
+	jobStatusCall func(ctx context.Context, c *openrfc.Client, name, count string) (saprfc.PolledJobStatus, error)
+	jobLogCall    func(ctx context.Context, c *openrfc.Client, name, count string) ([]saprfc.JobLogEntry, error)
 
 	// Shared classic-RFC client (lazily dialled, reused across tool calls, and
 	// pinged while idle so a gateway timeout does not kill it)
