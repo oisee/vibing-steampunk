@@ -200,6 +200,7 @@ var readOnlyClasses = map[string]surfaceClass{
 	// --- tools: execution ---
 	"tool CallRFC":            clsExecute,
 	"tool ExecuteABAP":        clsExecute,
+	"tool RunClass":           clsExecute,
 	"tool RunReport":          clsExecute,
 	"tool RunReportAsync":     clsExecute,
 	"tool DebuggerStep":       knownGap(kindExecute, gapStepping),
@@ -302,6 +303,7 @@ var readOnlyClasses = map[string]surfaceClass{
 	"SAP analyze type=abap_help":                   clsRead,
 	"SAP analyze type=syntax_check":                clsRead,
 	"SAP analyze type=execute_abap":                clsExecute,
+	"SAP analyze type=run_class":                   clsExecute,
 	// Creates a temporary program in $TMP and deletes it; never activates or
 	// runs. A content-only check of a program that does not exist would write
 	// nothing, but checks with fixed-point arithmetic off and so cannot see
@@ -646,6 +648,7 @@ func actionCases() []actionCase {
 		an("set_pretty_printer_settings", "SetPrettyPrinterSettings"), an("type_hierarchy", "GetTypeHierarchy"),
 		an("class_components", "GetClassComponents"), an("inactive_objects", "GetInactiveObjects"),
 		an("abap_help", "GetAbapHelp"), an("syntax_check", "SyntaxCheck"), an("execute_abap", "ExecuteABAP"),
+		an("run_class", "RunClass"),
 		{Name: "SAP analyze type=check_abap", Action: "analyze", Exact: true, Params: kv("type", "check_abap", "code", "DATA lv TYPE i.")},
 
 		// debug
@@ -748,6 +751,7 @@ var packageGated = map[string]string{
 	"tool MoveObject out of $TMP":   "", // into ZDEMO_PKG: refused for the package the object is in now
 	"tool RecoverFailedCreate":      "",
 	"tool RenameObject":             "",
+	"tool RunClass":                 "", // runs code of the class: refused for a class outside the allowed packages
 	"tool UI5CreateApp":             "",
 	"tool UI5UploadFile":            "", // fails closed: UI5 app→package resolution is not implemented
 	"tool UpdateClassInclude":       "",
@@ -763,6 +767,7 @@ var packageGated = map[string]string{
 	"SAP create STRUCT":             "",
 	"SAP create BADI_IMPL":          "",
 	"SAP i18n op=texts_set":         "",
+	"SAP analyze type=run_class":    "",
 
 	// #242: the class-include write paths.
 	"SAP edit CLAS include=testclasses":    "",

@@ -81,7 +81,7 @@ func getUnhandledErrorMessage(action, objectType, objectName string) string {
 	case "analyze":
 		sb.WriteString("Common types (params.type): syntax_check, call_graph, callers, callees,\n")
 		sb.WriteString("object_structure, check_boundaries, impact, health, cds_impact, loads, effects, parse_abap,\n")
-		sb.WriteString("execute_abap, check_abap, list_dumps, list_traces, abap_help\n")
+		sb.WriteString("execute_abap, run_class, check_abap, list_dumps, list_traces, abap_help\n")
 		sb.WriteString("Use SAP(action=\"help\", target=\"analyze\") for examples.")
 	case "system":
 		sb.WriteString("Supported system targets: INFO, COMPONENTS, CONNECTION, FEATURES\n")

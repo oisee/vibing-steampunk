@@ -254,6 +254,16 @@ See [ExecuteABAP Implementation Report](reports/2025-12-05-004-execute-abap-impl
 
 ---
 
+## RunClass (Expert Mode)
+
+| Tool | Description | Mode |
+|------|-------------|------|
+| `RunClass` | Run an `IF_OO_ADT_CLASSRUN` class (F9 in Eclipse) and return its console output | Expert |
+
+Executes code: refused under `--read-only`; with `--allowed-packages` the class must be in an allowed package. See the README recipe "Debugging a report without SAP GUI".
+
+---
+
 ## Runtime Errors / Short Dumps (2 tools) - RABAX
 
 | Tool | Description | Mode |
