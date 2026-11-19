@@ -21,7 +21,7 @@ var installCmd = &cobra.Command{
 	Long: `Install software components to a SAP system.
 
 Subcommands:
-  zadt-vsp    Install ZADT_VSP WebSocket handler (12 ABAP objects)
+  zadt-vsp    Install ZADT_VSP WebSocket handler (13 ABAP objects)
   abapgit     Install abapGit (standalone edition)
   list        List available installable components
 
@@ -37,11 +37,11 @@ var installZadtVspCmd = &cobra.Command{
 	Short: "Install ZADT_VSP WebSocket handler",
 	Long: `Install the ZADT_VSP WebSocket handler to enable advanced features.
 
-Deploys 12 ABAP objects (1 interface, 9 classes, 2 programs) in dependency order:
+Deploys 13 ABAP objects (1 interface, 9 classes, 3 programs) in dependency order:
   ZIF_VSP_SERVICE, ZCL_VSP_UTILS, ZCL_VSP_TADIR_MOVE, ZCL_VSP_RFC_SERVICE,
   ZCL_VSP_DEBUG_SERVICE, ZCL_VSP_AMDP_SERVICE, ZCL_VSP_GIT_SERVICE,
-  ZCL_VSP_REPORT_SERVICE, ZCL_VSP_TRANSPORT_SERVICE, ZVSP_TRANSPORT_BUFFER,
-  ZVSP_GIT_IMPORT, ZCL_VSP_APC_HANDLER
+  ZVSP_REPORT_RUNNER, ZCL_VSP_REPORT_SERVICE, ZCL_VSP_TRANSPORT_SERVICE,
+  ZVSP_TRANSPORT_BUFFER, ZVSP_GIT_IMPORT, ZCL_VSP_APC_HANDLER
 
 ZCL_VSP_GIT_SERVICE and ZVSP_GIT_IMPORT (and AMC application ZVSP_GIT) need
 abapGit on the system and are skipped without it.

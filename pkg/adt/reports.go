@@ -32,6 +32,9 @@ type JobStatusResult struct {
 	JobCount string   `json:"jobcount"`
 	Status   string   `json:"status"` // scheduled, running, finished, aborted
 	SpoolIDs []string `json:"spool_ids,omitempty"`
+	// ALV is the captured ALV output ({columns, rows, total_rows, truncated})
+	// when the report displayed one; absent for list-only reports.
+	ALV json.RawMessage `json:"alv,omitempty"`
 }
 
 // SpoolOutputResult contains spool output data.
