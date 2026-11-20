@@ -87,6 +87,26 @@ type SystemConfig struct {
 	// under, for systems that organise their requests in projects.
 	CTSProject      string `json:"cts_project,omitempty"`
 	TransportTarget string `json:"transport_target,omitempty"`
+
+	// Extensions holds settings of the extensions (pkg/mcpext) for this
+	// system, by extension name. vsp itself reads none of them; an extension
+	// reads its own through mcpext.Env.Setting.
+	Extensions map[string]map[string]any `json:"extensions,omitempty"`
+}
+
+// ExtensionSetting returns one setting of one extension for this system. The
+// extension name is matched without regard to case.
+func (s *SystemConfig) ExtensionSetting(extension, key string) (any, bool) {
+	if s == nil {
+		return nil, false
+	}
+	for name, settings := range s.Extensions {
+		if strings.EqualFold(name, extension) {
+			v, ok := settings[key]
+			return v, ok
+		}
+	}
+	return nil, false
 }
 
 // SSOSettings configures browser single sign-on for one system.

@@ -71,7 +71,10 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 
 	// Help action
 	if action == "help" {
-		return handleHelp(target), nil
+		if res, ok := s.extensionHelp(target); ok {
+			return res, nil
+		}
+		return withHelpSuffix(handleHelp(target), target, s.extensionsHelpSuffix()), nil
 	}
 
 	target, params = queryTargetSQL(action, target, params)
@@ -125,6 +128,8 @@ func (s *Server) handleUniversalTool(ctx context.Context, request mcp.CallToolRe
 		// reachable through no action. See handlers_route_eleven.go.
 		s.routeI18nAction,
 		s.routeRevisionsAction,
+		// Last, so that an extension can never shadow a built-in action.
+		s.routeExtensionAction,
 	}
 
 	for _, route := range routes {
