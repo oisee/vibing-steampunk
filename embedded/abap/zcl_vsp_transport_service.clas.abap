@@ -657,7 +657,7 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
     DATA(lv_request) = to_upper( zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'request' ) ).
     IF request_parts( EXPORTING iv_request = lv_request IMPORTING ev_sid = lv_sid ev_number = lv_number ) = abap_false.
       rs_response = err( iv_id = is_message-id iv_code = 'INVALID_REQUEST'
-                         iv_message = |Request '{ lv_request }' is not <SID>K<6 digits>| ).
+                         iv_message = |Request '{ lv_request }' is not <SID>K<6 alphanum>| ).
       RETURN.
     ENDIF.
     lv_trkorr = lv_request.
@@ -719,7 +719,7 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
     IF lv_request IS NOT INITIAL AND
        request_parts( EXPORTING iv_request = lv_request IMPORTING ev_sid = lv_sid ev_number = lv_number ) = abap_false.
       rs_response = err( iv_id = is_message-id iv_code = 'INVALID_REQUEST'
-                         iv_message = |Request '{ lv_request }' is not <SID>K<6 digits>| ).
+                         iv_message = |Request '{ lv_request }' is not <SID>K<6 alphanum>| ).
       RETURN.
     ENDIF.
 
@@ -1165,7 +1165,7 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
     DATA(lv_request) = to_upper( zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'request' ) ).
     IF request_parts( EXPORTING iv_request = lv_request IMPORTING ev_sid = lv_sid ev_number = lv_number ) = abap_false.
       rs_response = err( iv_id = is_message-id iv_code = 'INVALID_REQUEST'
-                         iv_message = |Request '{ lv_request }' is not <SID>K<6 digits>| ).
+                         iv_message = |Request '{ lv_request }' is not <SID>K<6 alphanum>| ).
       RETURN.
     ENDIF.
     DATA(lv_job) = zcl_vsp_utils=>extract_param( iv_params = is_message-params iv_name = 'job' ).
@@ -1477,7 +1477,7 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
     DATA(lv_request) = to_upper( zcl_vsp_utils=>extract_param( iv_params = lv_params iv_name = 'request' ) ).
     IF request_parts( EXPORTING iv_request = lv_request IMPORTING ev_sid = lv_sid ev_number = lv_number ) = abap_false.
       rs_response = err( iv_id = is_message-id iv_code = 'INVALID_REQUEST'
-                         iv_message = |Request '{ lv_request }' is not <SID>K<6 digits>| ).
+                         iv_message = |Request '{ lv_request }' is not <SID>K<6 alphanum>| ).
       RETURN.
     ENDIF.
     DATA(lv_kind) = zcl_vsp_utils=>extract_param( iv_params = lv_params iv_name = 'file' ).
@@ -1579,14 +1579,14 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
       ev_error = `Both files are required: the cofile K<nr>.<SID> and the data file R<nr>.<SID>`.
       RETURN.
     ENDIF.
-    FIND PCRE '^K([0-9]{6})\.([A-Z0-9]{3})\z' IN iv_cofile_name SUBMATCHES lv_cnr lv_csid.
+    FIND PCRE '^K([A-Z0-9]{6})\.([A-Z0-9]{3})\z' IN iv_cofile_name SUBMATCHES lv_cnr lv_csid.
     IF sy-subrc <> 0.
-      ev_error = |Cofile name '{ iv_cofile_name }' is not K<6 digits>.<SID>|.
+      ev_error = |Cofile name '{ iv_cofile_name }' is not K<6 alphanum>.<SID>|.
       RETURN.
     ENDIF.
-    FIND PCRE '^R([0-9]{6})\.([A-Z0-9]{3})\z' IN iv_data_name SUBMATCHES lv_dnr lv_dsid.
+    FIND PCRE '^R([A-Z0-9]{6})\.([A-Z0-9]{3})\z' IN iv_data_name SUBMATCHES lv_dnr lv_dsid.
     IF sy-subrc <> 0.
-      ev_error = |Data file name '{ iv_data_name }' is not R<6 digits>.<SID>|.
+      ev_error = |Data file name '{ iv_data_name }' is not R<6 alphanum>.<SID>|.
       RETURN.
     ENDIF.
     IF lv_cnr <> lv_dnr OR lv_csid <> lv_dsid.
@@ -2003,7 +2003,7 @@ CLASS zcl_vsp_transport_service IMPLEMENTATION.
 
   METHOD request_parts.
     CLEAR: ev_sid, ev_number.
-    FIND PCRE '^([A-Z0-9]{3})K([0-9]{6})\z' IN iv_request SUBMATCHES ev_sid ev_number.
+    FIND PCRE '^([A-Z0-9]{3})K([A-Z0-9]{6})\z' IN iv_request SUBMATCHES ev_sid ev_number.
     rv_ok = xsdbool( sy-subrc = 0 ).
   ENDMETHOD.
 

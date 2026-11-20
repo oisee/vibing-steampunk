@@ -641,10 +641,10 @@ CLASS zcl_vsp_git_service IMPLEMENTATION.
       RETURN.
     ENDIF.
     IF lv_transport IS NOT INITIAL.
-      FIND PCRE '^[A-Z0-9]{3}K[0-9]{6}\z' IN lv_transport.
+      FIND PCRE '^[A-Z0-9]{3}K[A-Z0-9]{6}\z' IN lv_transport.
       IF sy-subrc <> 0.
         rs_response = err( iv_id = is_message-id iv_code = 'INVALID_PARAM'
-                           iv_message = |transport '{ lv_transport }' is not <SID>K<6 digits>| ).
+                           iv_message = |transport '{ lv_transport }' is not <SID>K<6 alphanum>| ).
         RETURN.
       ENDIF.
     ENDIF.
