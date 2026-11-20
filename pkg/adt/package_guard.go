@@ -1,7 +1,9 @@
 package adt
 
 import (
+	"bytes"
 	"context"
+	"encoding/xml"
 	"fmt"
 	"net/url"
 	"strings"
@@ -93,7 +95,43 @@ func (c *Client) getObjectPackage(ctx context.Context, objectURL string, inLockS
 		}
 	}
 
+	// Some releases return no package in the quick search, while the object's
+	// metadata document always names it.
+	body, _, err := c.readMetadata(ctx, normalized, inLockSession)
+	if err != nil {
+		return "", fmt.Errorf("package metadata not found: %w", err)
+	}
+	if pkg := packageRefOf([]byte(body)); pkg != "" {
+		return pkg, nil
+	}
 	return "", fmt.Errorf("package metadata not found")
+}
+
+// packageRefOf returns the upper-cased package name from the packageRef that
+// is a direct child of the root element of an object metadata document, or an
+// empty string if there is none. Nested packageRef elements are ignored.
+func packageRefOf(body []byte) string {
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	depth := 0
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return ""
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			depth++
+			if depth == 2 && t.Name.Local == "packageRef" {
+				for _, attr := range t.Attr {
+					if attr.Name.Local == "name" {
+						return strings.ToUpper(strings.TrimSpace(attr.Value))
+					}
+				}
+			}
+		case xml.EndElement:
+			depth--
+		}
+	}
 }
 
 func normalizeObjectURLForPackageCheck(objectURL string) string {
