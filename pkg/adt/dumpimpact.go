@@ -320,21 +320,38 @@ func functionGroupOf(program, include string) (string, bool) {
 
 func groupFromPool(name string) (string, bool) {
 	name = strings.TrimSpace(strings.ToUpper(name))
+	// In a namespace the pool prefix comes after it: /NS/SAPLGROUP and
+	// /NS/LGROUPU01 belong to /NS/GROUP, so the checks below read the part
+	// after the namespace and the namespace goes back in front of the group.
+	ns, name := splitNamespace(name)
 	if strings.HasPrefix(name, "SAPL") && len(name) > 4 {
-		return name[4:], true
+		return ns + name[4:], true
 	}
 	// L<group><section>: the section is a letter and two more characters, or
 	// the literal TOP. Anything shorter is not a function pool include.
 	if len(name) > 4 && name[0] == 'L' {
 		if strings.HasSuffix(name, "TOP") {
-			return name[1 : len(name)-3], true
+			return ns + name[1:len(name)-3], true
 		}
 		tail := name[len(name)-3:]
 		if isPoolSection(tail) {
-			return name[1 : len(name)-3], true
+			return ns + name[1:len(name)-3], true
 		}
 	}
 	return "", false
+}
+
+// splitNamespace separates a repository name into its namespace and the rest:
+// /DEMO/LOG is "/DEMO/" and "LOG", ZDEMO_LOG is "" and "ZDEMO_LOG". Function
+// pool names put SAPL and L after the namespace, not before it, so whatever
+// adds or strips those prefixes has to work on the second half.
+func splitNamespace(name string) (namespace, rest string) {
+	if strings.HasPrefix(name, "/") {
+		if i := strings.Index(name[1:], "/"); i >= 0 {
+			return name[:i+2], name[i+2:]
+		}
+	}
+	return "", name
 }
 
 // isPoolSection recognises the U01/F02/I03/E01 suffix of a function pool
