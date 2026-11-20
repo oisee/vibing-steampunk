@@ -115,7 +115,9 @@ CLASS ZCL_VSP_TADIR_MOVE IMPLEMENTATION.
       iv_new_pkg  = iv_new_pkg ).
 
     IF rv_msg CP 'SUCCESS*'.
-      COMMIT WORK AND WAIT.
+      " COMMIT WORK AND WAIT is forbidden in an ABAP push channel
+      " (APC_ILLEGAL_STATEMENT): the dump rolled the move back.
+      COMMIT WORK.
       rv_msg = rv_msg && ' [COMMITTED]'.
     ENDIF.
   ENDMETHOD.
