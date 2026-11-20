@@ -15,6 +15,11 @@ import (
 // --- Code Coverage Handler ---
 
 func (s *Server) handleGetCodeCoverage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.longCall(ctx, request, "ABAP Unit coverage run", s.getCodeCoverage)
+}
+
+// getCodeCoverage is handleGetCodeCoverage without the call budget (see longCall).
+func (s *Server) getCodeCoverage(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	objectURL, ok := request.GetArguments()["object_url"].(string)
 	if !ok || objectURL == "" {
 		return newToolResultError("object_url is required"), nil

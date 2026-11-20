@@ -82,6 +82,9 @@ func (s *Server) routeReadAction(ctx context.Context, action, objectType, object
 			return s.callHandler(ctx, s.handleGetTableContents, args)
 		case "COVERAGE":
 			args := map[string]any{"object_url": objectName}
+			if v, ok := params["timeout"]; ok {
+				args["timeout"] = v
+			}
 			if v, ok := getBoolParam(params, "include_dangerous"); ok {
 				args["include_dangerous"] = v
 			}

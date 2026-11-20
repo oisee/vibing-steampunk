@@ -1131,6 +1131,10 @@
           "object_url": {
             "description": "ADT URL of object to test (e.g., /sap/bc/adt/oo/classes/ZCL_TEST)",
             "type": "string"
+          },
+          "timeout": {
+            "description": "Seconds this call may take in all (default: the server's --call-timeout; without one, each request to SAP is limited to 60s). When it runs out the call returns a timeout message; the work may still be running on SAP.",
+            "type": "number"
           }
         },
         "required": [
