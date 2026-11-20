@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,5 +157,65 @@ func TestFetchCSRFTokenForbiddenEverywhereFails(t *testing.T) {
 	err := newCSRFTestTransport(t, srv).fetchCSRFToken(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("expected a 403 authorization error, got %v", err)
+	}
+}
+
+// A write refused with 403 is retried after a token refresh, because a stale
+// token is the usual cause. When that refresh is refused too, the caller must
+// still get SAP's own answer to the write, as an *APIError: a missing
+// authorization would otherwise read as a token problem, and code that sorts
+// a definite refusal from a lost response (lock release) would sort it wrong.
+func TestForbiddenWriteKeepsSAPAnswerWhenRefreshFails(t *testing.T) {
+	const refusal = "You are not authorized to change object ZDEMO_PROG (S_DEVELOP)"
+	var posts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(refusal))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden) // the token probe is refused as well
+	}))
+	defer srv.Close()
+
+	tr := newCSRFTestTransport(t, srv)
+	tr.setCSRFToken("token-stale")
+	_, err := tr.Request(context.Background(), "/sap/bc/adt/demo", &RequestOptions{Method: http.MethodPost})
+	if err == nil {
+		t.Fatal("request succeeded on a 403")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error %v does not carry an *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusForbidden || apiErr.Message != refusal {
+		t.Errorf("APIError = %d %q, want 403 %q", apiErr.StatusCode, apiErr.Message, refusal)
+	}
+	if !strings.Contains(err.Error(), "refreshing CSRF token") {
+		t.Errorf("error %v lost the refresh failure", err)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Errorf("server saw %d writes, want 1: there is no token to retry with", got)
+	}
+}
+
+// The case that made the lost *APIError matter: an UNLOCK refused with 403,
+// with the token refresh refused too, is a definite answer from SAP. The
+// advice must say the object was left locked, not that the release is in doubt.
+func TestRefusedUnlockReadsAsLeftLockedWhenRefreshFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte("no authorization"))
+		}
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "user", "pass")
+	client.transport.setCSRFToken("token-stale")
+	advice := client.holdLock("/sap/bc/adt/programs/programs/zdemo_prog", "HANDLE-1").release(context.Background())
+	if !strings.Contains(advice, "was left LOCKED") {
+		t.Errorf("advice = %q, want the left-LOCKED advice for a definite refusal", advice)
 	}
 }
