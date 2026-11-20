@@ -49,7 +49,13 @@ type SystemConfig struct {
 	// the gateway port to 3300 + system number; set rfc_port to override directly.
 	// Credentials default to the RFC environment (SAP_USER/SAP_PASSWORD), then to
 	// this system's user/password.
+	// A system behind a SAProuter: saprouter is the route through the
+	// router(s), "/H/router/H/" (as SAP Logon writes it); or put the whole
+	// route, "/H/router/H/gwhost", in rfc_host. One key for the system, not
+	// for a protocol: RFC dials through it today, and HTTP can take the same
+	// route without a second key.
 	RFCHost     string `json:"rfc_host,omitempty"`
+	SAProuter   string `json:"saprouter,omitempty"`
 	RFCSysnr    string `json:"rfc_sysnr,omitempty"`
 	RFCPort     int    `json:"rfc_port,omitempty"`
 	RFCUser     string `json:"rfc_user,omitempty"`
