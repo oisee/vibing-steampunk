@@ -1182,8 +1182,8 @@ func TestAPCHandlerGitServiceIsOptional(t *testing.T) {
 	if strings.Contains(up, "NEW ZCL_VSP_GIT_SERVICE(") || strings.Contains(up, "TYPE REF TO ZCL_VSP_GIT_SERVICE") {
 		t.Error("the APC handler names ZCL_VSP_GIT_SERVICE statically; without abapGit it would not activate")
 	}
-	if !strings.Contains(up, "( `ZCL_VSP_GIT_SERVICE` )") || !strings.Contains(up, "CREATE OBJECT LO_SERVICE TYPE (LV_CLASS)") {
-		t.Error("the APC handler does not create the git service dynamically")
+	if !strings.Contains(up, "CREATE OBJECT LO_SERVICE TYPE (LS_CLASS-CLSNAME)") {
+		t.Error("the APC handler does not create the services it discovers dynamically")
 	}
 	start := strings.ToUpper(strings.Join(methodStatements(abapStatements(string(b)), "IF_APC_WSP_EXTENSION~ON_START"), "\n"))
 	if !regexp.MustCompile(`BIND_AMC_MESSAGE_CONSUMER\( I_APPLICATION_ID = 'ZVSP_GIT' I_CHANNEL_ID = '/IMPORT' I_CHANNEL_EXTENSION_ID = CONV #\( MV_SESSION_ID \) \)\nLV_GIT_PUSH = ABAP_TRUE\nCATCH CX_ROOT( ##CATCH_ALL)?\nLV_GIT_PUSH = ABAP_FALSE\nENDTRY`).MatchString(start) {
