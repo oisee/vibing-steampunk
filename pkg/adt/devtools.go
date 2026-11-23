@@ -613,12 +613,22 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 
 	// Filter by package if specified
 	var toActivate []InactiveObjectRecord
+	var skipped []string
 	packageName = strings.ToUpper(packageName)
+	resolved := map[string]string{}
 	for _, rec := range inactive {
 		if rec.Object == nil || rec.Object.Name == "" || rec.Object.URI == "" {
 			continue
 		}
-		if packageName == "" || objectBelongsToPackage(rec.Object, packageName) {
+		if packageName == "" {
+			toActivate = append(toActivate, rec)
+			continue
+		}
+		belongs, known := c.inactiveObjectInPackage(ctx, rec.Object, packageName, resolved)
+		switch {
+		case !known:
+			skipped = append(skipped, fmt.Sprintf("%s (%s): unknown package", rec.Object.Name, rec.Object.Type))
+		case belongs:
 			toActivate = append(toActivate, rec)
 		}
 	}
@@ -639,6 +649,7 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 	result := &ActivatePackageResult{
 		Activated: []ActivatedObject{},
 		Failed:    []ActivationFailed{},
+		Skipped:   skipped,
 	}
 
 	// Activate each object
@@ -674,6 +685,9 @@ func (c *Client) ActivatePackage(ctx context.Context, packageName string, maxObj
 	}
 
 	result.Summary = fmt.Sprintf("Activated %d objects, %d failed", len(result.Activated), len(result.Failed))
+	if len(skipped) > 0 {
+		result.Summary += fmt.Sprintf(", %d skipped (unknown package)", len(skipped))
+	}
 	return result, nil
 }
 
@@ -685,6 +699,27 @@ func objectBelongsToPackage(obj *InactiveObject, packageName string) bool {
 	}
 	expectedURI := "/sap/bc/adt/packages/" + strings.ToLower(packageName)
 	return strings.EqualFold(obj.ParentURI, expectedURI)
+}
+
+// inactiveObjectInPackage says whether an inactive object belongs to
+// packageName. Some systems send the inactive-objects feed without parentUri;
+// then the package comes from the repository search. known is false when the
+// package could not be resolved either way, so the caller can report the
+// object instead of dropping it as if it belonged elsewhere. resolved caches
+// lookups by object URI for one call.
+func (c *Client) inactiveObjectInPackage(ctx context.Context, obj *InactiveObject, packageName string, resolved map[string]string) (belongs, known bool) {
+	if obj.ParentURI != "" {
+		return objectBelongsToPackage(obj, packageName), true
+	}
+	pkg, ok := resolved[obj.URI]
+	if !ok {
+		pkg, _ = c.getObjectPackage(ctx, obj.URI, false)
+		resolved[obj.URI] = pkg
+	}
+	if pkg == "" {
+		return false, false
+	}
+	return strings.EqualFold(pkg, packageName), true
 }
 
 // ActivatePackageIterativeResult represents the result of iterative batch activation.
@@ -739,19 +774,32 @@ func (c *Client) ActivatePackageIterative(ctx context.Context, packageName strin
 
 	// Final diagnostic: check if any objects in this package are still inactive
 	inactive, err := c.GetInactiveObjects(ctx)
+	unknownPackage := 0
 	if err == nil {
+		resolved := map[string]string{}
 		for _, rec := range inactive {
 			if rec.Object == nil || rec.Object.Name == "" || rec.Object.URI == "" {
 				continue
 			}
-			if packageName == "" || objectBelongsToPackage(rec.Object, packageName) {
+			if packageName == "" {
+				result.StillInactive++
+				continue
+			}
+			belongs, known := c.inactiveObjectInPackage(ctx, rec.Object, packageName, resolved)
+			switch {
+			case !known:
+				unknownPackage++
+			case belongs:
 				result.StillInactive++
 			}
 		}
 	}
 
 	// Build summary
-	if result.StillInactive == 0 {
+	if unknownPackage > 0 {
+		result.Summary = fmt.Sprintf("%d activated across %d pass(es). WARNING: %d object(s) still inactive in %s; %d more inactive object(s) of unknown package not checked.",
+			result.TotalActivated, result.Iterations, result.StillInactive, packageName, unknownPackage)
+	} else if result.StillInactive == 0 {
 		result.Summary = fmt.Sprintf("%d activated across %d pass(es). All objects active — deployment verified.",
 			result.TotalActivated, result.Iterations)
 	} else {
