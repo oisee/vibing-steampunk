@@ -3,6 +3,7 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -269,24 +270,7 @@ func (p *FeatureProber) probeAbapGit(ctx context.Context) (bool, string, error) 
 
 // probeRAP checks if RAP development tools are available
 func (p *FeatureProber) probeRAP(ctx context.Context) (bool, string, error) {
-	// Check if DDLS endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/ddic/ddl/sources", &RequestOptions{
-		Method: http.MethodOptions,
-	})
-	if err != nil {
-		// Check if it's a 404 vs connection error
-		if strings.Contains(err.Error(), "404") {
-			return false, "DDLS endpoint not available", nil
-		}
-		return false, "", err
-	}
-
-	// OPTIONS returning 200 or 405 means endpoint exists
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "RAP endpoints available", nil
-	}
-
-	return false, "RAP endpoints not responding", nil
+	return p.probeEndpoint(ctx, "/sap/bc/adt/ddic/ddl/sources", "RAP endpoints available", "DDLS endpoint not available", "RAP endpoints not responding")
 }
 
 // probeAMDP checks if AMDP debugging is available
@@ -326,42 +310,42 @@ func (p *FeatureProber) probeAMDP(ctx context.Context) (bool, string, error) {
 
 // probeUI5 checks if UI5/Fiori BSP management is available
 func (p *FeatureProber) probeUI5(ctx context.Context) (bool, string, error) {
-	// Check if UI5 repository endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/filestore/ui5-bsp", &RequestOptions{
-		Method: http.MethodOptions,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return false, "UI5 BSP endpoint not available", nil
-		}
-		return false, "", err
-	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "UI5 BSP repository available", nil
-	}
-
-	return false, "UI5 BSP not responding", nil
+	return p.probeEndpoint(ctx, "/sap/bc/adt/filestore/ui5-bsp", "UI5 BSP repository available", "UI5 BSP endpoint not available", "UI5 BSP not responding")
 }
 
 // probeTransport checks if CTS transport management is available
 func (p *FeatureProber) probeTransport(ctx context.Context) (bool, string, error) {
-	// Check if transport endpoint exists
-	resp, err := p.client.transport.Request(ctx, "/sap/bc/adt/cts/transports", &RequestOptions{
+	return p.probeEndpoint(ctx, "/sap/bc/adt/cts/transports", "CTS transport management available", "CTS endpoint not available", "CTS not responding")
+}
+
+// probeEndpoint asks whether an ADT collection exists with an OPTIONS request.
+// Only a 404 means it is absent. Any other HTTP answer — 400 "HTTP method
+// OPTIONS not supported" (S/4HANA 2023), 405, 406, 415 — is the endpoint
+// answering and refusing the method, so it is there. 401/403 stay errors: an
+// authorization failure says nothing about the endpoint. The transport turns non-2xx into
+// an *APIError, so the status is read from the error, not the response.
+func (p *FeatureProber) probeEndpoint(ctx context.Context, path, present, absent, noResponse string) (bool, string, error) {
+	resp, err := p.client.transport.Request(ctx, path, &RequestOptions{
 		Method: http.MethodOptions,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "404") {
-			return false, "CTS endpoint not available", nil
+		var apiErr *APIError
+		if errors.As(err, &apiErr) {
+			if apiErr.StatusCode == http.StatusNotFound {
+				return false, absent, nil
+			}
+			switch apiErr.StatusCode {
+			case http.StatusBadRequest, http.StatusMethodNotAllowed,
+				http.StatusNotAcceptable, http.StatusUnsupportedMediaType:
+				return true, present, nil
+			}
 		}
 		return false, "", err
 	}
-
-	if resp.StatusCode == 200 || resp.StatusCode == 405 {
-		return true, "CTS transport management available", nil
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true, present, nil
 	}
-
-	return false, "CTS not responding", nil
+	return false, noResponse, nil
 }
 
 // FeatureSummary returns a human-readable summary of all features
