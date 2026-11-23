@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 )
 
@@ -31,9 +32,9 @@ func (r *recordingADT) count() int {
 
 func setDebugREPLReadOnly(t *testing.T, v bool) {
 	t.Helper()
-	saved := debugREPLReadOnly
-	debugREPLReadOnly = v
-	t.Cleanup(func() { debugREPLReadOnly = saved })
+	saved := debugREPLSafety
+	debugREPLSafety = adt.SafetyConfig{ReadOnly: v}
+	t.Cleanup(func() { debugREPLSafety = saved })
 }
 
 // eset overwrites a variable in a live program and adt with a writing method

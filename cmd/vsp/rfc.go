@@ -430,15 +430,16 @@ var rfcReadTableCmd = &cobra.Command{
 
 // rfcWriteGate refuses an rfc subcommand that can change the system — calling
 // a function module, running a report, a non-GET ADT request — when the
-// selected system is read-only: read_only in .vsp.json, or SAP_READ_ONLY. It
-// is the same workflow-operation check the MCP server applies to rfc call and
-// RunReport, made before any logon to the gateway.
+// selected system's safety refuses workflow operations: read-only, or W
+// filtered out by SAP_ALLOWED_OPS / SAP_DISALLOWED_OPS. It is the same
+// workflow-operation check the MCP server applies to rfc call and RunReport,
+// made before any logon to the gateway.
 func rfcWriteGate(cmd *cobra.Command, opName string) error {
 	params, err := resolveSystemParams(cmd)
 	if err != nil {
 		return err
 	}
-	return cliWorkflowGate(cliReadOnly(params), opName)
+	return cliWorkflowGate(cliSafety(params), opName)
 }
 
 // rfcFreeSQLGate refuses a caller's WHERE clause for RFC_READ_TABLE when the
@@ -453,7 +454,7 @@ func rfcFreeSQLGate(cmd *cobra.Command, where string) error {
 	if err != nil {
 		return err
 	}
-	safety := adt.SafetyConfig{BlockFreeSQL: params.BlockFreeSQL} // block_free_sql or SAP_BLOCK_FREE_SQL
+	safety := cliSafety(params)
 	return safety.CheckOperation(adt.OpFreeSQL, "RFCReadTable")
 }
 
@@ -463,10 +464,24 @@ func cliReadOnly(params *systemParams) bool {
 	return params.ReadOnly || envFlag("SAP_READ_ONLY")
 }
 
+// cliSafety is the operation safety the MCP server applies, for a CLI command
+// on the selected system: read-only, the SAP_ALLOWED_OPS / SAP_DISALLOWED_OPS
+// filters, the allowed packages and block_free_sql. Built from read-only alone,
+// it let `vsp rfc call` through where SAP_DISALLOWED_OPS forbids W, which the
+// server refuses.
+func cliSafety(params *systemParams) adt.SafetyConfig {
+	return adt.SafetyConfig{
+		ReadOnly:        cliReadOnly(params),
+		BlockFreeSQL:    params.BlockFreeSQL,
+		AllowedOps:      params.AllowedOps,
+		DisallowedOps:   params.DisallowedOps,
+		AllowedPackages: params.AllowedPackages,
+	}
+}
+
 // cliWorkflowGate is the workflow-operation check the MCP server applies to
-// rfc call and RunReport, for a CLI command on a system that may be read-only.
-func cliWorkflowGate(readOnly bool, opName string) error {
-	safety := adt.SafetyConfig{ReadOnly: readOnly}
+// rfc call and RunReport, for a CLI command under the given safety.
+func cliWorkflowGate(safety adt.SafetyConfig, opName string) error {
 	return safety.CheckOperation(adt.OpWorkflow, opName)
 }
 

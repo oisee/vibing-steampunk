@@ -2,6 +2,7 @@ package adt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +13,19 @@ import (
 // document carries the whole definition, and a POST of the complete document
 // creates the object with it (inactive). CreateDomain and CreateDataElement
 // build that document, activate, and check the inactive list afterwards.
+
+// The form documents' media types, newest first. SAP_BASIS 7.50 only knows v1
+// and refuses v2 with 406 or 415 before creating anything; the document is the
+// same in both versions, so createDDICForm sends it again as v1.
+var (
+	domainMediaTypes      = []string{"application/vnd.sap.adt.domains.v2+xml", "application/vnd.sap.adt.domains.v1+xml"}
+	dataElementMediaTypes = []string{"application/vnd.sap.adt.dataelements.v2+xml", "application/vnd.sap.adt.dataelements.v1+xml"}
+)
+
+// dataElementsAccept is what the data element readers (GetTypeInfo,
+// GetDataElementLabels) send: v2 where the system has it, else v1, which 7.50
+// answers with the same document. A v2-only Accept gets 406 there.
+const dataElementsAccept = "application/vnd.sap.adt.dataelements.v2+xml, application/vnd.sap.adt.dataelements.v1+xml;q=0.9"
 
 // FixedValue is one fixed value of a domain.
 type FixedValue struct {
@@ -178,7 +192,7 @@ func (c *Client) CreateDomain(ctx context.Context, o DomainOptions) (*DDICObject
 	}
 	o.Package = defaultPackage(o.Package)
 	return c.createDDICForm(ctx, "domain", o.Name, o.Package, o.Transport,
-		"/sap/bc/adt/ddic/domains", "application/vnd.sap.adt.domains.v2+xml",
+		"/sap/bc/adt/ddic/domains", domainMediaTypes,
 		domainBody(o, c.ddicLanguage(o.MasterLanguage)))
 }
 
@@ -198,7 +212,7 @@ func (c *Client) CreateDataElement(ctx context.Context, o DataElementOptions) (*
 	}
 	o.Package = defaultPackage(o.Package)
 	return c.createDDICForm(ctx, "data element", o.Name, o.Package, o.Transport,
-		"/sap/bc/adt/ddic/dataelements", "application/vnd.sap.adt.dataelements.v2+xml",
+		"/sap/bc/adt/ddic/dataelements", dataElementMediaTypes,
 		dataElementBody(o, c.ddicLanguage(o.MasterLanguage)))
 }
 
@@ -218,9 +232,9 @@ func fixedLengthType(t string) bool {
 	return false
 }
 
-// createDDICForm POSTs a complete form document, activates the object and
-// checks the inactive list.
-func (c *Client) createDDICForm(ctx context.Context, what, name, pkg, transport, collection, contentType, body string) (*DDICObjectResult, error) {
+// createDDICForm POSTs a complete form document, as the first of contentTypes
+// the system accepts, activates the object and checks the inactive list.
+func (c *Client) createDDICForm(ctx context.Context, what, name, pkg, transport, collection string, contentTypes []string, body string) (*DDICObjectResult, error) {
 	if err := c.checkMutation(ctx, MutationContext{
 		Op:        OpCreate,
 		OpName:    "Create " + what,
@@ -233,13 +247,20 @@ func (c *Client) createDDICForm(ctx context.Context, what, name, pkg, transport,
 	if transport != "" {
 		params.Set("corrNr", transport)
 	}
-	if _, err := c.transport.Request(ctx, collection, &RequestOptions{
-		Method:      http.MethodPost,
-		Query:       params,
-		Body:        []byte(body),
-		ContentType: contentType,
-		Accept:      contentType,
-	}); err != nil {
+	var err error
+	for _, contentType := range contentTypes {
+		_, err = c.transport.Request(ctx, collection, &RequestOptions{
+			Method:      http.MethodPost,
+			Query:       params,
+			Body:        []byte(body),
+			ContentType: contentType,
+			Accept:      contentType,
+		})
+		if !mediaTypeRefused(err) {
+			break
+		}
+	}
+	if err != nil {
 		return nil, fmt.Errorf("creating %s %s: %w", what, name, err)
 	}
 	objectURL := collection + "/" + url.PathEscape(strings.ToLower(name))
@@ -263,4 +284,12 @@ func (c *Client) createDDICForm(ctx context.Context, what, name, pkg, transport,
 	}
 	res.Active = true
 	return res, nil
+}
+
+// mediaTypeRefused is a 406 or a 415: the system does not know this version of
+// the document and refused it before doing anything, so another may be tried.
+func mediaTypeRefused(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) &&
+		(apiErr.StatusCode == http.StatusNotAcceptable || apiErr.StatusCode == http.StatusUnsupportedMediaType)
 }

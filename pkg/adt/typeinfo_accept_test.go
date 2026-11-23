@@ -15,7 +15,10 @@ import (
 // meant it had never returned anything to anybody. These two tests pin the header
 // on BOTH callers, because the bug was a twin drifting out of step with its twin —
 // pinning only the one that broke would let the next divergence through.
-const dataElementsAcceptV2 = "application/vnd.sap.adt.dataelements.v2+xml"
+//
+// v2 first, v1 at a lower q: 7.50 knows only v1 and answers a v2-only Accept
+// with 406 too.
+const wantDataElementsAccept = "application/vnd.sap.adt.dataelements.v2+xml, application/vnd.sap.adt.dataelements.v1+xml;q=0.9"
 
 func TestGetTypeInfo_SendsVersionedAccept(t *testing.T) {
 	xmlResp := `<?xml version="1.0" encoding="utf-8"?><blue:wbobj adtcore:name="APC_CONNECTION_ID" adtcore:type="DTEL/DE" adtcore:description="Connection ID" xmlns:blue="http://www.sap.com/wbobj/dictionary/dtel" xmlns:adtcore="http://www.sap.com/adt/core"><dtel:dataElement xmlns:dtel="http://www.sap.com/adt/dictionary/dataelements"><dtel:typeKind>domain</dtel:typeKind></dtel:dataElement></blue:wbobj>`
@@ -69,10 +72,10 @@ func assertDataElementsAccept(t *testing.T, mock *mockTransportClient, caller st
 			continue
 		}
 		found = true
-		if got := req.Header.Get("Accept"); got != dataElementsAcceptV2 {
+		if got := req.Header.Get("Accept"); got != wantDataElementsAccept {
 			t.Errorf("%s sent Accept %q to the dataelements endpoint, want %q\n"+
 				"A generic type is refused there with 406 on every name, so this "+
-				"call would return nothing to anybody.", caller, got, dataElementsAcceptV2)
+				"call would return nothing to anybody.", caller, got, wantDataElementsAccept)
 		}
 	}
 	if !found {

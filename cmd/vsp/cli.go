@@ -62,6 +62,10 @@ type systemParams struct {
 	// config to its client.
 	ReadOnly        bool
 	AllowedPackages []string
+	// AllowedOps and DisallowedOps are SAP_ALLOWED_OPS and SAP_DISALLOWED_OPS,
+	// as the MCP server reads them; .vsp.json has no per-system equivalent.
+	AllowedOps    string
+	DisallowedOps string
 
 	// Transport safety. allow-transportable-edits can be set explicitly on a
 	// CLI subcommand; the remaining settings currently come from system config
@@ -159,7 +163,9 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 			SSO:                sys.SSO,
 			TransportAttribute: sys.TransportAttribute,
 			ReadOnly:           sys.ReadOnly,
-			AllowedPackages:    sys.AllowedPackages,
+			AllowedPackages:    firstNonEmptyList(sys.AllowedPackages, splitList(os.Getenv("SAP_ALLOWED_PACKAGES"))),
+			AllowedOps:         os.Getenv("SAP_ALLOWED_OPS"),
+			DisallowedOps:      os.Getenv("SAP_DISALLOWED_OPS"),
 
 			EnableTransports:        sys.EnableTransports || envFlag("SAP_ENABLE_TRANSPORTS"),
 			TransportReadOnly:       sys.TransportReadOnly || envFlag("SAP_TRANSPORT_READ_ONLY"),
@@ -221,6 +227,8 @@ func resolveSystemParams(cmd *cobra.Command) (*systemParams, error) {
 		TransportAttribute: resolveTransportAttributeFromEnv(),
 		ReadOnly:           strings.EqualFold(os.Getenv("SAP_READ_ONLY"), "true"),
 		AllowedPackages:    splitList(os.Getenv("SAP_ALLOWED_PACKAGES")),
+		AllowedOps:         os.Getenv("SAP_ALLOWED_OPS"),
+		DisallowedOps:      os.Getenv("SAP_DISALLOWED_OPS"),
 		// The transport settings travel with the opt-in: without the
 		// allowlist, SAP_ALLOW_TRANSPORTABLE_EDITS=true would accept any
 		// transport in this mode.
@@ -375,6 +383,12 @@ func buildClient(params *systemParams) (*adt.Client, error) {
 	}
 	if params.BlockFreeSQL {
 		safety.BlockFreeSQL, restricted = true, true
+	}
+	if params.AllowedOps != "" {
+		safety.AllowedOps, restricted = params.AllowedOps, true
+	}
+	if params.DisallowedOps != "" {
+		safety.DisallowedOps, restricted = params.DisallowedOps, true
 	}
 	// Transport safety is opt-in, so enabling it is not a restriction — but it
 	// still has to reach the client, or the transport commands stay blocked no
