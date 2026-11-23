@@ -47,6 +47,9 @@ func (c *Client) postCheckRun(ctx context.Context, objectURL string, content str
 	//   - For other objects, append /source/main to point to the source
 	// Using objectURL (without /source/main) for checkObject avoids exceeding
 	// SAP's URI length limit for long namespaced classes.
+	// Callers may pass the source URL itself; appending /source/main to it
+	// again makes SAP answer 500 "URI-Mapping cannot be performed".
+	objectURL = strings.TrimSuffix(strings.TrimSuffix(objectURL, "/"), "/source/main")
 	checkObjectURI := objectURL
 	artifactURI := objectURL
 	// Class includes (/oo/classes/ZCL_FOO/includes/testclasses) have no /source/main suffix.
