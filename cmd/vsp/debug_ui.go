@@ -84,9 +84,9 @@ type debugUIServer struct {
 	target string
 	line   int
 	sysDbg bool
-	// readOnly is the system's read_only / SAP_READ_ONLY: Run calls the
-	// target, and is refused when it is set.
-	readOnly bool
+	// safety is the system's cliSafety: Run calls the target, and is refused
+	// when it refuses workflow operations.
+	safety adt.SafetyConfig
 
 	attached bool
 	debuggee *saprfc.ADTDebuggee
@@ -113,7 +113,7 @@ func runDebugUI(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	readOnly := cliReadOnly(params)
+	safety := cliSafety(params)
 
 	return withRFCDestTimeout(cmd, time.Duration(debugUITimeout)*time.Second, func(ctx context.Context, c *rfc.Client, dest saprfc.Params) error {
 		user := debugUIUser
@@ -126,7 +126,7 @@ func runDebugUI(cmd *cobra.Command, args []string) error {
 		}
 		defer func() { _ = dbg.Close(ctx) }()
 
-		srv := &debugUIServer{dbg: dbg, dest: dest, user: user, target: target, line: 1, readOnly: readOnly}
+		srv := &debugUIServer{dbg: dbg, dest: dest, user: user, target: target, line: 1, safety: safety}
 
 		mux := http.NewServeMux()
 		mux.HandleFunc("/", srv.handleIndex)
@@ -308,7 +308,7 @@ func (s *debugUIServer) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Run calls the target: code execution, refused on a read-only system
 	// before a breakpoint is set or the call goes out.
-	if err := cliWorkflowGate(s.readOnly, "DebugUIRun"); err != nil {
+	if err := cliWorkflowGate(s.safety, "DebugUIRun"); err != nil {
 		writeJSON(w, s.snapshot(r.Context(), err.Error()))
 		return
 	}

@@ -262,6 +262,7 @@ var envOnlyCLIVars = []string{
 	"SAP_URL", "SAP_USER", "SAP_PASSWORD", "SAP_CLIENT", "SAP_LANGUAGE", "SAP_INSECURE",
 	"SAP_COOKIE_FILE", "SAP_COOKIE_STRING", "SAP_SSO", "SAP_SSO_SYSTEM",
 	"SAP_READ_ONLY", "SAP_ALLOWED_PACKAGES", "SAP_BLOCK_FREE_SQL",
+	"SAP_ALLOWED_OPS", "SAP_DISALLOWED_OPS",
 	"SAP_ALLOW_TRANSPORTABLE_EDITS", "SAP_ALLOWED_TRANSPORTS", "SAP_ENABLE_TRANSPORTS",
 	"SAP_TRANSPORT_READ_ONLY", "SAP_TRANSPORT_CHOICE", "VSP_TRANSPORT_ATTRIBUTE",
 	"VSP_CACHE", "VSP_CACHE_PATH", "VSP_CACHE_TTL", "SAP_TRANSPORT_CMD",
@@ -436,5 +437,17 @@ func TestEnvOnlyConfigHonoursBlockFreeSQL(t *testing.T) {
 	}
 	if requests != 0 {
 		t.Fatalf("SAP_BLOCK_FREE_SQL=true did not stop the query before network I/O (%d requests): %v", requests, err)
+	}
+}
+
+// SAP_DISALLOWED_OPS reaches the CLI's ADT client as it reaches the server's:
+// with F filtered out, `vsp query` is refused before any request.
+func TestEnvOnlyConfigHonoursDisallowedOps(t *testing.T) {
+	requests, err := runEnvOnlyCLI(t, map[string]string{"SAP_DISALLOWED_OPS": "F"}, "query", "T000")
+	if err == nil || !strings.Contains(err.Error(), "blocked by safety") {
+		t.Fatalf("free SQL must be refused when SAP_DISALLOWED_OPS=F, got %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("SAP_DISALLOWED_OPS=F did not stop the query before network I/O (%d requests): %v", requests, err)
 	}
 }

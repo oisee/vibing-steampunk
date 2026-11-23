@@ -75,7 +75,7 @@ function group — those are function modules and need an RFC channel:
 		if err != nil {
 			return err
 		}
-		debugREPLReadOnly = cliReadOnly(params)
+		debugREPLSafety = cliSafety(params)
 		transport, err := statefulADTTransport(params, time.Duration(timeout)*time.Second)
 		if err != nil {
 			return err

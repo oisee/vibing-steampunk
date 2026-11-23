@@ -51,7 +51,7 @@ func debugTestSession(t *testing.T, readOnly bool, wsURL string, sap http.Handle
 		client:   adt.NewClientWithTransport(cfg, adt.NewTransportWithClient(cfg, hc)),
 		wsClient: adt.NewDebugWebSocketClient(wsURL, "001", "TESTUSER", "secret", false),
 		user:     "TESTUSER",
-		readOnly: readOnly,
+		safety:   adt.SafetyConfig{ReadOnly: readOnly},
 		ctx:      ctx,
 		cancel:   cancel,
 	}

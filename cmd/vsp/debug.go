@@ -76,11 +76,11 @@ type debugSession struct {
 	user       string
 	attached   bool
 	debuggeeID string
-	// readOnly is the system's read_only / SAP_READ_ONLY: "run" and "call"
-	// execute code on the system, and are refused when it is set.
-	readOnly bool
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// safety is the system's cliSafety: "run" and "call" execute code on the
+	// system, and are refused when it refuses workflow operations.
+	safety adt.SafetyConfig
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func runDebug(cmd *cobra.Command, args []string) error {
@@ -146,7 +146,7 @@ func runDebug(cmd *cobra.Command, args []string) error {
 		client:   client,
 		wsClient: wsClient,
 		user:     user,
-		readOnly: cliReadOnly(params),
+		safety:   cliSafety(params),
 		ctx:      ctx,
 		cancel:   cancel,
 	}
@@ -623,7 +623,7 @@ func (s *debugSession) runProgram(args []string) error {
 	}
 
 	// Before the listener starts or anything is submitted.
-	if err := cliWorkflowGate(s.readOnly, "RunReport"); err != nil {
+	if err := cliWorkflowGate(s.safety, "RunReport"); err != nil {
 		return err
 	}
 
@@ -732,7 +732,7 @@ func (s *debugSession) callRFC(args []string) error {
 		return nil
 	}
 
-	if err := cliWorkflowGate(s.readOnly, "RFCCall"); err != nil {
+	if err := cliWorkflowGate(s.safety, "RFCCall"); err != nil {
 		return err
 	}
 

@@ -85,7 +85,7 @@ semicolon-separated script and exits. Commands:
 		if err != nil {
 			return err
 		}
-		debugREPLReadOnly = cliReadOnly(params)
+		debugREPLSafety = cliSafety(params)
 
 		return withRFCDestTimeout(cmd, time.Duration(timeout)*time.Second, func(ctx context.Context, c *rfc.Client, dest saprfc.Params) error {
 			dbg, err := saprfc.NewDebugger(ctx, c, user)
@@ -150,11 +150,11 @@ const adtTerminalID = "56535000000000000000000000006462"
 // from --user, defaulting to the connection's logon user.
 var rfcDebugUser string
 
-// debugREPLReadOnly is the selected system's read_only / SAP_READ_ONLY, set by
-// vsp rfc debug and vsp adt debug before their loop. Commands that change the
-// running program or the system (eset, adt with a writing method) are refused
-// when it is set.
-var debugREPLReadOnly bool
+// debugREPLSafety is the selected system's cliSafety, set by vsp rfc debug and
+// vsp adt debug before their loop. Commands that change the running program or
+// the system (eset, adt with a writing method) are refused when it refuses
+// workflow operations.
+var debugREPLSafety adt.SafetyConfig
 
 // rfcDebugValues turns off redaction. A recording is business data by
 // construction, so the shape of a value is reported and the value is not,
@@ -373,7 +373,7 @@ func runDebugCommand(ctx context.Context, dbg *saprfc.Debugger, line string) err
 		if len(fields) < 3 {
 			return fmt.Errorf("usage: eset <NAME> <VALUE> — overwrites a variable in the stopped frame")
 		}
-		if gerr := cliWorkflowGate(debugREPLReadOnly, "DebuggerSetVariable"); gerr != nil {
+		if gerr := cliWorkflowGate(debugREPLSafety, "DebuggerSetVariable"); gerr != nil {
 			return gerr
 		}
 		if serr := dbg.SetVariable(ctx, strings.ToUpper(arg(1)), strings.Join(fields[2:], " ")); serr != nil {
@@ -661,7 +661,7 @@ func runDebugCommand(ctx context.Context, dbg *saprfc.Debugger, line string) err
 			return fmt.Errorf("usage: adt <METHOD> <URI> [NAME=VALUE …]")
 		}
 		if !rfcADTReadMethod(arg(1)) {
-			if gerr := cliWorkflowGate(debugREPLReadOnly, "DebugADT "+strings.ToUpper(arg(1))); gerr != nil {
+			if gerr := cliWorkflowGate(debugREPLSafety, "DebugADT "+strings.ToUpper(arg(1))); gerr != nil {
 				return gerr
 			}
 		}

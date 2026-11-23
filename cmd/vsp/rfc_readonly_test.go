@@ -149,6 +149,47 @@ func TestRFCCLI_EnvOnlyReadOnlyRefusesCall(t *testing.T) {
 	assertRefusedBeforeGateway(t, rfcWriteCommands()["call"], dials)
 }
 
+// SAP_ALLOWED_OPS and SAP_DISALLOWED_OPS reach the CLI as they reach the MCP
+// server: a filter that leaves out W refuses rfc call and the other writes on a
+// system that is not read-only, from .vsp.json or from SAP_* variables alone.
+func TestRFCCLI_OpsFilterWithoutWRefusesWrites(t *testing.T) {
+	filters := map[string][2]string{
+		"disallowed W":    {"SAP_DISALLOWED_OPS", "W"},
+		"allowed without": {"SAP_ALLOWED_OPS", "RSQ"},
+	}
+	for fname, f := range filters {
+		for name, c := range rfcWriteCommands() {
+			t.Run(fname+"/"+name, func(t *testing.T) {
+				dials := rfcCLITestEnv(t, false)
+				t.Setenv(f[0], f[1])
+				assertRefusedBeforeGateway(t, c, dials)
+			})
+		}
+		t.Run(fname+"/env only call", func(t *testing.T) {
+			dials := rfcCLITestEnv(t, false)
+			_ = os.Remove(".vsp.json")
+			t.Setenv("SAP_URL", "http://127.0.0.1:1")
+			t.Setenv("SAP_USER", "TESTUSER")
+			t.Setenv("SAP_PASSWORD", "secret")
+			t.Setenv(f[0], f[1])
+			assertRefusedBeforeGateway(t, rfcWriteCommands()["call"], dials)
+		})
+	}
+}
+
+// A filter that keeps W leaves rfc call alone.
+func TestRFCCLI_OpsFilterWithWLetsCallThrough(t *testing.T) {
+	dials := rfcCLITestEnv(t, false)
+	t.Setenv("SAP_DISALLOWED_OPS", "CDU")
+	c := rfcWriteCommands()["call"]
+	if err := c.cmd.RunE(c.cmd, c.args); err != nil && strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("refused: %v", err)
+	}
+	if dials() == 0 {
+		t.Error("never reached the gateway")
+	}
+}
+
 func TestRFCCLI_ReadsAndWritableWritesReachTheGateway(t *testing.T) {
 	cases := map[string]struct {
 		readOnly bool

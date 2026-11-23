@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oisee/vibing-steampunk/pkg/adt"
 	"github.com/oisee/vibing-steampunk/pkg/saprfc"
 	"github.com/spf13/cobra"
 )
@@ -58,12 +59,12 @@ func TestDebugUIRun_RefusedOnAReadOnlySystem(t *testing.T) {
 	port, dials := cliFakeGateway(t)
 	fake := &recordingADT{}
 	srv := &debugUIServer{
-		dbg:      saprfc.NewADTDebugger(fake, "TESTUSER"),
-		dest:     saprfc.Params{Host: "127.0.0.1", Port: port, Sysnr: "00", Client: "001", User: "TESTUSER", Password: "secret", Language: "E"},
-		user:     "TESTUSER",
-		target:   "Z_DOUBLE",
-		line:     1,
-		readOnly: true,
+		dbg:    saprfc.NewADTDebugger(fake, "TESTUSER"),
+		dest:   saprfc.Params{Host: "127.0.0.1", Port: port, Sysnr: "00", Client: "001", User: "TESTUSER", Password: "secret", Language: "E"},
+		user:   "TESTUSER",
+		target: "Z_DOUBLE",
+		line:   1,
+		safety: adt.SafetyConfig{ReadOnly: true},
 	}
 	rec := httptest.NewRecorder()
 	srv.handleRun(rec, httptest.NewRequestWithContext(context.Background(), "GET", "/api/run?seconds=1", nil))
