@@ -2646,7 +2646,7 @@ value, an array for several. The other fields are `success`, `programName`,
 came back). SAP turns a line break inside a value into `#`.
 
 ```json
-{ "success": true, "programName": "ZTEMP_EXEC_12345678",
+{ "success": true, "programName": "ZTEMP_EXEC_TESTUSER_0",
   "output": ["20261001", "TESTUSER"], "result_text": ["20261001", "TESTUSER"],
   "executionTime": 0.41,
   "message": "Executed successfully, 2 output(s) returned", "cleanedUp": true }
