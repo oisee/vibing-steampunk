@@ -16,8 +16,8 @@ import (
 )
 
 // programPoolServer stands in for SAP's repository as far as the ExecuteABAP
-// name pool depends on it: creating a name that exists is refused the way SAP
-// refuses it, and a DELETE frees the name again.
+// and CheckABAP name pools depend on it: creating a name that exists is
+// refused the way SAP refuses it, and a DELETE frees the name again.
 //
 // With holdRuns set, each test run waits until that many programs exist at
 // the same time, so that parallel runs really are in flight together rather
@@ -81,6 +81,10 @@ func (s *programPoolServer) start(t *testing.T) *Client {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(successfulExecuteRunResult))
+
+		case strings.Contains(r.URL.Path, "/checkruns"):
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?><chkrun:checkRunReports xmlns:chkrun="http://www.sap.com/adt/checkrun"><chkrun:checkReport chkrun:reporter="abapCheckRun" chkrun:status="processed" chkrun:statusText="checked"/></chkrun:checkRunReports>`))
 
 		case r.Method == http.MethodDelete:
 			name := strings.ToUpper(path.Base(r.URL.Path))
@@ -369,4 +373,67 @@ func TestExecuteABAPParallelRunsTakeDifferentNames(t *testing.T) {
 			t.Fatalf("creates refused = %v, want ZTEMP_EXEC_TESTUSER_0 once", refused)
 		}
 	})
+}
+
+// --- the pool through CheckABAP ---
+
+func TestCheckABAPReusesOneNameRunAfterRun(t *testing.T) {
+	// A program ExecuteABAP kept takes nothing from CheckABAP: each prefix is
+	// a pool of its own.
+	srv := &programPoolServer{existing: map[string]bool{"ZTEMP_EXEC_TESTUSER_0": true}}
+	client := srv.start(t)
+
+	for run := 1; run <= 3; run++ {
+		result, err := client.CheckABAP(context.Background(), "DATA lv TYPE i.")
+		if err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if !result.OK || !result.CleanedUp || result.ProgramName != "ZVSP_CHK_TESTUSER_0" {
+			t.Fatalf("run %d: result = %+v, want OK in ZVSP_CHK_TESTUSER_0, cleaned up", run, result)
+		}
+	}
+	if refused := srv.snapshot(&srv.refused); len(refused) != 0 {
+		t.Fatalf("creates refused = %v, want none when each run deletes its program", refused)
+	}
+	if !srv.exists("ZTEMP_EXEC_TESTUSER_0") {
+		t.Fatal("ExecuteABAP's kept program is gone")
+	}
+}
+
+func TestCheckABAPMovesPastANameThatExists(t *testing.T) {
+	srv := &programPoolServer{existing: map[string]bool{"ZVSP_CHK_TESTUSER_0": true}}
+	result, err := srv.start(t).CheckABAP(context.Background(), "DATA lv TYPE i.")
+	if err != nil {
+		t.Fatalf("CheckABAP: %v", err)
+	}
+	if !result.CleanedUp || result.ProgramName != "ZVSP_CHK_TESTUSER_1" {
+		t.Fatalf("result = %+v, want ZVSP_CHK_TESTUSER_1, cleaned up", result)
+	}
+	locked, deleted := srv.snapshot(&srv.locked), srv.snapshot(&srv.deleted)
+	for _, name := range append(append([]string(nil), locked...), deleted...) {
+		if name == "ZVSP_CHK_TESTUSER_0" {
+			t.Fatalf("locked %v, deleted %v: the program in slot 0 is not this run's to touch", locked, deleted)
+		}
+	}
+	if !srv.exists("ZVSP_CHK_TESTUSER_0") {
+		t.Fatal("the program in slot 0 is gone")
+	}
+}
+
+func TestCheckABAPReportsAFullPool(t *testing.T) {
+	srv := &programPoolServer{existing: map[string]bool{}}
+	for slot := 0; slot < temporaryProgramSlots; slot++ {
+		srv.existing[fmt.Sprintf("ZVSP_CHK_TESTUSER_%d", slot)] = true
+	}
+	result, err := srv.start(t).CheckABAP(context.Background(), "DATA lv TYPE i.")
+	if result != nil {
+		t.Fatalf("result = %+v, want none", result)
+	}
+	if err == nil || !strings.HasPrefix(err.Error(), "all 10 temporary program names are in use") ||
+		!strings.Contains(err.Error(), "ZVSP_CHK_TESTUSER_0") || !strings.Contains(err.Error(), "ZVSP_CHK_TESTUSER_9") {
+		t.Fatalf("error = %v, want the full pool named", err)
+	}
+	if created, locked, deleted := srv.snapshot(&srv.created), srv.snapshot(&srv.locked), srv.snapshot(&srv.deleted); len(created)+len(locked)+len(deleted) != 0 {
+		t.Fatalf("created %v, locked %v, deleted %v: nothing of anyone else's may be touched", created, locked, deleted)
+	}
 }

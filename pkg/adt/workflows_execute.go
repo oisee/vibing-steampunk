@@ -2,10 +2,8 @@ package adt
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/url"
 	"strconv"
 	"strings"
@@ -384,28 +382,9 @@ func (c *Client) deleteTemporaryProgram(ctx context.Context, objectURL, programN
 	return nil
 }
 
-// temporaryProgramDigits is how many random digits follow a temporary
-// program's prefix: the same eight the millisecond timestamp used to supply,
-// so names keep their shape and length (ZTEMP_EXEC_ + 8 = 19 characters, well
-// inside the 30 a program name may have).
-const temporaryProgramDigits = 8
-
-// temporaryProgramName returns prefix followed by eight random digits.
-//
-// The digits come from crypto/rand rather than the clock: two calls in the
-// same millisecond — two agents, or one agent's parallel calls — used to get
-// the same name, and the second create then met the first one's program.
-func temporaryProgramName(prefix string) (string, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
-	if err != nil {
-		return "", fmt.Errorf("generating a temporary program name: %w", err)
-	}
-	return strings.ToUpper(fmt.Sprintf("%s%0*d", prefix, temporaryProgramDigits, n.Int64())), nil
-}
-
-// temporaryProgramSlots is how many names each SAP user's ExecuteABAP pool
-// holds: as many runs of one user as may be in flight at once, across every
-// session and process.
+// temporaryProgramSlots is how many names each SAP user's pool holds, for
+// ExecuteABAP and for CheckABAP each: as many runs of one user as may be in
+// flight at once, across every session and process.
 const temporaryProgramSlots = 10
 
 // maxProgramNameLength is the longest name SAP gives a program.
@@ -470,9 +449,10 @@ func (p *temporaryPrograms) release(name string) {
 	delete(p.inUse, name)
 }
 
-// createTemporaryProgram creates the program of one ExecuteABAP run under the
-// first free name of the caller's pool, and returns the name together with
-// the function that gives it back to this process's pool.
+// createTemporaryProgram creates the program of one ExecuteABAP or CheckABAP
+// run under the first free name of the caller's pool for that prefix, and
+// returns the name together with the function that gives it back to this
+// process's pool.
 //
 // The names are stable on purpose. The ICF keeps an entry in shared memory
 // for every distinct URL it has served, and a random name per run made each

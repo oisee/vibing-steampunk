@@ -91,24 +91,22 @@ func (c *Client) CheckABAP(ctx context.Context, code string) (result *CheckABAPR
 		}
 	}
 
-	programName, err := temporaryProgramName(checkABAPProgramPrefix)
-	if err != nil {
-		return nil, err
+	// The first free name of the caller's pool, as for ExecuteABAP. A failed
+	// create whose object then turns out to exist is reported, not deleted:
+	// nothing shows this call created it.
+	programName, releaseName, createErr := c.createTemporaryProgram(ctx, checkABAPProgramPrefix, "Temp program for CheckABAP")
+	if createErr != nil {
+		if programName == "" {
+			return nil, createErr
+		}
+		return nil, fmt.Errorf("creating the temporary program %s in $TMP: %w", programName, createErr)
 	}
+	// Deferred before the cleanup so that it runs after it: the name only goes
+	// back to the pool once the program is deleted.
+	defer releaseName()
 	objectURL := "/sap/bc/adt/programs/programs/" + url.PathEscape(programName)
 	source := executeWrapperSource(programName, "RISK LEVEL HARMLESS", "lv_result", code)
 
-	if createErr := c.CreateObject(ctx, CreateObjectOptions{
-		ObjectType:  ObjectTypeProgram,
-		Name:        programName,
-		Description: "Temp program for CheckABAP",
-		PackageName: "$TMP",
-		// A failed create whose object then turns out to exist is reported,
-		// not deleted: nothing shows this call created it.
-		leavePartialObject: true,
-	}); createErr != nil {
-		return nil, fmt.Errorf("creating the temporary program %s in $TMP: %w", programName, createErr)
-	}
 	// Created in $TMP, which the gate above approved: the delete need not look
 	// the package up again (see ExecuteABAP).
 	ctx = withMutationPackageChecked(ctx, objectURL)

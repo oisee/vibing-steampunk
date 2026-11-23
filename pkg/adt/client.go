@@ -21,8 +21,8 @@ type Client struct {
 	// retire the session one of them is bound to. See lock_window.go.
 	locks lockWindow
 
-	// ExecuteABAP program names this client's runs hold right now. See
-	// createTemporaryProgram.
+	// ExecuteABAP and CheckABAP program names this client's runs hold right
+	// now. See createTemporaryProgram.
 	tempPrograms temporaryPrograms
 
 	// rfcFetcherFactory, when non-nil, overrides the default WebSocket-backed
