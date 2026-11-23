@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -91,13 +92,6 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		}
 	}
 
-	outputPath := ""
-	if p, ok := request.GetArguments()["outputPath"].(string); ok {
-		outputPath = p
-	} else if p, ok := request.GetArguments()["output_dir"].(string); ok {
-		outputPath = p
-	}
-
 	// Check for include parameter (for class includes)
 	includeStr := ""
 	if inc, ok := request.GetArguments()["include"].(string); ok {
@@ -138,6 +132,11 @@ func (s *Server) handleSaveToFile(ctx context.Context, request mcp.CallToolReque
 		objType = adt.ObjectTypeSRVD
 	default:
 		objType = adt.CreatableObjectType(objTypeStr)
+	}
+
+	outputPath, err := exportOutputPath(request.GetArguments(), objType, objectName, parentName)
+	if err != nil {
+		return newToolResultError(err.Error()), nil
 	}
 
 	// Handle class includes
@@ -284,4 +283,30 @@ func (s *Server) editSource(ctx context.Context, request mcp.CallToolRequest) (*
 
 	output, _ := json.MarshalIndent(result, "", "  ")
 	return mcp.NewToolResultText(string(output)), nil
+}
+
+// exportOutputPath picks where ExportToFile writes: outputPath or output_dir
+// as before, else file_path — the name ImportFromFile uses — when it names an
+// export file for the object. A file_path that does not is refused with the
+// expected name rather than ignored, which used to drop the export into the
+// bridge's working directory.
+func exportOutputPath(args map[string]any, objType adt.CreatableObjectType, objectName, parentName string) (string, error) {
+	if p, ok := args["outputPath"].(string); ok {
+		return p, nil
+	}
+	if p, ok := args["output_dir"].(string); ok {
+		return p, nil
+	}
+	p, ok := args["file_path"].(string)
+	if !ok || p == "" {
+		return "", nil
+	}
+	want, err := adt.ExportFilePath(objType, objectName, parentName, p)
+	if err != nil {
+		return "", err
+	}
+	if want != p {
+		return "", fmt.Errorf("file_path %s is not an export file name for %s; use a name like %s, or pass output_dir", p, objectName, filepath.Base(want))
+	}
+	return p, nil
 }
