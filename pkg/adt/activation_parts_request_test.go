@@ -19,6 +19,7 @@ type activateCall struct {
 type activateHTTP struct {
 	activate []string
 	inactive func() (int, string)
+	missing  map[string]bool // GET paths that answer 404
 
 	mu    sync.Mutex
 	calls []activateCall
@@ -38,6 +39,8 @@ func (m *activateHTTP) Do(req *http.Request) (*http.Response, error) {
 	switch {
 	case strings.HasSuffix(req.URL.Path, "/activation/inactiveobjects"):
 		status, answer = m.inactive()
+	case req.Method == http.MethodGet && m.missing[req.URL.Path]:
+		status = http.StatusNotFound
 	case strings.HasSuffix(req.URL.Path, "/activation") && req.Method == http.MethodPost:
 		n := len(m.activations()) - 1
 		if n < len(m.activate) {
@@ -187,5 +190,28 @@ func TestActivate_NothingInactiveIsNothingToActivate(t *testing.T) {
 	}
 	if n := len(m.posts()); n != 1 {
 		t.Errorf("activation POSTs = %d, want 1", n)
+	}
+}
+
+// SAP refuses without a word for an object that does not exist, too, and the
+// inactive list then has nothing of it. "Nothing to activate" was the verdict,
+// success:true, for an include name with a typo (seen on S/4HANA 2023). When
+// the object itself answers 404, the refusal stands and says why.
+func TestActivate_MissingObjectIsNotNothingToActivate(t *testing.T) {
+	const incl = "/sap/bc/adt/programs/includes/zdemo_typo_f01"
+	m := &activateHTTP{
+		activate: []string{silentRefusalXML},
+		inactive: func() (int, string) { return http.StatusOK, inactiveList() },
+		missing:  map[string]bool{incl: true},
+	}
+	res, err := m.client("dev").Activate(context.Background(), incl+"/source/main", "ZDEMO_TYPO_F01")
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if res.Success {
+		t.Fatalf("activating an object that does not exist was reported as success: %+v", res)
+	}
+	if len(res.Messages) == 0 || !strings.Contains(res.Messages[0].ShortText, "does not exist") {
+		t.Errorf("result = %+v, want a message saying the object does not exist", res)
 	}
 }
