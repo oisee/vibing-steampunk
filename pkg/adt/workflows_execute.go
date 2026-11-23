@@ -2,11 +2,12 @@ package adt
 
 import (
 	"context"
-	"crypto/rand"
+	"errors"
 	"fmt"
-	"math/big"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 // --- Execute ABAP Code via Unit Test ---
@@ -101,7 +102,8 @@ type ExecuteABAPOptions struct {
 	KeepProgram bool
 
 	// ProgramPrefix is the prefix for the temp program name.
-	// Default is "ZTEMP_EXEC_".
+	// Default is "ZTEMP_EXEC_". The full name is the prefix, the SAP user and
+	// a slot digit (see pooledProgramName), and it is reused from call to call.
 	ProgramPrefix string
 }
 
@@ -112,7 +114,7 @@ type ExecuteABAPOptions struct {
 // Return values are extracted from assertion messages.
 //
 // Workflow:
-// 1. Generate unique temp program name
+// 1. Take the first free name of the caller's pool (createTemporaryProgram)
 // 2. Create program with test class wrapper
 // 3. Inject user code into test method
 // 4. Activate program
@@ -153,11 +155,16 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 		Output: []string{},
 	}
 
-	programName, err := temporaryProgramName(opts.ProgramPrefix)
-	if err != nil {
-		return nil, err
-	}
+	// Step 1: Create the temp program, under the first free name of the pool
+	programName, releaseName, err := c.createTemporaryProgram(ctx, opts.ProgramPrefix, "Temp program for ExecuteABAP")
 	result.ProgramName = programName
+	if err != nil {
+		result.Message = fmt.Sprintf("Failed to create temp program: %v", err)
+		return result, nil
+	}
+	// Deferred first so that it runs last: the name only goes back to the pool
+	// once the cleanup below has deleted the program, or kept it.
+	defer releaseName()
 	objectURL := fmt.Sprintf("/sap/bc/adt/programs/programs/%s", url.PathEscape(programName))
 
 	// Build the test class wrapper source
@@ -170,20 +177,6 @@ func (c *Client) ExecuteABAP(ctx context.Context, code string, opts *ExecuteABAP
 	}
 
 	source := executeWrapperSource(programName, riskLevelABAP, opts.ReturnVariable, code)
-
-	// Step 1: Create the temp program
-	err = c.CreateObject(ctx, CreateObjectOptions{
-		ObjectType:  ObjectTypeProgram,
-		Name:        programName,
-		Description: "Temp program for ExecuteABAP",
-		PackageName: "$TMP",
-		// A failed create must not delete an object it cannot show is its own.
-		leavePartialObject: true,
-	})
-	if err != nil {
-		result.Message = fmt.Sprintf("Failed to create temp program: %v", err)
-		return result, nil
-	}
 
 	// The temp program lives in $TMP, and CreateObject only got that far
 	// because "$TMP" passed the package whitelist. Record it so neither the
@@ -389,23 +382,135 @@ func (c *Client) deleteTemporaryProgram(ctx context.Context, objectURL, programN
 	return nil
 }
 
-// temporaryProgramDigits is how many random digits follow a temporary
-// program's prefix: the same eight the millisecond timestamp used to supply,
-// so names keep their shape and length (ZTEMP_EXEC_ + 8 = 19 characters, well
-// inside the 30 a program name may have).
-const temporaryProgramDigits = 8
+// temporaryProgramSlots is how many names each SAP user's pool holds, for
+// ExecuteABAP and for CheckABAP each: as many runs of one user as may be in
+// flight at once, across every session and process.
+const temporaryProgramSlots = 10
 
-// temporaryProgramName returns prefix followed by eight random digits.
+// maxProgramNameLength is the longest name SAP gives a program.
+const maxProgramNameLength = 30
+
+// pooledProgramName returns the name of one slot of a user's pool: the prefix,
+// the user, an underscore and the slot number, as in ZTEMP_EXEC_DEVELOPER_0.
 //
-// The digits come from crypto/rand rather than the clock: two calls in the
-// same millisecond — two agents, or one agent's parallel calls — used to get
-// the same name, and the second create then met the first one's program.
-func temporaryProgramName(prefix string) (string, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
-	if err != nil {
-		return "", fmt.Errorf("generating a temporary program name: %w", err)
+// The user is cut short when the whole would not fit in 30 characters, and
+// left out when it is unknown (SSO, a cookie file) or when the prefix leaves
+// it no room; the name is then the prefix and the slot alone. Only the
+// characters a program name may hold are kept from it.
+func pooledProgramName(prefix, user string, slot int) (string, error) {
+	prefix = strings.ToUpper(prefix)
+	suffix := strconv.Itoa(slot)
+	if len(prefix)+len(suffix) > maxProgramNameLength {
+		return "", fmt.Errorf("program prefix %q is too long: a program name has at most %d characters, and the slot number needs %d", prefix, maxProgramNameLength, len(suffix))
 	}
-	return strings.ToUpper(fmt.Sprintf("%s%0*d", prefix, temporaryProgramDigits, n.Int64())), nil
+
+	user = strings.Map(func(r rune) rune {
+		if (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' {
+			return r
+		}
+		return -1
+	}, strings.ToUpper(user))
+	room := maxProgramNameLength - len(prefix) - len("_") - len(suffix)
+	if user == "" || room <= 0 {
+		return prefix + suffix, nil
+	}
+	if len(user) > room {
+		user = user[:room]
+	}
+	return prefix + user + "_" + suffix, nil
+}
+
+// temporaryPrograms is the set of pool names this client's own runs hold.
+//
+// SAP already refuses to create a name that exists, and that is what keeps
+// two processes apart. This set keeps two calls of one process from even
+// trying the same name, so neither one's create runs into the other's lock.
+type temporaryPrograms struct {
+	mu    sync.Mutex
+	inUse map[string]bool
+}
+
+func (p *temporaryPrograms) reserve(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.inUse[name] {
+		return false
+	}
+	if p.inUse == nil {
+		p.inUse = make(map[string]bool)
+	}
+	p.inUse[name] = true
+	return true
+}
+
+func (p *temporaryPrograms) release(name string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.inUse, name)
+}
+
+// createTemporaryProgram creates the program of one ExecuteABAP or CheckABAP
+// run under the first free name of the caller's pool for that prefix, and
+// returns the name together with the function that gives it back to this
+// process's pool.
+//
+// The names are stable on purpose. The ICF keeps an entry in shared memory
+// for every distinct URL it has served, and a random name per run made each
+// run a new URL. On a busy system those entries filled the shared memory
+// area until unrelated OData services failed with SYSTEM_NO_SHM_MEMORY. A
+// pool of ten names per user costs at most ten entries per user, however
+// many times it runs.
+//
+// The create is the arbiter. SAP refuses a name that already exists, so a
+// run in progress in another session, or a program that a failed cleanup or
+// keep_program left behind, sends this run on to the next slot. The lock
+// cannot play that part: a run releases it once the source is written and
+// activates and tests without it, so a free lock does not mean a free name.
+//
+// Any other failure ends the search under that slot's name, as it did with
+// a random name. Trying the next slot could leave a second half-created
+// program behind.
+func (c *Client) createTemporaryProgram(ctx context.Context, prefix, description string) (string, func(), error) {
+	var taken []string
+	for slot := 0; slot < temporaryProgramSlots; slot++ {
+		name, err := pooledProgramName(prefix, c.config.Username, slot)
+		if err != nil {
+			return "", nil, err
+		}
+		if !c.tempPrograms.reserve(name) {
+			taken = append(taken, name)
+			continue
+		}
+		err = c.CreateObject(ctx, CreateObjectOptions{
+			ObjectType:  ObjectTypeProgram,
+			Name:        name,
+			Description: description,
+			PackageName: "$TMP",
+			// A failed create must not delete an object it cannot show is its own.
+			leavePartialObject: true,
+		})
+		if err == nil {
+			return name, func() { c.tempPrograms.release(name) }, nil
+		}
+		c.tempPrograms.release(name)
+		if !temporaryNameTaken(err) {
+			return name, nil, err
+		}
+		taken = append(taken, name)
+	}
+	return "", nil, fmt.Errorf("all %d temporary program names are in use (%s): other runs hold them, or a failed cleanup or keep_program left them in $TMP; delete the ones no run is using", temporaryProgramSlots, strings.Join(taken, ", "))
+}
+
+// temporaryNameTaken reports a create that failed because the name belongs to
+// someone else. Either the program already exists, or another session holds
+// the lock on it: CreateObject retried past that lock, then found the
+// program there and left it alone.
+func temporaryNameTaken(err error) bool {
+	if isAlreadyExistsError(err) {
+		return true
+	}
+	var pce *PartialCreateError
+	return errors.As(err, &pce) && pce.LeftInPlace && isLockConflictError(pce.OriginalErr)
 }
 
 // Lean is the result as execute_abap and `vsp execute --json` report it: every

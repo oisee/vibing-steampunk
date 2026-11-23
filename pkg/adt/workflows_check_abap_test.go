@@ -366,27 +366,6 @@ func TestDeleteTemporaryProgramReportsAFailedLock(t *testing.T) {
 
 // --- names and collisions ---
 
-func TestTemporaryProgramNameIsRandomAndKeepsItsShape(t *testing.T) {
-	shape := regexp.MustCompile(`^ZVSP_CHK_[0-9]{8}$`)
-	seen := map[string]bool{}
-	for i := 0; i < 20; i++ {
-		name, err := temporaryProgramName(checkABAPProgramPrefix)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !shape.MatchString(name) {
-			t.Fatalf("name = %q, want ZVSP_CHK_ and eight digits", name)
-		}
-		seen[name] = true
-	}
-	if len(seen) < 2 {
-		t.Fatalf("20 names, %d distinct: not random", len(seen))
-	}
-	if name, _ := temporaryProgramName("ztemp_exec_"); len(name) != 19 || !strings.HasPrefix(name, "ZTEMP_EXEC_") {
-		t.Fatalf("ExecuteABAP name = %q, want ZTEMP_EXEC_ and eight digits", name)
-	}
-}
-
 func TestCheckABAPNeverDeletesAnObjectItCannotShowItCreated(t *testing.T) {
 	// The create fails with something other than "already exists", and the
 	// probe then finds a program of that name. It may be ours, committed
@@ -533,7 +512,7 @@ func TestCheckABAPWarnsThatAnInterruptedCreateMayStillLand(t *testing.T) {
 	defer cancel()
 	srv := &checkABAPServer{cancelOnCreate: cancel, probeStatus: http.StatusNotFound}
 	_, err := srv.start(t).CheckABAP(ctx, "DATA lv TYPE i.")
-	if err == nil || !strings.Contains(err.Error(), "SAP may still complete it") || !regexp.MustCompile(`look for ZVSP_CHK_[0-9]{8} in \$TMP`).MatchString(err.Error()) {
+	if err == nil || !strings.Contains(err.Error(), "SAP may still complete it") || !strings.Contains(err.Error(), `look for ZVSP_CHK_TESTUSER_0 in $TMP`) {
 		t.Fatalf("error = %v, want the program named as possibly created", err)
 	}
 	if got, want := srv.sequence(), "create,probe"; got != want {

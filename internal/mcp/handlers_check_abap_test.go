@@ -41,7 +41,7 @@ func TestHandleCheckABAPLeftoverProgramIsAnError(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("a leftover temporary program was reported as success:\n%s", text)
 	}
-	name := regexp.MustCompile(`ZVSP_CHK_[0-9]{8}`).FindString(text)
+	name := regexp.MustCompile(`ZVSP_CHK_U_[0-9]`).FindString(text)
 	if name == "" || !strings.HasPrefix(text, "check_abap left the temporary program "+name+" in $TMP") {
 		t.Fatalf("error does not lead with the program's name:\n%s", text)
 	}

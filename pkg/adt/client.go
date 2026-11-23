@@ -21,6 +21,10 @@ type Client struct {
 	// retire the session one of them is bound to. See lock_window.go.
 	locks lockWindow
 
+	// ExecuteABAP and CheckABAP program names this client's runs hold right
+	// now. See createTemporaryProgram.
+	tempPrograms temporaryPrograms
+
 	// rfcFetcherFactory, when non-nil, overrides the default WebSocket-backed
 	// RFC source fetcher used by GetEnhancement's fallback path. Production
 	// callers leave this nil; tests inject a stub to avoid opening a real
