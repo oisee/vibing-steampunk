@@ -225,6 +225,16 @@ func (c *Client) activateWithInactiveParts(ctx context.Context, objectURL, objec
 		// nothing to do. Calling that "still inactive" sends the caller off to
 		// repair an object that is fine.
 		if !objectInactive(objectURL, records) {
+			// SAP refuses an object that does not exist the same silent way.
+			// Only a definite 404 overturns "nothing to do"; an inconclusive
+			// probe keeps the old verdict.
+			base := strings.TrimSuffix(strings.TrimSuffix(objectURL, "/"), "/source/main")
+			if exists, perr := c.objectExistsByURL(ctx, base); perr == nil && !exists {
+				refused.Messages = append(refused.Messages, ActivationResultMessage{
+					Type: "E", ShortText: "Object does not exist: " + objectName + " (" + base + ")",
+				})
+				return refused, nil
+			}
 			return &ActivationResult{Success: true, Messages: []ActivationResultMessage{{
 				Type: "I", ShortText: "Nothing to activate: the object has no inactive version",
 			}}}, nil
